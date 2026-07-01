@@ -22,14 +22,16 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 248px 1fr;
+  grid-template-columns: 256px minmax(0, 1fr);
   min-height: 100vh;
+  background: #eef1f4;
 }
 
 .sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 22px;
+  min-height: 100vh;
   padding: 18px;
   background: #20262d;
   color: #f7f9fb;
@@ -39,12 +41,14 @@ button {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .brand-mark {
   display: grid;
   width: 40px;
   height: 40px;
+  flex: 0 0 auto;
   place-items: center;
   border-radius: 8px;
   background: #2ba6a0;
@@ -67,40 +71,74 @@ button {
   font-size: 12px;
 }
 
-.nav-list {
+.nav-list,
+.sidebar-filter {
   display: grid;
   gap: 6px;
 }
 
-.nav-list button {
-  height: 36px;
+.nav-list button,
+.sidebar-filter button {
+  min-height: 42px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: #dce4ec;
   text-align: left;
-  padding: 0 12px;
+  padding: 7px 10px;
   cursor: pointer;
 }
 
+.nav-list button {
+  display: grid;
+  gap: 2px;
+}
+
+.nav-list button span {
+  font-size: 14px;
+}
+
+.nav-list button small {
+  color: #9facba;
+  font-size: 11px;
+}
+
 .nav-list button:hover,
-.nav-list button.active {
+.nav-list button.active,
+.sidebar-filter button:hover {
   background: #303943;
   color: #ffffff;
 }
 
-.main-panel {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  min-width: 0;
+.sidebar-filter {
+  align-self: end;
 }
 
-.toolbar,
-.bottom-panel {
+.sidebar-filter h2 {
+  margin: 0 0 4px;
+  color: #9facba;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sidebar-filter button {
+  min-height: 32px;
+  font-size: 13px;
+}
+
+.main-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 100vh;
+}
+
+.toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  min-height: 68px;
   border-bottom: 1px solid #d7dde3;
   background: #ffffff;
   padding: 14px 18px;
@@ -129,6 +167,7 @@ button {
   color: #17202a;
   padding: 0 12px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .toolbar-actions {
@@ -139,42 +178,109 @@ button {
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 34%) minmax(360px, 1fr) 280px;
+  grid-template-columns: minmax(480px, 1fr) 320px;
+  min-width: 0;
   min-height: 0;
   padding: 14px;
   gap: 12px;
 }
 
-.change-list,
-.diff-panel,
-.details-panel {
+.main-workspace,
+.detail-panel {
   min-width: 0;
   min-height: 0;
+}
+
+.main-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+}
+
+.metric-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric,
+.work-row,
+.detail-block {
   border: 1px solid #d7dde3;
   border-radius: 8px;
   background: #ffffff;
-  padding: 14px;
 }
 
-.change-list h3,
-.diff-panel h3,
-.details-panel h3 {
-  margin: 0 0 8px;
+.metric {
+  display: grid;
+  gap: 4px;
+  min-height: 76px;
+  padding: 13px;
+}
+
+.metric span {
+  color: #637282;
+  font-size: 12px;
+}
+
+.metric strong {
+  font-size: 22px;
+}
+
+.work-list,
+.detail-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.work-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 68px;
+  padding: 13px;
+}
+
+.work-row h3,
+.work-row p,
+.detail-block h3,
+.detail-block p {
+  margin: 0;
+}
+
+.work-row h3,
+.detail-block h3 {
   font-size: 15px;
 }
 
-.change-list p,
-.diff-panel p,
-.details-panel p {
-  margin: 0;
+.work-row p,
+.detail-block p {
+  margin-top: 5px;
   color: #637282;
   font-size: 13px;
+}
+
+.work-row span {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #eef5f4;
+  color: #227873;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.detail-block {
+  padding: 13px;
 }
 
 .error-notice {
   display: grid;
   gap: 6px;
-  margin-bottom: 12px;
+  margin: 8px 0 0;
   border: 1px solid #e4a8a8;
   border-radius: 6px;
   background: #fff4f4;
@@ -202,9 +308,31 @@ button {
 }
 
 .bottom-panel {
-  justify-content: flex-start;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr) 180px;
+  gap: 12px;
+  min-height: 76px;
   border-top: 1px solid #d7dde3;
-  border-bottom: 0;
+  background: #ffffff;
   color: #637282;
+  padding: 12px 18px;
+}
+
+.bottom-panel section {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.bottom-panel strong {
+  color: #17202a;
   font-size: 13px;
+}
+
+.bottom-panel span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
 }

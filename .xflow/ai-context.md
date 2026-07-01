@@ -21,6 +21,9 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 
 - Structure: 前端源码在 `src/`，Tauri/Rust 后端在 `src-tauri/`，设计和计划文档在 `doc/`。
 - App Shell: `src/App.svelte` 是当前工作台入口，`src/stores/` 存放前端状态，`src/types/` 存放共享类型，`src/components/` 存放可复用组件。
+- Layout Components: 工作台布局组件放在 `src/components/layout/` 和 `src/components/workbench/`。
+- Workbench Data: 当前工作台占位视图和导航数据集中在 `src/lib/workbench.ts`。
+- Workbench Structure: 首屏应保持为工作台结构，包括左侧导航/过滤器、中间主视图、右侧详情和底部状态区。
 - Tauri Config: 应用配置在 `src-tauri/tauri.conf.json`，产品名为 `NovaSVN`。
 - Rust Entry: Rust 后端入口在 `src-tauri/src/lib.rs` 和 `src-tauri/src/main.rs`。
 - Frontend API: 前端组件不直接调用 Tauri `invoke`，统一通过 `src/lib/api.ts` 的 API client 调用后端命令。
@@ -33,6 +36,7 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 ## Quality Constraints
 
 - Performance: 大型工作副本性能是核心约束，后续列表、扫描、diff 和任务都应避免阻塞 UI。
+- Layout Stability: 工作台使用稳定 grid/flex 布局，新增真实数据时应避免面板尺寸跳动、文本溢出和控件重排。
 - Security: 不提交密钥、本机敏感路径或临时缓存。
 - Compatibility: 目标平台包含 Windows 和 macOS；当前 macOS 已验证开发启动，Windows 仍需后续环境验证。
 - Generated Files: `node_modules/`、`dist/`、`src-tauri/target/`、`src-tauri/gen/` 等生成物不应提交。
