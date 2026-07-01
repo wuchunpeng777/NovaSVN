@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import ErrorNotice from "./components/ErrorNotice.svelte";
+  import { callBackend } from "./lib/api";
   import { currentView, setCurrentView } from "./stores/app";
+  import type { CommandError, HealthPayload } from "./types/api";
   import type { AppView } from "./types/app";
 
   const views: Array<{ id: AppView; label: string }> = [
@@ -11,9 +13,21 @@
   ];
 
   let backendMessage = "等待连接后端";
+  let commandError: CommandError | null = null;
 
   async function pingBackend() {
-    backendMessage = await invoke<string>("ping");
+    commandError = null;
+    const health = await callBackend<HealthPayload>("ping");
+    backendMessage = `${health.message} (${health.backend})`;
+  }
+
+  async function previewError() {
+    commandError = null;
+    try {
+      await callBackend<void>("fail_for_preview");
+    } catch (error) {
+      commandError = error as CommandError;
+    }
   }
 </script>
 
@@ -43,10 +57,13 @@
   <section class="main-panel" aria-label="主要工作区">
     <header class="toolbar">
       <div>
-        <h2>初始化工程</h2>
-        <p>Tauri + Svelte + TypeScript + Rust</p>
+        <h2>前后端通信基础</h2>
+        <p>统一响应、错误模型和 API client</p>
       </div>
-      <button type="button" on:click={pingBackend}>连接后端</button>
+      <div class="toolbar-actions">
+        <button type="button" on:click={pingBackend}>连接后端</button>
+        <button type="button" on:click={previewError}>验证错误</button>
+      </div>
     </header>
 
     <div class="workspace-grid">
@@ -62,6 +79,7 @@
 
       <section class="details-panel" aria-label="详情">
         <h3>详情</h3>
+        <ErrorNotice error={commandError} />
         <p>{backendMessage}</p>
       </section>
     </div>

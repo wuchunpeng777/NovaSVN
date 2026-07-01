@@ -131,6 +131,12 @@ button {
   cursor: pointer;
 }
 
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .workspace-grid {
   display: grid;
   grid-template-columns: minmax(280px, 34%) minmax(360px, 1fr) 280px;
@@ -163,6 +169,36 @@ button {
   margin: 0;
   color: #637282;
   font-size: 13px;
+}
+
+.error-notice {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  border: 1px solid #e4a8a8;
+  border-radius: 6px;
+  background: #fff4f4;
+  color: #7b2525;
+  padding: 10px;
+}
+
+.error-notice div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.error-notice strong,
+.error-notice p,
+.error-notice small {
+  margin: 0;
+}
+
+.error-notice span,
+.error-notice small {
+  color: #9c4a4a;
+  font-size: 12px;
 }
 
 .bottom-panel {
