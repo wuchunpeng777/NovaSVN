@@ -48,6 +48,7 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 ## Code Standards
 
 - 使用中文沟通，代码注释使用中文。
+- Git 提交日志必须使用中文。
 - Keep code scoped to the active task spec.
 - Prefer existing project patterns over new abstractions.
 - Use readable names and small, focused methods.
