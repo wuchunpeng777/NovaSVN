@@ -1,12 +1,20 @@
 <script lang="ts">
   import ErrorNotice from "../ErrorNotice.svelte";
-  import type { ChangedFile, CommandError, SvnDetection } from "../../types/api";
+  import type {
+    ChangedFile,
+    CommandError,
+    FileDiff,
+    SvnDetection,
+  } from "../../types/api";
   import type { DetailSection } from "../../types/app";
 
   export let sections: DetailSection[] = [];
   export let commandError: CommandError | null = null;
   export let backendMessage = "";
   export let selectedFile: ChangedFile | null = null;
+  export let selectedFileDiff: FileDiff | null = null;
+  export let diffLoading = false;
+  export let diffError: CommandError | null = null;
   export let svnDetection: SvnDetection | null = null;
   export let svnError: CommandError | null = null;
   export let svnExecutableInput = "";
@@ -93,6 +101,22 @@
       </dl>
     {:else}
       <p>选择一个改动文件后显示详情。</p>
+    {/if}
+  </section>
+
+  <section class="detail-block diff-block">
+    <h3>Diff</h3>
+    <ErrorNotice error={diffError} />
+    {#if diffLoading}
+      <p>正在读取 Diff...</p>
+    {:else if selectedFileDiff?.binary}
+      <p>该文件是二进制文件，当前不可预览文本 Diff。</p>
+    {:else if selectedFileDiff && !selectedFileDiff.empty}
+      <pre>{selectedFileDiff.text}</pre>
+    {:else if selectedFile}
+      <p>当前文件没有可显示的文本 Diff。</p>
+    {:else}
+      <p>选择一个改动文件后显示 Diff。</p>
     {/if}
   </section>
 

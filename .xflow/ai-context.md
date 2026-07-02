@@ -45,6 +45,9 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 - Changes List: 本地改动列表在前端基于 `workspaceStore.status.files` 派生，支持路径搜索、按状态分组和选中文件。
 - Selected File: 当前选中文件路径保存在 `workspaceStore.selectedFilePath`，右侧详情区展示选中文件摘要，后续 diff 可复用该选择状态。
 - Staging Placeholder: 虚拟暂存尚未实现，当前已暂存统计固定为 0，未暂存等于扫描到的改动数。
+- File Diff: `get_file_diff` command 执行 `svn diff <path>`，请求包含工作副本 root、文件相对路径和可选 SVN 可执行文件路径。
+- Diff UI: 右侧详情区显示普通文本 diff，二进制文件显示不可预览提示；Monaco diff 放到后续阶段。
+- Diff State: 当前文件 diff、加载状态和错误保存在 `workspaceStore.selectedFileDiff`、`diffLoading`、`diffError`。
 - Dialog Plugin: 目录选择使用 `@tauri-apps/plugin-dialog` 和 Rust `tauri-plugin-dialog`，权限配置在 `src-tauri/capabilities/default.json`。
 - Task Queue: 后端任务队列由 `src-tauri/src/task.rs` 提供，当前为内存存储和串行执行模型，通过 Tauri managed state 注入。
 - Task Commands: 任务相关 commands 包括创建模拟任务、读取任务列表、读取任务详情和取消任务；任务错误继续走统一 `NovaError`。

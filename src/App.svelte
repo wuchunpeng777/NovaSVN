@@ -90,7 +90,11 @@
         onWorkspacePathInput={workspaceStore.setPathInput}
         onSearchTextInput={workspaceStore.setSearchText}
         onToggleGroupByStatus={workspaceStore.toggleGroupByStatus}
-        onSelectFile={workspaceStore.selectFile}
+        onSelectFile={(path) =>
+          workspaceStore.selectFile(
+            path,
+            $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+          )}
       />
       <DetailPanel
       sections={detailSections}
@@ -99,6 +103,9 @@
       selectedFile={$workspaceStore.status?.files.find(
         (file) => file.path === $workspaceStore.selectedFilePath,
       ) ?? null}
+      selectedFileDiff={$workspaceStore.selectedFileDiff}
+      diffLoading={$workspaceStore.diffLoading}
+      diffError={$workspaceStore.diffError}
       svnDetection={$svnStore.detection}
       svnError={$svnStore.error}
       svnExecutableInput={$svnStore.executableInput}

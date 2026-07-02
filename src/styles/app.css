@@ -457,6 +457,25 @@ button.work-row.active {
   padding: 13px;
 }
 
+.diff-block {
+  align-content: stretch;
+}
+
+.diff-block pre {
+  max-height: 360px;
+  overflow: auto;
+  margin: 8px 0 0;
+  border: 1px solid #d7dde3;
+  border-radius: 6px;
+  background: #f7f9fb;
+  color: #1f2933;
+  padding: 10px;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+}
+
 .detail-heading {
   display: flex;
   align-items: center;

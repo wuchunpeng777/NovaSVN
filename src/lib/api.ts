@@ -5,6 +5,8 @@ import type {
   CommandResponse,
   CreateMockTaskRequest,
   DetectSvnRequest,
+  FileDiff,
+  GetFileDiffRequest,
   OpenWorkspaceRequest,
   RecentWorkspace,
   ScanWorkspaceStatusRequest,
@@ -81,6 +83,10 @@ export function scanWorkspaceStatus(
   request: ScanWorkspaceStatusRequest,
 ): Promise<WorkingCopyStatus> {
   return callBackend<WorkingCopyStatus>("scan_workspace_status", { request });
+}
+
+export function getFileDiff(request: GetFileDiffRequest): Promise<FileDiff> {
+  return callBackend<FileDiff>("get_file_diff", { request });
 }
 
 export async function chooseWorkspaceDirectory(): Promise<string | null> {

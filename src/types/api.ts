@@ -112,3 +112,16 @@ export interface WorkingCopyStatus {
   property_changed: number;
   files: ChangedFile[];
 }
+
+export interface GetFileDiffRequest {
+  working_copy_root: string;
+  file_path: string;
+  svn_executable?: string;
+}
+
+export interface FileDiff {
+  path: string;
+  text: string;
+  binary: boolean;
+  empty: boolean;
+}

@@ -87,7 +87,6 @@ export const workbenchViews: Record<string, WorkbenchView> = {
 };
 
 export const detailSections: DetailSection[] = [
-  { title: "Diff", description: "阶段 2 集成 Monaco Diff。" },
   { title: "属性", description: "后续显示 SVN properties。" },
   { title: "锁状态", description: "后续显示 lock / unlock 信息。" },
   { title: "检查结果", description: "后续显示阻塞、警告和提示。" },

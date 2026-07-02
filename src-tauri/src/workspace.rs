@@ -65,6 +65,21 @@ pub struct ChangedFile {
     pub abnormal: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetFileDiffRequest {
+    pub working_copy_root: String,
+    pub file_path: String,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FileDiff {
+    pub path: String,
+    pub text: String,
+    pub binary: bool,
+    pub empty: bool,
+}
+
 pub fn open_workspace(
     app: &AppHandle,
     request: OpenWorkspaceRequest,
@@ -105,6 +120,59 @@ pub fn open_workspace(
     let summary = parse_svn_info_xml(&xml, &path)?;
     save_recent_workspace(app, &summary)?;
     Ok(summary)
+}
+
+pub fn get_file_diff(request: GetFileDiffRequest) -> Result<FileDiff, NovaError> {
+    let root = normalize_workspace_path(&request.working_copy_root)?;
+    let file_path = normalize_relative_file_path(&request.file_path)?;
+    let target = root.join(&file_path);
+    let executable = request
+        .svn_executable
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "svn".to_string());
+
+    let output = Command::new(&executable)
+        .arg("diff")
+        .arg(&target)
+        .current_dir(&root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_DIFF_FAILED",
+                "无法读取文件 Diff",
+                Some(format!(
+                    "执行 `{executable} diff {}` 失败：{error}",
+                    target.display()
+                )),
+                true,
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "SVN_DIFF_COMMAND_FAILED",
+            "文件 Diff 读取失败",
+            Some(svn_diff_error_detail(&executable, &target, &output)),
+            true,
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let text = if stdout.trim().is_empty() && !stderr.trim().is_empty() {
+        stderr
+    } else {
+        stdout
+    };
+    let binary = is_binary_diff(&text);
+
+    Ok(FileDiff {
+        path: file_path.replace('\\', "/"),
+        empty: text.trim().is_empty(),
+        text,
+        binary,
+    })
 }
 
 pub fn scan_workspace_status(
@@ -149,6 +217,37 @@ pub fn scan_workspace_status(
         request.offset.unwrap_or(0),
         request.limit.unwrap_or(500),
     )
+}
+
+fn normalize_relative_file_path(path: &str) -> Result<String, NovaError> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(NovaError::command(
+            "DIFF_PATH_EMPTY",
+            "请选择要查看 Diff 的文件",
+            None,
+            true,
+        ));
+    }
+
+    let path = PathBuf::from(trimmed);
+    if path.is_absolute() || trimmed.contains("..") {
+        return Err(NovaError::command(
+            "DIFF_PATH_INVALID",
+            "Diff 文件路径无效",
+            Some("文件路径必须是当前工作副本内的相对路径。".to_string()),
+            true,
+        ));
+    }
+
+    Ok(trimmed.to_string())
+}
+
+fn is_binary_diff(text: &str) -> bool {
+    let lowered = text.to_lowercase();
+    lowered.contains("cannot display: file marked as a binary type")
+        || lowered.contains("cannot display: file marked as binary")
+        || lowered.contains("diff of binary files")
 }
 
 pub fn read_recent_workspace(app: &AppHandle) -> Result<RecentWorkspace, NovaError> {
@@ -446,6 +545,25 @@ fn svn_status_error_detail(executable: &str, path: &Path, output: &std::process:
 
     format!(
         "`{executable} status --xml {}` 返回退出码 {:?}，但没有输出。",
+        path.display(),
+        output.status.code()
+    )
+}
+
+fn svn_diff_error_detail(executable: &str, path: &Path, output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if !stderr.is_empty() {
+        return format!("`{executable} diff {}` 返回失败：{stderr}", path.display());
+    }
+
+    if !stdout.is_empty() {
+        return format!("`{executable} diff {}` 返回失败：{stdout}", path.display());
+    }
+
+    format!(
+        "`{executable} diff {}` 返回退出码 {:?}，但没有输出。",
         path.display(),
         output.status.code()
     )

@@ -4,6 +4,7 @@ import {
   chooseWorkspaceDirectory,
   createMockTask,
   detectSvn,
+  getFileDiff,
   getRecentWorkspace,
   getTask,
   listTasks,
@@ -14,6 +15,7 @@ import type { AppView } from "../types/app";
 import type {
   ChangedFile,
   CommandError,
+  FileDiff,
   MockTaskOutcome,
   SvnDetection,
   Task,
@@ -247,11 +249,14 @@ export interface WorkspaceStoreState {
   searchText: string;
   groupByStatus: boolean;
   selectedFilePath: string | null;
+  selectedFileDiff: FileDiff | null;
   pathInput: string;
   loading: boolean;
   statusLoading: boolean;
+  diffLoading: boolean;
   error: CommandError | null;
   statusError: CommandError | null;
+  diffError: CommandError | null;
 }
 
 const initialWorkspaceState: WorkspaceStoreState = {
@@ -260,11 +265,14 @@ const initialWorkspaceState: WorkspaceStoreState = {
   searchText: "",
   groupByStatus: true,
   selectedFilePath: null,
+  selectedFileDiff: null,
   pathInput: "",
   loading: false,
   statusLoading: false,
+  diffLoading: false,
   error: null,
   statusError: null,
+  diffError: null,
 };
 
 function createWorkspaceStore() {
@@ -281,6 +289,7 @@ function createWorkspaceStore() {
         current: recent.workspace,
         status: null,
         selectedFilePath: null,
+        selectedFileDiff: null,
         pathInput: state.pathInput || root || "",
         loading: false,
         error: null,
@@ -316,6 +325,7 @@ function createWorkspaceStore() {
         current,
         status: null,
         selectedFilePath: null,
+        selectedFileDiff: null,
         pathInput: current.working_copy_root,
         loading: false,
         error: null,
@@ -374,11 +384,21 @@ function createWorkspaceStore() {
     }));
   }
 
-  function selectFile(path: string) {
+  async function selectFile(path: string, svnExecutable?: string | null) {
+    let root = "";
     update((state) => ({
       ...state,
+      selectedFileDiff: null,
       selectedFilePath: path,
     }));
+    update((state) => {
+      root = state.current?.working_copy_root ?? "";
+      return state;
+    });
+
+    if (root) {
+      await refreshFileDiff(svnExecutable, root, path);
+    }
   }
 
   async function refreshStatus(
@@ -410,24 +430,83 @@ function createWorkspaceStore() {
     }
 
     try {
+      let previousSelectedFilePath: string | null = null;
+      update((state) => {
+        previousSelectedFilePath = state.selectedFilePath;
+        return state;
+      });
       const status = await scanWorkspaceStatus({
         working_copy_root: root,
         svn_executable: svnExecutable || undefined,
         offset: 0,
         limit: 500,
       });
+      const selectedFilePath = resolveSelectedFilePath(status.files, previousSelectedFilePath);
       update((state) => ({
         ...state,
         status,
-        selectedFilePath: resolveSelectedFilePath(status.files, state.selectedFilePath),
+        selectedFilePath,
+        selectedFileDiff:
+          selectedFilePath === state.selectedFilePath ? state.selectedFileDiff : null,
         statusLoading: false,
         statusError: null,
       }));
+      if (selectedFilePath) {
+        await refreshFileDiff(svnExecutable, root, selectedFilePath);
+      }
     } catch (error) {
       update((state) => ({
         ...state,
         statusLoading: false,
         statusError: error as CommandError,
+      }));
+    }
+  }
+
+  async function refreshFileDiff(
+    svnExecutable?: string | null,
+    workingCopyRoot?: string,
+    filePath?: string | null,
+  ) {
+    let root = workingCopyRoot ?? "";
+    let path = filePath ?? "";
+    update((state) => {
+      root = root || state.current?.working_copy_root || "";
+      path = path || state.selectedFilePath || "";
+      return {
+        ...state,
+        diffLoading: true,
+        diffError: null,
+      };
+    });
+
+    if (!root || !path) {
+      update((state) => ({
+        ...state,
+        selectedFileDiff: null,
+        diffLoading: false,
+      }));
+      return;
+    }
+
+    try {
+      const selectedFileDiff = await getFileDiff({
+        working_copy_root: root,
+        file_path: path,
+        svn_executable: svnExecutable || undefined,
+      });
+      update((state) => ({
+        ...state,
+        selectedFileDiff,
+        diffLoading: false,
+        diffError: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        selectedFileDiff: null,
+        diffLoading: false,
+        diffError: error as CommandError,
       }));
     }
   }
@@ -442,6 +521,7 @@ function createWorkspaceStore() {
     toggleGroupByStatus,
     selectFile,
     refreshStatus,
+    refreshFileDiff,
   };
 }
 
