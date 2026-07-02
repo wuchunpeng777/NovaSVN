@@ -5,6 +5,7 @@ mod task;
 mod workspace;
 
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
+use svn::{DetectSvnRequest, SvnClient, SvnDetection};
 use task::{CreateMockTaskRequest, Task, TaskQueue, TaskSnapshot};
 
 #[tauri::command]
@@ -51,6 +52,12 @@ fn cancel_task(queue: tauri::State<'_, TaskQueue>, task_id: String) -> CommandRe
     Ok(CommandResponse::success(queue.cancel_task(&task_id)?))
 }
 
+#[tauri::command]
+fn detect_svn(request: DetectSvnRequest) -> CommandResult<SvnDetection> {
+    println!("[NovaSVN] detect_svn command received");
+    Ok(CommandResponse::success(SvnClient::detect(request)?))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(TaskQueue::new())
@@ -61,6 +68,7 @@ pub fn run() {
             list_tasks,
             get_task,
             cancel_task,
+            detect_svn,
         ])
         .run(tauri::generate_context!())
         .expect("启动 NovaSVN 失败");

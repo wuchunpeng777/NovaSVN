@@ -52,3 +52,14 @@ export interface CreateMockTaskRequest {
   title?: string;
   outcome: MockTaskOutcome;
 }
+
+export interface SvnDetection {
+  available: boolean;
+  version: string;
+  executable: string;
+  resolved_path: string | null;
+}
+
+export interface DetectSvnRequest {
+  executable?: string;
+}

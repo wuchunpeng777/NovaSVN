@@ -3,6 +3,8 @@ import type {
   CommandError,
   CommandResponse,
   CreateMockTaskRequest,
+  DetectSvnRequest,
+  SvnDetection,
   Task,
   TaskSnapshot,
 } from "../types/api";
@@ -53,4 +55,8 @@ export function getTask(taskId: string): Promise<Task> {
 
 export function cancelTask(taskId: string): Promise<Task> {
   return callBackend<Task>("cancel_task", { taskId });
+}
+
+export function detectSvn(request: DetectSvnRequest = {}): Promise<SvnDetection> {
+  return callBackend<SvnDetection>("detect_svn", { request });
 }

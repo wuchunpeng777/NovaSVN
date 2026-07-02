@@ -31,6 +31,10 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 - Command Error: Rust 错误使用 `NovaError`，错误字段包含 `code`、`message`、`detail`、`recoverable`。
 - Error UI: 前端命令错误通过统一错误展示组件呈现。
 - Backend Modules: Rust 后端保留 `svn`、`workspace`、`task`、`staging`、`error` 模块边界。
+- SVN Detection: `src-tauri/src/svn.rs` 提供 SVN 命令行检测，默认检测 PATH 中的 `svn`，也支持指定可执行文件路径。
+- SVN Detection Command: `detect_svn` command 执行 `svn --version --quiet` 获取版本，并在 Windows 下通过 `where` 尽力解析路径。
+- SVN Detection UI: 右侧详情区展示 SVN 命令行状态、版本和路径，前端状态由 `src/stores/app.ts` 的 `svnStore` 管理。
+- SVN Path Settings: 当前手动 SVN 路径只保存在前端运行态，持久化设置后续单独实现。
 - Task Queue: 后端任务队列由 `src-tauri/src/task.rs` 提供，当前为内存存储和串行执行模型，通过 Tauri managed state 注入。
 - Task Commands: 任务相关 commands 包括创建模拟任务、读取任务列表、读取任务详情和取消任务；任务错误继续走统一 `NovaError`。
 - Task UI: 前端任务状态集中在 `src/stores/app.ts` 的 `taskStore`，底部任务队列 UI 位于 `src/components/workbench/BottomPanel.svelte`。

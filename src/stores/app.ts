@@ -2,6 +2,7 @@ import { writable } from "svelte/store";
 import {
   cancelTask,
   createMockTask,
+  detectSvn,
   getTask,
   listTasks,
 } from "../lib/api";
@@ -9,6 +10,7 @@ import type { AppView } from "../types/app";
 import type {
   CommandError,
   MockTaskOutcome,
+  SvnDetection,
   Task,
   TaskSnapshot,
 } from "../types/api";
@@ -147,3 +149,87 @@ function createTaskStore() {
 }
 
 export const taskStore = createTaskStore();
+
+export interface SvnStoreState {
+  detection: SvnDetection | null;
+  executableInput: string;
+  loading: boolean;
+  error: CommandError | null;
+}
+
+const initialSvnState: SvnStoreState = {
+  detection: null,
+  executableInput: "",
+  loading: false,
+  error: null,
+};
+
+function createSvnStore() {
+  const { subscribe, update } = writable<SvnStoreState>(initialSvnState);
+
+  async function detect() {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const detection = await detectSvn();
+      update((state) => ({
+        ...state,
+        detection,
+        executableInput: state.executableInput || detection.resolved_path || detection.executable,
+        loading: false,
+        error: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        detection: null,
+        loading: false,
+        error: error as CommandError,
+      }));
+    }
+  }
+
+  async function detectWithInput() {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    let executable = "";
+    update((state) => {
+      executable = state.executableInput.trim();
+      return state;
+    });
+
+    try {
+      const detection = await detectSvn({ executable });
+      update((state) => ({
+        ...state,
+        detection,
+        executableInput: executable || detection.resolved_path || detection.executable,
+        loading: false,
+        error: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        detection: null,
+        loading: false,
+        error: error as CommandError,
+      }));
+    }
+  }
+
+  function setExecutableInput(value: string) {
+    update((state) => ({
+      ...state,
+      executableInput: value,
+    }));
+  }
+
+  return {
+    subscribe,
+    detect,
+    detectWithInput,
+    setExecutableInput,
+  };
+}
+
+export const svnStore = createSvnStore();
