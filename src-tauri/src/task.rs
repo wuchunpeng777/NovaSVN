@@ -1,5 +1,7 @@
 use std::{
     collections::VecDeque,
+    path::{Path, PathBuf},
+    process::Command,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
@@ -38,7 +40,7 @@ pub struct Task {
     pub created_at: u64,
     pub updated_at: u64,
     #[serde(skip_serializing)]
-    outcome: MockTaskOutcome,
+    payload: TaskPayload,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -68,6 +70,28 @@ pub enum MockTaskOutcome {
 pub struct CreateMockTaskRequest {
     pub title: Option<String>,
     pub outcome: MockTaskOutcome,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateCommitTaskRequest {
+    pub working_copy_root: String,
+    pub message: String,
+    pub files: Vec<String>,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+enum TaskPayload {
+    Mock(MockTaskOutcome),
+    SvnCommit(CommitTaskPayload),
+}
+
+#[derive(Debug, Clone)]
+struct CommitTaskPayload {
+    working_copy_root: String,
+    message: String,
+    files: Vec<String>,
+    svn_executable: String,
 }
 
 #[derive(Debug)]
@@ -112,17 +136,55 @@ impl TaskQueue {
             error: None,
             created_at: now,
             updated_at: now,
-            outcome: request.outcome.clone(),
+            payload: TaskPayload::Mock(request.outcome.clone()),
         };
 
-        {
-            let mut state = self.state.lock().expect("任务队列锁已损坏");
-            state.pending.push_back(task_id);
-            state.tasks.push(task.clone());
+        self.enqueue(task_id, task.clone());
+
+        task
+    }
+
+    pub fn create_commit_task(&self, request: CreateCommitTaskRequest) -> Result<Task, NovaError> {
+        let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
+        let files = normalize_commit_files(&request.files)?;
+        let message = request.message.trim().to_string();
+        if message.is_empty() {
+            return Err(NovaError::command(
+                "COMMIT_MESSAGE_REQUIRED",
+                "请输入提交信息",
+                None,
+                true,
+            ));
         }
 
-        self.ensure_worker();
-        task
+        let svn_executable = request
+            .svn_executable
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "svn".to_string());
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!("提交 {} 个文件", files.len()),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "提交任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::SvnCommit(CommitTaskPayload {
+                working_copy_root: working_copy_root.display().to_string(),
+                message,
+                files,
+                svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
     }
 
     pub fn list_tasks(&self) -> TaskSnapshot {
@@ -213,6 +275,16 @@ impl TaskQueue {
             run_worker(state, worker_running);
         });
     }
+
+    fn enqueue(&self, task_id: String, task: Task) {
+        {
+            let mut state = self.state.lock().expect("任务队列锁已损坏");
+            state.pending.push_back(task_id);
+            state.tasks.push(task);
+        }
+
+        self.ensure_worker();
+    }
 }
 
 impl From<&Task> for TaskSummary {
@@ -239,11 +311,11 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
                     .tasks
                     .iter()
                     .find(|task| task.task_id == task_id)
-                    .map(|task| (task_id, task.outcome.clone()))
+                    .map(|task| (task_id, task.payload.clone()))
             })
         };
 
-        let Some((task_id, outcome)) = next_task else {
+        let Some((task_id, payload)) = next_task else {
             worker_running.store(false, Ordering::Release);
             let mut state = state.lock().expect("任务队列锁已损坏");
             state.running_task_id = None;
@@ -257,26 +329,124 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             continue;
         };
 
-        update_task(&state, &task_id, TaskStatus::Running, "任务开始执行", None);
-        thread::sleep(Duration::from_millis(450));
-        append_task_log(&state, &task_id, "准备模拟命令环境");
-        thread::sleep(Duration::from_millis(450));
-        append_task_log(&state, &task_id, "模拟命令运行中");
-        thread::sleep(Duration::from_millis(450));
-
-        match outcome {
-            MockTaskOutcome::Success => {
-                update_task(&state, &task_id, TaskStatus::Success, "任务执行成功", None)
-            }
-            MockTaskOutcome::Failed => update_task(
-                &state,
-                &task_id,
-                TaskStatus::Failed,
-                "任务执行失败",
-                Some("模拟任务失败，用于验证失败状态和日志展示。".to_string()),
-            ),
+        match payload {
+            TaskPayload::Mock(outcome) => run_mock_task(&state, &task_id, outcome),
+            TaskPayload::SvnCommit(payload) => run_commit_task(&state, &task_id, payload),
         }
     }
+}
+
+fn run_mock_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    outcome: MockTaskOutcome,
+) {
+    update_task(state, task_id, TaskStatus::Running, "任务开始执行", None);
+    thread::sleep(Duration::from_millis(450));
+    append_task_log(state, task_id, "准备模拟命令环境");
+    thread::sleep(Duration::from_millis(450));
+    append_task_log(state, task_id, "模拟命令运行中");
+    thread::sleep(Duration::from_millis(450));
+
+    match outcome {
+        MockTaskOutcome::Success => {
+            update_task(state, task_id, TaskStatus::Success, "任务执行成功", None)
+        }
+        MockTaskOutcome::Failed => update_task(
+            state,
+            task_id,
+            TaskStatus::Failed,
+            "任务执行失败",
+            Some("模拟任务失败，用于验证失败状态和日志展示。".to_string()),
+        ),
+    }
+}
+
+fn run_commit_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: CommitTaskPayload,
+) {
+    update_task(state, task_id, TaskStatus::Running, "提交任务开始执行", None);
+    append_task_log(
+        state,
+        task_id,
+        &format!("准备提交 {} 个文件", payload.files.len()),
+    );
+
+    let root = PathBuf::from(&payload.working_copy_root);
+    let targets: Vec<PathBuf> = payload.files.iter().map(|file| root.join(file)).collect();
+    let mut command = Command::new(&payload.svn_executable);
+    command.arg("commit");
+    for target in &targets {
+        command.arg(target);
+    }
+    command.arg("-m").arg(&payload.message).current_dir(&root);
+
+    append_task_log(
+        state,
+        task_id,
+        &format!("执行 svn commit：{}", payload.files.join(", ")),
+    );
+
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(state, task_id, TaskStatus::Success, "提交执行成功", None);
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "提交执行失败",
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "提交命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn append_command_output(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    output: &std::process::Output,
+) {
+    append_stream_lines(state, task_id, &String::from_utf8_lossy(&output.stdout));
+    append_stream_lines(state, task_id, &String::from_utf8_lossy(&output.stderr));
+}
+
+fn append_stream_lines(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, text: &str) {
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        append_task_log(state, task_id, line);
+    }
+}
+
+fn command_error_detail(executable: &str, output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    if !stdout.is_empty() {
+        return stdout;
+    }
+
+    format!(
+        "`{executable} commit` 返回退出码 {:?}，但没有输出。",
+        output.status.code()
+    )
 }
 
 fn update_task(
@@ -316,4 +486,56 @@ fn timestamp_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .expect("系统时间早于 UNIX_EPOCH")
         .as_millis() as u64
+}
+
+fn normalize_workspace_root(path: &str) -> Result<PathBuf, NovaError> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(NovaError::command(
+            "WORKSPACE_REQUIRED",
+            "请先打开 SVN 工作副本",
+            None,
+            true,
+        ));
+    }
+
+    let path = PathBuf::from(trimmed);
+    if !path.exists() || !path.is_dir() {
+        return Err(NovaError::command(
+            "WORKSPACE_PATH_INVALID",
+            "工作副本路径无效",
+            Some(format!("路径：{}", path.display())),
+            true,
+        ));
+    }
+
+    Ok(path)
+}
+
+fn normalize_commit_files(files: &[String]) -> Result<Vec<String>, NovaError> {
+    if files.is_empty() {
+        return Err(NovaError::command(
+            "COMMIT_FILES_REQUIRED",
+            "请先暂存要提交的文件",
+            None,
+            true,
+        ));
+    }
+
+    let mut normalized = Vec::with_capacity(files.len());
+    for file in files {
+        let trimmed = file.trim();
+        let path = Path::new(trimmed);
+        if trimmed.is_empty() || path.is_absolute() || trimmed.contains("..") {
+            return Err(NovaError::command(
+                "COMMIT_FILE_PATH_INVALID",
+                "提交文件路径无效",
+                Some("提交文件必须是工作副本内的相对路径。".to_string()),
+                true,
+            ));
+        }
+        normalized.push(trimmed.replace('\\', "/"));
+    }
+
+    Ok(normalized)
 }

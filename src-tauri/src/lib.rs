@@ -6,7 +6,7 @@ mod workspace;
 
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
-use task::{CreateMockTaskRequest, Task, TaskQueue, TaskSnapshot};
+use task::{CreateCommitTaskRequest, CreateMockTaskRequest, Task, TaskQueue, TaskSnapshot};
 use workspace::{
     FileDiff, GetFileDiffRequest, OpenWorkspaceRequest, RecentWorkspace,
     ScanWorkspaceStatusRequest, WorkingCopyStatus, WorkspaceSummary,
@@ -39,6 +39,15 @@ fn create_mock_task(
 ) -> CommandResult<Task> {
     println!("[NovaSVN] create_mock_task command received");
     Ok(CommandResponse::success(queue.create_mock_task(request)))
+}
+
+#[tauri::command]
+fn create_commit_task(
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateCommitTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_commit_task command received");
+    Ok(CommandResponse::success(queue.create_commit_task(request)?))
 }
 
 #[tauri::command]
@@ -102,6 +111,7 @@ pub fn run() {
             ping,
             fail_for_preview,
             create_mock_task,
+            create_commit_task,
             list_tasks,
             get_task,
             cancel_task,

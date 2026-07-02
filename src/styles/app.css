@@ -670,7 +670,7 @@ button {
 }
 
 .commit-placeholder {
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 42px) 48px auto;
   align-content: stretch;
 }
 
@@ -684,6 +684,27 @@ button {
   border-radius: 6px;
   background: #f7f9fb;
   padding: 8px;
+}
+
+.commit-placeholder textarea {
+  min-width: 0;
+  width: 100%;
+  min-height: 0;
+  resize: none;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  color: #17202a;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 6px 8px;
+}
+
+.commit-error {
+  margin: 0;
+  color: #9c3838;
+  font-size: 12px;
+  line-height: 1.3;
 }
 
 .staged-summary p {
@@ -705,7 +726,7 @@ button {
 }
 
 .commit-action {
-  height: 30px;
+  height: 26px;
   border: 1px solid #5ba9a5;
   border-radius: 6px;
   background: #227873;

@@ -36,6 +36,51 @@
     }
   }
 
+  async function submitStagedFiles() {
+    if (!workspaceStore.validateStagedFilesForCommit() || !$workspaceStore.current) {
+      return;
+    }
+
+    const files = $workspaceStore.stagedFiles.map((file) => file.path);
+    const task = await taskStore.createCommit({
+      workingCopyRoot: $workspaceStore.current.working_copy_root,
+      message: $workspaceStore.commitMessage,
+      files,
+      svnExecutable: $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    });
+
+    if (!task) {
+      return;
+    }
+
+    workspaceStore.markCommitTask(task.task_id);
+  }
+
+  $: if (
+    $workspaceStore.pendingCommitTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
+    $taskStore.selectedTask.status === "success"
+  ) {
+    const committedPaths = $workspaceStore.stagedFiles.map((file) => file.path);
+    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+    workspaceStore.clearCommittedFiles(committedPaths);
+    if (workingCopyRoot) {
+      void workspaceStore.refreshStatus(
+        $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+        workingCopyRoot,
+      );
+    }
+  }
+
+  $: if (
+    $workspaceStore.pendingCommitTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
+    ($taskStore.selectedTask.status === "failed" ||
+      $taskStore.selectedTask.status === "cancelled")
+  ) {
+    workspaceStore.markCommitTask(null);
+  }
+
   onMount(() => {
     taskStore.startPolling();
     void svnStore.detect();
@@ -126,7 +171,15 @@
       loading={$taskStore.loading}
       error={$taskStore.error}
       stagedFiles={$workspaceStore.stagedFiles}
+      commitMessage={$workspaceStore.commitMessage}
+      commitError={$workspaceStore.commitError}
+      commitDisabled={
+        $workspaceStore.stagedFiles.length === 0 ||
+        $taskStore.snapshot.running_task_id !== null
+      }
       onCreateTask={taskStore.create}
+      onCommitMessageInput={workspaceStore.setCommitMessage}
+      onCommit={submitStagedFiles}
       onSelectTask={taskStore.select}
       onCancelTask={taskStore.cancel}
     />

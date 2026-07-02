@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type {
   CommandError,
   CommandResponse,
+  CreateCommitTaskRequest,
   CreateMockTaskRequest,
   DetectSvnRequest,
   FileDiff,
@@ -51,6 +52,10 @@ export async function callBackend<T>(
 
 export function createMockTask(request: CreateMockTaskRequest): Promise<Task> {
   return callBackend<Task>("create_mock_task", { request });
+}
+
+export function createCommitTask(request: CreateCommitTaskRequest): Promise<Task> {
+  return callBackend<Task>("create_commit_task", { request });
 }
 
 export function listTasks(): Promise<TaskSnapshot> {

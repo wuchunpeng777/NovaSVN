@@ -53,6 +53,13 @@ export interface CreateMockTaskRequest {
   outcome: MockTaskOutcome;
 }
 
+export interface CreateCommitTaskRequest {
+  working_copy_root: string;
+  message: string;
+  files: string[];
+  svn_executable?: string;
+}
+
 export interface SvnDetection {
   available: boolean;
   version: string;

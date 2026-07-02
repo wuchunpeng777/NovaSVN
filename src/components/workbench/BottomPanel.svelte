@@ -5,9 +5,14 @@
   export let selectedTask: Task | null = null;
   export let runningTaskId: string | null = null;
   export let stagedFiles: Array<{ path: string; status: string }> = [];
+  export let commitMessage = "";
+  export let commitError: string | null = null;
+  export let commitDisabled = false;
   export let loading = false;
   export let error: CommandError | null = null;
   export let onCreateTask: (outcome: "success" | "failed") => void;
+  export let onCommitMessageInput: (value: string) => void;
+  export let onCommit: () => void;
   export let onSelectTask: (taskId: string) => void;
   export let onCancelTask: (taskId: string) => void;
 
@@ -63,11 +68,23 @@
       {/if}
     </div>
 
+    <textarea
+      value={commitMessage}
+      placeholder="输入提交信息"
+      rows="3"
+      on:input={(event) =>
+        onCommitMessageInput((event.currentTarget as HTMLTextAreaElement).value)}
+    ></textarea>
+
+    {#if commitError}
+      <p class="commit-error">{commitError}</p>
+    {/if}
+
     <button
       class="commit-action"
       type="button"
-      disabled={stagedFiles.length === 0}
-      title="真实提交将在 1.7 接入"
+      disabled={commitDisabled}
+      on:click={onCommit}
     >
       提交
     </button>

@@ -2,6 +2,7 @@ import { writable } from "svelte/store";
 import {
   cancelTask,
   chooseWorkspaceDirectory,
+  createCommitTask,
   createMockTask,
   detectSvn,
   getFileDiff,
@@ -106,6 +107,34 @@ function createTaskStore() {
     }
   }
 
+  async function createCommit(request: {
+    workingCopyRoot: string;
+    message: string;
+    files: string[];
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createCommitTask({
+        working_copy_root: request.workingCopyRoot,
+        message: request.message,
+        files: request.files,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function select(taskId: string) {
     selectedTaskId = taskId;
     await refresh();
@@ -150,6 +179,7 @@ function createTaskStore() {
     subscribe,
     refresh,
     create,
+    createCommit,
     select,
     cancel,
     startPolling,
@@ -254,6 +284,9 @@ export interface WorkspaceStoreState {
     path: string;
     status: string;
   }>;
+  commitMessage: string;
+  commitError: string | null;
+  pendingCommitTaskId: string | null;
   pathInput: string;
   loading: boolean;
   statusLoading: boolean;
@@ -271,6 +304,9 @@ const initialWorkspaceState: WorkspaceStoreState = {
   selectedFilePath: null,
   selectedFileDiff: null,
   stagedFiles: [],
+  commitMessage: "",
+  commitError: null,
+  pendingCommitTaskId: null,
   pathInput: "",
   loading: false,
   statusLoading: false,
@@ -296,6 +332,9 @@ function createWorkspaceStore() {
         selectedFilePath: null,
         selectedFileDiff: null,
         stagedFiles: [],
+        commitMessage: "",
+        commitError: null,
+        pendingCommitTaskId: null,
         pathInput: state.pathInput || root || "",
         loading: false,
         error: null,
@@ -333,6 +372,9 @@ function createWorkspaceStore() {
         selectedFilePath: null,
         selectedFileDiff: null,
         stagedFiles: [],
+        commitMessage: "",
+        commitError: null,
+        pendingCommitTaskId: null,
         pathInput: current.working_copy_root,
         loading: false,
         error: null,
@@ -384,6 +426,14 @@ function createWorkspaceStore() {
     }));
   }
 
+  function setCommitMessage(value: string) {
+    update((state) => ({
+      ...state,
+      commitMessage: value,
+      commitError: null,
+    }));
+  }
+
   function toggleGroupByStatus() {
     update((state) => ({
       ...state,
@@ -418,6 +468,7 @@ function createWorkspaceStore() {
       return {
         ...state,
         stagedFiles: [...state.stagedFiles, { path: file.path, status: file.status }],
+        commitError: null,
       };
     });
   }
@@ -426,6 +477,53 @@ function createWorkspaceStore() {
     update((state) => ({
       ...state,
       stagedFiles: state.stagedFiles.filter((file) => file.path !== path),
+      commitError: null,
+    }));
+  }
+
+  function validateStagedFilesForCommit() {
+    let valid = false;
+    update((state) => {
+      const reconciled = reconcileStagedFiles(state.stagedFiles, state.status?.files ?? []);
+      const message = state.commitMessage.trim();
+      let commitError: string | null = null;
+
+      if (!state.current) {
+        commitError = "请先打开 SVN 工作副本";
+      } else if (reconciled.length === 0) {
+        commitError = "请先暂存要提交的文件";
+      } else if (!message) {
+        commitError = "请输入提交信息";
+      }
+
+      valid = commitError === null;
+
+      return {
+        ...state,
+        stagedFiles: reconciled,
+        commitError,
+      };
+    });
+
+    return valid;
+  }
+
+  function markCommitTask(taskId: string | null) {
+    update((state) => ({
+      ...state,
+      pendingCommitTaskId: taskId,
+      commitError: null,
+    }));
+  }
+
+  function clearCommittedFiles(paths: string[]) {
+    const committed = new Set(paths);
+    update((state) => ({
+      ...state,
+      stagedFiles: state.stagedFiles.filter((file) => !committed.has(file.path)),
+      commitMessage: "",
+      commitError: null,
+      pendingCommitTaskId: null,
     }));
   }
 
@@ -547,10 +645,14 @@ function createWorkspaceStore() {
     chooseAndOpen,
     setPathInput,
     setSearchText,
+    setCommitMessage,
     toggleGroupByStatus,
     selectFile,
     stageFile,
     unstageFile,
+    validateStagedFilesForCommit,
+    markCommitTask,
+    clearCommittedFiles,
     refreshStatus,
     refreshFileDiff,
   };

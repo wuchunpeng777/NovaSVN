@@ -46,8 +46,9 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 - Selected File: 当前选中文件路径保存在 `workspaceStore.selectedFilePath`，右侧详情区展示选中文件摘要，后续 diff 可复用该选择状态。
 - Virtual Staging: 文件级虚拟暂存由 `workspaceStore.stagedFiles` 保存在前端运行内存中，只记录文件路径和状态，不持久化，也不修改真实 SVN 工作副本或 `.svn` 元数据。
 - Staging Rules: `missing`、`conflicted`、`obstructed` 默认不可暂存；状态刷新后会移除不存在、状态变化或变为不可暂存的 staged 文件。
-- Staging UI: 主工作区列表分为“已暂存”和“未暂存”分区，文件行支持选择、暂存和取消暂存；底部提交区显示已暂存摘要和提交按钮占位启用状态。
-- Commit Placeholder: 当前提交按钮只作为后续提交功能入口占位，不执行真实 `svn commit`。
+- Staging UI: 主工作区列表分为“已暂存”和“未暂存”分区，文件行支持选择、暂存和取消暂存；底部提交区显示已暂存摘要、提交信息输入、校验提示和提交按钮。
+- Commit Task: 文件级提交通过 `create_commit_task` 创建后端任务，由 `src-tauri/src/task.rs` 的任务队列执行 `svn commit <staged paths> -m <message>`，stdout/stderr 写入底部任务日志。
+- Commit State: 提交信息、提交错误和待完成提交任务 ID 保存在 `workspaceStore`；提交成功后刷新状态并清空已提交 staged 文件和提交信息，提交失败保留 staged 文件和提交信息。
 - File Diff: `get_file_diff` command 执行 `svn diff <path>`，请求包含工作副本 root、文件相对路径和可选 SVN 可执行文件路径。
 - Diff UI: 右侧详情区显示普通文本 diff，二进制文件显示不可预览提示；Monaco diff 放到后续阶段。
 - Diff State: 当前文件 diff、加载状态和错误保存在 `workspaceStore.selectedFileDiff`、`diffLoading`、`diffError`。
