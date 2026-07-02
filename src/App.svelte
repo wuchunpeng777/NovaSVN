@@ -312,6 +312,8 @@
       error={$taskStore.error}
       stagedFiles={$workspaceStore.stagedFiles}
       safetyCheck={$workspaceStore.safetyCheck}
+      commitTemplate={$workspaceStore.commitTemplate}
+      commitHistory={$workspaceStore.commitHistory}
       commitMessage={$workspaceStore.commitMessage}
       commitError={$workspaceStore.commitError}
       commitDisabled={
@@ -321,6 +323,8 @@
       }
       onCreateTask={taskStore.create}
       onCommitMessageInput={workspaceStore.setCommitMessage}
+      onCommitTemplateInput={workspaceStore.setCommitTemplate}
+      onUseCommitHistoryMessage={workspaceStore.useCommitHistoryMessage}
       onConfirmSafetyWarnings={workspaceStore.confirmSafetyWarnings}
       onCommit={submitStagedFiles}
       onSelectTask={taskStore.select}

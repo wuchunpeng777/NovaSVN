@@ -333,6 +333,8 @@ export interface WorkspaceStoreState {
   }>;
   safetyCheck: SafetyCheckSummary;
   reviewedFiles: ReviewedFileState[];
+  commitTemplate: string;
+  commitHistory: string[];
   commitMessage: string;
   commitError: string | null;
   pendingCommitTaskId: string | null;
@@ -365,6 +367,8 @@ const initialWorkspaceState: WorkspaceStoreState = {
   stagedFiles: [],
   safetyCheck: emptySafetyCheck(),
   reviewedFiles: [],
+  commitTemplate: "",
+  commitHistory: [],
   commitMessage: "",
   commitError: null,
   pendingCommitTaskId: null,
@@ -391,6 +395,7 @@ function createWorkspaceStore() {
       const recent = await getRecentWorkspace();
       const root = recent.workspace?.working_copy_root;
       const reviewedFiles = recent.workspace ? loadReviewedFiles(recent.workspace) : [];
+      const commitSettings = loadCommitMessageSettings();
       update((state) => ({
         ...state,
         current: recent.workspace,
@@ -401,7 +406,9 @@ function createWorkspaceStore() {
         stagedFiles: [],
         safetyCheck: emptySafetyCheck(),
         reviewedFiles,
-        commitMessage: "",
+        commitTemplate: commitSettings.template,
+        commitHistory: commitSettings.history,
+        commitMessage: commitSettings.template,
         commitError: null,
         pendingCommitTaskId: null,
         pendingSvnOperationTaskId: null,
@@ -437,6 +444,7 @@ function createWorkspaceStore() {
         svn_executable: svnExecutable || undefined,
       });
       const reviewedFiles = loadReviewedFiles(current);
+      const commitSettings = loadCommitMessageSettings();
       update((state) => ({
         ...state,
         current,
@@ -447,7 +455,9 @@ function createWorkspaceStore() {
         stagedFiles: [],
         safetyCheck: emptySafetyCheck(),
         reviewedFiles,
-        commitMessage: "",
+        commitTemplate: commitSettings.template,
+        commitHistory: commitSettings.history,
+        commitMessage: commitSettings.template,
         commitError: null,
         pendingCommitTaskId: null,
         pendingSvnOperationTaskId: null,
@@ -504,6 +514,30 @@ function createWorkspaceStore() {
   }
 
   function setCommitMessage(value: string) {
+    update((state) => ({
+      ...state,
+      commitMessage: value,
+      commitError: null,
+    }));
+  }
+
+  function setCommitTemplate(value: string) {
+    update((state) => {
+      const commitTemplate = value;
+      saveCommitMessageSettings({
+        template: commitTemplate,
+        history: state.commitHistory,
+      });
+
+      return {
+        ...state,
+        commitTemplate,
+        commitMessage: state.commitMessage.trim() ? state.commitMessage : commitTemplate,
+      };
+    });
+  }
+
+  function useCommitHistoryMessage(value: string) {
     update((state) => ({
       ...state,
       commitMessage: value,
@@ -756,7 +790,12 @@ function createWorkspaceStore() {
         ...state,
         stagedFiles,
         safetyCheck: buildSafetyCheck(state.status?.files ?? [], stagedFiles),
-        commitMessage: "",
+        commitHistory: recordCommitHistory(
+          state.commitMessage,
+          state.commitHistory,
+          state.commitTemplate,
+        ),
+        commitMessage: state.commitTemplate,
         commitError: null,
         pendingCommitTaskId: null,
       };
@@ -942,6 +981,8 @@ function createWorkspaceStore() {
     setPathInput,
     setSearchText,
     setCommitMessage,
+    setCommitTemplate,
+    useCommitHistoryMessage,
     toggleGroupByStatus,
     setStageFilter,
     toggleAbnormalOnly,
@@ -1252,4 +1293,67 @@ function isReviewedFileState(value: unknown): value is ReviewedFileState {
     typeof candidate.contentDigest === "string" &&
     typeof candidate.reviewedAt === "number"
   );
+}
+
+interface CommitMessageSettings {
+  template: string;
+  history: string[];
+}
+
+function commitMessageSettingsKey() {
+  return "novasvn:commit-message-settings";
+}
+
+function loadCommitMessageSettings(): CommitMessageSettings {
+  if (typeof window === "undefined") {
+    return { template: "", history: [] };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(commitMessageSettingsKey());
+    if (!raw) {
+      return { template: "", history: [] };
+    }
+
+    const parsed = JSON.parse(raw) as Partial<CommitMessageSettings>;
+    return {
+      template: typeof parsed.template === "string" ? parsed.template : "",
+      history: Array.isArray(parsed.history)
+        ? parsed.history.filter((item): item is string => typeof item === "string").slice(0, 8)
+        : [],
+    };
+  } catch {
+    return { template: "", history: [] };
+  }
+}
+
+function saveCommitMessageSettings(settings: CommitMessageSettings) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(commitMessageSettingsKey(), JSON.stringify(settings));
+  } catch {
+    // 本地设置保存失败不应阻断提交流程。
+  }
+}
+
+function recordCommitHistory(
+  message: string,
+  history: string[],
+  template: string,
+) {
+  const normalized = message.trim();
+  if (!normalized) {
+    return history;
+  }
+
+  const nextHistory = [normalized, ...history.filter((item) => item !== normalized)].slice(0, 8);
+  saveCommitMessageSettings({
+    template,
+    history: nextHistory,
+  });
+
+  return nextHistory;
 }

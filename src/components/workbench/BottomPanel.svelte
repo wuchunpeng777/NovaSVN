@@ -12,6 +12,8 @@
     infos: [],
     confirmedWarningIds: [],
   };
+  export let commitTemplate = "";
+  export let commitHistory: string[] = [];
   export let commitMessage = "";
   export let commitError: string | null = null;
   export let commitDisabled = false;
@@ -19,6 +21,8 @@
   export let error: CommandError | null = null;
   export let onCreateTask: (outcome: "success" | "failed") => void;
   export let onCommitMessageInput: (value: string) => void;
+  export let onCommitTemplateInput: (value: string) => void;
+  export let onUseCommitHistoryMessage: (value: string) => void;
   export let onConfirmSafetyWarnings: () => void;
   export let onCommit: () => void;
   export let onSelectTask: (taskId: string) => void;
@@ -55,6 +59,7 @@
   $: unconfirmedWarningCount = safetyCheck.warnings.filter(
     (item) => !safetyCheck.confirmedWarningIds.includes(item.id),
   ).length;
+  let selectedHistoryMessage = "";
 </script>
 
 <footer class="bottom-panel">
@@ -80,6 +85,15 @@
       {/if}
     </div>
 
+    <input
+      class="commit-template-input"
+      type="text"
+      value={commitTemplate}
+      placeholder="提交信息模板"
+      on:input={(event) =>
+        onCommitTemplateInput((event.currentTarget as HTMLInputElement).value)}
+    />
+
     <textarea
       value={commitMessage}
       placeholder="输入提交信息"
@@ -87,6 +101,23 @@
       on:input={(event) =>
         onCommitMessageInput((event.currentTarget as HTMLTextAreaElement).value)}
     ></textarea>
+
+    {#if commitHistory.length > 0}
+      <select
+        class="commit-history-select"
+        aria-label="最近提交信息"
+        bind:value={selectedHistoryMessage}
+        on:change={() => {
+          onUseCommitHistoryMessage(selectedHistoryMessage);
+          selectedHistoryMessage = "";
+        }}
+      >
+        <option value="">最近提交信息</option>
+        {#each commitHistory as message}
+          <option value={message}>{message}</option>
+        {/each}
+      </select>
+    {/if}
 
     {#if commitError}
       <p class="commit-error">{commitError}</p>
