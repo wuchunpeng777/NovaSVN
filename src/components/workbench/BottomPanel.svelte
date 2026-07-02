@@ -4,6 +4,7 @@
   export let tasks: TaskSummary[] = [];
   export let selectedTask: Task | null = null;
   export let runningTaskId: string | null = null;
+  export let stagedFiles: Array<{ path: string; status: string }> = [];
   export let loading = false;
   export let error: CommandError | null = null;
   export let onCreateTask: (outcome: "success" | "failed") => void;
@@ -18,6 +19,17 @@
     cancelled: "已取消",
   };
 
+  const fileStatusLabels: Record<string, string> = {
+    modified: "修改",
+    added: "新增",
+    deleted: "删除",
+    unversioned: "未版本控制",
+  };
+
+  function labelFileStatus(status: string) {
+    return fileStatusLabels[status] ?? status;
+  }
+
   function formatTime(value: number) {
     return new Date(value).toLocaleTimeString("zh-CN", {
       hour12: false,
@@ -30,8 +42,35 @@
 
 <footer class="bottom-panel">
   <section class="commit-placeholder">
-    <strong>提交信息</strong>
-    <span>等待阶段 1.7 接入编辑器</span>
+    <div class="bottom-section-heading">
+      <strong>提交区</strong>
+      <span>{stagedFiles.length} 个已暂存</span>
+    </div>
+
+    <div class="staged-summary" aria-label="已暂存摘要">
+      {#if stagedFiles.length === 0}
+        <span>暂存文件后可进入提交准备</span>
+      {:else}
+        {#each stagedFiles.slice(0, 3) as file}
+          <p>
+            <small>{labelFileStatus(file.status)}</small>
+            <span>{file.path}</span>
+          </p>
+        {/each}
+        {#if stagedFiles.length > 3}
+          <span>另有 {stagedFiles.length - 3} 个文件</span>
+        {/if}
+      {/if}
+    </div>
+
+    <button
+      class="commit-action"
+      type="button"
+      disabled={stagedFiles.length === 0}
+      title="真实提交将在 1.7 接入"
+    >
+      提交
+    </button>
   </section>
 
   <section class="task-log-panel">

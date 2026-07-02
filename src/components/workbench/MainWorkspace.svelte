@@ -17,6 +17,7 @@
   export let searchText = "";
   export let groupByStatus = true;
   export let selectedFilePath: string | null = null;
+  export let stagedFiles: Array<{ path: string; status: string }> = [];
   export let statusLoading = false;
   export let statusError: CommandError | null = null;
   export let onChooseWorkspace: () => void;
@@ -26,6 +27,8 @@
   export let onSearchTextInput: (value: string) => void;
   export let onToggleGroupByStatus: () => void;
   export let onSelectFile: (path: string) => void;
+  export let onStageFile: (path: string) => void;
+  export let onUnstageFile: (path: string) => void;
 
   const statusLabels: Record<string, string> = {
     modified: "修改",
@@ -45,6 +48,23 @@
     return file.property_changed
       ? `${file.path} · 属性 ${file.property_status}`
       : file.path;
+  }
+
+  function isStaged(path: string) {
+    return stagedFiles.some((file) => file.path === path);
+  }
+
+  function isStageable(file: ChangedFile) {
+    return !["missing", "conflicted", "obstructed"].includes(file.status);
+  }
+
+  function handleRowKeydown(event: KeyboardEvent, path: string) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    onSelectFile(path);
   }
 
   function buildGroups(files: ChangedFile[]) {
@@ -67,7 +87,10 @@
   $: filteredFiles = normalizedSearch
     ? changedFiles.filter((file) => file.path.toLowerCase().includes(normalizedSearch))
     : changedFiles;
-  $: groupedFiles = buildGroups(filteredFiles);
+  $: stagedVisibleFiles = filteredFiles.filter((file) => isStaged(file.path));
+  $: unstagedVisibleFiles = filteredFiles.filter((file) => !isStaged(file.path));
+  $: groupedStagedFiles = buildGroups(stagedVisibleFiles);
+  $: groupedUnstagedFiles = buildGroups(unstagedVisibleFiles);
   $: abnormalCount =
     (workingCopyStatus?.missing ?? 0) +
     (workingCopyStatus?.conflicted ?? 0) +
@@ -143,8 +166,12 @@
       <strong>{workingCopyStatus?.total ?? 0}</strong>
     </div>
     <div class="metric">
+      <span>已暂存</span>
+      <strong>{stagedFiles.length}</strong>
+    </div>
+    <div class="metric">
       <span>未暂存</span>
-      <strong>{workingCopyStatus?.total ?? 0}</strong>
+      <strong>{Math.max((workingCopyStatus?.total ?? 0) - stagedFiles.length, 0)}</strong>
     </div>
     <div class="metric">
       <span>异常</span>
@@ -163,50 +190,137 @@
     <button type="button" class:active={groupByStatus} on:click={onToggleGroupByStatus}>
       按状态分组
     </button>
-    <span>已暂存 0</span>
+    <span>异常 {abnormalCount}</span>
     <span>显示 {filteredFiles.length}</span>
   </section>
 
   <div class="work-list">
     {#if workingCopyStatus && filteredFiles.length > 0}
-      {#if groupByStatus}
-        {#each groupedFiles as group}
-          <section class="status-group">
-            <h3>{labelStatus(group.status)} · {group.files.length}</h3>
-            {#each group.files as file}
-              <button
-                type="button"
+      <section class="stage-section">
+        <h3>已暂存 · {stagedVisibleFiles.length}</h3>
+        {#if stagedVisibleFiles.length > 0}
+          {#if groupByStatus}
+            {#each groupedStagedFiles as group}
+              <section class="status-group">
+                <h3>{labelStatus(group.status)} · {group.files.length}</h3>
+                {#each group.files as file}
+                  <div
+                    role="button"
+                    tabindex="0"
+                    class:abnormal={file.abnormal}
+                    class:active={selectedFilePath === file.path}
+                    class="work-row"
+                    on:click={() => onSelectFile(file.path)}
+                    on:keydown={(event) => handleRowKeydown(event, file.path)}
+                  >
+                    <div>
+                      <h3>{file.path}</h3>
+                      <p>{statusMeta(file)}</p>
+                    </div>
+                    <span>{labelStatus(file.status)}</span>
+                    <button
+                      type="button"
+                      class="stage-action"
+                      on:click|stopPropagation={() => onUnstageFile(file.path)}
+                    >
+                      取消暂存
+                    </button>
+                  </div>
+                {/each}
+              </section>
+            {/each}
+          {:else}
+            {#each stagedVisibleFiles as file}
+              <div
+                role="button"
+                tabindex="0"
                 class:abnormal={file.abnormal}
                 class:active={selectedFilePath === file.path}
                 class="work-row"
                 on:click={() => onSelectFile(file.path)}
+                on:keydown={(event) => handleRowKeydown(event, file.path)}
               >
                 <div>
                   <h3>{file.path}</h3>
                   <p>{statusMeta(file)}</p>
                 </div>
                 <span>{labelStatus(file.status)}</span>
-              </button>
+                <button
+                  type="button"
+                  class="stage-action"
+                  on:click|stopPropagation={() => onUnstageFile(file.path)}
+                >
+                  取消暂存
+                </button>
+              </div>
             {/each}
-          </section>
-        {/each}
-      {:else}
-        {#each filteredFiles as file}
-          <button
-            type="button"
-            class:abnormal={file.abnormal}
-            class:active={selectedFilePath === file.path}
-            class="work-row"
-            on:click={() => onSelectFile(file.path)}
-          >
-            <div>
-              <h3>{file.path}</h3>
-              <p>{statusMeta(file)}</p>
+          {/if}
+        {:else}
+          <p class="empty-stage">暂无已暂存文件</p>
+        {/if}
+      </section>
+
+      <section class="stage-section">
+        <h3>未暂存 · {unstagedVisibleFiles.length}</h3>
+        {#if groupByStatus}
+          {#each groupedUnstagedFiles as group}
+            <section class="status-group">
+              <h3>{labelStatus(group.status)} · {group.files.length}</h3>
+              {#each group.files as file}
+                <div
+                  role="button"
+                  tabindex="0"
+                  class:abnormal={file.abnormal}
+                  class:active={selectedFilePath === file.path}
+                  class="work-row"
+                  on:click={() => onSelectFile(file.path)}
+                  on:keydown={(event) => handleRowKeydown(event, file.path)}
+                >
+                  <div>
+                    <h3>{file.path}</h3>
+                    <p>{statusMeta(file)}</p>
+                  </div>
+                  <span>{labelStatus(file.status)}</span>
+                  <button
+                    type="button"
+                    class="stage-action"
+                    disabled={!isStageable(file)}
+                    on:click|stopPropagation={() => onStageFile(file.path)}
+                  >
+                    {isStageable(file) ? "暂存" : "不可暂存"}
+                  </button>
+                </div>
+              {/each}
+            </section>
+          {/each}
+        {:else}
+          {#each unstagedVisibleFiles as file}
+            <div
+              role="button"
+              tabindex="0"
+              class:abnormal={file.abnormal}
+              class:active={selectedFilePath === file.path}
+              class="work-row"
+              on:click={() => onSelectFile(file.path)}
+              on:keydown={(event) => handleRowKeydown(event, file.path)}
+            >
+              <div>
+                <h3>{file.path}</h3>
+                <p>{statusMeta(file)}</p>
+              </div>
+              <span>{labelStatus(file.status)}</span>
+              <button
+                type="button"
+                class="stage-action"
+                disabled={!isStageable(file)}
+                on:click|stopPropagation={() => onStageFile(file.path)}
+              >
+                {isStageable(file) ? "暂存" : "不可暂存"}
+              </button>
             </div>
-            <span>{labelStatus(file.status)}</span>
-          </button>
-        {/each}
-      {/if}
+          {/each}
+        {/if}
+      </section>
     {:else if workingCopyStatus && changedFiles.length > 0}
       <article class="work-row">
         <div>

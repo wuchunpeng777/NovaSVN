@@ -73,6 +73,7 @@
         searchText={$workspaceStore.searchText}
         groupByStatus={$workspaceStore.groupByStatus}
         selectedFilePath={$workspaceStore.selectedFilePath}
+        stagedFiles={$workspaceStore.stagedFiles}
         statusLoading={$workspaceStore.statusLoading}
         statusError={$workspaceStore.statusError}
         onChooseWorkspace={() =>
@@ -95,6 +96,8 @@
             path,
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
           )}
+        onStageFile={workspaceStore.stageFile}
+        onUnstageFile={workspaceStore.unstageFile}
       />
       <DetailPanel
       sections={detailSections}
@@ -122,6 +125,7 @@
       runningTaskId={$taskStore.snapshot.running_task_id}
       loading={$taskStore.loading}
       error={$taskStore.error}
+      stagedFiles={$workspaceStore.stagedFiles}
       onCreateTask={taskStore.create}
       onSelectTask={taskStore.select}
       onCancelTask={taskStore.cancel}

@@ -250,6 +250,10 @@ export interface WorkspaceStoreState {
   groupByStatus: boolean;
   selectedFilePath: string | null;
   selectedFileDiff: FileDiff | null;
+  stagedFiles: Array<{
+    path: string;
+    status: string;
+  }>;
   pathInput: string;
   loading: boolean;
   statusLoading: boolean;
@@ -266,6 +270,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   groupByStatus: true,
   selectedFilePath: null,
   selectedFileDiff: null,
+  stagedFiles: [],
   pathInput: "",
   loading: false,
   statusLoading: false,
@@ -290,6 +295,7 @@ function createWorkspaceStore() {
         status: null,
         selectedFilePath: null,
         selectedFileDiff: null,
+        stagedFiles: [],
         pathInput: state.pathInput || root || "",
         loading: false,
         error: null,
@@ -326,6 +332,7 @@ function createWorkspaceStore() {
         status: null,
         selectedFilePath: null,
         selectedFileDiff: null,
+        stagedFiles: [],
         pathInput: current.working_copy_root,
         loading: false,
         error: null,
@@ -401,6 +408,27 @@ function createWorkspaceStore() {
     }
   }
 
+  function stageFile(path: string) {
+    update((state) => {
+      const file = state.status?.files.find((item) => item.path === path);
+      if (!file || !isStageable(file) || state.stagedFiles.some((item) => item.path === path)) {
+        return state;
+      }
+
+      return {
+        ...state,
+        stagedFiles: [...state.stagedFiles, { path: file.path, status: file.status }],
+      };
+    });
+  }
+
+  function unstageFile(path: string) {
+    update((state) => ({
+      ...state,
+      stagedFiles: state.stagedFiles.filter((file) => file.path !== path),
+    }));
+  }
+
   async function refreshStatus(
     svnExecutable?: string | null,
     workingCopyRoot?: string,
@@ -448,6 +476,7 @@ function createWorkspaceStore() {
         selectedFilePath,
         selectedFileDiff:
           selectedFilePath === state.selectedFilePath ? state.selectedFileDiff : null,
+        stagedFiles: reconcileStagedFiles(state.stagedFiles, status.files),
         statusLoading: false,
         statusError: null,
       }));
@@ -520,6 +549,8 @@ function createWorkspaceStore() {
     setSearchText,
     toggleGroupByStatus,
     selectFile,
+    stageFile,
+    unstageFile,
     refreshStatus,
     refreshFileDiff,
   };
@@ -536,4 +567,18 @@ function resolveSelectedFilePath(
   }
 
   return files[0]?.path ?? null;
+}
+
+function isStageable(file: ChangedFile) {
+  return !["missing", "conflicted", "obstructed"].includes(file.status);
+}
+
+function reconcileStagedFiles(
+  stagedFiles: Array<{ path: string; status: string }>,
+  currentFiles: ChangedFile[],
+) {
+  return stagedFiles.filter((stagedFile) => {
+    const current = currentFiles.find((file) => file.path === stagedFile.path);
+    return current && current.status === stagedFile.status && isStageable(current);
+  });
 }

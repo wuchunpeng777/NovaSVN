@@ -296,7 +296,7 @@ button {
 
 .metric-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -344,6 +344,10 @@ button {
   width: 100%;
 }
 
+.work-row > div {
+  min-width: 0;
+}
+
 .work-row h3,
 .work-row p,
 .detail-block h3,
@@ -366,7 +370,7 @@ button {
   font-size: 13px;
 }
 
-.work-row span {
+.work-row > span {
   flex: 0 0 auto;
   border-radius: 999px;
   background: #eef5f4;
@@ -375,14 +379,16 @@ button {
   font-size: 12px;
 }
 
-button.work-row {
+.work-row[role="button"] {
   cursor: pointer;
 }
 
-button.work-row:hover,
-button.work-row.active {
+.work-row[role="button"]:hover,
+.work-row[role="button"]:focus-visible,
+.work-row.active {
   border-color: #5ba9a5;
   background: #f2fbfa;
+  outline: none;
 }
 
 .work-row.abnormal {
@@ -390,9 +396,54 @@ button.work-row.active {
   background: #fff8f6;
 }
 
-.work-row.abnormal span {
+.work-row.abnormal > span {
   background: #fff0ec;
   color: #a33f2f;
+}
+
+.stage-section {
+  display: grid;
+  gap: 8px;
+}
+
+.stage-section > h3 {
+  margin: 2px 0 0;
+  color: #44515f;
+  font-size: 13px;
+}
+
+.empty-stage {
+  margin: 0;
+  border: 1px dashed #cfd7df;
+  border-radius: 8px;
+  background: #f8fafb;
+  color: #7a8794;
+  padding: 13px;
+  font-size: 13px;
+}
+
+.stage-action {
+  flex: 0 0 auto;
+  height: 28px;
+  border: 1px solid #5ba9a5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #227873;
+  cursor: pointer;
+  padding: 0 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.stage-action:hover {
+  background: #eef8f7;
+}
+
+.stage-action:disabled {
+  border-color: #cfd7df;
+  color: #7a8794;
+  cursor: default;
+  background: #f7f9fb;
 }
 
 .changes-toolbar {
@@ -619,7 +670,55 @@ button.work-row.active {
 }
 
 .commit-placeholder {
-  align-content: center;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-content: stretch;
+}
+
+.staged-summary {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #d7dde3;
+  border-radius: 6px;
+  background: #f7f9fb;
+  padding: 8px;
+}
+
+.staged-summary p {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  min-width: 0;
+}
+
+.staged-summary small {
+  border-radius: 999px;
+  background: #eef5f4;
+  color: #227873;
+  padding: 2px 6px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.commit-action {
+  height: 30px;
+  border: 1px solid #5ba9a5;
+  border-radius: 6px;
+  background: #227873;
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.commit-action:disabled {
+  border-color: #bcc8d4;
+  background: #eef2f5;
+  color: #7a8794;
+  cursor: default;
 }
 
 .bottom-section-heading {

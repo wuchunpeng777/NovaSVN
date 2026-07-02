@@ -44,7 +44,10 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 - Status Limit: 当前状态扫描返回前 500 项，保留 offset/limit 扩展字段；搜索、过滤、分组和虚拟滚动后续实现。
 - Changes List: 本地改动列表在前端基于 `workspaceStore.status.files` 派生，支持路径搜索、按状态分组和选中文件。
 - Selected File: 当前选中文件路径保存在 `workspaceStore.selectedFilePath`，右侧详情区展示选中文件摘要，后续 diff 可复用该选择状态。
-- Staging Placeholder: 虚拟暂存尚未实现，当前已暂存统计固定为 0，未暂存等于扫描到的改动数。
+- Virtual Staging: 文件级虚拟暂存由 `workspaceStore.stagedFiles` 保存在前端运行内存中，只记录文件路径和状态，不持久化，也不修改真实 SVN 工作副本或 `.svn` 元数据。
+- Staging Rules: `missing`、`conflicted`、`obstructed` 默认不可暂存；状态刷新后会移除不存在、状态变化或变为不可暂存的 staged 文件。
+- Staging UI: 主工作区列表分为“已暂存”和“未暂存”分区，文件行支持选择、暂存和取消暂存；底部提交区显示已暂存摘要和提交按钮占位启用状态。
+- Commit Placeholder: 当前提交按钮只作为后续提交功能入口占位，不执行真实 `svn commit`。
 - File Diff: `get_file_diff` command 执行 `svn diff <path>`，请求包含工作副本 root、文件相对路径和可选 SVN 可执行文件路径。
 - Diff UI: 右侧详情区显示普通文本 diff，二进制文件显示不可预览提示；Monaco diff 放到后续阶段。
 - Diff State: 当前文件 diff、加载状态和错误保存在 `workspaceStore.selectedFileDiff`、`diffLoading`、`diffError`。
