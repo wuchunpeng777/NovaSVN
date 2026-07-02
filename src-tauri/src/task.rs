@@ -10,6 +10,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use roxmltree::Document;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
@@ -41,6 +42,7 @@ pub struct Task {
     pub status: TaskStatus,
     pub logs: Vec<TaskLog>,
     pub error: Option<String>,
+    pub result: Option<TaskResult>,
     pub created_at: u64,
     pub updated_at: u64,
     #[serde(skip_serializing)]
@@ -127,6 +129,32 @@ pub struct CreatePartialCommitTaskRequest {
     pub svn_executable: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateRepositoryListTaskRequest {
+    pub url: String,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskResult {
+    pub repository_list: Option<RepositoryListResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RepositoryListResult {
+    pub url: String,
+    pub entries: Vec<RepositoryListEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RepositoryListEntry {
+    pub name: String,
+    pub kind: String,
+    pub revision: String,
+    pub author: String,
+    pub date: String,
+}
+
 #[derive(Debug, Clone)]
 enum TaskPayload {
     Mock(MockTaskOutcome),
@@ -134,6 +162,7 @@ enum TaskPayload {
     SvnOperation(SvnOperationTaskPayload),
     ShadowWorkspace(ShadowWorkspaceTaskPayload),
     PartialCommit(PartialCommitTaskPayload),
+    RepositoryList(RepositoryListTaskPayload),
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +195,12 @@ struct PartialCommitTaskPayload {
     message: String,
     selected_patch: String,
     files: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RepositoryListTaskPayload {
+    url: String,
+    svn_executable: String,
 }
 
 #[derive(Debug)]
@@ -208,6 +243,7 @@ impl TaskQueue {
                 created_at: now,
             }],
             error: None,
+            result: None,
             created_at: now,
             updated_at: now,
             payload: TaskPayload::Mock(request.outcome.clone()),
@@ -247,6 +283,7 @@ impl TaskQueue {
                 created_at: now,
             }],
             error: None,
+            result: None,
             created_at: now,
             updated_at: now,
             payload: TaskPayload::SvnCommit(CommitTaskPayload {
@@ -291,6 +328,7 @@ impl TaskQueue {
                 created_at: now,
             }],
             error: None,
+            result: None,
             created_at: now,
             updated_at: now,
             payload: TaskPayload::SvnOperation(SvnOperationTaskPayload {
@@ -342,6 +380,7 @@ impl TaskQueue {
                 created_at: now,
             }],
             error: None,
+            result: None,
             created_at: now,
             updated_at: now,
             payload: TaskPayload::ShadowWorkspace(ShadowWorkspaceTaskPayload {
@@ -405,6 +444,7 @@ impl TaskQueue {
                 created_at: now,
             }],
             error: None,
+            result: None,
             created_at: now,
             updated_at: now,
             payload: TaskPayload::PartialCommit(PartialCommitTaskPayload {
@@ -413,6 +453,40 @@ impl TaskQueue {
                 message,
                 selected_patch: request.selected_patch,
                 files,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
+    pub fn create_repository_list_task(
+        &self,
+        request: CreateRepositoryListTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let url = normalize_repository_url(&request.url)?;
+        let svn_executable = request
+            .svn_executable
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "svn".to_string());
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!("浏览仓库 {}", compact_repository_url(&url)),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "仓库目录加载任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::RepositoryList(RepositoryListTaskPayload {
+                url,
+                svn_executable,
             }),
         };
 
@@ -570,6 +644,9 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
                 run_shadow_workspace_task(&state, &task_id, payload)
             }
             TaskPayload::PartialCommit(payload) => run_partial_commit_task(&state, &task_id, payload),
+            TaskPayload::RepositoryList(payload) => {
+                run_repository_list_task(&state, &task_id, payload)
+            }
         }
     }
 }
@@ -990,6 +1067,80 @@ fn run_partial_commit_task(
     }
 }
 
+fn run_repository_list_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: RepositoryListTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "仓库目录加载开始执行",
+        None,
+    );
+    append_task_log(state, task_id, &format!("执行 svn list --xml：{}", payload.url));
+
+    let output = Command::new(&payload.svn_executable)
+        .args(["list", "--xml"])
+        .arg(&payload.url)
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            let xml = String::from_utf8_lossy(&output.stdout);
+            match parse_repository_list_xml(&xml, &payload.url) {
+                Ok(result) => {
+                    let count = result.entries.len();
+                    set_task_result(
+                        state,
+                        task_id,
+                        TaskResult {
+                            repository_list: Some(result),
+                        },
+                    );
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Success,
+                        &format!("仓库目录加载完成，共 {count} 项"),
+                        None,
+                    );
+                }
+                Err(error) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "仓库目录 XML 解析失败",
+                        Some(error.to_string()),
+                    );
+                }
+            }
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "仓库目录加载失败",
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
 fn run_shadow_checkout_or_update(
     state: &Arc<Mutex<TaskQueueState>>,
     task_id: &str,
@@ -1119,6 +1270,14 @@ fn append_task_log(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, message: &
     }
 }
 
+fn set_task_result(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, result: TaskResult) {
+    let mut state = state.lock().expect("任务队列锁已损坏");
+    if let Some(task) = state.tasks.iter_mut().find(|task| task.task_id == task_id) {
+        task.result = Some(result);
+        task.updated_at = timestamp_millis();
+    }
+}
+
 fn timestamp_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1199,4 +1358,107 @@ fn operation_title(kind: &SvnOperationKind, file_path: Option<&str>) -> String {
             format!("撤销文件 {}", file_path.unwrap_or(""))
         }
     }
+}
+
+fn normalize_repository_url(url: &str) -> Result<String, NovaError> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err(NovaError::command(
+            "REPOSITORY_URL_REQUIRED",
+            "请输入仓库 URL",
+            None,
+            true,
+        ));
+    }
+
+    if trimmed.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "REPOSITORY_URL_INVALID",
+            "仓库 URL 无效",
+            Some("仓库 URL 不能包含控制字符。".to_string()),
+            true,
+        ));
+    }
+
+    Ok(trimmed.trim_end_matches('/').to_string())
+}
+
+fn compact_repository_url(url: &str) -> String {
+    const MAX_CHARS: usize = 48;
+    if url.chars().count() <= MAX_CHARS {
+        return url.to_string();
+    }
+
+    let tail: String = url
+        .chars()
+        .rev()
+        .take(MAX_CHARS - 3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("...{tail}")
+}
+
+fn parse_repository_list_xml(
+    xml: &str,
+    url: &str,
+) -> Result<RepositoryListResult, NovaError> {
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "SVN_LIST_XML_PARSE_FAILED",
+            "解析仓库目录失败",
+            Some(format!("svn list --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+
+    let mut entries = Vec::new();
+    for entry in document.descendants().filter(|node| node.has_tag_name("entry")) {
+        let kind = entry.attribute("kind").unwrap_or("file").to_string();
+        let name = text_child(entry, "name").unwrap_or_default();
+        let commit = entry
+            .children()
+            .find(|node| node.has_tag_name("commit"));
+        let revision = commit
+            .and_then(|node| node.attribute("revision"))
+            .unwrap_or("")
+            .to_string();
+        let author = commit
+            .and_then(|node| text_child(node, "author"))
+            .unwrap_or_default();
+        let date = commit
+            .and_then(|node| text_child(node, "date"))
+            .unwrap_or_default();
+
+        entries.push(RepositoryListEntry {
+            name,
+            kind,
+            revision,
+            author,
+            date,
+        });
+    }
+
+    entries.sort_by(|left, right| {
+        let left_dir = left.kind == "dir";
+        let right_dir = right.kind == "dir";
+        right_dir
+            .cmp(&left_dir)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+
+    Ok(RepositoryListResult {
+        url: url.to_string(),
+        entries,
+    })
+}
+
+fn text_child(node: roxmltree::Node<'_, '_>, tag_name: &str) -> Option<String> {
+    node.children()
+        .find(|child| child.has_tag_name(tag_name))
+        .and_then(|child| child.text())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }

@@ -4,6 +4,7 @@
   import type {
     ChangedFile,
     CommandError,
+    RepositoryListResult,
     WorkingCopyStatus,
     WorkspaceSummary,
   } from "../../types/api";
@@ -32,6 +33,10 @@
   export let reviewedFiles: ReviewedFileState[] = [];
   export let statusLoading = false;
   export let statusError: CommandError | null = null;
+  export let repositoryUrlInput = "";
+  export let repositoryList: RepositoryListResult | null = null;
+  export let repositoryLoading = false;
+  export let repositoryError: string | null = null;
   export let onChooseWorkspace: () => void;
   export let onOpenWorkspace: () => void;
   export let onRefreshStatus: () => void;
@@ -46,6 +51,9 @@
   export let onSelectFile: (path: string) => void;
   export let onStageFile: (path: string) => void;
   export let onUnstageFile: (path: string) => void;
+  export let onRepositoryUrlInput: (value: string) => void;
+  export let onUseWorkspaceRepositoryRoot: () => void;
+  export let onLoadRepositoryUrl: (url?: string) => void;
 
   const fileRowHeight = 76;
   const sectionHeaderHeight = 32;
@@ -414,6 +422,60 @@
     }
   }
 
+  function joinRepositoryUrl(baseUrl: string, name: string) {
+    return `${baseUrl.replace(/\/+$/, "")}/${encodeURIComponent(name)}`;
+  }
+
+  function parentRepositoryUrl(url: string) {
+    const normalized = url.replace(/\/+$/, "");
+    const slashIndex = normalized.lastIndexOf("/");
+    if (slashIndex <= "https://".length) {
+      return normalized;
+    }
+
+    return normalized.slice(0, slashIndex);
+  }
+
+  function repositoryBreadcrumbs(url: string) {
+    const trimmed = url.trim().replace(/\/+$/, "");
+    if (!trimmed) {
+      return [];
+    }
+
+    const protocolMatch = trimmed.match(/^[a-z][a-z0-9+.-]*:\/\//i);
+    if (!protocolMatch) {
+      const segments = trimmed.split("/").filter(Boolean);
+      return segments.map((segment, index) => ({
+        label: segment,
+        url: segments.slice(0, index + 1).join("/"),
+      }));
+    }
+
+    const prefix = protocolMatch[0];
+    const rest = trimmed.slice(prefix.length);
+    const [host = "", ...segments] = rest.split("/").filter(Boolean);
+    return [
+      { label: `${prefix}${host}`, url: `${prefix}${host}` },
+      ...segments.map((segment, index) => ({
+        label: segment,
+        url: `${prefix}${host}/${segments.slice(0, index + 1).join("/")}`,
+      })),
+    ];
+  }
+
+  function formatRepositoryDate(value: string) {
+    if (!value) {
+      return "-";
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+
+    return date.toLocaleString();
+  }
+
   $: changedFiles = workingCopyStatus?.files ?? [];
   $: normalizedSearch = searchText.trim().toLowerCase();
   $: stagedFilePaths = new Set(stagedFiles.map((file) => file.path));
@@ -455,6 +517,11 @@
     (workingCopyStatus?.obstructed ?? 0);
   $: reviewedCount = changedFiles.filter((file) => isReviewed(file.path)).length;
   $: unreviewedCount = Math.max(changedFiles.length - reviewedCount, 0);
+  $: repositoryEntries = repositoryList?.entries ?? [];
+  $: repositoryDirectoryCount = repositoryEntries.filter((entry) => entry.kind === "dir").length;
+  $: repositoryFileCount = repositoryEntries.filter((entry) => entry.kind !== "dir").length;
+  $: repositoryCurrentUrl = repositoryList?.url ?? repositoryUrlInput.trim();
+  $: breadcrumbs = repositoryBreadcrumbs(repositoryCurrentUrl);
 </script>
 
 <section class="main-workspace" aria-label={view.title}>
@@ -526,175 +593,289 @@
     {/if}
   </section>
 
-  <div class="metric-row">
-    <div class="metric">
-      <span>总改动</span>
-      <strong>{workingCopyStatus?.total ?? 0}</strong>
-    </div>
-    <div class="metric">
-      <span>已暂存</span>
-      <strong>{stagedFiles.length}</strong>
-    </div>
-    <div class="metric">
-      <span>未暂存</span>
-      <strong>{Math.max((workingCopyStatus?.total ?? 0) - stagedFiles.length, 0)}</strong>
-    </div>
-    <div class="metric">
-      <span>异常</span>
-      <strong>{abnormalCount}</strong>
-    </div>
-    <div class="metric">
-      <span>未审</span>
-      <strong>{unreviewedCount}</strong>
-    </div>
-  </div>
-
-  <section class="changes-toolbar">
-    <input
-      type="search"
-      value={searchText}
-      placeholder="搜索文件路径"
-      on:input={(event) =>
-        onSearchTextInput((event.currentTarget as HTMLInputElement).value)}
-    />
-    <button type="button" class:active={groupByStatus} on:click={onToggleGroupByStatus}>
-      分组
-    </button>
-    <button
-      type="button"
-      class:active={groupByStatus && groupMode === "status"}
-      on:click={() => onGroupModeChange("status")}
-    >
-      状态
-    </button>
-    <button
-      type="button"
-      class:active={groupByStatus && groupMode === "directory"}
-      on:click={() => onGroupModeChange("directory")}
-    >
-      目录
-    </button>
-    <button
-      type="button"
-      class:active={groupByStatus && groupMode === "extension"}
-      on:click={() => onGroupModeChange("extension")}
-    >
-      类型
-    </button>
-    <button type="button" on:click={onClearFilters}>清空过滤</button>
-    <button
-      type="button"
-      class:active={unreviewedOnly}
-      on:click={onToggleUnreviewedOnly}
-    >
-      未审
-    </button>
-    <span>异常 {abnormalCount}</span>
-    <span>未审 {unreviewedCount}</span>
-    <span>显示 {filteredFiles.length}/{changedFiles.length}</span>
-  </section>
-
-  <div
-    role="listbox"
-    aria-label="改动文件列表"
-    class="work-list"
-    class:virtual-work-list={workingCopyStatus && filteredFiles.length > 0}
-    bind:this={virtualListElement}
-    bind:clientHeight={virtualViewportHeight}
-    tabindex={workingCopyStatus && filteredFiles.length > 0 ? 0 : undefined}
-    on:scroll={(event) => {
-      virtualScrollTop = (event.currentTarget as HTMLDivElement).scrollTop;
-    }}
-    on:keydown={handleVirtualListKeydown}
-  >
-    {#if workingCopyStatus && filteredFiles.length > 0}
-      <div class="virtual-work-spacer" style={`height: ${totalVirtualHeight}px;`}>
-        {#each visibleVirtualItems as item (item.key)}
-          <div
-            class="virtual-list-item"
-            style={`transform: translateY(${item.top}px); height: ${item.height}px;`}
-          >
-            {#if item.kind === "section"}
-              <h3 class="stage-section-heading">{item.title}</h3>
-            {:else if item.kind === "status"}
-              <button
-                type="button"
-                class="status-group-heading"
-                on:click={() => toggleGroupCollapse(item.groupKey)}
-              >
-                <span>{item.collapsed ? "展开" : "折叠"}</span>
-                <strong>{item.title}</strong>
-              </button>
-            {:else if item.kind === "empty"}
-              <p class="empty-stage virtual-empty">{item.title}</p>
-            {:else if item.kind === "file"}
-              <div
-                role="option"
-                aria-selected={selectedFilePath === item.file.path}
-                tabindex="0"
-                class:abnormal={item.file.abnormal}
-                class:active={selectedFilePath === item.file.path}
-                class="work-row"
-                on:click={() => onSelectFile(item.file.path)}
-                on:keydown={(event) => handleRowKeydown(event, item.file.path)}
-              >
-                <div>
-                  <h3>{item.file.path}</h3>
-                  <p>{statusMeta(item.file)}</p>
-                </div>
-                <span>{labelStatus(item.file.status)}</span>
-                <span class="review-badge" class:reviewed={isReviewed(item.file.path)}>
-                  {isReviewed(item.file.path) ? "已审" : "未审"}
-                </span>
-                {#if item.staged}
-                  <button
-                    type="button"
-                    class="stage-action"
-                    on:click|stopPropagation={() => onUnstageFile(item.file.path)}
-                  >
-                    取消暂存
-                  </button>
-                {:else}
-                  <button
-                    type="button"
-                    class="stage-action"
-                    disabled={!isStageable(item.file)}
-                    on:click|stopPropagation={() => onStageFile(item.file.path)}
-                  >
-                    {isStageable(item.file) ? "暂存" : "不可暂存"}
-                  </button>
-                {/if}
-              </div>
-            {/if}
-          </div>
-        {/each}
+  {#if view.id === "repository"}
+    <div class="metric-row">
+      <div class="metric">
+        <span>目录</span>
+        <strong>{repositoryDirectoryCount}</strong>
       </div>
-    {:else if workingCopyStatus && changedFiles.length > 0}
-      <article class="work-row">
-        <div>
-          <h3>没有匹配结果</h3>
-          <p>调整搜索内容后重试</p>
+      <div class="metric">
+        <span>文件</span>
+        <strong>{repositoryFileCount}</strong>
+      </div>
+      <div class="metric">
+        <span>总项</span>
+        <strong>{repositoryEntries.length}</strong>
+      </div>
+      <div class="metric">
+        <span>状态</span>
+        <strong>{repositoryLoading ? "加载" : repositoryList ? "完成" : "待选"}</strong>
+      </div>
+    </div>
+
+    <section class="repository-browser">
+      <div class="repository-toolbar">
+        <input
+          type="url"
+          value={repositoryUrlInput}
+          placeholder="输入 SVN 仓库 URL"
+          on:input={(event) =>
+            onRepositoryUrlInput((event.currentTarget as HTMLInputElement).value)}
+          on:keydown={(event) => {
+            if (event.key === "Enter") {
+              onLoadRepositoryUrl();
+            }
+          }}
+        />
+        <button type="button" on:click={onUseWorkspaceRepositoryRoot} disabled={!workspace}>
+          使用 Root
+        </button>
+        <button
+          type="button"
+          on:click={() => onLoadRepositoryUrl()}
+          disabled={repositoryLoading || !repositoryUrlInput.trim()}
+        >
+          {repositoryLoading ? "加载中" : "浏览"}
+        </button>
+      </div>
+
+      {#if repositoryError}
+        <p class="inline-error">{repositoryError}</p>
+      {/if}
+
+      {#if breadcrumbs.length > 0}
+        <nav class="repository-breadcrumbs" aria-label="仓库路径">
+          {#each breadcrumbs as crumb, index (crumb.url)}
+            <button
+              type="button"
+              disabled={repositoryLoading || crumb.url === repositoryCurrentUrl}
+              on:click={() => onLoadRepositoryUrl(crumb.url)}
+            >
+              {crumb.label}
+            </button>
+            {#if index < breadcrumbs.length - 1}
+              <span>/</span>
+            {/if}
+          {/each}
+        </nav>
+      {/if}
+
+      <div class="repository-list" role="table" aria-label="仓库目录列表">
+        <div class="repository-row repository-header" role="row">
+          <span>名称</span>
+          <span>类型</span>
+          <span>Revision</span>
+          <span>作者</span>
+          <span>日期</span>
         </div>
-        <span>过滤</span>
-      </article>
-    {:else if workspace}
-      <article class="work-row">
-        <div>
-          <h3>无本地改动</h3>
-          <p>状态扫描未发现改动文件</p>
+
+        {#if repositoryLoading}
+          <article class="repository-empty">仓库目录加载中</article>
+        {:else if repositoryList}
+          <button
+            type="button"
+            class="repository-row repository-entry"
+            on:click={() => onLoadRepositoryUrl(parentRepositoryUrl(repositoryList.url))}
+          >
+            <span>..</span>
+            <span>目录</span>
+            <span>-</span>
+            <span>-</span>
+            <span>-</span>
+          </button>
+          {#each repositoryEntries as entry (entry.kind + ":" + entry.name)}
+            <button
+              type="button"
+              class="repository-row repository-entry"
+              disabled={entry.kind !== "dir"}
+              on:click={() => onLoadRepositoryUrl(joinRepositoryUrl(repositoryList.url, entry.name))}
+            >
+              <span>{entry.name || "/"}</span>
+              <span>{entry.kind === "dir" ? "目录" : "文件"}</span>
+              <span>{entry.revision || "-"}</span>
+              <span>{entry.author || "-"}</span>
+              <span>{formatRepositoryDate(entry.date)}</span>
+            </button>
+          {/each}
+          {#if repositoryEntries.length === 0}
+            <article class="repository-empty">当前仓库目录为空</article>
+          {/if}
+        {:else}
+          <article class="repository-empty">输入仓库 URL 或使用当前工作副本 Root 后开始浏览</article>
+        {/if}
+      </div>
+    </section>
+  {:else}
+    <div class="metric-row">
+      <div class="metric">
+        <span>总改动</span>
+        <strong>{workingCopyStatus?.total ?? 0}</strong>
+      </div>
+      <div class="metric">
+        <span>已暂存</span>
+        <strong>{stagedFiles.length}</strong>
+      </div>
+      <div class="metric">
+        <span>未暂存</span>
+        <strong>{Math.max((workingCopyStatus?.total ?? 0) - stagedFiles.length, 0)}</strong>
+      </div>
+      <div class="metric">
+        <span>异常</span>
+        <strong>{abnormalCount}</strong>
+      </div>
+      <div class="metric">
+        <span>未审</span>
+        <strong>{unreviewedCount}</strong>
+      </div>
+    </div>
+
+    <section class="changes-toolbar">
+      <input
+        type="search"
+        value={searchText}
+        placeholder="搜索文件路径"
+        on:input={(event) =>
+          onSearchTextInput((event.currentTarget as HTMLInputElement).value)}
+      />
+      <button type="button" class:active={groupByStatus} on:click={onToggleGroupByStatus}>
+        分组
+      </button>
+      <button
+        type="button"
+        class:active={groupByStatus && groupMode === "status"}
+        on:click={() => onGroupModeChange("status")}
+      >
+        状态
+      </button>
+      <button
+        type="button"
+        class:active={groupByStatus && groupMode === "directory"}
+        on:click={() => onGroupModeChange("directory")}
+      >
+        目录
+      </button>
+      <button
+        type="button"
+        class:active={groupByStatus && groupMode === "extension"}
+        on:click={() => onGroupModeChange("extension")}
+      >
+        类型
+      </button>
+      <button type="button" on:click={onClearFilters}>清空过滤</button>
+      <button
+        type="button"
+        class:active={unreviewedOnly}
+        on:click={onToggleUnreviewedOnly}
+      >
+        未审
+      </button>
+      <span>异常 {abnormalCount}</span>
+      <span>未审 {unreviewedCount}</span>
+      <span>显示 {filteredFiles.length}/{changedFiles.length}</span>
+    </section>
+
+    <div
+      role="listbox"
+      aria-label="改动文件列表"
+      class="work-list"
+      class:virtual-work-list={workingCopyStatus && filteredFiles.length > 0}
+      bind:this={virtualListElement}
+      bind:clientHeight={virtualViewportHeight}
+      tabindex={workingCopyStatus && filteredFiles.length > 0 ? 0 : undefined}
+      on:scroll={(event) => {
+        virtualScrollTop = (event.currentTarget as HTMLDivElement).scrollTop;
+      }}
+      on:keydown={handleVirtualListKeydown}
+    >
+      {#if workingCopyStatus && filteredFiles.length > 0}
+        <div class="virtual-work-spacer" style={`height: ${totalVirtualHeight}px;`}>
+          {#each visibleVirtualItems as item (item.key)}
+            <div
+              class="virtual-list-item"
+              style={`transform: translateY(${item.top}px); height: ${item.height}px;`}
+            >
+              {#if item.kind === "section"}
+                <h3 class="stage-section-heading">{item.title}</h3>
+              {:else if item.kind === "status"}
+                <button
+                  type="button"
+                  class="status-group-heading"
+                  on:click={() => toggleGroupCollapse(item.groupKey)}
+                >
+                  <span>{item.collapsed ? "展开" : "折叠"}</span>
+                  <strong>{item.title}</strong>
+                </button>
+              {:else if item.kind === "empty"}
+                <p class="empty-stage virtual-empty">{item.title}</p>
+              {:else if item.kind === "file"}
+                <div
+                  role="option"
+                  aria-selected={selectedFilePath === item.file.path}
+                  tabindex="0"
+                  class:abnormal={item.file.abnormal}
+                  class:active={selectedFilePath === item.file.path}
+                  class="work-row"
+                  on:click={() => onSelectFile(item.file.path)}
+                  on:keydown={(event) => handleRowKeydown(event, item.file.path)}
+                >
+                  <div>
+                    <h3>{item.file.path}</h3>
+                    <p>{statusMeta(item.file)}</p>
+                  </div>
+                  <span>{labelStatus(item.file.status)}</span>
+                  <span class="review-badge" class:reviewed={isReviewed(item.file.path)}>
+                    {isReviewed(item.file.path) ? "已审" : "未审"}
+                  </span>
+                  {#if item.staged}
+                    <button
+                      type="button"
+                      class="stage-action"
+                      on:click|stopPropagation={() => onUnstageFile(item.file.path)}
+                    >
+                      取消暂存
+                    </button>
+                  {:else}
+                    <button
+                      type="button"
+                      class="stage-action"
+                      disabled={!isStageable(item.file)}
+                      on:click|stopPropagation={() => onStageFile(item.file.path)}
+                    >
+                      {isStageable(item.file) ? "暂存" : "不可暂存"}
+                    </button>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          {/each}
         </div>
-        <span>干净</span>
-      </article>
-    {:else}
-      {#each view.primaryItems as item}
+      {:else if workingCopyStatus && changedFiles.length > 0}
         <article class="work-row">
           <div>
-            <h3>{item.title}</h3>
-            <p>{item.meta}</p>
+            <h3>没有匹配结果</h3>
+            <p>调整搜索内容后重试</p>
           </div>
-          <span>{item.status}</span>
+          <span>过滤</span>
         </article>
-      {/each}
-    {/if}
-  </div>
+      {:else if workspace}
+        <article class="work-row">
+          <div>
+            <h3>无本地改动</h3>
+            <p>状态扫描未发现改动文件</p>
+          </div>
+          <span>干净</span>
+        </article>
+      {:else}
+        {#each view.primaryItems as item}
+          <article class="work-row">
+            <div>
+              <h3>{item.title}</h3>
+              <p>{item.meta}</p>
+            </div>
+            <span>{item.status}</span>
+          </article>
+        {/each}
+      {/if}
+    </div>
+  {/if}
 </section>

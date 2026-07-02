@@ -5,6 +5,7 @@ import {
   createCommitTask,
   createMockTask,
   createPartialCommitTask,
+  createRepositoryListTask,
   createShadowWorkspaceTask,
   createSvnOperationTask,
   detectSvn,
@@ -34,6 +35,7 @@ import type {
   FileDiff,
   MockTaskOutcome,
   ParsedFileDiff,
+  RepositoryListResult,
   SelectedPatch,
   ShadowWorkspaceOperationKind,
   ShadowWorkspaceStatus,
@@ -247,6 +249,30 @@ function createTaskStore() {
     }
   }
 
+  async function createRepositoryList(request: {
+    url: string;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createRepositoryListTask({
+        url: request.url,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function select(taskId: string) {
     selectedTaskId = taskId;
     await refresh();
@@ -295,6 +321,7 @@ function createTaskStore() {
     createSvnOperation,
     createShadowWorkspace,
     createPartialCommit,
+    createRepositoryList,
     select,
     cancel,
     startPolling,
@@ -423,6 +450,12 @@ export interface WorkspaceStoreState {
   pendingPartialCommitTaskId: string | null;
   pendingSvnOperationTaskId: string | null;
   pendingSvnOperationKind: SvnOperationKind | null;
+  repositoryUrlInput: string;
+  repositoryCurrentUrl: string;
+  repositoryList: RepositoryListResult | null;
+  pendingRepositoryListTaskId: string | null;
+  repositoryLoading: boolean;
+  repositoryError: string | null;
   shadowStatus: ShadowWorkspaceStatus | null;
   shadowLoading: boolean;
   shadowError: CommandError | null;
@@ -467,6 +500,12 @@ const initialWorkspaceState: WorkspaceStoreState = {
   pendingPartialCommitTaskId: null,
   pendingSvnOperationTaskId: null,
   pendingSvnOperationKind: null,
+  repositoryUrlInput: "",
+  repositoryCurrentUrl: "",
+  repositoryList: null,
+  pendingRepositoryListTaskId: null,
+  repositoryLoading: false,
+  repositoryError: null,
   shadowStatus: null,
   shadowLoading: false,
   shadowError: null,
@@ -518,6 +557,12 @@ function createWorkspaceStore() {
         pendingPartialCommitTaskId: null,
         pendingSvnOperationTaskId: null,
         pendingSvnOperationKind: null,
+        repositoryUrlInput: recent.workspace?.repository_root ?? state.repositoryUrlInput,
+        repositoryCurrentUrl: "",
+        repositoryList: null,
+        pendingRepositoryListTaskId: null,
+        repositoryLoading: false,
+        repositoryError: null,
         shadowStatus: null,
         shadowError: null,
         pathInput: state.pathInput || root || "",
@@ -575,6 +620,12 @@ function createWorkspaceStore() {
         pendingPartialCommitTaskId: null,
         pendingSvnOperationTaskId: null,
         pendingSvnOperationKind: null,
+        repositoryUrlInput: current.repository_root,
+        repositoryCurrentUrl: "",
+        repositoryList: null,
+        pendingRepositoryListTaskId: null,
+        repositoryLoading: false,
+        repositoryError: null,
         shadowStatus: null,
         shadowError: null,
         pathInput: current.working_copy_root,
@@ -938,6 +989,53 @@ function createWorkspaceStore() {
       ...state,
       pendingSvnOperationTaskId: taskId,
       pendingSvnOperationKind: kind,
+    }));
+  }
+
+  function setRepositoryUrlInput(value: string) {
+    update((state) => ({
+      ...state,
+      repositoryUrlInput: value,
+      repositoryError: null,
+    }));
+  }
+
+  function useWorkspaceRepositoryRoot() {
+    update((state) => ({
+      ...state,
+      repositoryUrlInput: state.current?.repository_root ?? state.repositoryUrlInput,
+      repositoryError: state.current ? null : "请先打开 SVN 工作副本",
+    }));
+  }
+
+  function markRepositoryListTask(taskId: string | null, url?: string) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryListTaskId: taskId,
+      repositoryCurrentUrl: url ?? state.repositoryCurrentUrl,
+      repositoryLoading: taskId !== null,
+      repositoryError: null,
+    }));
+  }
+
+  function applyRepositoryListResult(result: RepositoryListResult) {
+    update((state) => ({
+      ...state,
+      repositoryUrlInput: result.url,
+      repositoryCurrentUrl: result.url,
+      repositoryList: result,
+      pendingRepositoryListTaskId: null,
+      repositoryLoading: false,
+      repositoryError: null,
+    }));
+  }
+
+  function failRepositoryList(message: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryListTaskId: null,
+      repositoryLoading: false,
+      repositoryError: message ?? "仓库目录加载失败",
     }));
   }
 
@@ -1379,6 +1477,11 @@ function createWorkspaceStore() {
     markCommitTask,
     markPartialCommitTask,
     markSvnOperationTask,
+    setRepositoryUrlInput,
+    useWorkspaceRepositoryRoot,
+    markRepositoryListTask,
+    applyRepositoryListResult,
+    failRepositoryList,
     clearCommittedFiles,
     clearWorkspaceDraft,
     refreshStatus,

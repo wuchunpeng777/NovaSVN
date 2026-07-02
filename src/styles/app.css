@@ -610,6 +610,143 @@ button {
   white-space: nowrap;
 }
 
+.repository-browser {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+}
+
+.repository-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 9px;
+}
+
+.repository-toolbar input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  padding: 0 9px;
+  color: #17202a;
+  font: inherit;
+  font-size: 12px;
+}
+
+.repository-toolbar button,
+.repository-breadcrumbs button {
+  height: 30px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17202a;
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.repository-toolbar button:disabled,
+.repository-breadcrumbs button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.repository-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.repository-breadcrumbs span {
+  color: #9aa6b2;
+  font-size: 12px;
+}
+
+.repository-list {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.repository-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 72px 90px 120px 180px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 42px;
+  border: 0;
+  border-bottom: 1px solid #edf1f4;
+  background: #ffffff;
+  color: #17202a;
+  padding: 0 12px;
+  text-align: left;
+}
+
+.repository-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.repository-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: 36px;
+  background: #f7f9fb;
+  color: #637282;
+  font-weight: 700;
+}
+
+.repository-entry {
+  cursor: pointer;
+}
+
+.repository-entry:hover:not(:disabled),
+.repository-entry:focus-visible:not(:disabled) {
+  background: #f2fbfa;
+  outline: none;
+}
+
+.repository-entry:disabled {
+  cursor: default;
+  color: #44515f;
+}
+
+.repository-empty {
+  margin: 0;
+  color: #637282;
+  padding: 16px;
+  font-size: 13px;
+}
+
+.inline-error {
+  margin: 0;
+  border: 1px solid #e2b3a9;
+  border-radius: 8px;
+  background: #fff8f6;
+  color: #a33f2f;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
 .status-group {
   display: grid;
   gap: 7px;

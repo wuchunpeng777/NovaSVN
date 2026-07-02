@@ -160,6 +160,26 @@
     taskStore.startPolling();
   }
 
+  async function loadRepositoryUrl(url?: string) {
+    const targetUrl = (url ?? $workspaceStore.repositoryUrlInput).trim();
+    if (!targetUrl) {
+      workspaceStore.failRepositoryList("请输入仓库 URL");
+      return;
+    }
+
+    const task = await taskStore.createRepositoryList({
+      url: targetUrl,
+      svnExecutable: $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    });
+
+    if (!task) {
+      workspaceStore.failRepositoryList($taskStore.error?.message ?? "仓库目录加载任务创建失败");
+      return;
+    }
+
+    workspaceStore.markRepositoryListTask(task.task_id, targetUrl);
+  }
+
   $: if (
     $workspaceStore.pendingCommitTaskId &&
     $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
@@ -238,6 +258,30 @@
       $taskStore.selectedTask.status === "cancelled")
   ) {
     workspaceStore.markSvnOperationTask(null, null);
+  }
+
+  $: if (
+    $workspaceStore.pendingRepositoryListTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingRepositoryListTaskId &&
+    $taskStore.selectedTask.status === "success"
+  ) {
+    const result = $taskStore.selectedTask.result?.repository_list;
+    if (result) {
+      workspaceStore.applyRepositoryListResult(result);
+    } else {
+      workspaceStore.failRepositoryList("仓库目录任务没有返回结果");
+    }
+  }
+
+  $: if (
+    $workspaceStore.pendingRepositoryListTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingRepositoryListTaskId &&
+    ($taskStore.selectedTask.status === "failed" ||
+      $taskStore.selectedTask.status === "cancelled")
+  ) {
+    workspaceStore.failRepositoryList(
+      $taskStore.selectedTask.error ?? "仓库目录加载失败",
+    );
   }
 
   onMount(() => {
@@ -333,6 +377,10 @@
         reviewedFiles={$workspaceStore.reviewedFiles}
         statusLoading={$workspaceStore.statusLoading}
         statusError={$workspaceStore.statusError}
+        repositoryUrlInput={$workspaceStore.repositoryUrlInput}
+        repositoryList={$workspaceStore.repositoryList}
+        repositoryLoading={$workspaceStore.repositoryLoading}
+        repositoryError={$workspaceStore.repositoryError}
         onChooseWorkspace={() =>
           workspaceStore.chooseAndOpen(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
@@ -360,6 +408,9 @@
           )}
         onStageFile={workspaceStore.stageFile}
         onUnstageFile={workspaceStore.unstageFile}
+        onRepositoryUrlInput={workspaceStore.setRepositoryUrlInput}
+        onUseWorkspaceRepositoryRoot={workspaceStore.useWorkspaceRepositoryRoot}
+        onLoadRepositoryUrl={loadRepositoryUrl}
       />
       <DetailPanel
         sections={detailSections}

@@ -41,6 +41,7 @@ export interface TaskSummary {
 
 export interface Task extends TaskSummary {
   logs: TaskLog[];
+  result: TaskResult | null;
 }
 
 export interface TaskSnapshot {
@@ -87,6 +88,28 @@ export interface CreatePartialCommitTaskRequest {
   selected_patch: string;
   files: string[];
   svn_executable?: string;
+}
+
+export interface CreateRepositoryListTaskRequest {
+  url: string;
+  svn_executable?: string;
+}
+
+export interface TaskResult {
+  repository_list: RepositoryListResult | null;
+}
+
+export interface RepositoryListResult {
+  url: string;
+  entries: RepositoryListEntry[];
+}
+
+export interface RepositoryListEntry {
+  name: string;
+  kind: "dir" | "file" | string;
+  revision: string;
+  author: string;
+  date: string;
 }
 
 export interface ShadowWorkspaceRequest {
