@@ -95,6 +95,17 @@ export interface CreateRepositoryListTaskRequest {
   svn_executable?: string;
 }
 
+export type RepositoryCopyKind = "branch" | "tag";
+
+export interface CreateRepositoryCopyTaskRequest {
+  kind: RepositoryCopyKind;
+  source_url: string;
+  target_url: string;
+  revision?: string;
+  message: string;
+  svn_executable?: string;
+}
+
 export interface TaskResult {
   repository_list: RepositoryListResult | null;
 }

@@ -4,6 +4,7 @@
   import type {
     ChangedFile,
     CommandError,
+    RepositoryCopyKind,
     RepositoryListResult,
     WorkingCopyStatus,
     WorkspaceSummary,
@@ -61,6 +62,21 @@
     tags: null,
   };
   export let repositoryLayoutLoading = false;
+  export let repositoryCopyForm: {
+    kind: RepositoryCopyKind;
+    sourceUrl: string;
+    targetUrl: string;
+    revision: string;
+    message: string;
+  } = {
+    kind: "branch",
+    sourceUrl: "",
+    targetUrl: "",
+    revision: "",
+    message: "",
+  };
+  export let repositoryCopyError: string | null = null;
+  export let repositoryCopyRunning = false;
   export let onChooseWorkspace: () => void;
   export let onOpenWorkspace: () => void;
   export let onRefreshStatus: () => void;
@@ -83,6 +99,15 @@
     value: string,
   ) => void;
   export let onDetectRepositoryLayout: () => void;
+  export let onRepositoryCopyFormInput: (
+    field: keyof typeof repositoryCopyForm,
+    value: string,
+  ) => void;
+  export let onPrepareRepositoryCopyTarget: (
+    kind: RepositoryCopyKind,
+    targetBaseUrl?: string | null,
+  ) => void;
+  export let onCreateRepositoryCopy: () => void;
 
   const fileRowHeight = 76;
   const sectionHeaderHeight = 32;
@@ -812,6 +837,122 @@
               <p>暂无标签结果</p>
             {/if}
           </section>
+        </div>
+      </section>
+
+      <section class="repository-copy-panel" aria-label="创建分支和标签">
+        <div class="repository-layout-header">
+          <div>
+            <h3>创建分支或标签</h3>
+            <p>使用 svn copy 从源 URL 创建远端 branch/tag</p>
+          </div>
+          <div class="repository-copy-presets">
+            <button
+              type="button"
+              on:click={() =>
+                onPrepareRepositoryCopyTarget(
+                  "branch",
+                  repositoryLayoutResults.branches?.url,
+                )}
+            >
+              新分支
+            </button>
+            <button
+              type="button"
+              on:click={() =>
+                onPrepareRepositoryCopyTarget("tag", repositoryLayoutResults.tags?.url)}
+            >
+              新标签
+            </button>
+          </div>
+        </div>
+
+        <div class="repository-copy-kind" role="group" aria-label="创建类型">
+          <button
+            type="button"
+            class:active={repositoryCopyForm.kind === "branch"}
+            on:click={() => onRepositoryCopyFormInput("kind", "branch")}
+          >
+            Branch
+          </button>
+          <button
+            type="button"
+            class:active={repositoryCopyForm.kind === "tag"}
+            on:click={() => onRepositoryCopyFormInput("kind", "tag")}
+          >
+            Tag
+          </button>
+        </div>
+
+        <div class="repository-copy-grid">
+          <label>
+            <span>源 URL</span>
+            <input
+              type="url"
+              value={repositoryCopyForm.sourceUrl}
+              on:input={(event) =>
+                onRepositoryCopyFormInput(
+                  "sourceUrl",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+          </label>
+          <label>
+            <span>目标 URL</span>
+            <input
+              type="url"
+              value={repositoryCopyForm.targetUrl}
+              on:input={(event) =>
+                onRepositoryCopyFormInput(
+                  "targetUrl",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+          </label>
+          <label>
+            <span>Revision</span>
+            <input
+              type="text"
+              value={repositoryCopyForm.revision}
+              placeholder="留空使用 HEAD"
+              on:input={(event) =>
+                onRepositoryCopyFormInput(
+                  "revision",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+          </label>
+        </div>
+
+        <label class="repository-copy-message">
+          <span>提交信息</span>
+          <textarea
+            rows="3"
+            value={repositoryCopyForm.message}
+            on:input={(event) =>
+              onRepositoryCopyFormInput(
+                "message",
+                (event.currentTarget as HTMLTextAreaElement).value,
+              )}
+          ></textarea>
+        </label>
+
+        {#if repositoryCopyError}
+          <p class="inline-error">{repositoryCopyError}</p>
+        {/if}
+
+        <div class="repository-copy-actions">
+          <button
+            type="button"
+            on:click={onCreateRepositoryCopy}
+            disabled={repositoryCopyRunning}
+          >
+            {repositoryCopyRunning
+              ? "创建中"
+              : repositoryCopyForm.kind === "branch"
+                ? "创建分支"
+                : "创建标签"}
+          </button>
         </div>
       </section>
 

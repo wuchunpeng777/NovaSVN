@@ -864,6 +864,96 @@ button {
   font-size: 11px;
 }
 
+.repository-copy-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.repository-copy-presets,
+.repository-copy-kind,
+.repository-copy-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.repository-copy-presets button,
+.repository-copy-kind button,
+.repository-copy-actions button {
+  height: 30px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17202a;
+  cursor: pointer;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.repository-copy-kind button.active,
+.repository-copy-actions button {
+  border-color: #5ba9a5;
+  background: #eef8f7;
+  color: #227873;
+}
+
+.repository-copy-actions {
+  justify-content: flex-end;
+}
+
+.repository-copy-actions button:disabled {
+  border-color: #cfd7df;
+  background: #f7f9fb;
+  color: #7a8794;
+  cursor: default;
+}
+
+.repository-copy-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 120px;
+  gap: 8px;
+}
+
+.repository-copy-grid label,
+.repository-copy-message {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.repository-copy-grid span,
+.repository-copy-message span {
+  color: #637282;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.repository-copy-grid input,
+.repository-copy-message textarea {
+  min-width: 0;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  color: #17202a;
+  font: inherit;
+  font-size: 12px;
+}
+
+.repository-copy-grid input {
+  height: 30px;
+  padding: 0 8px;
+}
+
+.repository-copy-message textarea {
+  resize: vertical;
+  min-height: 64px;
+  padding: 8px;
+}
+
 .repository-list {
   min-height: 0;
   overflow: auto;

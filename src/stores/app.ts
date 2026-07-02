@@ -5,6 +5,7 @@ import {
   createCommitTask,
   createMockTask,
   createPartialCommitTask,
+  createRepositoryCopyTask,
   createRepositoryListTask,
   createShadowWorkspaceTask,
   createSvnOperationTask,
@@ -36,6 +37,7 @@ import type {
   MockTaskOutcome,
   ParsedFileDiff,
   RepositoryListResult,
+  RepositoryCopyKind,
   SelectedPatch,
   ShadowWorkspaceOperationKind,
   ShadowWorkspaceStatus,
@@ -273,6 +275,38 @@ function createTaskStore() {
     }
   }
 
+  async function createRepositoryCopy(request: {
+    kind: RepositoryCopyKind;
+    sourceUrl: string;
+    targetUrl: string;
+    revision?: string | null;
+    message: string;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createRepositoryCopyTask({
+        kind: request.kind,
+        source_url: request.sourceUrl,
+        target_url: request.targetUrl,
+        revision: request.revision || undefined,
+        message: request.message,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function select(taskId: string) {
     selectedTaskId = taskId;
     await refresh();
@@ -330,6 +364,7 @@ function createTaskStore() {
     createShadowWorkspace,
     createPartialCommit,
     createRepositoryList,
+    createRepositoryCopy,
     select,
     cancel,
     getTaskById,
@@ -484,6 +519,15 @@ export interface WorkspaceStoreState {
     tags: string | null;
   };
   repositoryLayoutLoading: boolean;
+  repositoryCopyForm: {
+    kind: RepositoryCopyKind;
+    sourceUrl: string;
+    targetUrl: string;
+    revision: string;
+    message: string;
+  };
+  pendingRepositoryCopyTaskId: string | null;
+  repositoryCopyError: string | null;
   repositoryLoading: boolean;
   repositoryError: string | null;
   shadowStatus: ShadowWorkspaceStatus | null;
@@ -555,6 +599,15 @@ const initialWorkspaceState: WorkspaceStoreState = {
     tags: null,
   },
   repositoryLayoutLoading: false,
+  repositoryCopyForm: {
+    kind: "branch",
+    sourceUrl: "",
+    targetUrl: "",
+    revision: "",
+    message: "",
+  },
+  pendingRepositoryCopyTaskId: null,
+  repositoryCopyError: null,
   repositoryLoading: false,
   repositoryError: null,
   shadowStatus: null,
@@ -616,6 +669,13 @@ function createWorkspaceStore() {
         repositoryLayoutResults: emptyRepositoryLayoutResults(),
         repositoryLayoutErrors: emptyRepositoryLayoutErrors(),
         repositoryLayoutLoading: false,
+        repositoryCopyForm: {
+          ...emptyRepositoryCopyForm(),
+          sourceUrl: recent.workspace?.repository_url ?? "",
+          revision: recent.workspace?.revision ?? "",
+        },
+        pendingRepositoryCopyTaskId: null,
+        repositoryCopyError: null,
         repositoryLoading: false,
         repositoryError: null,
         shadowStatus: null,
@@ -683,6 +743,13 @@ function createWorkspaceStore() {
         repositoryLayoutResults: emptyRepositoryLayoutResults(),
         repositoryLayoutErrors: emptyRepositoryLayoutErrors(),
         repositoryLayoutLoading: false,
+        repositoryCopyForm: {
+          ...emptyRepositoryCopyForm(),
+          sourceUrl: current.repository_url,
+          revision: current.revision,
+        },
+        pendingRepositoryCopyTaskId: null,
+        repositoryCopyError: null,
         repositoryLoading: false,
         repositoryError: null,
         shadowStatus: null,
@@ -1182,6 +1249,73 @@ function createWorkspaceStore() {
     });
   }
 
+  function setRepositoryCopyForm(
+    field: keyof WorkspaceStoreState["repositoryCopyForm"],
+    value: string,
+  ) {
+    update((state) => ({
+      ...state,
+      repositoryCopyForm: {
+        ...state.repositoryCopyForm,
+        [field]: field === "kind" && value === "tag" ? "tag" : value,
+      },
+      repositoryCopyError: null,
+    }));
+  }
+
+  function prepareRepositoryCopyTarget(kind: RepositoryCopyKind, targetBaseUrl?: string | null) {
+    update((state) => {
+      const baseUrl =
+        targetBaseUrl ||
+        (kind === "branch"
+          ? state.repositoryLayoutResults.branches?.url
+          : state.repositoryLayoutResults.tags?.url) ||
+        state.repositoryUrlInput;
+      const suffix = kind === "branch" ? "new-branch" : "new-tag";
+
+      return {
+        ...state,
+        repositoryCopyForm: {
+          ...state.repositoryCopyForm,
+          kind,
+          sourceUrl: state.repositoryCopyForm.sourceUrl || state.current?.repository_url || "",
+          targetUrl: baseUrl ? `${baseUrl.replace(/\/+$/, "")}/${suffix}` : "",
+          revision: state.repositoryCopyForm.revision || state.current?.revision || "",
+        },
+        repositoryCopyError: null,
+      };
+    });
+  }
+
+  function markRepositoryCopyTask(taskId: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryCopyTaskId: taskId,
+      repositoryCopyError: null,
+    }));
+  }
+
+  function completeRepositoryCopyTask() {
+    update((state) => ({
+      ...state,
+      pendingRepositoryCopyTaskId: null,
+      repositoryCopyForm: {
+        ...state.repositoryCopyForm,
+        targetUrl: "",
+        message: "",
+      },
+      repositoryCopyError: null,
+    }));
+  }
+
+  function failRepositoryCopyTask(message: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryCopyTaskId: null,
+      repositoryCopyError: message ?? "创建分支或标签失败",
+    }));
+  }
+
   function clearCommittedFiles(paths: string[]) {
     const committed = new Set(paths);
     update((state) => {
@@ -1629,6 +1763,11 @@ function createWorkspaceStore() {
     markRepositoryLayoutTask,
     applyRepositoryLayoutResult,
     failRepositoryLayoutResult,
+    setRepositoryCopyForm,
+    prepareRepositoryCopyTarget,
+    markRepositoryCopyTask,
+    completeRepositoryCopyTask,
+    failRepositoryCopyTask,
     clearCommittedFiles,
     clearWorkspaceDraft,
     refreshStatus,
@@ -1664,6 +1803,16 @@ function emptyRepositoryLayoutErrors() {
     trunk: null,
     branches: null,
     tags: null,
+  };
+}
+
+function emptyRepositoryCopyForm() {
+  return {
+    kind: "branch" as RepositoryCopyKind,
+    sourceUrl: "",
+    targetUrl: "",
+    revision: "",
+    message: "",
   };
 }
 

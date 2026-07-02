@@ -227,6 +227,37 @@
     return `${root.replace(/\/+$/, "")}/${normalizedPath}`;
   }
 
+  async function createRepositoryCopy() {
+    const form = $workspaceStore.repositoryCopyForm;
+    if (!form.sourceUrl.trim() || !form.targetUrl.trim()) {
+      workspaceStore.failRepositoryCopyTask("请输入源 URL 和目标 URL");
+      return;
+    }
+
+    if (!form.message.trim()) {
+      workspaceStore.failRepositoryCopyTask("请输入创建分支或标签的提交信息");
+      return;
+    }
+
+    const task = await taskStore.createRepositoryCopy({
+      kind: form.kind,
+      sourceUrl: form.sourceUrl,
+      targetUrl: form.targetUrl,
+      revision: form.revision,
+      message: form.message,
+      svnExecutable: $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    });
+
+    if (!task) {
+      workspaceStore.failRepositoryCopyTask(
+        $taskStore.error?.message ?? "创建分支或标签任务创建失败",
+      );
+      return;
+    }
+
+    workspaceStore.markRepositoryCopyTask(task.task_id);
+  }
+
   $: if (
     $workspaceStore.pendingCommitTaskId &&
     $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
@@ -328,6 +359,25 @@
   ) {
     workspaceStore.failRepositoryList(
       $taskStore.selectedTask.error ?? "仓库目录加载失败",
+    );
+  }
+
+  $: if (
+    $workspaceStore.pendingRepositoryCopyTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingRepositoryCopyTaskId &&
+    $taskStore.selectedTask.status === "success"
+  ) {
+    workspaceStore.completeRepositoryCopyTask();
+  }
+
+  $: if (
+    $workspaceStore.pendingRepositoryCopyTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingRepositoryCopyTaskId &&
+    ($taskStore.selectedTask.status === "failed" ||
+      $taskStore.selectedTask.status === "cancelled")
+  ) {
+    workspaceStore.failRepositoryCopyTask(
+      $taskStore.selectedTask.error ?? "创建分支或标签失败",
     );
   }
 
@@ -472,6 +522,9 @@
         repositoryLayoutResults={$workspaceStore.repositoryLayoutResults}
         repositoryLayoutErrors={$workspaceStore.repositoryLayoutErrors}
         repositoryLayoutLoading={$workspaceStore.repositoryLayoutLoading}
+        repositoryCopyForm={$workspaceStore.repositoryCopyForm}
+        repositoryCopyError={$workspaceStore.repositoryCopyError}
+        repositoryCopyRunning={$workspaceStore.pendingRepositoryCopyTaskId !== null}
         onChooseWorkspace={() =>
           workspaceStore.chooseAndOpen(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
@@ -504,6 +557,9 @@
         onLoadRepositoryUrl={loadRepositoryUrl}
         onRepositoryLayoutPathInput={workspaceStore.setRepositoryLayoutPath}
         onDetectRepositoryLayout={detectRepositoryLayout}
+        onRepositoryCopyFormInput={workspaceStore.setRepositoryCopyForm}
+        onPrepareRepositoryCopyTarget={workspaceStore.prepareRepositoryCopyTarget}
+        onCreateRepositoryCopy={createRepositoryCopy}
       />
       <DetailPanel
         sections={detailSections}

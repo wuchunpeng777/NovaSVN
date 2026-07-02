@@ -135,6 +135,23 @@ pub struct CreateRepositoryListTaskRequest {
     pub svn_executable: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepositoryCopyKind {
+    Branch,
+    Tag,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateRepositoryCopyTaskRequest {
+    pub kind: RepositoryCopyKind,
+    pub source_url: String,
+    pub target_url: String,
+    pub revision: Option<String>,
+    pub message: String,
+    pub svn_executable: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskResult {
     pub repository_list: Option<RepositoryListResult>,
@@ -163,6 +180,7 @@ enum TaskPayload {
     ShadowWorkspace(ShadowWorkspaceTaskPayload),
     PartialCommit(PartialCommitTaskPayload),
     RepositoryList(RepositoryListTaskPayload),
+    RepositoryCopy(RepositoryCopyTaskPayload),
 }
 
 #[derive(Debug, Clone)]
@@ -200,6 +218,16 @@ struct PartialCommitTaskPayload {
 #[derive(Debug, Clone)]
 struct RepositoryListTaskPayload {
     url: String,
+    svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct RepositoryCopyTaskPayload {
+    kind: RepositoryCopyKind,
+    source_url: String,
+    target_url: String,
+    revision: Option<String>,
+    message: String,
     svn_executable: String,
 }
 
@@ -494,6 +522,63 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_repository_copy_task(
+        &self,
+        request: CreateRepositoryCopyTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let source_url = normalize_repository_url(&request.source_url)?;
+        let target_url = normalize_repository_url(&request.target_url)?;
+        let message = request.message.trim().to_string();
+        if message.is_empty() {
+            return Err(NovaError::command(
+                "REPOSITORY_COPY_MESSAGE_REQUIRED",
+                "请输入创建分支或标签的提交信息",
+                None,
+                true,
+            ));
+        }
+
+        let revision = request
+            .revision
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let svn_executable = request
+            .svn_executable
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "svn".to_string());
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let title = match request.kind {
+            RepositoryCopyKind::Branch => "创建分支",
+            RepositoryCopyKind::Tag => "创建标签",
+        };
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!("{title} {}", compact_repository_url(&target_url)),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "创建分支/标签任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::RepositoryCopy(RepositoryCopyTaskPayload {
+                kind: request.kind,
+                source_url,
+                target_url,
+                revision,
+                message,
+                svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn list_tasks(&self) -> TaskSnapshot {
         let state = self.state.lock().expect("任务队列锁已损坏");
         TaskSnapshot {
@@ -646,6 +731,9 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             TaskPayload::PartialCommit(payload) => run_partial_commit_task(&state, &task_id, payload),
             TaskPayload::RepositoryList(payload) => {
                 run_repository_list_task(&state, &task_id, payload)
+            }
+            TaskPayload::RepositoryCopy(payload) => {
+                run_repository_copy_task(&state, &task_id, payload)
             }
         }
     }
@@ -1126,6 +1214,69 @@ fn run_repository_list_task(
                 task_id,
                 TaskStatus::Failed,
                 "仓库目录加载失败",
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn run_repository_copy_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: RepositoryCopyTaskPayload,
+) {
+    let title = match payload.kind {
+        RepositoryCopyKind::Branch => "创建分支",
+        RepositoryCopyKind::Tag => "创建标签",
+    };
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        &format!("{title}开始执行"),
+        None,
+    );
+    append_task_log(
+        state,
+        task_id,
+        &format!(
+            "执行 svn copy：{} -> {}",
+            payload.source_url, payload.target_url
+        ),
+    );
+
+    let mut command = Command::new(&payload.svn_executable);
+    command.arg("copy");
+    if let Some(revision) = payload.revision.as_deref() {
+        command.arg("-r").arg(revision);
+    }
+    command
+        .arg(&payload.source_url)
+        .arg(&payload.target_url)
+        .arg("-m")
+        .arg(&payload.message);
+
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(state, task_id, TaskStatus::Success, &format!("{title}成功"), None);
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                &format!("{title}失败"),
                 Some(command_error_detail(&payload.svn_executable, &output)),
             );
         }

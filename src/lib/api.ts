@@ -6,6 +6,7 @@ import type {
   CreateCommitTaskRequest,
   CreateMockTaskRequest,
   CreatePartialCommitTaskRequest,
+  CreateRepositoryCopyTaskRequest,
   CreateRepositoryListTaskRequest,
   CreateShadowWorkspaceTaskRequest,
   CreateSvnOperationTaskRequest,
@@ -91,6 +92,12 @@ export function createRepositoryListTask(
   request: CreateRepositoryListTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_repository_list_task", { request });
+}
+
+export function createRepositoryCopyTask(
+  request: CreateRepositoryCopyTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_repository_copy_task", { request });
 }
 
 export function listTasks(): Promise<TaskSnapshot> {
