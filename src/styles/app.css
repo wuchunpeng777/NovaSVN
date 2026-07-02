@@ -1076,6 +1076,133 @@ button {
   font-size: 12px;
 }
 
+.task-workspace-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.task-workspace-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.task-workspace-form label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.task-workspace-form span {
+  color: #637282;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.task-workspace-form input,
+.task-workspace-form select {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  color: #17202a;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.task-workspace-form button,
+.task-workspace-entry button {
+  height: 30px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17202a;
+  cursor: pointer;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.task-workspace-form button {
+  border-color: #5ba9a5;
+  background: #eef8f7;
+  color: #227873;
+}
+
+.task-workspace-form button:disabled {
+  border-color: #cfd7df;
+  background: #f7f9fb;
+  color: #7a8794;
+  cursor: default;
+}
+
+.task-workspace-bound {
+  overflow: hidden;
+  margin: 0;
+  color: #637282;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.task-workspace-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.task-workspace-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 62px;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.task-workspace-entry.active {
+  border-color: #5ba9a5;
+  background: #f2fbfa;
+}
+
+.task-workspace-entry div {
+  min-width: 0;
+}
+
+.task-workspace-entry h3,
+.task-workspace-entry p {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-workspace-entry h3 {
+  font-size: 13px;
+}
+
+.task-workspace-entry p {
+  margin-top: 4px;
+  color: #637282;
+  font-size: 12px;
+}
+
+.task-workspace-entry > span {
+  color: #44515f;
+  font-size: 12px;
+}
+
 .repository-list {
   min-height: 0;
   overflow: auto;

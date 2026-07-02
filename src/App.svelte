@@ -13,6 +13,7 @@
     setCurrentView,
     svnStore,
     taskStore,
+    taskWorkspaceStore,
     workspaceStore,
   } from "./stores/app";
   import type { ChangedFile, CommandError, HealthPayload } from "./types/api";
@@ -318,6 +319,56 @@
     await branchPoolStore.remove(entry);
   }
 
+  async function createTaskWorkspace() {
+    const branchEntry = $branchPoolStore.pool.entries.find(
+      (entry) => entry.id === $taskWorkspaceStore.form.branchPoolEntryId,
+    );
+    if (!branchEntry) {
+      return;
+    }
+
+    const created = await taskWorkspaceStore.createFromBranch(branchEntry);
+    if (created) {
+      taskWorkspaceStore.saveDraft(created, workspaceStore.exportTaskWorkspaceDraft());
+    }
+  }
+
+  async function switchTaskWorkspace(taskId: string) {
+    const nextTask = $taskWorkspaceStore.list.entries.find((entry) => entry.id === taskId);
+    if (!nextTask) {
+      return;
+    }
+
+    const activeTask = $taskWorkspaceStore.list.entries.find(
+      (entry) => entry.id === $taskWorkspaceStore.activeTaskId,
+    );
+    if (activeTask) {
+      taskWorkspaceStore.saveDraft(activeTask, workspaceStore.exportTaskWorkspaceDraft());
+    }
+
+    workspaceStore.setPathInput(nextTask.local_path);
+    await workspaceStore.openPath(
+      $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    );
+    const draft = taskWorkspaceStore.loadDraft(nextTask);
+    workspaceStore.importTaskWorkspaceDraft(draft);
+    setCurrentView("changes");
+  }
+
+  async function removeTaskWorkspace(entryId: string) {
+    const entry = $taskWorkspaceStore.list.entries.find((item) => item.id === entryId);
+    if (!entry) {
+      return;
+    }
+
+    const confirmed = window.confirm(`确定删除任务工作区吗？\n${entry.name}`);
+    if (!confirmed) {
+      return;
+    }
+
+    await taskWorkspaceStore.remove(entry);
+  }
+
   $: if (
     $workspaceStore.pendingCommitTaskId &&
     $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
@@ -505,6 +556,7 @@
     void svnStore.detect();
     void workspaceStore.loadRecent();
     void branchPoolStore.load();
+    void taskWorkspaceStore.load();
   });
 
   onDestroy(() => {
@@ -611,6 +663,11 @@
         branchPoolError={$branchPoolStore.error}
         branchCheckoutError={$branchPoolStore.checkoutError}
         branchCheckoutRunning={$branchPoolStore.pendingCheckoutTaskId !== null}
+        taskWorkspaces={$taskWorkspaceStore.list}
+        taskWorkspaceForm={$taskWorkspaceStore.form}
+        activeTaskWorkspaceId={$taskWorkspaceStore.activeTaskId}
+        taskWorkspaceLoading={$taskWorkspaceStore.loading}
+        taskWorkspaceError={$taskWorkspaceStore.error}
         onChooseWorkspace={() =>
           workspaceStore.chooseAndOpen(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
@@ -652,6 +709,10 @@
         onReuseBranchPoolEntry={reuseBranchPoolEntry}
         onOpenBranchPoolEntry={openBranchPoolEntry}
         onRemoveBranchPoolEntry={removeBranchPoolEntry}
+        onTaskWorkspaceFormInput={taskWorkspaceStore.setFormField}
+        onCreateTaskWorkspace={createTaskWorkspace}
+        onSwitchTaskWorkspace={switchTaskWorkspace}
+        onRemoveTaskWorkspace={removeTaskWorkspace}
       />
       <DetailPanel
         sections={detailSections}

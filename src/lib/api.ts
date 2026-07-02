@@ -22,14 +22,17 @@ import type {
   ParsedDiff,
   RecentWorkspace,
   RemoveBranchPoolEntryRequest,
+  RemoveTaskWorkspaceRequest,
   ScanWorkspaceStatusRequest,
   SaveBranchPoolEntryRequest,
+  SaveTaskWorkspaceRequest,
   SvnDetection,
   SelectedPatch,
   ShadowWorkspaceRequest,
   ShadowWorkspaceStatus,
   Task,
   TaskSnapshot,
+  TaskWorkspaceList,
   WorkingCopyStatus,
   WorkspaceSummary,
 } from "../types/api";
@@ -124,6 +127,22 @@ export function removeBranchPoolEntry(
   request: RemoveBranchPoolEntryRequest,
 ): Promise<BranchPool> {
   return callBackend<BranchPool>("remove_branch_pool_entry", { request });
+}
+
+export function getTaskWorkspaces(): Promise<TaskWorkspaceList> {
+  return callBackend<TaskWorkspaceList>("get_task_workspaces");
+}
+
+export function saveTaskWorkspace(
+  request: SaveTaskWorkspaceRequest,
+): Promise<TaskWorkspaceList> {
+  return callBackend<TaskWorkspaceList>("save_task_workspace", { request });
+}
+
+export function removeTaskWorkspace(
+  request: RemoveTaskWorkspaceRequest,
+): Promise<TaskWorkspaceList> {
+  return callBackend<TaskWorkspaceList>("remove_task_workspace", { request });
 }
 
 export function listTasks(): Promise<TaskSnapshot> {

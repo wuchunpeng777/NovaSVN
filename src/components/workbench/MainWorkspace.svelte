@@ -7,6 +7,7 @@
     CommandError,
     RepositoryCopyKind,
     RepositoryListResult,
+    TaskWorkspaceList,
     WorkingCopyStatus,
     WorkspaceSummary,
   } from "../../types/api";
@@ -88,6 +89,14 @@
   export let branchPoolError: CommandError | null = null;
   export let branchCheckoutError: string | null = null;
   export let branchCheckoutRunning = false;
+  export let taskWorkspaces: TaskWorkspaceList = { entries: [] };
+  export let taskWorkspaceForm = {
+    name: "",
+    branchPoolEntryId: "",
+  };
+  export let activeTaskWorkspaceId: string | null = null;
+  export let taskWorkspaceLoading = false;
+  export let taskWorkspaceError: CommandError | null = null;
   export let onChooseWorkspace: () => void;
   export let onOpenWorkspace: () => void;
   export let onRefreshStatus: () => void;
@@ -128,6 +137,13 @@
   export let onReuseBranchPoolEntry: () => void;
   export let onOpenBranchPoolEntry: (localPath: string) => void;
   export let onRemoveBranchPoolEntry: (entryId: string) => void;
+  export let onTaskWorkspaceFormInput: (
+    field: keyof typeof taskWorkspaceForm,
+    value: string,
+  ) => void;
+  export let onCreateTaskWorkspace: () => void;
+  export let onSwitchTaskWorkspace: (taskId: string) => void;
+  export let onRemoveTaskWorkspace: (taskId: string) => void;
 
   const fileRowHeight = 76;
   const sectionHeaderHeight = 32;
@@ -607,6 +623,9 @@
     (total, entry) => total + entry.local_changes,
     0,
   );
+  $: selectedTaskBranch = branchPool.entries.find(
+    (entry) => entry.id === taskWorkspaceForm.branchPoolEntryId,
+  );
 </script>
 
 <section class="main-workspace" aria-label={view.title}>
@@ -678,7 +697,104 @@
     {/if}
   </section>
 
-  {#if view.id === "branches"}
+  {#if view.id === "staging"}
+    <div class="metric-row">
+      <div class="metric">
+        <span>任务</span>
+        <strong>{taskWorkspaces.entries.length}</strong>
+      </div>
+      <div class="metric">
+        <span>分支池</span>
+        <strong>{branchPool.entries.length}</strong>
+      </div>
+      <div class="metric">
+        <span>已暂存</span>
+        <strong>{stagedFiles.length}</strong>
+      </div>
+      <div class="metric">
+        <span>已审</span>
+        <strong>{reviewedCount}</strong>
+      </div>
+      <div class="metric">
+        <span>当前</span>
+        <strong>{activeTaskWorkspaceId ? "任务" : "无"}</strong>
+      </div>
+    </div>
+
+    <section class="task-workspace-panel" aria-label="任务工作区">
+      <div class="repository-layout-header">
+        <div>
+          <h3>任务工作区</h3>
+          <p>任务保存 NovaSVN 草稿，不影响 SVN 元数据</p>
+        </div>
+      </div>
+
+      <div class="task-workspace-form">
+        <label>
+          <span>任务名称</span>
+          <input
+            type="text"
+            value={taskWorkspaceForm.name}
+            on:input={(event) =>
+              onTaskWorkspaceFormInput(
+                "name",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
+          />
+        </label>
+        <label>
+          <span>绑定分支工作副本</span>
+          <select
+            value={taskWorkspaceForm.branchPoolEntryId}
+            on:change={(event) =>
+              onTaskWorkspaceFormInput(
+                "branchPoolEntryId",
+                (event.currentTarget as HTMLSelectElement).value,
+              )}
+          >
+            <option value="">选择分支工作副本</option>
+            {#each branchPool.entries as entry (entry.id)}
+              <option value={entry.id}>{entry.branch_url}</option>
+            {/each}
+          </select>
+        </label>
+        <button
+          type="button"
+          on:click={onCreateTaskWorkspace}
+          disabled={taskWorkspaceLoading || !taskWorkspaceForm.branchPoolEntryId}
+        >
+          创建任务
+        </button>
+      </div>
+
+      {#if selectedTaskBranch}
+        <p class="task-workspace-bound">{selectedTaskBranch.local_path}</p>
+      {/if}
+      <ErrorNotice error={taskWorkspaceError} />
+    </section>
+
+    <section class="task-workspace-list" aria-label="任务工作区列表">
+      {#if taskWorkspaces.entries.length > 0}
+        {#each taskWorkspaces.entries as entry (entry.id)}
+          <article class="task-workspace-entry" class:active={entry.id === activeTaskWorkspaceId}>
+            <div>
+              <h3>{entry.name}</h3>
+              <p>{entry.branch_url || entry.local_path}</p>
+            </div>
+            <span>{entry.id === activeTaskWorkspaceId ? "当前" : "任务"}</span>
+            <button type="button" on:click={() => onSwitchTaskWorkspace(entry.id)}>
+              切换
+            </button>
+            <button type="button" on:click={() => onRemoveTaskWorkspace(entry.id)}>
+              删除
+            </button>
+          </article>
+        {/each}
+      {:else}
+        <article class="repository-empty">暂无任务工作区</article>
+      {/if}
+    </section>
+  {:else if view.id === "branches"}
     <div class="metric-row">
       <div class="metric">
         <span>池项</span>

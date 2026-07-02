@@ -138,6 +138,34 @@ export interface RemoveBranchPoolEntryRequest {
   id: string;
 }
 
+export interface TaskWorkspaceEntry {
+  id: string;
+  name: string;
+  branch_pool_entry_id: string | null;
+  branch_url: string;
+  local_path: string;
+  draft_key: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface TaskWorkspaceList {
+  entries: TaskWorkspaceEntry[];
+}
+
+export interface SaveTaskWorkspaceRequest {
+  id?: string;
+  name: string;
+  branch_pool_entry_id?: string;
+  branch_url: string;
+  local_path: string;
+  draft_key: string;
+}
+
+export interface RemoveTaskWorkspaceRequest {
+  id: string;
+}
+
 export interface TaskResult {
   repository_list: RepositoryListResult | null;
 }

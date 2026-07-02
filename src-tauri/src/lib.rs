@@ -5,6 +5,7 @@ mod shadow;
 mod staging;
 mod svn;
 mod task;
+mod task_workspace;
 mod workspace;
 
 use branch_pool::{BranchPool, RemoveBranchPoolEntryRequest, SaveBranchPoolEntryRequest};
@@ -18,6 +19,7 @@ use task::{
     CreateRepositoryListTaskRequest, CreateShadowWorkspaceTaskRequest,
     CreateSvnOperationTaskRequest, Task, TaskQueue, TaskSnapshot,
 };
+use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use workspace::{
     FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, OpenWorkspaceRequest,
     RecentWorkspace, ScanWorkspaceStatusRequest, WorkingCopyStatus, WorkspaceSummary,
@@ -157,6 +159,33 @@ fn remove_branch_pool_entry(
 }
 
 #[tauri::command]
+fn get_task_workspaces(app: tauri::AppHandle) -> CommandResult<TaskWorkspaceList> {
+    Ok(CommandResponse::success(
+        task_workspace::read_task_workspaces(&app)?,
+    ))
+}
+
+#[tauri::command]
+fn save_task_workspace(
+    app: tauri::AppHandle,
+    request: SaveTaskWorkspaceRequest,
+) -> CommandResult<TaskWorkspaceList> {
+    Ok(CommandResponse::success(
+        task_workspace::save_task_workspace(&app, request)?,
+    ))
+}
+
+#[tauri::command]
+fn remove_task_workspace(
+    app: tauri::AppHandle,
+    request: RemoveTaskWorkspaceRequest,
+) -> CommandResult<TaskWorkspaceList> {
+    Ok(CommandResponse::success(
+        task_workspace::remove_task_workspace(&app, request)?,
+    ))
+}
+
+#[tauri::command]
 fn list_tasks(queue: tauri::State<'_, TaskQueue>) -> CommandResult<TaskSnapshot> {
     Ok(CommandResponse::success(queue.list_tasks()))
 }
@@ -262,6 +291,9 @@ pub fn run() {
             get_branch_pool,
             save_branch_pool_entry,
             remove_branch_pool_entry,
+            get_task_workspaces,
+            save_task_workspace,
+            remove_task_workspace,
             list_tasks,
             get_task,
             cancel_task,

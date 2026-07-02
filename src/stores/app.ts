@@ -14,6 +14,7 @@ import {
   getFileContentDiff,
   getFileDiff,
   getBranchPool,
+  getTaskWorkspaces,
   generateSelectedPatch,
   getShadowWorkspaceStatus,
   getRecentWorkspace,
@@ -22,8 +23,10 @@ import {
   openWorkspace,
   parseUnifiedDiff,
   removeBranchPoolEntry,
+  removeTaskWorkspace,
   scanWorkspaceStatus,
   saveBranchPoolEntry,
+  saveTaskWorkspace,
 } from "../lib/api";
 import type {
   AppView,
@@ -51,6 +54,8 @@ import type {
   SvnDetection,
   Task,
   TaskSnapshot,
+  TaskWorkspaceEntry,
+  TaskWorkspaceList,
   WorkingCopyStatus,
   WorkspaceSummary,
 } from "../types/api";
@@ -699,6 +704,150 @@ function createBranchPoolStore() {
 }
 
 export const branchPoolStore = createBranchPoolStore();
+
+export interface TaskWorkspaceStoreState {
+  list: TaskWorkspaceList;
+  form: {
+    name: string;
+    branchPoolEntryId: string;
+  };
+  activeTaskId: string | null;
+  loading: boolean;
+  error: CommandError | null;
+}
+
+type TaskWorkspaceDraftSnapshot = ReturnType<typeof buildTaskWorkspaceDraftSnapshot>;
+
+const initialTaskWorkspaceState: TaskWorkspaceStoreState = {
+  list: {
+    entries: [],
+  },
+  form: {
+    name: "",
+    branchPoolEntryId: "",
+  },
+  activeTaskId: null,
+  loading: false,
+  error: null,
+};
+
+function createTaskWorkspaceStore() {
+  const { subscribe, update } = writable<TaskWorkspaceStoreState>(
+    initialTaskWorkspaceState,
+  );
+
+  async function load() {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const list = await getTaskWorkspaces();
+      update((state) => ({
+        ...state,
+        list,
+        loading: false,
+        error: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+    }
+  }
+
+  function setFormField(field: keyof TaskWorkspaceStoreState["form"], value: string) {
+    update((state) => ({
+      ...state,
+      form: {
+        ...state.form,
+        [field]: value,
+      },
+      error: null,
+    }));
+  }
+
+  async function createFromBranch(entry: BranchPoolEntry) {
+    const state = get({ subscribe });
+    const name = state.form.name.trim() || branchNameFromUrl(entry.branch_url);
+    const draftKey = taskWorkspaceDraftKey(entry.id, name);
+    update((current) => ({ ...current, loading: true, error: null }));
+
+    try {
+      const list = await saveTaskWorkspace({
+        name,
+        branch_pool_entry_id: entry.id,
+        branch_url: entry.branch_url,
+        local_path: entry.local_path,
+        draft_key: draftKey,
+      });
+      update((current) => ({
+        ...current,
+        list,
+        form: {
+          ...current.form,
+          name: "",
+        },
+        loading: false,
+        error: null,
+      }));
+      return list.entries.find((item) => item.draft_key === draftKey) ?? null;
+    } catch (error) {
+      update((current) => ({
+        ...current,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
+  async function remove(entry: TaskWorkspaceEntry) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const list = await removeTaskWorkspace({ id: entry.id });
+      removeTaskWorkspaceDraft(entry.draft_key);
+      update((state) => ({
+        ...state,
+        list,
+        activeTaskId: state.activeTaskId === entry.id ? null : state.activeTaskId,
+        loading: false,
+        error: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+    }
+  }
+
+  function saveDraft(entry: TaskWorkspaceEntry, draft: TaskWorkspaceDraftSnapshot) {
+    saveTaskWorkspaceDraft(entry.draft_key, draft);
+  }
+
+  function loadDraft(entry: TaskWorkspaceEntry) {
+    update((state) => ({
+      ...state,
+      activeTaskId: entry.id,
+    }));
+    return loadTaskWorkspaceDraft(entry.draft_key);
+  }
+
+  return {
+    subscribe,
+    load,
+    setFormField,
+    createFromBranch,
+    remove,
+    saveDraft,
+    loadDraft,
+  };
+}
+
+export const taskWorkspaceStore = createTaskWorkspaceStore();
 
 export interface WorkspaceStoreState {
   current: WorkspaceSummary | null;
@@ -1557,6 +1706,40 @@ function createWorkspaceStore() {
     }));
   }
 
+  function exportTaskWorkspaceDraft() {
+    const state = get({ subscribe });
+    return buildTaskWorkspaceDraftSnapshot(state);
+  }
+
+  function importTaskWorkspaceDraft(draft: Partial<WorkspaceDraft>) {
+    update((state) => {
+      const nextState = {
+        ...state,
+        stagedFiles: Array.isArray(draft.stagedFiles)
+          ? draft.stagedFiles.filter(isStagedFileDraft)
+          : [],
+        selectedHunks: Array.isArray(draft.selectedHunks)
+          ? draft.selectedHunks.filter(isSelectedHunkDraft)
+          : [],
+        reviewedFiles: Array.isArray(draft.reviewedFiles)
+          ? draft.reviewedFiles.filter(isReviewedFileState)
+          : [],
+        safetyCheck: {
+          ...emptySafetyCheck(),
+          confirmedWarningIds: Array.isArray(draft.confirmedWarningIds)
+            ? draft.confirmedWarningIds.filter((item): item is string => typeof item === "string")
+            : [],
+        },
+        commitMessage:
+          typeof draft.commitMessage === "string" ? draft.commitMessage : state.commitTemplate,
+        selectedPatch: null,
+        commitError: null,
+      };
+      saveWorkspaceDraftFromState(nextState);
+      return nextState;
+    });
+  }
+
   function clearCommittedFiles(paths: string[]) {
     const committed = new Set(paths);
     update((state) => {
@@ -2009,6 +2192,8 @@ function createWorkspaceStore() {
     markRepositoryCopyTask,
     completeRepositoryCopyTask,
     failRepositoryCopyTask,
+    exportTaskWorkspaceDraft,
+    importTaskWorkspaceDraft,
     clearCommittedFiles,
     clearWorkspaceDraft,
     refreshStatus,
@@ -2055,6 +2240,63 @@ function emptyRepositoryCopyForm() {
     revision: "",
     message: "",
   };
+}
+
+function taskWorkspaceDraftKey(branchPoolEntryId: string, name: string) {
+  const normalizedName = name.trim().replace(/\s+/g, "-").toLowerCase();
+  return `novasvn:task-workspace-draft:${branchPoolEntryId}:${normalizedName}:${Date.now()}`;
+}
+
+function branchNameFromUrl(url: string) {
+  return url.replace(/\/+$/, "").split("/").pop() || "新任务";
+}
+
+function buildTaskWorkspaceDraftSnapshot(state: WorkspaceStoreState) {
+  return {
+    stagedFiles: state.stagedFiles,
+    selectedHunks: state.selectedHunks,
+    reviewedFiles: state.reviewedFiles,
+    confirmedWarningIds: state.safetyCheck.confirmedWarningIds,
+    commitMessage: state.commitMessage,
+    updatedAt: Date.now(),
+  };
+}
+
+function saveTaskWorkspaceDraft(key: string, draft: TaskWorkspaceDraftSnapshot) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(key, JSON.stringify(draft));
+  } catch {
+    // 任务草稿保存失败不影响 SVN 工作副本本身。
+  }
+}
+
+function loadTaskWorkspaceDraft(key: string): Partial<WorkspaceDraft> {
+  if (typeof window === "undefined") {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as Partial<WorkspaceDraft>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function removeTaskWorkspaceDraft(key: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // 删除任务草稿失败不应阻断任务工作区删除。
+  }
 }
 
 function resolveSelectedFilePath(
