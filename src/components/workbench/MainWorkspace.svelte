@@ -9,6 +9,7 @@
   } from "../../types/api";
   import type {
     WorkbenchView,
+    ReviewedFileState,
     WorkspaceGroupMode,
     WorkspaceStageFilter,
   } from "../../types/app";
@@ -23,10 +24,12 @@
   export let groupByStatus = true;
   export let stageFilter: WorkspaceStageFilter = "all";
   export let abnormalOnly = false;
+  export let unreviewedOnly = false;
   export let statusFilters: string[] = [];
   export let groupMode: WorkspaceGroupMode = "status";
   export let selectedFilePath: string | null = null;
   export let stagedFiles: Array<{ path: string; status: string }> = [];
+  export let reviewedFiles: ReviewedFileState[] = [];
   export let statusLoading = false;
   export let statusError: CommandError | null = null;
   export let onChooseWorkspace: () => void;
@@ -37,6 +40,7 @@
   export let onWorkspacePathInput: (value: string) => void;
   export let onSearchTextInput: (value: string) => void;
   export let onToggleGroupByStatus: () => void;
+  export let onToggleUnreviewedOnly: () => void;
   export let onGroupModeChange: (value: WorkspaceGroupMode) => void;
   export let onClearFilters: () => void;
   export let onSelectFile: (path: string) => void;
@@ -117,6 +121,10 @@
     return stagedPaths.has(path);
   }
 
+  function isReviewed(path: string, reviewedPaths = reviewedFilePaths) {
+    return reviewedPaths.has(path);
+  }
+
   function isStageable(file: ChangedFile) {
     return !["missing", "conflicted", "obstructed"].includes(file.status);
   }
@@ -126,8 +134,10 @@
     search: string,
     currentStageFilter: WorkspaceStageFilter,
     currentAbnormalOnly: boolean,
+    currentUnreviewedOnly: boolean,
     currentStatusFilters: string[],
     stagedPaths: Set<string>,
+    reviewedPaths: Set<string>,
   ) {
     const selectedStatuses = new Set(currentStatusFilters);
     return files.filter((file) => {
@@ -144,6 +154,10 @@
       }
 
       if (currentAbnormalOnly && !file.abnormal) {
+        return false;
+      }
+
+      if (currentUnreviewedOnly && isReviewed(file.path, reviewedPaths)) {
         return false;
       }
 
@@ -403,13 +417,16 @@
   $: changedFiles = workingCopyStatus?.files ?? [];
   $: normalizedSearch = searchText.trim().toLowerCase();
   $: stagedFilePaths = new Set(stagedFiles.map((file) => file.path));
+  $: reviewedFilePaths = new Set(reviewedFiles.map((file) => file.path));
   $: filteredFiles = filterFiles(
     changedFiles,
     normalizedSearch,
     stageFilter,
     abnormalOnly,
+    unreviewedOnly,
     statusFilters,
     stagedFilePaths,
+    reviewedFilePaths,
   );
   $: stagedVisibleFiles = filteredFiles.filter((file) => isStaged(file.path, stagedFilePaths));
   $: unstagedVisibleFiles = filteredFiles.filter((file) => !isStaged(file.path, stagedFilePaths));
@@ -436,6 +453,8 @@
     (workingCopyStatus?.missing ?? 0) +
     (workingCopyStatus?.conflicted ?? 0) +
     (workingCopyStatus?.obstructed ?? 0);
+  $: reviewedCount = changedFiles.filter((file) => isReviewed(file.path)).length;
+  $: unreviewedCount = Math.max(changedFiles.length - reviewedCount, 0);
 </script>
 
 <section class="main-workspace" aria-label={view.title}>
@@ -524,6 +543,10 @@
       <span>异常</span>
       <strong>{abnormalCount}</strong>
     </div>
+    <div class="metric">
+      <span>未审</span>
+      <strong>{unreviewedCount}</strong>
+    </div>
   </div>
 
   <section class="changes-toolbar">
@@ -559,7 +582,15 @@
       类型
     </button>
     <button type="button" on:click={onClearFilters}>清空过滤</button>
+    <button
+      type="button"
+      class:active={unreviewedOnly}
+      on:click={onToggleUnreviewedOnly}
+    >
+      未审
+    </button>
     <span>异常 {abnormalCount}</span>
+    <span>未审 {unreviewedCount}</span>
     <span>显示 {filteredFiles.length}/{changedFiles.length}</span>
   </section>
 
@@ -612,6 +643,9 @@
                   <p>{statusMeta(item.file)}</p>
                 </div>
                 <span>{labelStatus(item.file.status)}</span>
+                <span class="review-badge" class:reviewed={isReviewed(item.file.path)}>
+                  {isReviewed(item.file.path) ? "已审" : "未审"}
+                </span>
                 {#if item.staged}
                   <button
                     type="button"

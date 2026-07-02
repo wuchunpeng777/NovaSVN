@@ -14,18 +14,21 @@
     staged: 0,
     unstaged: 0,
     abnormal: 0,
+    unreviewed: 0,
     statuses: [],
   };
   export let stageFilter: WorkspaceStageFilter = "all";
   export let abnormalOnly = false;
+  export let unreviewedOnly = false;
   export let statusFilters: string[] = [];
   export let onStageFilter: (value: WorkspaceStageFilter) => void;
   export let onToggleAbnormalOnly: () => void;
+  export let onToggleUnreviewedOnly: () => void;
   export let onToggleStatusFilter: (status: string) => void;
   export let onClearFilters: () => void;
 
   $: hasActiveFilters =
-    stageFilter !== "all" || abnormalOnly || statusFilters.length > 0;
+    stageFilter !== "all" || abnormalOnly || unreviewedOnly || statusFilters.length > 0;
 </script>
 
 <aside class="sidebar" aria-label="主导航">
@@ -77,6 +80,10 @@
     <button type="button" class:active={abnormalOnly} on:click={onToggleAbnormalOnly}>
       <span>异常状态</span>
       <small>{filterStats.abnormal}</small>
+    </button>
+    <button type="button" class:active={unreviewedOnly} on:click={onToggleUnreviewedOnly}>
+      <span>未审文件</span>
+      <small>{filterStats.unreviewed}</small>
     </button>
 
     {#if filterStats.statuses.length > 0}

@@ -329,7 +329,7 @@ button {
 
 .metric-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -435,6 +435,16 @@ button {
   color: #227873;
   padding: 4px 8px;
   font-size: 12px;
+}
+
+.review-badge {
+  background: #fff6e8;
+  color: #8a5a18;
+}
+
+.review-badge.reviewed {
+  background: #edf1f7;
+  color: #4c5f75;
 }
 
 .work-row[role="button"],
@@ -556,7 +566,7 @@ button {
 
 .changes-toolbar {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) repeat(6, auto) auto auto;
+  grid-template-columns: minmax(160px, 1fr) repeat(7, auto) auto auto auto;
   align-items: center;
   gap: 8px;
   border: 1px solid #d7dde3;
@@ -623,6 +633,12 @@ button {
 .diff-actions {
   display: flex;
   gap: 5px;
+}
+
+.detail-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
 }
 
 .diff-actions button.active {

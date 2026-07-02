@@ -110,6 +110,7 @@ export interface ChangedFile {
   property_status: string | null;
   property_changed: boolean;
   abnormal: boolean;
+  content_digest: string;
 }
 
 export interface WorkingCopyStatus {

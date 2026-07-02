@@ -14,6 +14,7 @@
   export let commandError: CommandError | null = null;
   export let backendMessage = "";
   export let selectedFile: ChangedFile | null = null;
+  export let selectedFileReviewed = false;
   export let selectedFileDiff: FileDiff | null = null;
   export let selectedFileContentDiff: FileContentDiff | null = null;
   export let diffLoading = false;
@@ -28,6 +29,8 @@
   export let onDetectSvnWithInput: () => void;
   export let onSvnExecutableInput: (value: string) => void;
   export let onRevertFile: (path: string) => void;
+  export let onMarkFileReviewed: (path: string) => void;
+  export let onMarkFileUnreviewed: (path: string) => void;
 
   let inlineDiff = false;
   let showWhitespace = false;
@@ -90,9 +93,32 @@
   <section class="detail-block">
     <div class="detail-heading">
       <h3>文件详情</h3>
-      <button type="button" on:click={() => selectedFile && onRevertFile(selectedFile.path)} disabled={!selectedFile}>
-        撤销文件
-      </button>
+      <div class="detail-actions">
+        {#if selectedFileReviewed}
+          <button
+            type="button"
+            on:click={() => selectedFile && onMarkFileUnreviewed(selectedFile.path)}
+            disabled={!selectedFile}
+          >
+            标为未审
+          </button>
+        {:else}
+          <button
+            type="button"
+            on:click={() => selectedFile && onMarkFileReviewed(selectedFile.path)}
+            disabled={!selectedFile}
+          >
+            标为已审
+          </button>
+        {/if}
+        <button
+          type="button"
+          on:click={() => selectedFile && onRevertFile(selectedFile.path)}
+          disabled={!selectedFile}
+        >
+          撤销文件
+        </button>
+      </div>
     </div>
     {#if selectedFile}
       <dl class="info-list">
@@ -111,6 +137,10 @@
         <div>
           <dt>异常</dt>
           <dd>{selectedFile.abnormal ? "是" : "否"}</dd>
+        </div>
+        <div>
+          <dt>审查</dt>
+          <dd>{selectedFileReviewed ? "已审" : "未审"}</dd>
         </div>
       </dl>
     {:else}

@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::Read,
+    io::{BufReader, Read},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -64,6 +64,7 @@ pub struct ChangedFile {
     pub property_status: Option<String>,
     pub property_changed: bool,
     pub abnormal: bool,
+    pub content_digest: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -531,12 +532,16 @@ fn parse_svn_status_xml(
             .map(|value| value != "none" && value != "normal")
             .unwrap_or(false);
 
+        let display_path = display_status_path(raw_path, working_copy_root);
+        let target_path = status_target_path(raw_path, working_copy_root);
+
         files.push(ChangedFile {
-            path: display_status_path(raw_path, working_copy_root),
+            path: display_path,
             status: normalize_status(&item),
             property_status: props,
             property_changed,
             abnormal: is_abnormal_status(&item),
+            content_digest: changed_file_digest(&target_path, &item),
         });
     }
 
@@ -598,6 +603,58 @@ fn display_status_path(raw_path: &str, working_copy_root: &Path) -> String {
         .filter(|value| !value.is_empty())
         .map(|value| value.replace('\\', "/"))
         .unwrap_or_else(|| raw_path.to_string())
+}
+
+fn status_target_path(raw_path: &str, working_copy_root: &Path) -> PathBuf {
+    let path = PathBuf::from(raw_path);
+    if path.is_absolute() {
+        path
+    } else {
+        working_copy_root.join(path)
+    }
+}
+
+fn changed_file_digest(path: &Path, status: &str) -> String {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => metadata,
+        Ok(metadata) => {
+            return format!("meta:{status}:dir:{}", metadata.len());
+        }
+        Err(_) => {
+            return format!("meta:{status}:missing");
+        }
+    };
+
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => {
+            return format!("meta:{status}:unreadable:{}", metadata.len());
+        }
+    };
+
+    let mut reader = BufReader::new(file);
+    let mut buffer = [0_u8; 8192];
+    let mut hash = 0xcbf29ce484222325_u64;
+
+    loop {
+        let read = match reader.read(&mut buffer) {
+            Ok(read) => read,
+            Err(_) => {
+                return format!("meta:{status}:read-error:{}", metadata.len());
+            }
+        };
+
+        if read == 0 {
+            break;
+        }
+
+        for byte in &buffer[..read] {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+
+    format!("fnv64:{status}:{}:{hash:016x}", metadata.len())
 }
 
 fn normalize_workspace_path(path: &str) -> Result<PathBuf, NovaError> {

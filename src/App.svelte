@@ -24,7 +24,15 @@
   $: sidebarFilterStats = buildSidebarFilterStats(
     $workspaceStore.status?.files ?? [],
     $workspaceStore.stagedFiles,
+    $workspaceStore.reviewedFiles,
   );
+  $: selectedFile =
+    $workspaceStore.status?.files.find(
+      (file) => file.path === $workspaceStore.selectedFilePath,
+    ) ?? null;
+  $: selectedFileReviewed =
+    selectedFile !== null &&
+    $workspaceStore.reviewedFiles.some((file) => file.path === selectedFile.path);
 
   async function pingBackend() {
     commandError = null;
@@ -166,8 +174,10 @@
   function buildSidebarFilterStats(
     files: ChangedFile[],
     stagedFiles: Array<{ path: string; status: string }>,
+    reviewedFiles: Array<{ path: string }>,
   ): SidebarFilterStats {
     const stagedPaths = new Set(stagedFiles.map((file) => file.path));
+    const reviewedPaths = new Set(reviewedFiles.map((file) => file.path));
     const statusCounts = new Map<string, number>();
 
     for (const file of files) {
@@ -179,6 +189,7 @@
       staged: files.filter((file) => stagedPaths.has(file.path)).length,
       unstaged: files.filter((file) => !stagedPaths.has(file.path)).length,
       abnormal: files.filter((file) => file.abnormal).length,
+      unreviewed: files.filter((file) => !reviewedPaths.has(file.path)).length,
       statuses: Array.from(statusCounts.entries()).map(([status, count]) => ({
         status,
         label: statusLabels[status] ?? status,
@@ -195,10 +206,12 @@
     filterStats={sidebarFilterStats}
     stageFilter={$workspaceStore.stageFilter}
     abnormalOnly={$workspaceStore.abnormalOnly}
+    unreviewedOnly={$workspaceStore.unreviewedOnly}
     statusFilters={$workspaceStore.statusFilters}
     onSelect={setCurrentView}
     onStageFilter={workspaceStore.setStageFilter}
     onToggleAbnormalOnly={workspaceStore.toggleAbnormalOnly}
+    onToggleUnreviewedOnly={workspaceStore.toggleUnreviewedOnly}
     onToggleStatusFilter={workspaceStore.toggleStatusFilter}
     onClearFilters={workspaceStore.clearFilters}
   />
@@ -223,10 +236,12 @@
         groupByStatus={$workspaceStore.groupByStatus}
         stageFilter={$workspaceStore.stageFilter}
         abnormalOnly={$workspaceStore.abnormalOnly}
+        unreviewedOnly={$workspaceStore.unreviewedOnly}
         statusFilters={$workspaceStore.statusFilters}
         groupMode={$workspaceStore.groupMode}
         selectedFilePath={$workspaceStore.selectedFilePath}
         stagedFiles={$workspaceStore.stagedFiles}
+        reviewedFiles={$workspaceStore.reviewedFiles}
         statusLoading={$workspaceStore.statusLoading}
         statusError={$workspaceStore.statusError}
         onChooseWorkspace={() =>
@@ -246,6 +261,7 @@
         onWorkspacePathInput={workspaceStore.setPathInput}
         onSearchTextInput={workspaceStore.setSearchText}
         onToggleGroupByStatus={workspaceStore.toggleGroupByStatus}
+        onToggleUnreviewedOnly={workspaceStore.toggleUnreviewedOnly}
         onGroupModeChange={workspaceStore.setGroupMode}
         onClearFilters={workspaceStore.clearFilters}
         onSelectFile={(path) =>
@@ -257,27 +273,28 @@
         onUnstageFile={workspaceStore.unstageFile}
       />
       <DetailPanel
-      sections={detailSections}
-      commandError={commandError}
-      backendMessage={backendMessage}
-      selectedFile={$workspaceStore.status?.files.find(
-        (file) => file.path === $workspaceStore.selectedFilePath,
-      ) ?? null}
-      selectedFileDiff={$workspaceStore.selectedFileDiff}
-      selectedFileContentDiff={$workspaceStore.selectedFileContentDiff}
-      diffLoading={$workspaceStore.diffLoading}
-      contentDiffLoading={$workspaceStore.contentDiffLoading}
-      diffError={$workspaceStore.diffError}
-      contentDiffError={$workspaceStore.contentDiffError}
-      svnDetection={$svnStore.detection}
-      svnError={$svnStore.error}
-      svnExecutableInput={$svnStore.executableInput}
-      svnLoading={$svnStore.loading}
-      onDetectSvn={svnStore.detect}
-      onDetectSvnWithInput={svnStore.detectWithInput}
-      onSvnExecutableInput={svnStore.setExecutableInput}
-      onRevertFile={(path) => runSvnOperation("revert_file", path)}
-    />
+        sections={detailSections}
+        commandError={commandError}
+        backendMessage={backendMessage}
+        selectedFile={selectedFile}
+        selectedFileReviewed={selectedFileReviewed}
+        selectedFileDiff={$workspaceStore.selectedFileDiff}
+        selectedFileContentDiff={$workspaceStore.selectedFileContentDiff}
+        diffLoading={$workspaceStore.diffLoading}
+        contentDiffLoading={$workspaceStore.contentDiffLoading}
+        diffError={$workspaceStore.diffError}
+        contentDiffError={$workspaceStore.contentDiffError}
+        svnDetection={$svnStore.detection}
+        svnError={$svnStore.error}
+        svnExecutableInput={$svnStore.executableInput}
+        svnLoading={$svnStore.loading}
+        onDetectSvn={svnStore.detect}
+        onDetectSvnWithInput={svnStore.detectWithInput}
+        onSvnExecutableInput={svnStore.setExecutableInput}
+        onRevertFile={(path) => runSvnOperation("revert_file", path)}
+        onMarkFileReviewed={workspaceStore.markFileReviewed}
+        onMarkFileUnreviewed={workspaceStore.markFileUnreviewed}
+      />
     </div>
 
     <BottomPanel

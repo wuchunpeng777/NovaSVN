@@ -14,7 +14,12 @@ import {
   openWorkspace,
   scanWorkspaceStatus,
 } from "../lib/api";
-import type { AppView, WorkspaceGroupMode, WorkspaceStageFilter } from "../types/app";
+import type {
+  AppView,
+  ReviewedFileState,
+  WorkspaceGroupMode,
+  WorkspaceStageFilter,
+} from "../types/app";
 import type {
   ChangedFile,
   CommandError,
@@ -313,6 +318,7 @@ export interface WorkspaceStoreState {
   groupByStatus: boolean;
   stageFilter: WorkspaceStageFilter;
   abnormalOnly: boolean;
+  unreviewedOnly: boolean;
   statusFilters: string[];
   groupMode: WorkspaceGroupMode;
   selectedFilePath: string | null;
@@ -322,6 +328,7 @@ export interface WorkspaceStoreState {
     path: string;
     status: string;
   }>;
+  reviewedFiles: ReviewedFileState[];
   commitMessage: string;
   commitError: string | null;
   pendingCommitTaskId: string | null;
@@ -345,12 +352,14 @@ const initialWorkspaceState: WorkspaceStoreState = {
   groupByStatus: true,
   stageFilter: "all",
   abnormalOnly: false,
+  unreviewedOnly: false,
   statusFilters: [],
   groupMode: "status",
   selectedFilePath: null,
   selectedFileDiff: null,
   selectedFileContentDiff: null,
   stagedFiles: [],
+  reviewedFiles: [],
   commitMessage: "",
   commitError: null,
   pendingCommitTaskId: null,
@@ -376,6 +385,7 @@ function createWorkspaceStore() {
     try {
       const recent = await getRecentWorkspace();
       const root = recent.workspace?.working_copy_root;
+      const reviewedFiles = recent.workspace ? loadReviewedFiles(recent.workspace) : [];
       update((state) => ({
         ...state,
         current: recent.workspace,
@@ -384,6 +394,7 @@ function createWorkspaceStore() {
         selectedFileDiff: null,
         selectedFileContentDiff: null,
         stagedFiles: [],
+        reviewedFiles,
         commitMessage: "",
         commitError: null,
         pendingCommitTaskId: null,
@@ -419,6 +430,7 @@ function createWorkspaceStore() {
         path,
         svn_executable: svnExecutable || undefined,
       });
+      const reviewedFiles = loadReviewedFiles(current);
       update((state) => ({
         ...state,
         current,
@@ -427,6 +439,7 @@ function createWorkspaceStore() {
         selectedFileDiff: null,
         selectedFileContentDiff: null,
         stagedFiles: [],
+        reviewedFiles,
         commitMessage: "",
         commitError: null,
         pendingCommitTaskId: null,
@@ -512,6 +525,13 @@ function createWorkspaceStore() {
     }));
   }
 
+  function toggleUnreviewedOnly() {
+    update((state) => ({
+      ...state,
+      unreviewedOnly: !state.unreviewedOnly,
+    }));
+  }
+
   function toggleStatusFilter(status: string) {
     update((state) => {
       const selected = new Set(state.statusFilters);
@@ -542,6 +562,7 @@ function createWorkspaceStore() {
       searchText: "",
       stageFilter: "all",
       abnormalOnly: false,
+      unreviewedOnly: false,
       statusFilters: [],
     }));
   }
@@ -588,6 +609,43 @@ function createWorkspaceStore() {
       stagedFiles: state.stagedFiles.filter((file) => file.path !== path),
       commitError: null,
     }));
+  }
+
+  function markFileReviewed(path: string) {
+    update((state) => {
+      const file = state.status?.files.find((item) => item.path === path);
+      if (!state.current || !file) {
+        return state;
+      }
+
+      const nextReviewedFiles = upsertReviewedFile(state.reviewedFiles, {
+        path: file.path,
+        contentDigest: file.content_digest,
+        reviewedAt: Date.now(),
+      });
+      saveReviewedFiles(state.current, nextReviewedFiles);
+
+      return {
+        ...state,
+        reviewedFiles: nextReviewedFiles,
+      };
+    });
+  }
+
+  function markFileUnreviewed(path: string) {
+    update((state) => {
+      if (!state.current) {
+        return state;
+      }
+
+      const nextReviewedFiles = state.reviewedFiles.filter((file) => file.path !== path);
+      saveReviewedFiles(state.current, nextReviewedFiles);
+
+      return {
+        ...state,
+        reviewedFiles: nextReviewedFiles,
+      };
+    });
   }
 
   function validateStagedFilesForCommit() {
@@ -694,6 +752,7 @@ function createWorkspaceStore() {
         selectedFileContentDiff:
           selectedFilePath === state.selectedFilePath ? state.selectedFileContentDiff : null,
         stagedFiles: reconcileStagedFiles(state.stagedFiles, status.files),
+        reviewedFiles: reconcileReviewedFiles(state.reviewedFiles, status.files, state.current),
         statusLoading: false,
         statusError: null,
       }));
@@ -820,12 +879,15 @@ function createWorkspaceStore() {
     toggleGroupByStatus,
     setStageFilter,
     toggleAbnormalOnly,
+    toggleUnreviewedOnly,
     toggleStatusFilter,
     setGroupMode,
     clearFilters,
     selectFile,
     stageFile,
     unstageFile,
+    markFileReviewed,
+    markFileUnreviewed,
     validateStagedFilesForCommit,
     markCommitTask,
     markSvnOperationTask,
@@ -861,4 +923,88 @@ function reconcileStagedFiles(
     const current = currentFiles.find((file) => file.path === stagedFile.path);
     return current && current.status === stagedFile.status && isStageable(current);
   });
+}
+
+function upsertReviewedFile(
+  reviewedFiles: ReviewedFileState[],
+  reviewedFile: ReviewedFileState,
+) {
+  return [
+    ...reviewedFiles.filter((file) => file.path !== reviewedFile.path),
+    reviewedFile,
+  ];
+}
+
+function reconcileReviewedFiles(
+  reviewedFiles: ReviewedFileState[],
+  currentFiles: ChangedFile[],
+  workspace: WorkspaceSummary | null,
+) {
+  const nextReviewedFiles = reviewedFiles.filter((reviewedFile) => {
+    const current = currentFiles.find((file) => file.path === reviewedFile.path);
+    return current && current.content_digest === reviewedFile.contentDigest;
+  });
+
+  if (workspace && nextReviewedFiles.length !== reviewedFiles.length) {
+    saveReviewedFiles(workspace, nextReviewedFiles);
+  }
+
+  return nextReviewedFiles;
+}
+
+function reviewedStorageKey(workspace: WorkspaceSummary) {
+  return `novasvn:reviewed-files:${workspace.working_copy_root}:${workspace.repository_url}`;
+}
+
+function loadReviewedFiles(workspace: WorkspaceSummary) {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(reviewedStorageKey(workspace));
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.filter(isReviewedFileState);
+  } catch {
+    return [];
+  }
+}
+
+function saveReviewedFiles(
+  workspace: WorkspaceSummary,
+  reviewedFiles: ReviewedFileState[],
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      reviewedStorageKey(workspace),
+      JSON.stringify(reviewedFiles),
+    );
+  } catch {
+    // 本地持久化失败不应阻断工作副本操作。
+  }
+}
+
+function isReviewedFileState(value: unknown): value is ReviewedFileState {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Partial<ReviewedFileState>;
+  return (
+    typeof candidate.path === "string" &&
+    typeof candidate.contentDigest === "string" &&
+    typeof candidate.reviewedAt === "number"
+  );
 }

@@ -40,9 +40,16 @@ export interface SidebarFilterStats {
   staged: number;
   unstaged: number;
   abnormal: number;
+  unreviewed: number;
   statuses: Array<{
     status: string;
     label: string;
     count: number;
   }>;
+}
+
+export interface ReviewedFileState {
+  path: string;
+  contentDigest: string;
+  reviewedAt: number;
 }
