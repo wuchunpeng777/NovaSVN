@@ -42,8 +42,12 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 - Status Scan: `scan_workspace_status` command 执行 `svn status --xml <working_copy_root>`，返回 `WorkingCopyStatus` 和 `ChangedFile`。
 - Status UI: 主工作区显示状态统计和虚拟化文件状态列表，打开工作副本后会自动扫描，也支持手动刷新。
 - Status Limit: 当前状态扫描返回前 500 项，保留 offset/limit 扩展字段；后续更大规模数据需要分页/全量扫描能力配合。
-- Changes List: 本地改动列表在前端基于 `workspaceStore.status.files` 派生，支持路径搜索、按状态分组、已暂存/未暂存分区、选中文件和虚拟滚动。
-- Virtual List: 中间改动列表由 `MainWorkspace.svelte` 构建扁平虚拟行模型，分区标题、状态标题、空状态和文件行共享同一个滚动容器。
+- Changes List: 本地改动列表在前端基于 `workspaceStore.status.files` 派生，支持路径搜索、暂存过滤、异常过滤、状态过滤、已暂存/未暂存分区、选中文件和虚拟滚动。
+- Filter State: 工作区过滤状态保存在 `workspaceStore`，包括 `stageFilter`、`abnormalOnly`、`statusFilters` 和 `groupMode`，并提供清空过滤操作。
+- Sidebar Filters: 左侧过滤器展示未暂存、已暂存、异常和各 SVN 状态数量，按钮会同步当前过滤激活状态。
+- Group Modes: 中间改动列表支持按状态、目录和文件类型分组；分组模式只影响前端当前扫描结果，不改变后端 SVN 扫描接口。
+- Virtual List: 中间改动列表由 `MainWorkspace.svelte` 构建扁平虚拟行模型，分区标题、分组标题、空状态和文件行共享同一个滚动容器。
+- Group Collapse: 分组折叠状态保存在 `MainWorkspace.svelte` 组件运行态，并作为显式参数传入虚拟行构建，避免 Svelte 响应式依赖遗漏。
 - Virtual Row Height: 虚拟列表文件行高度固定为 76px，文件行内部视觉高度为 68px；后续修改行高时必须同步虚拟高度常量和 CSS。
 - Virtual Selection: 文件选择状态仍由 `workspaceStore.selectedFilePath` 管理；列表方向键上下选择只移动当前过滤后可见文件，并滚动选中项到可见区域。
 - Selected File: 当前选中文件路径保存在 `workspaceStore.selectedFilePath`，右侧详情区展示选中文件摘要，后续 diff 可复用该选择状态。

@@ -5,6 +5,10 @@ export type AppView =
   | "branches"
   | "repository";
 
+export type WorkspaceStageFilter = "all" | "staged" | "unstaged";
+
+export type WorkspaceGroupMode = "status" | "directory" | "extension";
+
 export interface NavigationItem {
   id: AppView;
   label: string;
@@ -28,5 +32,17 @@ export interface WorkbenchView {
     title: string;
     meta: string;
     status: string;
+  }>;
+}
+
+export interface SidebarFilterStats {
+  total: number;
+  staged: number;
+  unstaged: number;
+  abnormal: number;
+  statuses: Array<{
+    status: string;
+    label: string;
+    count: number;
   }>;
 }

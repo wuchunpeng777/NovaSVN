@@ -7,7 +7,11 @@
     WorkingCopyStatus,
     WorkspaceSummary,
   } from "../../types/api";
-  import type { WorkbenchView } from "../../types/app";
+  import type {
+    WorkbenchView,
+    WorkspaceGroupMode,
+    WorkspaceStageFilter,
+  } from "../../types/app";
 
   export let view: WorkbenchView;
   export let workspace: WorkspaceSummary | null = null;
@@ -17,6 +21,10 @@
   export let workingCopyStatus: WorkingCopyStatus | null = null;
   export let searchText = "";
   export let groupByStatus = true;
+  export let stageFilter: WorkspaceStageFilter = "all";
+  export let abnormalOnly = false;
+  export let statusFilters: string[] = [];
+  export let groupMode: WorkspaceGroupMode = "status";
   export let selectedFilePath: string | null = null;
   export let stagedFiles: Array<{ path: string; status: string }> = [];
   export let statusLoading = false;
@@ -29,6 +37,8 @@
   export let onWorkspacePathInput: (value: string) => void;
   export let onSearchTextInput: (value: string) => void;
   export let onToggleGroupByStatus: () => void;
+  export let onGroupModeChange: (value: WorkspaceGroupMode) => void;
+  export let onClearFilters: () => void;
   export let onSelectFile: (path: string) => void;
   export let onStageFile: (path: string) => void;
   export let onUnstageFile: (path: string) => void;
@@ -50,7 +60,8 @@
   };
 
   type FileGroup = {
-    status: string;
+    key: string;
+    label: string;
     files: ChangedFile[];
   };
 
@@ -64,8 +75,10 @@
     | {
         kind: "status";
         key: string;
+        groupKey: string;
         height: number;
         title: string;
+        collapsed: boolean;
       }
     | {
         kind: "empty";
@@ -88,6 +101,7 @@
   let virtualListElement: HTMLDivElement | null = null;
   let virtualScrollTop = 0;
   let virtualViewportHeight = 0;
+  let collapsedGroups = new Set<string>();
 
   function labelStatus(status: string) {
     return statusLabels[status] ?? status;
@@ -99,12 +113,46 @@
       : file.path;
   }
 
-  function isStaged(path: string) {
-    return stagedFiles.some((file) => file.path === path);
+  function isStaged(path: string, stagedPaths = stagedFilePaths) {
+    return stagedPaths.has(path);
   }
 
   function isStageable(file: ChangedFile) {
     return !["missing", "conflicted", "obstructed"].includes(file.status);
+  }
+
+  function filterFiles(
+    files: ChangedFile[],
+    search: string,
+    currentStageFilter: WorkspaceStageFilter,
+    currentAbnormalOnly: boolean,
+    currentStatusFilters: string[],
+    stagedPaths: Set<string>,
+  ) {
+    const selectedStatuses = new Set(currentStatusFilters);
+    return files.filter((file) => {
+      if (search && !file.path.toLowerCase().includes(search)) {
+        return false;
+      }
+
+      if (currentStageFilter === "staged" && !isStaged(file.path, stagedPaths)) {
+        return false;
+      }
+
+      if (currentStageFilter === "unstaged" && isStaged(file.path, stagedPaths)) {
+        return false;
+      }
+
+      if (currentAbnormalOnly && !file.abnormal) {
+        return false;
+      }
+
+      if (selectedStatuses.size > 0 && !selectedStatuses.has(file.status)) {
+        return false;
+      }
+
+      return true;
+    });
   }
 
   function handleRowKeydown(event: KeyboardEvent, path: string) {
@@ -179,19 +227,60 @@
     }
   }
 
-  function buildGroups(files: ChangedFile[]) {
+  function buildGroups(files: ChangedFile[], mode: WorkspaceGroupMode) {
     const groups: FileGroup[] = [];
 
     for (const file of files) {
-      let group = groups.find((item) => item.status === file.status);
+      const key = getGroupKey(file, mode);
+      let group = groups.find((item) => item.key === key);
       if (!group) {
-        group = { status: file.status, files: [] };
+        group = { key, label: getGroupLabel(file, mode), files: [] };
         groups.push(group);
       }
       group.files.push(file);
     }
 
     return groups;
+  }
+
+  function getGroupKey(file: ChangedFile, mode: WorkspaceGroupMode) {
+    if (mode === "directory") {
+      const directory = getDirectoryName(file.path);
+      return `directory:${directory}`;
+    }
+
+    if (mode === "extension") {
+      const extension = getFileExtension(file.path);
+      return `extension:${extension}`;
+    }
+
+    return `status:${file.status}`;
+  }
+
+  function getGroupLabel(file: ChangedFile, mode: WorkspaceGroupMode) {
+    if (mode === "directory") {
+      return getDirectoryName(file.path);
+    }
+
+    if (mode === "extension") {
+      return getFileExtension(file.path);
+    }
+
+    return labelStatus(file.status);
+  }
+
+  function getDirectoryName(path: string) {
+    const normalizedPath = path.replaceAll("\\", "/");
+    const index = normalizedPath.lastIndexOf("/");
+    return index > 0 ? normalizedPath.slice(0, index) : "根目录";
+  }
+
+  function getFileExtension(path: string) {
+    const fileName = path.replaceAll("\\", "/").split("/").pop() ?? path;
+    const index = fileName.lastIndexOf(".");
+    return index > 0 && index < fileName.length - 1
+      ? fileName.slice(index + 1).toLowerCase()
+      : "无扩展名";
   }
 
   function appendFileItems(items: VirtualItem[], files: ChangedFile[], staged: boolean) {
@@ -210,15 +299,21 @@
     items: VirtualItem[],
     groups: FileGroup[],
     staged: boolean,
+    currentCollapsedGroups: Set<string>,
   ) {
     for (const group of groups) {
+      const scopedGroupKey = `${staged ? "staged" : "unstaged"}:${group.key}`;
       items.push({
         kind: "status",
-        key: `${staged ? "staged" : "unstaged"}:status:${group.status}`,
+        key: `${staged ? "staged" : "unstaged"}:group:${group.key}`,
+        groupKey: scopedGroupKey,
         height: statusHeaderHeight,
-        title: `${labelStatus(group.status)} · ${group.files.length}`,
+        title: `${group.label} · ${group.files.length}`,
+        collapsed: currentCollapsedGroups.has(scopedGroupKey),
       });
-      appendFileItems(items, group.files, staged);
+      if (!currentCollapsedGroups.has(scopedGroupKey)) {
+        appendFileItems(items, group.files, staged);
+      }
     }
   }
 
@@ -228,6 +323,7 @@
     unstagedFilesInView: ChangedFile[],
     unstagedGroupsInView: FileGroup[],
     shouldGroupByStatus: boolean,
+    currentCollapsedGroups: Set<string>,
   ) {
     const items: VirtualItem[] = [];
 
@@ -246,7 +342,7 @@
         title: "暂无已暂存文件",
       });
     } else if (shouldGroupByStatus) {
-      appendGroupedFileItems(items, stagedGroupsInView, true);
+      appendGroupedFileItems(items, stagedGroupsInView, true, currentCollapsedGroups);
     } else {
       appendFileItems(items, stagedFilesInView, true);
     }
@@ -266,7 +362,7 @@
         title: "暂无未暂存文件",
       });
     } else if (shouldGroupByStatus) {
-      appendGroupedFileItems(items, unstagedGroupsInView, false);
+      appendGroupedFileItems(items, unstagedGroupsInView, false, currentCollapsedGroups);
     } else {
       appendFileItems(items, unstagedFilesInView, false);
     }
@@ -295,21 +391,37 @@
     return items.filter((item) => item.top + item.height >= start && item.top <= end);
   }
 
+  function toggleGroupCollapse(key: string) {
+    collapsedGroups = new Set(collapsedGroups);
+    if (collapsedGroups.has(key)) {
+      collapsedGroups.delete(key);
+    } else {
+      collapsedGroups.add(key);
+    }
+  }
+
   $: changedFiles = workingCopyStatus?.files ?? [];
   $: normalizedSearch = searchText.trim().toLowerCase();
-  $: filteredFiles = normalizedSearch
-    ? changedFiles.filter((file) => file.path.toLowerCase().includes(normalizedSearch))
-    : changedFiles;
-  $: stagedVisibleFiles = filteredFiles.filter((file) => isStaged(file.path));
-  $: unstagedVisibleFiles = filteredFiles.filter((file) => !isStaged(file.path));
-  $: groupedStagedFiles = buildGroups(stagedVisibleFiles);
-  $: groupedUnstagedFiles = buildGroups(unstagedVisibleFiles);
+  $: stagedFilePaths = new Set(stagedFiles.map((file) => file.path));
+  $: filteredFiles = filterFiles(
+    changedFiles,
+    normalizedSearch,
+    stageFilter,
+    abnormalOnly,
+    statusFilters,
+    stagedFilePaths,
+  );
+  $: stagedVisibleFiles = filteredFiles.filter((file) => isStaged(file.path, stagedFilePaths));
+  $: unstagedVisibleFiles = filteredFiles.filter((file) => !isStaged(file.path, stagedFilePaths));
+  $: groupedStagedFiles = buildGroups(stagedVisibleFiles, groupMode);
+  $: groupedUnstagedFiles = buildGroups(unstagedVisibleFiles, groupMode);
   $: virtualItems = buildVirtualItems(
     stagedVisibleFiles,
     groupedStagedFiles,
     unstagedVisibleFiles,
     groupedUnstagedFiles,
     groupByStatus,
+    collapsedGroups,
   );
   $: positionedVirtualItems = positionVirtualItems(virtualItems);
   $: lastVirtualItem = positionedVirtualItems.at(-1);
@@ -423,10 +535,32 @@
         onSearchTextInput((event.currentTarget as HTMLInputElement).value)}
     />
     <button type="button" class:active={groupByStatus} on:click={onToggleGroupByStatus}>
-      按状态分组
+      分组
     </button>
+    <button
+      type="button"
+      class:active={groupByStatus && groupMode === "status"}
+      on:click={() => onGroupModeChange("status")}
+    >
+      状态
+    </button>
+    <button
+      type="button"
+      class:active={groupByStatus && groupMode === "directory"}
+      on:click={() => onGroupModeChange("directory")}
+    >
+      目录
+    </button>
+    <button
+      type="button"
+      class:active={groupByStatus && groupMode === "extension"}
+      on:click={() => onGroupModeChange("extension")}
+    >
+      类型
+    </button>
+    <button type="button" on:click={onClearFilters}>清空过滤</button>
     <span>异常 {abnormalCount}</span>
-    <span>显示 {filteredFiles.length}</span>
+    <span>显示 {filteredFiles.length}/{changedFiles.length}</span>
   </section>
 
   <div
@@ -452,7 +586,14 @@
             {#if item.kind === "section"}
               <h3 class="stage-section-heading">{item.title}</h3>
             {:else if item.kind === "status"}
-              <h3 class="status-group-heading">{item.title}</h3>
+              <button
+                type="button"
+                class="status-group-heading"
+                on:click={() => toggleGroupCollapse(item.groupKey)}
+              >
+                <span>{item.collapsed ? "展开" : "折叠"}</span>
+                <strong>{item.title}</strong>
+              </button>
             {:else if item.kind === "empty"}
               <p class="empty-stage virtual-empty">{item.title}</p>
             {:else if item.kind === "file"}

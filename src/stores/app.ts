@@ -14,7 +14,7 @@ import {
   openWorkspace,
   scanWorkspaceStatus,
 } from "../lib/api";
-import type { AppView } from "../types/app";
+import type { AppView, WorkspaceGroupMode, WorkspaceStageFilter } from "../types/app";
 import type {
   ChangedFile,
   CommandError,
@@ -311,6 +311,10 @@ export interface WorkspaceStoreState {
   status: WorkingCopyStatus | null;
   searchText: string;
   groupByStatus: boolean;
+  stageFilter: WorkspaceStageFilter;
+  abnormalOnly: boolean;
+  statusFilters: string[];
+  groupMode: WorkspaceGroupMode;
   selectedFilePath: string | null;
   selectedFileDiff: FileDiff | null;
   selectedFileContentDiff: FileContentDiff | null;
@@ -339,6 +343,10 @@ const initialWorkspaceState: WorkspaceStoreState = {
   status: null,
   searchText: "",
   groupByStatus: true,
+  stageFilter: "all",
+  abnormalOnly: false,
+  statusFilters: [],
+  groupMode: "status",
   selectedFilePath: null,
   selectedFileDiff: null,
   selectedFileContentDiff: null,
@@ -487,6 +495,54 @@ function createWorkspaceStore() {
     update((state) => ({
       ...state,
       groupByStatus: !state.groupByStatus,
+    }));
+  }
+
+  function setStageFilter(value: WorkspaceStageFilter) {
+    update((state) => ({
+      ...state,
+      stageFilter: state.stageFilter === value ? "all" : value,
+    }));
+  }
+
+  function toggleAbnormalOnly() {
+    update((state) => ({
+      ...state,
+      abnormalOnly: !state.abnormalOnly,
+    }));
+  }
+
+  function toggleStatusFilter(status: string) {
+    update((state) => {
+      const selected = new Set(state.statusFilters);
+      if (selected.has(status)) {
+        selected.delete(status);
+      } else {
+        selected.add(status);
+      }
+
+      return {
+        ...state,
+        statusFilters: Array.from(selected),
+      };
+    });
+  }
+
+  function setGroupMode(value: WorkspaceGroupMode) {
+    update((state) => ({
+      ...state,
+      groupMode: value,
+      groupByStatus: true,
+    }));
+  }
+
+  function clearFilters() {
+    update((state) => ({
+      ...state,
+      searchText: "",
+      stageFilter: "all",
+      abnormalOnly: false,
+      statusFilters: [],
     }));
   }
 
@@ -762,6 +818,11 @@ function createWorkspaceStore() {
     setSearchText,
     setCommitMessage,
     toggleGroupByStatus,
+    setStageFilter,
+    toggleAbnormalOnly,
+    toggleStatusFilter,
+    setGroupMode,
+    clearFilters,
     selectFile,
     stageFile,
     unstageFile,

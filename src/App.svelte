@@ -14,12 +14,17 @@
     taskStore,
     workspaceStore,
   } from "./stores/app";
-  import type { CommandError, HealthPayload } from "./types/api";
+  import type { ChangedFile, CommandError, HealthPayload } from "./types/api";
+  import type { SidebarFilterStats } from "./types/app";
 
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
 
   $: activeView = workbenchViews[$currentView];
+  $: sidebarFilterStats = buildSidebarFilterStats(
+    $workspaceStore.status?.files ?? [],
+    $workspaceStore.stagedFiles,
+  );
 
   async function pingBackend() {
     commandError = null;
@@ -147,13 +152,55 @@
   onDestroy(() => {
     taskStore.stopPolling();
   });
+
+  const statusLabels: Record<string, string> = {
+    modified: "修改",
+    added: "新增",
+    deleted: "删除",
+    missing: "缺失",
+    unversioned: "未版本控制",
+    conflicted: "冲突",
+    obstructed: "阻塞",
+  };
+
+  function buildSidebarFilterStats(
+    files: ChangedFile[],
+    stagedFiles: Array<{ path: string; status: string }>,
+  ): SidebarFilterStats {
+    const stagedPaths = new Set(stagedFiles.map((file) => file.path));
+    const statusCounts = new Map<string, number>();
+
+    for (const file of files) {
+      statusCounts.set(file.status, (statusCounts.get(file.status) ?? 0) + 1);
+    }
+
+    return {
+      total: files.length,
+      staged: files.filter((file) => stagedPaths.has(file.path)).length,
+      unstaged: files.filter((file) => !stagedPaths.has(file.path)).length,
+      abnormal: files.filter((file) => file.abnormal).length,
+      statuses: Array.from(statusCounts.entries()).map(([status, count]) => ({
+        status,
+        label: statusLabels[status] ?? status,
+        count,
+      })),
+    };
+  }
 </script>
 
 <main class="app-shell">
   <Sidebar
     currentView={$currentView}
     items={navigationItems}
+    filterStats={sidebarFilterStats}
+    stageFilter={$workspaceStore.stageFilter}
+    abnormalOnly={$workspaceStore.abnormalOnly}
+    statusFilters={$workspaceStore.statusFilters}
     onSelect={setCurrentView}
+    onStageFilter={workspaceStore.setStageFilter}
+    onToggleAbnormalOnly={workspaceStore.toggleAbnormalOnly}
+    onToggleStatusFilter={workspaceStore.toggleStatusFilter}
+    onClearFilters={workspaceStore.clearFilters}
   />
 
   <section class="main-panel" aria-label="主要工作区">
@@ -174,6 +221,10 @@
         workingCopyStatus={$workspaceStore.status}
         searchText={$workspaceStore.searchText}
         groupByStatus={$workspaceStore.groupByStatus}
+        stageFilter={$workspaceStore.stageFilter}
+        abnormalOnly={$workspaceStore.abnormalOnly}
+        statusFilters={$workspaceStore.statusFilters}
+        groupMode={$workspaceStore.groupMode}
         selectedFilePath={$workspaceStore.selectedFilePath}
         stagedFiles={$workspaceStore.stagedFiles}
         statusLoading={$workspaceStore.statusLoading}
@@ -195,6 +246,8 @@
         onWorkspacePathInput={workspaceStore.setPathInput}
         onSearchTextInput={workspaceStore.setSearchText}
         onToggleGroupByStatus={workspaceStore.toggleGroupByStatus}
+        onGroupModeChange={workspaceStore.setGroupMode}
+        onClearFilters={workspaceStore.clearFilters}
         onSelectFile={(path) =>
           workspaceStore.selectFile(
             path,
