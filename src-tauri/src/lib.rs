@@ -1,9 +1,11 @@
+mod diff;
 mod error;
 mod staging;
 mod svn;
 mod task;
 mod workspace;
 
+use diff::ParsedDiff;
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
 use task::{
@@ -125,6 +127,12 @@ fn get_file_content_diff(request: GetFileContentDiffRequest) -> CommandResult<Fi
     )?))
 }
 
+#[tauri::command]
+fn parse_unified_diff(diff_text: String) -> CommandResult<ParsedDiff> {
+    println!("[NovaSVN] parse_unified_diff command received");
+    Ok(CommandResponse::success(diff::parse_unified_diff(&diff_text)))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(TaskQueue::new())
@@ -144,6 +152,7 @@ pub fn run() {
             scan_workspace_status,
             get_file_diff,
             get_file_content_diff,
+            parse_unified_diff,
         ])
         .run(tauri::generate_context!())
         .expect("启动 NovaSVN 失败");

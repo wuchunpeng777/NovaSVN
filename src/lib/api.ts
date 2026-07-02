@@ -12,6 +12,7 @@ import type {
   GetFileContentDiffRequest,
   GetFileDiffRequest,
   OpenWorkspaceRequest,
+  ParsedDiff,
   RecentWorkspace,
   ScanWorkspaceStatusRequest,
   SvnDetection,
@@ -107,6 +108,10 @@ export function getFileContentDiff(
   request: GetFileContentDiffRequest,
 ): Promise<FileContentDiff> {
   return callBackend<FileContentDiff>("get_file_content_diff", { request });
+}
+
+export function parseUnifiedDiff(diffText: string): Promise<ParsedDiff> {
+  return callBackend<ParsedDiff>("parse_unified_diff", { diffText });
 }
 
 export async function chooseWorkspaceDirectory(): Promise<string | null> {

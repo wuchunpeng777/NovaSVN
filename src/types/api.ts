@@ -159,3 +159,37 @@ export interface FileContentDiff {
   too_large: boolean;
   max_bytes: number;
 }
+
+export type DiffLineKind = "context" | "added" | "removed" | "no_newline";
+
+export interface ParsedDiffLine {
+  kind: DiffLineKind;
+  old_line: number | null;
+  new_line: number | null;
+  content: string;
+}
+
+export interface ParsedHunk {
+  id: string;
+  old_start: number;
+  old_lines: number;
+  new_start: number;
+  new_lines: number;
+  header: string;
+  lines: ParsedDiffLine[];
+}
+
+export interface ParsedFileDiff {
+  path: string;
+  old_path: string | null;
+  new_path: string | null;
+  hunks: ParsedHunk[];
+  partial_commit_supported: boolean;
+  unsupported_reason: string | null;
+  binary: boolean;
+  property_only: boolean;
+}
+
+export interface ParsedDiff {
+  files: ParsedFileDiff[];
+}
