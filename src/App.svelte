@@ -82,7 +82,7 @@
       return;
     }
 
-    workspaceStore.markPartialCommitTask(task.task_id);
+    workspaceStore.markCommitTask(task.task_id);
   }
 
   async function submitSelectedPatch() {
@@ -111,7 +111,7 @@
       return;
     }
 
-    workspaceStore.markCommitTask(task.task_id);
+    workspaceStore.markPartialCommitTask(task.task_id);
   }
 
   async function runSvnOperation(kind: "update" | "cleanup" | "revert_file", filePath?: string) {
