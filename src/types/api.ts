@@ -79,6 +79,16 @@ export interface CreateShadowWorkspaceTaskRequest {
   kind: ShadowWorkspaceOperationKind;
 }
 
+export interface CreatePartialCommitTaskRequest {
+  working_copy_root: string;
+  repository_url: string;
+  revision?: string;
+  message: string;
+  selected_patch: string;
+  files: string[];
+  svn_executable?: string;
+}
+
 export interface ShadowWorkspaceRequest {
   working_copy_root: string;
   repository_url: string;

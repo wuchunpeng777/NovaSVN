@@ -82,6 +82,35 @@
       return;
     }
 
+    workspaceStore.markPartialCommitTask(task.task_id);
+  }
+
+  async function submitSelectedPatch() {
+    if (
+      !$workspaceStore.current ||
+      !$workspaceStore.selectedPatch ||
+      !workspaceStore.validateStagedFilesForCommit()
+    ) {
+      return;
+    }
+
+    const files = Array.from(
+      new Set($workspaceStore.selectedHunks.map((item) => item.filePath)),
+    );
+    const task = await taskStore.createPartialCommit({
+      workingCopyRoot: $workspaceStore.current.working_copy_root,
+      repositoryUrl: $workspaceStore.current.repository_url,
+      revision: $workspaceStore.current.revision,
+      message: $workspaceStore.commitMessage,
+      selectedPatch: $workspaceStore.selectedPatch.text,
+      files,
+      svnExecutable: $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    });
+
+    if (!task) {
+      return;
+    }
+
     workspaceStore.markCommitTask(task.task_id);
   }
 
@@ -154,6 +183,30 @@
       $taskStore.selectedTask.status === "cancelled")
   ) {
     workspaceStore.markCommitTask(null);
+  }
+
+  $: if (
+    $workspaceStore.pendingPartialCommitTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingPartialCommitTaskId &&
+    $taskStore.selectedTask.status === "success"
+  ) {
+    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+    workspaceStore.markPartialCommitTask(null);
+    if (workingCopyRoot) {
+      void workspaceStore.refreshStatus(
+        $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+        workingCopyRoot,
+      );
+    }
+  }
+
+  $: if (
+    $workspaceStore.pendingPartialCommitTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingPartialCommitTaskId &&
+    ($taskStore.selectedTask.status === "failed" ||
+      $taskStore.selectedTask.status === "cancelled")
+  ) {
+    workspaceStore.markPartialCommitTask(null);
   }
 
   $: if (
@@ -368,6 +421,11 @@
         commitSafetyBlocked ||
         $taskStore.snapshot.running_task_id !== null
       }
+      partialCommitDisabled={
+        !$workspaceStore.selectedPatch ||
+        commitSafetyBlocked ||
+        $taskStore.snapshot.running_task_id !== null
+      }
       onCreateTask={taskStore.create}
       onCommitMessageInput={workspaceStore.setCommitMessage}
       onCommitTemplateInput={workspaceStore.setCommitTemplate}
@@ -375,6 +433,7 @@
       onConfirmSafetyWarnings={workspaceStore.confirmSafetyWarnings}
       onClearWorkspaceDraft={workspaceStore.clearWorkspaceDraft}
       onCommit={submitStagedFiles}
+      onPartialCommit={submitSelectedPatch}
       onSelectTask={taskStore.select}
       onCancelTask={taskStore.cancel}
     />

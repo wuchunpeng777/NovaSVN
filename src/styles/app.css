@@ -935,7 +935,7 @@ button {
 }
 
 .commit-placeholder {
-  grid-template-rows: auto minmax(0, 34px) 28px 44px auto auto auto;
+  grid-template-rows: auto minmax(0, 34px) 28px 44px auto auto auto auto;
   align-content: stretch;
 }
 
@@ -1065,6 +1065,11 @@ button {
   background: #eef2f5;
   color: #7a8794;
   cursor: default;
+}
+
+.commit-action.secondary {
+  background: #ffffff;
+  color: #227873;
 }
 
 .bottom-section-heading {

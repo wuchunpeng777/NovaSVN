@@ -4,6 +4,7 @@ import {
   chooseWorkspaceDirectory,
   createCommitTask,
   createMockTask,
+  createPartialCommitTask,
   createShadowWorkspaceTask,
   createSvnOperationTask,
   detectSvn,
@@ -212,6 +213,40 @@ function createTaskStore() {
     }
   }
 
+  async function createPartialCommit(request: {
+    workingCopyRoot: string;
+    repositoryUrl: string;
+    revision?: string | null;
+    message: string;
+    selectedPatch: string;
+    files: string[];
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createPartialCommitTask({
+        working_copy_root: request.workingCopyRoot,
+        repository_url: request.repositoryUrl,
+        revision: request.revision || undefined,
+        message: request.message,
+        selected_patch: request.selectedPatch,
+        files: request.files,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function select(taskId: string) {
     selectedTaskId = taskId;
     await refresh();
@@ -259,6 +294,7 @@ function createTaskStore() {
     createCommit,
     createSvnOperation,
     createShadowWorkspace,
+    createPartialCommit,
     select,
     cancel,
     startPolling,
@@ -384,6 +420,7 @@ export interface WorkspaceStoreState {
   commitMessage: string;
   commitError: string | null;
   pendingCommitTaskId: string | null;
+  pendingPartialCommitTaskId: string | null;
   pendingSvnOperationTaskId: string | null;
   pendingSvnOperationKind: SvnOperationKind | null;
   shadowStatus: ShadowWorkspaceStatus | null;
@@ -427,6 +464,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   commitMessage: "",
   commitError: null,
   pendingCommitTaskId: null,
+  pendingPartialCommitTaskId: null,
   pendingSvnOperationTaskId: null,
   pendingSvnOperationKind: null,
   shadowStatus: null,
@@ -477,6 +515,7 @@ function createWorkspaceStore() {
         commitMessage: draft.commitMessage || commitSettings.template,
         commitError: null,
         pendingCommitTaskId: null,
+        pendingPartialCommitTaskId: null,
         pendingSvnOperationTaskId: null,
         pendingSvnOperationKind: null,
         shadowStatus: null,
@@ -533,6 +572,7 @@ function createWorkspaceStore() {
         commitMessage: draft.commitMessage || commitSettings.template,
         commitError: null,
         pendingCommitTaskId: null,
+        pendingPartialCommitTaskId: null,
         pendingSvnOperationTaskId: null,
         pendingSvnOperationKind: null,
         shadowStatus: null,
@@ -885,6 +925,14 @@ function createWorkspaceStore() {
     }));
   }
 
+  function markPartialCommitTask(taskId: string | null) {
+    update((state) => ({
+      ...state,
+      pendingPartialCommitTaskId: taskId,
+      commitError: null,
+    }));
+  }
+
   function markSvnOperationTask(taskId: string | null, kind: SvnOperationKind | null) {
     update((state) => ({
       ...state,
@@ -919,6 +967,7 @@ function createWorkspaceStore() {
         commitMessage: state.commitTemplate,
         commitError: null,
         pendingCommitTaskId: null,
+        pendingPartialCommitTaskId: null,
       };
     });
   }
@@ -1328,6 +1377,7 @@ function createWorkspaceStore() {
     validateStagedFilesForCommit,
     confirmSafetyWarnings,
     markCommitTask,
+    markPartialCommitTask,
     markSvnOperationTask,
     clearCommittedFiles,
     clearWorkspaceDraft,

@@ -116,12 +116,24 @@ pub struct CreateShadowWorkspaceTaskRequest {
     pub kind: ShadowWorkspaceOperationKind,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreatePartialCommitTaskRequest {
+    pub working_copy_root: String,
+    pub repository_url: String,
+    pub revision: Option<String>,
+    pub message: String,
+    pub selected_patch: String,
+    pub files: Vec<String>,
+    pub svn_executable: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 enum TaskPayload {
     Mock(MockTaskOutcome),
     SvnCommit(CommitTaskPayload),
     SvnOperation(SvnOperationTaskPayload),
     ShadowWorkspace(ShadowWorkspaceTaskPayload),
+    PartialCommit(PartialCommitTaskPayload),
 }
 
 #[derive(Debug, Clone)]
@@ -145,6 +157,15 @@ struct ShadowWorkspaceTaskPayload {
     app: AppHandle,
     request: ShadowWorkspaceRequest,
     kind: ShadowWorkspaceOperationKind,
+}
+
+#[derive(Debug, Clone)]
+struct PartialCommitTaskPayload {
+    app: AppHandle,
+    shadow_request: ShadowWorkspaceRequest,
+    message: String,
+    selected_patch: String,
+    files: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -334,6 +355,71 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_partial_commit_task(
+        &self,
+        app: &AppHandle,
+        request: CreatePartialCommitTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
+        let files = normalize_commit_files(&request.files)?;
+        let message = request.message.trim().to_string();
+        if message.is_empty() {
+            return Err(NovaError::command(
+                "COMMIT_MESSAGE_REQUIRED",
+                "请输入提交信息",
+                None,
+                true,
+            ));
+        }
+        if request.selected_patch.trim().is_empty() {
+            return Err(NovaError::command(
+                "SELECTED_PATCH_REQUIRED",
+                "缺少要提交的 selected patch",
+                None,
+                true,
+            ));
+        }
+        if request.repository_url.trim().is_empty() {
+            return Err(NovaError::command(
+                "SHADOW_REPOSITORY_URL_REQUIRED",
+                "缺少仓库 URL",
+                None,
+                true,
+            ));
+        }
+
+        let shadow_request = ShadowWorkspaceRequest {
+            working_copy_root: working_copy_root.display().to_string(),
+            repository_url: request.repository_url,
+            revision: request.revision,
+            svn_executable: request.svn_executable,
+        };
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!("部分提交 {} 个文件", files.len()),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "Hunk 级部分提交任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::PartialCommit(PartialCommitTaskPayload {
+                app: app.clone(),
+                shadow_request,
+                message,
+                selected_patch: request.selected_patch,
+                files,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn list_tasks(&self) -> TaskSnapshot {
         let state = self.state.lock().expect("任务队列锁已损坏");
         TaskSnapshot {
@@ -483,6 +569,7 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             TaskPayload::ShadowWorkspace(payload) => {
                 run_shadow_workspace_task(&state, &task_id, payload)
             }
+            TaskPayload::PartialCommit(payload) => run_partial_commit_task(&state, &task_id, payload),
         }
     }
 }
@@ -742,6 +829,227 @@ fn run_shadow_workspace_task(
                 "SVN 命令启动失败",
                 Some(format!("无法执行 `{executable}`：{error}")),
             );
+        }
+    }
+}
+
+fn run_partial_commit_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: PartialCommitTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "Hunk 级部分提交开始执行",
+        None,
+    );
+
+    let shadow_path = match shadow::shadow_workspace_path(&payload.app, &payload.shadow_request) {
+        Ok(path) => path,
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "影子路径计算失败",
+                Some(error.to_string()),
+            );
+            return;
+        }
+    };
+    let executable = shadow::svn_executable(&payload.shadow_request);
+
+    if !shadow_path.join(".svn").exists() {
+        append_task_log(state, task_id, "影子工作副本不存在，先执行 checkout");
+        if !run_shadow_checkout_or_update(state, task_id, &payload.shadow_request, &shadow_path, &executable) {
+            return;
+        }
+    } else {
+        append_task_log(state, task_id, "更新影子工作副本");
+        if !run_shadow_checkout_or_update(state, task_id, &payload.shadow_request, &shadow_path, &executable) {
+            return;
+        }
+    }
+
+    append_task_log(state, task_id, "清理影子工作副本本地改动");
+    let revert_output = Command::new(&executable)
+        .arg("revert")
+        .arg("-R")
+        .arg(&shadow_path)
+        .current_dir(&shadow_path)
+        .output();
+    match revert_output {
+        Ok(output) if output.status.success() => append_command_output(state, task_id, &output),
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "影子工作副本清理失败",
+                Some(command_error_detail(&executable, &output)),
+            );
+            return;
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN revert 启动失败",
+                Some(format!("无法执行 `{executable}`：{error}")),
+            );
+            return;
+        }
+    }
+
+    let patch_path = shadow_path.join(".novasvn-selected.patch");
+    if let Err(error) = std::fs::write(&patch_path, &payload.selected_patch) {
+        update_task(
+            state,
+            task_id,
+            TaskStatus::Failed,
+            "写入 selected patch 失败",
+            Some(error.to_string()),
+        );
+        return;
+    }
+
+    append_task_log(state, task_id, "应用 selected patch 到影子工作副本");
+    let patch_output = Command::new(&executable)
+        .arg("patch")
+        .arg(&patch_path)
+        .current_dir(&shadow_path)
+        .output();
+    let _ = std::fs::remove_file(&patch_path);
+    match patch_output {
+        Ok(output) if output.status.success() => append_command_output(state, task_id, &output),
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "selected patch 应用失败",
+                Some(command_error_detail(&executable, &output)),
+            );
+            return;
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN patch 启动失败",
+                Some(format!("无法执行 `{executable}`：{error}")),
+            );
+            return;
+        }
+    }
+
+    append_task_log(state, task_id, "在影子工作副本执行 svn commit");
+    let mut commit = Command::new(&executable);
+    commit.arg("commit");
+    for file in &payload.files {
+        commit.arg(shadow_path.join(file));
+    }
+    commit.arg("-m").arg(&payload.message).current_dir(&shadow_path);
+
+    match commit.output() {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                "Hunk 级部分提交成功，请同步真实工作副本",
+                None,
+            );
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "影子工作副本提交失败",
+                Some(command_error_detail(&executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN commit 启动失败",
+                Some(format!("无法执行 `{executable}`：{error}")),
+            );
+        }
+    }
+}
+
+fn run_shadow_checkout_or_update(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    request: &ShadowWorkspaceRequest,
+    shadow_path: &Path,
+    executable: &str,
+) -> bool {
+    let exists = shadow_path.join(".svn").exists();
+    let mut command = Command::new(executable);
+    if exists {
+        command.arg("update");
+        if let Some(revision) = request.revision.as_deref().filter(|value| !value.is_empty()) {
+            command.arg("-r").arg(revision);
+        }
+        command.arg(shadow_path).current_dir(shadow_path);
+    } else {
+        if let Some(parent) = shadow_path.parent() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "创建影子目录失败",
+                    Some(error.to_string()),
+                );
+                return false;
+            }
+        }
+        command.arg("checkout");
+        if let Some(revision) = request.revision.as_deref().filter(|value| !value.is_empty()) {
+            command.arg("-r").arg(revision);
+        }
+        command.arg(&request.repository_url).arg(shadow_path);
+    }
+
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            true
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "影子工作副本准备失败",
+                Some(command_error_detail(executable, &output)),
+            );
+            false
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 命令启动失败",
+                Some(format!("无法执行 `{executable}`：{error}")),
+            );
+            false
         }
     }
 }

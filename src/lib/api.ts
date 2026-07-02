@@ -5,6 +5,7 @@ import type {
   CommandResponse,
   CreateCommitTaskRequest,
   CreateMockTaskRequest,
+  CreatePartialCommitTaskRequest,
   CreateShadowWorkspaceTaskRequest,
   CreateSvnOperationTaskRequest,
   DetectSvnRequest,
@@ -77,6 +78,12 @@ export function createShadowWorkspaceTask(
   request: CreateShadowWorkspaceTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_shadow_workspace_task", { request });
+}
+
+export function createPartialCommitTask(
+  request: CreatePartialCommitTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_partial_commit_task", { request });
 }
 
 export function listTasks(): Promise<TaskSnapshot> {

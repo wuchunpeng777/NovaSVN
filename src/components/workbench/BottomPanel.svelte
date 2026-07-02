@@ -17,6 +17,7 @@
   export let commitMessage = "";
   export let commitError: string | null = null;
   export let commitDisabled = false;
+  export let partialCommitDisabled = false;
   export let loading = false;
   export let error: CommandError | null = null;
   export let onCreateTask: (outcome: "success" | "failed") => void;
@@ -26,6 +27,7 @@
   export let onConfirmSafetyWarnings: () => void;
   export let onClearWorkspaceDraft: () => void;
   export let onCommit: () => void;
+  export let onPartialCommit: () => void;
   export let onSelectTask: (taskId: string) => void;
   export let onCancelTask: (taskId: string) => void;
 
@@ -155,6 +157,14 @@
       on:click={onCommit}
     >
       提交
+    </button>
+    <button
+      class="commit-action secondary"
+      type="button"
+      disabled={partialCommitDisabled}
+      on:click={onPartialCommit}
+    >
+      提交选中 Hunk
     </button>
   </section>
 

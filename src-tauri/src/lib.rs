@@ -11,8 +11,8 @@ use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
 use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
 use task::{
-    CreateCommitTaskRequest, CreateMockTaskRequest, CreateShadowWorkspaceTaskRequest,
-    CreateSvnOperationTaskRequest, Task, TaskQueue, TaskSnapshot,
+    CreateCommitTaskRequest, CreateMockTaskRequest, CreatePartialCommitTaskRequest,
+    CreateShadowWorkspaceTaskRequest, CreateSvnOperationTaskRequest, Task, TaskQueue, TaskSnapshot,
 };
 use workspace::{
     FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, OpenWorkspaceRequest,
@@ -77,6 +77,18 @@ fn create_shadow_workspace_task(
     println!("[NovaSVN] create_shadow_workspace_task command received");
     Ok(CommandResponse::success(
         queue.create_shadow_workspace_task(&app, request)?,
+    ))
+}
+
+#[tauri::command]
+fn create_partial_commit_task(
+    app: tauri::AppHandle,
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreatePartialCommitTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_partial_commit_task command received");
+    Ok(CommandResponse::success(
+        queue.create_partial_commit_task(&app, request)?,
     ))
 }
 
@@ -175,6 +187,7 @@ pub fn run() {
             create_commit_task,
             create_svn_operation_task,
             create_shadow_workspace_task,
+            create_partial_commit_task,
             list_tasks,
             get_task,
             cancel_task,
