@@ -6,6 +6,7 @@
     CommandError,
     FileContentDiff,
     FileDiff,
+    ParsedFileDiff,
     SvnDetection,
   } from "../../types/api";
   import type { DetailSection, SafetyCheckSummary } from "../../types/app";
@@ -23,10 +24,13 @@
   };
   export let selectedFileDiff: FileDiff | null = null;
   export let selectedFileContentDiff: FileContentDiff | null = null;
+  export let selectedFileParsedDiff: ParsedFileDiff | null = null;
+  export let selectedHunkIds: string[] = [];
   export let diffLoading = false;
   export let contentDiffLoading = false;
   export let diffError: CommandError | null = null;
   export let contentDiffError: CommandError | null = null;
+  export let parsedDiffError: CommandError | null = null;
   export let svnDetection: SvnDetection | null = null;
   export let svnError: CommandError | null = null;
   export let svnExecutableInput = "";
@@ -37,6 +41,7 @@
   export let onRevertFile: (path: string) => void;
   export let onMarkFileReviewed: (path: string) => void;
   export let onMarkFileUnreviewed: (path: string) => void;
+  export let onToggleHunkSelection: (filePath: string, hunkId: string) => void;
 
   let inlineDiff = false;
   let showWhitespace = false;
@@ -175,6 +180,7 @@
     </div>
     <ErrorNotice error={diffError} />
     <ErrorNotice error={contentDiffError} />
+    <ErrorNotice error={parsedDiffError} />
     {#if diffLoading || contentDiffLoading}
       <p>正在读取 Diff...</p>
     {:else if selectedFileContentDiff?.too_large}
@@ -193,6 +199,32 @@
       <p>当前文件没有可显示的文本 Diff。</p>
     {:else}
       <p>选择一个改动文件后显示 Diff。</p>
+    {/if}
+
+    {#if selectedFile && selectedFileParsedDiff}
+      <div class="hunk-selection-panel">
+        <div class="hunk-selection-heading">
+          <strong>Hunk 选择</strong>
+          {#if selectedFileParsedDiff.partial_commit_supported}
+            <span>{selectedHunkIds.length}/{selectedFileParsedDiff.hunks.length} 已选择</span>
+          {:else}
+            <span>{selectedFileParsedDiff.unsupported_reason}</span>
+          {/if}
+        </div>
+        {#if selectedFileParsedDiff.partial_commit_supported}
+          {#each selectedFileParsedDiff.hunks as hunk}
+            <label class="hunk-option">
+              <input
+                type="checkbox"
+                checked={selectedHunkIds.includes(hunk.id)}
+                on:change={() => onToggleHunkSelection(selectedFile.path, hunk.id)}
+              />
+              <span>{hunk.header}</span>
+              <small>{hunk.lines.length} 行</small>
+            </label>
+          {/each}
+        {/if}
+      </div>
     {/if}
   </section>
 

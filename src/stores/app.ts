@@ -12,6 +12,7 @@ import {
   getTask,
   listTasks,
   openWorkspace,
+  parseUnifiedDiff,
   scanWorkspaceStatus,
 } from "../lib/api";
 import type {
@@ -28,6 +29,7 @@ import type {
   FileContentDiff,
   FileDiff,
   MockTaskOutcome,
+  ParsedFileDiff,
   SvnOperationKind,
   SvnDetection,
   Task,
@@ -326,12 +328,18 @@ export interface WorkspaceStoreState {
   selectedFilePath: string | null;
   selectedFileDiff: FileDiff | null;
   selectedFileContentDiff: FileContentDiff | null;
+  selectedFileParsedDiff: ParsedFileDiff | null;
   stagedFiles: Array<{
     path: string;
     status: string;
     contentDigest: string;
   }>;
   safetyCheck: SafetyCheckSummary;
+  selectedHunks: Array<{
+    filePath: string;
+    fileDigest: string;
+    hunkId: string;
+  }>;
   reviewedFiles: ReviewedFileState[];
   commitTemplate: string;
   commitHistory: string[];
@@ -349,6 +357,7 @@ export interface WorkspaceStoreState {
   statusError: CommandError | null;
   diffError: CommandError | null;
   contentDiffError: CommandError | null;
+  parsedDiffError: CommandError | null;
 }
 
 const initialWorkspaceState: WorkspaceStoreState = {
@@ -364,8 +373,10 @@ const initialWorkspaceState: WorkspaceStoreState = {
   selectedFilePath: null,
   selectedFileDiff: null,
   selectedFileContentDiff: null,
+  selectedFileParsedDiff: null,
   stagedFiles: [],
   safetyCheck: emptySafetyCheck(),
+  selectedHunks: [],
   reviewedFiles: [],
   commitTemplate: "",
   commitHistory: [],
@@ -383,6 +394,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   statusError: null,
   diffError: null,
   contentDiffError: null,
+  parsedDiffError: null,
 };
 
 function createWorkspaceStore() {
@@ -403,11 +415,13 @@ function createWorkspaceStore() {
         selectedFilePath: null,
         selectedFileDiff: null,
         selectedFileContentDiff: null,
+        selectedFileParsedDiff: null,
         stagedFiles: draft.stagedFiles,
         safetyCheck: {
           ...emptySafetyCheck(),
           confirmedWarningIds: draft.confirmedWarningIds,
         },
+        selectedHunks: draft.selectedHunks,
         reviewedFiles: draft.reviewedFiles,
         commitTemplate: commitSettings.template,
         commitHistory: commitSettings.history,
@@ -455,11 +469,13 @@ function createWorkspaceStore() {
         selectedFilePath: null,
         selectedFileDiff: null,
         selectedFileContentDiff: null,
+        selectedFileParsedDiff: null,
         stagedFiles: draft.stagedFiles,
         safetyCheck: {
           ...emptySafetyCheck(),
           confirmedWarningIds: draft.confirmedWarningIds,
         },
+        selectedHunks: draft.selectedHunks,
         reviewedFiles: draft.reviewedFiles,
         commitTemplate: commitSettings.template,
         commitHistory: commitSettings.history,
@@ -639,6 +655,7 @@ function createWorkspaceStore() {
       ...state,
       selectedFileDiff: null,
       selectedFileContentDiff: null,
+      selectedFileParsedDiff: null,
       selectedFilePath: path,
     }));
     update((state) => {
@@ -651,6 +668,7 @@ function createWorkspaceStore() {
         refreshFileDiff(svnExecutable, root, path),
         refreshFileContentDiff(svnExecutable, root, path),
       ]);
+      await refreshParsedDiff(path);
     }
   }
 
@@ -895,6 +913,7 @@ function createWorkspaceStore() {
       update((state) => {
         const stagedFiles = reconcileStagedFiles(state.stagedFiles, status.files);
         const reviewedFiles = reconcileReviewedFiles(state.reviewedFiles, status.files);
+        const selectedHunks = reconcileSelectedHunks(state.selectedHunks, status.files);
         const safetyCheck = buildSafetyCheck(
           status.files,
           stagedFiles,
@@ -910,6 +929,7 @@ function createWorkspaceStore() {
             selectedFilePath === state.selectedFilePath ? state.selectedFileContentDiff : null,
           stagedFiles,
           safetyCheck,
+          selectedHunks,
           reviewedFiles,
           statusLoading: false,
           statusError: null,
@@ -922,6 +942,7 @@ function createWorkspaceStore() {
           refreshFileDiff(svnExecutable, root, selectedFilePath),
           refreshFileContentDiff(svnExecutable, root, selectedFilePath),
         ]);
+        await refreshParsedDiff(selectedFilePath);
       }
     } catch (error) {
       update((state) => ({
@@ -944,6 +965,7 @@ function createWorkspaceStore() {
         reviewedFiles: [],
         safetyCheck: emptySafetyCheck(),
         commitMessage: state.commitTemplate,
+        selectedHunks: [],
         commitError: null,
       };
     });
@@ -1046,6 +1068,83 @@ function createWorkspaceStore() {
     }
   }
 
+  async function refreshParsedDiff(filePath?: string | null) {
+    let path = filePath ?? "";
+    let diffText = "";
+    update((state) => {
+      path = path || state.selectedFilePath || "";
+      diffText = state.selectedFileDiff?.text ?? "";
+      return {
+        ...state,
+        selectedFileParsedDiff: null,
+        parsedDiffError: null,
+      };
+    });
+
+    if (!path || !diffText.trim()) {
+      return;
+    }
+
+    try {
+      const parsed = await parseUnifiedDiff(diffText);
+      const selectedFileParsedDiff =
+        parsed.files.find((file) => file.path === path) ?? parsed.files[0] ?? null;
+      update((state) => ({
+        ...state,
+        selectedFileParsedDiff,
+        parsedDiffError: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        selectedFileParsedDiff: null,
+        parsedDiffError: error as CommandError,
+      }));
+    }
+  }
+
+  function toggleHunkSelection(filePath: string, hunkId: string) {
+    update((state) => {
+      const file = state.status?.files.find((item) => item.path === filePath);
+      if (!file) {
+        return state;
+      }
+
+      const exists = state.selectedHunks.some(
+        (item) =>
+          item.filePath === filePath &&
+          item.fileDigest === file.content_digest &&
+          item.hunkId === hunkId,
+      );
+      const selectedHunks = exists
+        ? state.selectedHunks.filter(
+            (item) =>
+              !(
+                item.filePath === filePath &&
+                item.fileDigest === file.content_digest &&
+                item.hunkId === hunkId
+              ),
+          )
+        : [
+            ...state.selectedHunks.filter(
+              (item) => item.filePath !== filePath || item.fileDigest === file.content_digest,
+            ),
+            {
+              filePath,
+              fileDigest: file.content_digest,
+              hunkId,
+            },
+          ];
+
+      saveWorkspaceDraftFromState({ ...state, selectedHunks });
+
+      return {
+        ...state,
+        selectedHunks,
+      };
+    });
+  }
+
   return {
     subscribe,
     loadRecent,
@@ -1077,6 +1176,8 @@ function createWorkspaceStore() {
     refreshStatus,
     refreshFileDiff,
     refreshFileContentDiff,
+    refreshParsedDiff,
+    toggleHunkSelection,
   };
 }
 
@@ -1305,12 +1406,27 @@ function reconcileReviewedFiles(
   });
 }
 
+function reconcileSelectedHunks(
+  selectedHunks: Array<{ filePath: string; fileDigest: string; hunkId: string }>,
+  currentFiles: ChangedFile[],
+) {
+  return selectedHunks.filter((selectedHunk) => {
+    const current = currentFiles.find((file) => file.path === selectedHunk.filePath);
+    return current && current.content_digest === selectedHunk.fileDigest;
+  });
+}
+
 interface WorkspaceDraft {
   version: number;
   stagedFiles: Array<{
     path: string;
     status: string;
     contentDigest: string;
+  }>;
+  selectedHunks: Array<{
+    filePath: string;
+    fileDigest: string;
+    hunkId: string;
   }>;
   reviewedFiles: ReviewedFileState[];
   confirmedWarningIds: string[];
@@ -1322,6 +1438,7 @@ function emptyWorkspaceDraft(): WorkspaceDraft {
   return {
     version: 1,
     stagedFiles: [],
+    selectedHunks: [],
     reviewedFiles: [],
     confirmedWarningIds: [],
     commitMessage: "",
@@ -1357,6 +1474,9 @@ function loadWorkspaceDraft(workspace: WorkspaceSummary): WorkspaceDraft {
       stagedFiles: Array.isArray(parsed.stagedFiles)
         ? parsed.stagedFiles.filter(isStagedFileDraft)
         : [],
+      selectedHunks: Array.isArray(parsed.selectedHunks)
+        ? parsed.selectedHunks.filter(isSelectedHunkDraft)
+        : [],
       reviewedFiles: Array.isArray(parsed.reviewedFiles)
         ? parsed.reviewedFiles.filter(isReviewedFileState)
         : loadLegacyReviewedFiles(workspace),
@@ -1376,7 +1496,12 @@ function loadWorkspaceDraft(workspace: WorkspaceSummary): WorkspaceDraft {
 
 function saveWorkspaceDraftFromState(state: Pick<
   WorkspaceStoreState,
-  "current" | "stagedFiles" | "reviewedFiles" | "safetyCheck" | "commitMessage"
+  | "current"
+  | "stagedFiles"
+  | "selectedHunks"
+  | "reviewedFiles"
+  | "safetyCheck"
+  | "commitMessage"
 >) {
   if (!state.current) {
     return;
@@ -1385,6 +1510,7 @@ function saveWorkspaceDraftFromState(state: Pick<
   saveWorkspaceDraft(state.current, {
     version: 1,
     stagedFiles: state.stagedFiles,
+    selectedHunks: state.selectedHunks,
     reviewedFiles: state.reviewedFiles,
     confirmedWarningIds: state.safetyCheck.confirmedWarningIds,
     commitMessage: state.commitMessage,
@@ -1467,6 +1593,28 @@ function isStagedFileDraft(value: unknown): value is {
     typeof candidate.path === "string" &&
     typeof candidate.status === "string" &&
     typeof candidate.contentDigest === "string"
+  );
+}
+
+function isSelectedHunkDraft(value: unknown): value is {
+  filePath: string;
+  fileDigest: string;
+  hunkId: string;
+} {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as {
+    filePath?: unknown;
+    fileDigest?: unknown;
+    hunkId?: unknown;
+  };
+
+  return (
+    typeof candidate.filePath === "string" &&
+    typeof candidate.fileDigest === "string" &&
+    typeof candidate.hunkId === "string"
   );
 }
 

@@ -672,6 +672,55 @@ button {
   white-space: pre;
 }
 
+.hunk-selection-panel {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+  border-top: 1px solid #d7dde3;
+  padding-top: 10px;
+}
+
+.hunk-selection-heading,
+.hunk-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.hunk-selection-heading {
+  justify-content: space-between;
+}
+
+.hunk-selection-heading strong {
+  color: #17202a;
+  font-size: 13px;
+}
+
+.hunk-selection-heading span,
+.hunk-option small {
+  color: #637282;
+  font-size: 12px;
+}
+
+.hunk-option {
+  min-height: 30px;
+  border: 1px solid #d7dde3;
+  border-radius: 6px;
+  background: #f7f9fb;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.hunk-option span {
+  overflow: hidden;
+  flex: 1 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+}
+
 .detail-heading {
   display: flex;
   align-items: center;

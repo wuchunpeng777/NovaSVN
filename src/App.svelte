@@ -39,6 +39,16 @@
     ).length;
   $: commitSafetyBlocked =
     $workspaceStore.safetyCheck.blockers.length > 0 || unconfirmedSafetyWarnings > 0;
+  $: selectedHunkIds =
+    selectedFile === null
+      ? []
+      : $workspaceStore.selectedHunks
+          .filter(
+            (item) =>
+              item.filePath === selectedFile.path &&
+              item.fileDigest === selectedFile.content_digest,
+          )
+          .map((item) => item.hunkId);
 
   async function pingBackend() {
     commandError = null;
@@ -287,10 +297,13 @@
         safetyCheck={$workspaceStore.safetyCheck}
         selectedFileDiff={$workspaceStore.selectedFileDiff}
         selectedFileContentDiff={$workspaceStore.selectedFileContentDiff}
+        selectedFileParsedDiff={$workspaceStore.selectedFileParsedDiff}
+        selectedHunkIds={selectedHunkIds}
         diffLoading={$workspaceStore.diffLoading}
         contentDiffLoading={$workspaceStore.contentDiffLoading}
         diffError={$workspaceStore.diffError}
         contentDiffError={$workspaceStore.contentDiffError}
+        parsedDiffError={$workspaceStore.parsedDiffError}
         svnDetection={$svnStore.detection}
         svnError={$svnStore.error}
         svnExecutableInput={$svnStore.executableInput}
@@ -301,6 +314,7 @@
         onRevertFile={(path) => runSvnOperation("revert_file", path)}
         onMarkFileReviewed={workspaceStore.markFileReviewed}
         onMarkFileUnreviewed={workspaceStore.markFileUnreviewed}
+        onToggleHunkSelection={workspaceStore.toggleHunkSelection}
       />
     </div>
 
