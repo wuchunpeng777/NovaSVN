@@ -5,7 +5,7 @@ mod svn;
 mod task;
 mod workspace;
 
-use diff::ParsedDiff;
+use diff::{GenerateSelectedPatchRequest, ParsedDiff, SelectedPatch};
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
 use task::{
@@ -133,6 +133,14 @@ fn parse_unified_diff(diff_text: String) -> CommandResult<ParsedDiff> {
     Ok(CommandResponse::success(diff::parse_unified_diff(&diff_text)))
 }
 
+#[tauri::command]
+fn generate_selected_patch(request: GenerateSelectedPatchRequest) -> CommandResult<SelectedPatch> {
+    println!("[NovaSVN] generate_selected_patch command received");
+    Ok(CommandResponse::success(diff::generate_selected_patch(
+        request,
+    )))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(TaskQueue::new())
@@ -153,6 +161,7 @@ pub fn run() {
             get_file_diff,
             get_file_content_diff,
             parse_unified_diff,
+            generate_selected_patch,
         ])
         .run(tauri::generate_context!())
         .expect("启动 NovaSVN 失败");

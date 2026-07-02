@@ -7,6 +7,7 @@
     FileContentDiff,
     FileDiff,
     ParsedFileDiff,
+    SelectedPatch,
     SvnDetection,
   } from "../../types/api";
   import type { DetailSection, SafetyCheckSummary } from "../../types/app";
@@ -26,11 +27,14 @@
   export let selectedFileContentDiff: FileContentDiff | null = null;
   export let selectedFileParsedDiff: ParsedFileDiff | null = null;
   export let selectedHunkIds: string[] = [];
+  export let selectedPatch: SelectedPatch | null = null;
   export let diffLoading = false;
   export let contentDiffLoading = false;
+  export let selectedPatchLoading = false;
   export let diffError: CommandError | null = null;
   export let contentDiffError: CommandError | null = null;
   export let parsedDiffError: CommandError | null = null;
+  export let selectedPatchError: CommandError | null = null;
   export let svnDetection: SvnDetection | null = null;
   export let svnError: CommandError | null = null;
   export let svnExecutableInput = "";
@@ -42,6 +46,7 @@
   export let onMarkFileReviewed: (path: string) => void;
   export let onMarkFileUnreviewed: (path: string) => void;
   export let onToggleHunkSelection: (filePath: string, hunkId: string) => void;
+  export let onPreviewSelectedPatch: () => void;
 
   let inlineDiff = false;
   let showWhitespace = false;
@@ -181,6 +186,7 @@
     <ErrorNotice error={diffError} />
     <ErrorNotice error={contentDiffError} />
     <ErrorNotice error={parsedDiffError} />
+    <ErrorNotice error={selectedPatchError} />
     {#if diffLoading || contentDiffLoading}
       <p>正在读取 Diff...</p>
     {:else if selectedFileContentDiff?.too_large}
@@ -206,7 +212,13 @@
         <div class="hunk-selection-heading">
           <strong>Hunk 选择</strong>
           {#if selectedFileParsedDiff.partial_commit_supported}
-            <span>{selectedHunkIds.length}/{selectedFileParsedDiff.hunks.length} 已选择</span>
+            <button
+              type="button"
+              disabled={selectedHunkIds.length === 0 || selectedPatchLoading}
+              on:click={onPreviewSelectedPatch}
+            >
+              {selectedPatchLoading ? "生成中" : `预览 ${selectedHunkIds.length}/${selectedFileParsedDiff.hunks.length}`}
+            </button>
           {:else}
             <span>{selectedFileParsedDiff.unsupported_reason}</span>
           {/if}
@@ -223,6 +235,9 @@
               <small>{hunk.lines.length} 行</small>
             </label>
           {/each}
+        {/if}
+        {#if selectedPatch}
+          <pre class="selected-patch-preview">{selectedPatch.text}</pre>
         {/if}
       </div>
     {/if}

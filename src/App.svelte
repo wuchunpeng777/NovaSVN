@@ -299,11 +299,14 @@
         selectedFileContentDiff={$workspaceStore.selectedFileContentDiff}
         selectedFileParsedDiff={$workspaceStore.selectedFileParsedDiff}
         selectedHunkIds={selectedHunkIds}
+        selectedPatch={$workspaceStore.selectedPatch}
         diffLoading={$workspaceStore.diffLoading}
         contentDiffLoading={$workspaceStore.contentDiffLoading}
+        selectedPatchLoading={$workspaceStore.selectedPatchLoading}
         diffError={$workspaceStore.diffError}
         contentDiffError={$workspaceStore.contentDiffError}
         parsedDiffError={$workspaceStore.parsedDiffError}
+        selectedPatchError={$workspaceStore.selectedPatchError}
         svnDetection={$svnStore.detection}
         svnError={$svnStore.error}
         svnExecutableInput={$svnStore.executableInput}
@@ -315,6 +318,7 @@
         onMarkFileReviewed={workspaceStore.markFileReviewed}
         onMarkFileUnreviewed={workspaceStore.markFileUnreviewed}
         onToggleHunkSelection={workspaceStore.toggleHunkSelection}
+        onPreviewSelectedPatch={workspaceStore.previewSelectedPatch}
       />
     </div>
 

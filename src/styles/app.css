@@ -703,6 +703,22 @@ button {
   font-size: 12px;
 }
 
+.hunk-selection-heading button {
+  height: 26px;
+  border: 1px solid #5ba9a5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #227873;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.hunk-selection-heading button:disabled {
+  border-color: #cfd7df;
+  color: #7a8794;
+  cursor: default;
+}
+
 .hunk-option {
   min-height: 30px;
   border: 1px solid #d7dde3;
@@ -719,6 +735,19 @@ button {
   white-space: nowrap;
   font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
+}
+
+.selected-patch-preview {
+  max-height: 220px;
+  overflow: auto;
+  margin: 4px 0 0;
+  border: 1px solid #d7dde3;
+  border-radius: 6px;
+  background: #f7f9fb;
+  padding: 8px;
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .detail-heading {

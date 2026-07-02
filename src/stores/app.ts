@@ -8,6 +8,7 @@ import {
   detectSvn,
   getFileContentDiff,
   getFileDiff,
+  generateSelectedPatch,
   getRecentWorkspace,
   getTask,
   listTasks,
@@ -30,6 +31,7 @@ import type {
   FileDiff,
   MockTaskOutcome,
   ParsedFileDiff,
+  SelectedPatch,
   SvnOperationKind,
   SvnDetection,
   Task,
@@ -329,6 +331,7 @@ export interface WorkspaceStoreState {
   selectedFileDiff: FileDiff | null;
   selectedFileContentDiff: FileContentDiff | null;
   selectedFileParsedDiff: ParsedFileDiff | null;
+  selectedPatch: SelectedPatch | null;
   stagedFiles: Array<{
     path: string;
     status: string;
@@ -353,11 +356,13 @@ export interface WorkspaceStoreState {
   statusLoading: boolean;
   diffLoading: boolean;
   contentDiffLoading: boolean;
+  selectedPatchLoading: boolean;
   error: CommandError | null;
   statusError: CommandError | null;
   diffError: CommandError | null;
   contentDiffError: CommandError | null;
   parsedDiffError: CommandError | null;
+  selectedPatchError: CommandError | null;
 }
 
 const initialWorkspaceState: WorkspaceStoreState = {
@@ -374,6 +379,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   selectedFileDiff: null,
   selectedFileContentDiff: null,
   selectedFileParsedDiff: null,
+  selectedPatch: null,
   stagedFiles: [],
   safetyCheck: emptySafetyCheck(),
   selectedHunks: [],
@@ -390,11 +396,13 @@ const initialWorkspaceState: WorkspaceStoreState = {
   statusLoading: false,
   diffLoading: false,
   contentDiffLoading: false,
+  selectedPatchLoading: false,
   error: null,
   statusError: null,
   diffError: null,
   contentDiffError: null,
   parsedDiffError: null,
+  selectedPatchError: null,
 };
 
 function createWorkspaceStore() {
@@ -656,6 +664,7 @@ function createWorkspaceStore() {
       selectedFileDiff: null,
       selectedFileContentDiff: null,
       selectedFileParsedDiff: null,
+      selectedPatch: null,
       selectedFilePath: path,
     }));
     update((state) => {
@@ -930,6 +939,7 @@ function createWorkspaceStore() {
           stagedFiles,
           safetyCheck,
           selectedHunks,
+          selectedPatch: null,
           reviewedFiles,
           statusLoading: false,
           statusError: null,
@@ -966,6 +976,7 @@ function createWorkspaceStore() {
         safetyCheck: emptySafetyCheck(),
         commitMessage: state.commitTemplate,
         selectedHunks: [],
+        selectedPatch: null,
         commitError: null,
       };
     });
@@ -1141,8 +1152,64 @@ function createWorkspaceStore() {
       return {
         ...state,
         selectedHunks,
+        selectedPatch: null,
+        selectedPatchError: null,
       };
     });
+  }
+
+  async function previewSelectedPatch() {
+    let parsedDiff: ParsedFileDiff | null = null;
+    let selectedHunkIds: string[] = [];
+    update((state) => {
+      parsedDiff = state.selectedFileParsedDiff;
+      const selectedFile = state.status?.files.find(
+        (file) => file.path === state.selectedFilePath,
+      );
+      selectedHunkIds = selectedFile
+        ? state.selectedHunks
+            .filter(
+              (item) =>
+                item.filePath === selectedFile.path &&
+                item.fileDigest === selectedFile.content_digest,
+            )
+            .map((item) => item.hunkId)
+        : [];
+      return {
+        ...state,
+        selectedPatchLoading: true,
+        selectedPatchError: null,
+      };
+    });
+
+    if (!parsedDiff || selectedHunkIds.length === 0) {
+      update((state) => ({
+        ...state,
+        selectedPatch: null,
+        selectedPatchLoading: false,
+      }));
+      return;
+    }
+
+    try {
+      const selectedPatch = await generateSelectedPatch({
+        parsed_diff: { files: [parsedDiff] },
+        selected_hunk_ids: selectedHunkIds,
+      });
+      update((state) => ({
+        ...state,
+        selectedPatch,
+        selectedPatchLoading: false,
+        selectedPatchError: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        selectedPatch: null,
+        selectedPatchLoading: false,
+        selectedPatchError: error as CommandError,
+      }));
+    }
   }
 
   return {
@@ -1178,6 +1245,7 @@ function createWorkspaceStore() {
     refreshFileContentDiff,
     refreshParsedDiff,
     toggleHunkSelection,
+    previewSelectedPatch,
   };
 }
 

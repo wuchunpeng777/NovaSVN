@@ -9,6 +9,7 @@ import type {
   DetectSvnRequest,
   FileDiff,
   FileContentDiff,
+  GenerateSelectedPatchRequest,
   GetFileContentDiffRequest,
   GetFileDiffRequest,
   OpenWorkspaceRequest,
@@ -16,6 +17,7 @@ import type {
   RecentWorkspace,
   ScanWorkspaceStatusRequest,
   SvnDetection,
+  SelectedPatch,
   Task,
   TaskSnapshot,
   WorkingCopyStatus,
@@ -112,6 +114,12 @@ export function getFileContentDiff(
 
 export function parseUnifiedDiff(diffText: string): Promise<ParsedDiff> {
   return callBackend<ParsedDiff>("parse_unified_diff", { diffText });
+}
+
+export function generateSelectedPatch(
+  request: GenerateSelectedPatchRequest,
+): Promise<SelectedPatch> {
+  return callBackend<SelectedPatch>("generate_selected_patch", { request });
 }
 
 export async function chooseWorkspaceDirectory(): Promise<string | null> {

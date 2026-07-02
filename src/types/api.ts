@@ -193,3 +193,14 @@ export interface ParsedFileDiff {
 export interface ParsedDiff {
   files: ParsedFileDiff[];
 }
+
+export interface GenerateSelectedPatchRequest {
+  parsed_diff: ParsedDiff;
+  selected_hunk_ids: string[];
+}
+
+export interface SelectedPatch {
+  text: string;
+  file_count: number;
+  hunk_count: number;
+}

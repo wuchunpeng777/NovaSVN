@@ -1,11 +1,26 @@
-use serde::Serialize;
+use std::collections::HashSet;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedDiff {
     pub files: Vec<ParsedFileDiff>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GenerateSelectedPatchRequest {
+    pub parsed_diff: ParsedDiff,
+    pub selected_hunk_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SelectedPatch {
+    pub text: String,
+    pub file_count: usize,
+    pub hunk_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedFileDiff {
     pub path: String,
     pub old_path: Option<String>,
@@ -17,7 +32,7 @@ pub struct ParsedFileDiff {
     pub property_only: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedHunk {
     pub id: String,
     pub old_start: usize,
@@ -28,7 +43,7 @@ pub struct ParsedHunk {
     pub lines: Vec<ParsedDiffLine>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedDiffLine {
     pub kind: DiffLineKind,
     pub old_line: Option<usize>,
@@ -36,7 +51,7 @@ pub struct ParsedDiffLine {
     pub content: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffLineKind {
     Context,
@@ -103,6 +118,52 @@ pub fn parse_unified_diff(input: &str) -> ParsedDiff {
     finish_file(&mut files, current_file);
 
     ParsedDiff { files }
+}
+
+pub fn generate_selected_patch(request: GenerateSelectedPatchRequest) -> SelectedPatch {
+    let selected_ids: HashSet<&str> = request
+        .selected_hunk_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let mut text = String::new();
+    let mut file_count = 0;
+    let mut hunk_count = 0;
+
+    for file in request.parsed_diff.files {
+        let selected_hunks: Vec<&ParsedHunk> = file
+            .hunks
+            .iter()
+            .filter(|hunk| selected_ids.contains(hunk.id.as_str()))
+            .collect();
+
+        if selected_hunks.is_empty() {
+            continue;
+        }
+
+        file_count += 1;
+        text.push_str(&format!("Index: {}\n", file.path));
+        text.push_str("===================================================================\n");
+        text.push_str(&format!(
+            "--- {}\n",
+            file.old_path.as_deref().unwrap_or(file.path.as_str())
+        ));
+        text.push_str(&format!(
+            "+++ {}\n",
+            file.new_path.as_deref().unwrap_or(file.path.as_str())
+        ));
+
+        for hunk in selected_hunks {
+            hunk_count += 1;
+            append_selected_hunk(&mut text, hunk);
+        }
+    }
+
+    SelectedPatch {
+        text,
+        file_count,
+        hunk_count,
+    }
 }
 
 impl ParsedFileDiff {
@@ -277,6 +338,49 @@ fn finish_file(files: &mut Vec<ParsedFileDiff>, file: Option<ParsedFileDiff>) {
     }
 }
 
+fn append_selected_hunk(output: &mut String, hunk: &ParsedHunk) {
+    let old_lines = hunk
+        .lines
+        .iter()
+        .filter(|line| matches!(line.kind, DiffLineKind::Context | DiffLineKind::Removed))
+        .count();
+    let new_lines = hunk
+        .lines
+        .iter()
+        .filter(|line| matches!(line.kind, DiffLineKind::Context | DiffLineKind::Added))
+        .count();
+
+    output.push_str(&format!(
+        "@@ -{},{} +{},{} @@\n",
+        hunk.old_start, old_lines, hunk.new_start, new_lines
+    ));
+
+    for line in &hunk.lines {
+        match line.kind {
+            DiffLineKind::Context => {
+                output.push(' ');
+                output.push_str(&line.content);
+                output.push('\n');
+            }
+            DiffLineKind::Added => {
+                output.push('+');
+                output.push_str(&line.content);
+                output.push('\n');
+            }
+            DiffLineKind::Removed => {
+                output.push('-');
+                output.push_str(&line.content);
+                output.push('\n');
+            }
+            DiffLineKind::NoNewline => {
+                output.push('\\');
+                output.push_str(&line.content);
+                output.push('\n');
+            }
+        }
+    }
+}
+
 fn parse_path_header(line: &str, prefix: &str) -> Option<String> {
     let value = line.strip_prefix(prefix)?.trim();
     Some(value.split('\t').next().unwrap_or(value).to_string())
@@ -438,5 +542,73 @@ Modified: svn:executable
             parsed.files[0].hunks[0].lines[3].kind,
             DiffLineKind::NoNewline
         );
+    }
+
+    #[test]
+    fn generates_patch_for_selected_hunks_only() {
+        let parsed = parse_unified_diff(
+            r#"Index: src/main.rs
+===================================================================
+--- src/main.rs	(revision 1)
++++ src/main.rs	(working copy)
+@@ -1,2 +1,2 @@
+-old
++new
+ keep
+@@ -10,2 +10,2 @@
+-skip
++ignored
+ keep
+"#,
+        );
+        let selected_hunk_ids = vec![parsed.files[0].hunks[0].id.clone()];
+
+        let patch = generate_selected_patch(GenerateSelectedPatchRequest {
+            parsed_diff: parsed,
+            selected_hunk_ids,
+        });
+
+        assert_eq!(patch.file_count, 1);
+        assert_eq!(patch.hunk_count, 1);
+        assert!(patch.text.contains("Index: src/main.rs"));
+        assert!(patch.text.contains("-old"));
+        assert!(patch.text.contains("+new"));
+        assert!(!patch.text.contains("-skip"));
+        assert!(!patch.text.contains("+ignored"));
+    }
+
+    #[test]
+    fn generates_patch_for_multiple_files() {
+        let parsed = parse_unified_diff(
+            r#"Index: a.txt
+===================================================================
+--- a.txt	(revision 1)
++++ a.txt	(working copy)
+@@ -1 +1 @@
+-a
++b
+Index: b.txt
+===================================================================
+--- b.txt	(revision 1)
++++ b.txt	(working copy)
+@@ -1 +1 @@
+-c
++d
+"#,
+        );
+        let selected_hunk_ids = vec![
+            parsed.files[0].hunks[0].id.clone(),
+            parsed.files[1].hunks[0].id.clone(),
+        ];
+
+        let patch = generate_selected_patch(GenerateSelectedPatchRequest {
+            parsed_diff: parsed,
+            selected_hunk_ids,
+        });
+
+        assert_eq!(patch.file_count, 2);
+        assert_eq!(patch.hunk_count, 2);
+        assert!(patch.text.contains("Index: a.txt"));
+        assert!(patch.text.contains("Index: b.txt"));
     }
 }
