@@ -49,6 +49,9 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 - Staging UI: 主工作区列表分为“已暂存”和“未暂存”分区，文件行支持选择、暂存和取消暂存；底部提交区显示已暂存摘要、提交信息输入、校验提示和提交按钮。
 - Commit Task: 文件级提交通过 `create_commit_task` 创建后端任务，由 `src-tauri/src/task.rs` 的任务队列执行 `svn commit <staged paths> -m <message>`，stdout/stderr 写入底部任务日志。
 - Commit State: 提交信息、提交错误和待完成提交任务 ID 保存在 `workspaceStore`；提交成功后刷新状态并清空已提交 staged 文件和提交信息，提交失败保留 staged 文件和提交信息。
+- SVN Operation Task: `create_svn_operation_task` 创建 update、cleanup 和单文件 revert 任务，由后端任务队列执行对应 SVN 命令并记录 stdout/stderr。
+- SVN Operation UI: 主工作区顶部提供工作副本级“更新”和“清理”；右侧文件详情提供单文件“撤销文件”，执行前使用二次确认。
+- SVN Operation Refresh: SVN 操作任务成功后刷新状态；update 成功后重新打开当前工作副本以更新 revision。
 - File Diff: `get_file_diff` command 执行 `svn diff <path>`，请求包含工作副本 root、文件相对路径和可选 SVN 可执行文件路径。
 - Diff UI: 右侧详情区显示普通文本 diff，二进制文件显示不可预览提示；Monaco diff 放到后续阶段。
 - Diff State: 当前文件 diff、加载状态和错误保存在 `workspaceStore.selectedFileDiff`、`diffLoading`、`diffError`。

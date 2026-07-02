@@ -80,10 +80,27 @@ pub struct CreateCommitTaskRequest {
     pub svn_executable: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SvnOperationKind {
+    Update,
+    Cleanup,
+    RevertFile,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateSvnOperationTaskRequest {
+    pub working_copy_root: String,
+    pub kind: SvnOperationKind,
+    pub file_path: Option<String>,
+    pub svn_executable: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 enum TaskPayload {
     Mock(MockTaskOutcome),
     SvnCommit(CommitTaskPayload),
+    SvnOperation(SvnOperationTaskPayload),
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +108,14 @@ struct CommitTaskPayload {
     working_copy_root: String,
     message: String,
     files: Vec<String>,
+    svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct SvnOperationTaskPayload {
+    working_copy_root: String,
+    kind: SvnOperationKind,
+    file_path: Option<String>,
     svn_executable: String,
 }
 
@@ -179,6 +204,50 @@ impl TaskQueue {
                 working_copy_root: working_copy_root.display().to_string(),
                 message,
                 files,
+                svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
+    pub fn create_svn_operation_task(
+        &self,
+        request: CreateSvnOperationTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
+        let file_path = match request.kind {
+            SvnOperationKind::RevertFile => Some(normalize_relative_file_path(
+                request.file_path.as_deref().unwrap_or_default(),
+                "REVERT_FILE_PATH_INVALID",
+                "Revert 文件路径无效",
+            )?),
+            SvnOperationKind::Update | SvnOperationKind::Cleanup => None,
+        };
+        let svn_executable = request
+            .svn_executable
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "svn".to_string());
+        let title = operation_title(&request.kind, file_path.as_deref());
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title,
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "SVN 操作已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::SvnOperation(SvnOperationTaskPayload {
+                working_copy_root: working_copy_root.display().to_string(),
+                kind: request.kind,
+                file_path,
                 svn_executable,
             }),
         };
@@ -332,6 +401,7 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
         match payload {
             TaskPayload::Mock(outcome) => run_mock_task(&state, &task_id, outcome),
             TaskPayload::SvnCommit(payload) => run_commit_task(&state, &task_id, payload),
+            TaskPayload::SvnOperation(payload) => run_svn_operation_task(&state, &task_id, payload),
         }
     }
 }
@@ -410,6 +480,68 @@ fn run_commit_task(
                 task_id,
                 TaskStatus::Failed,
                 "提交命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn run_svn_operation_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: SvnOperationTaskPayload,
+) {
+    update_task(state, task_id, TaskStatus::Running, "SVN 操作开始执行", None);
+
+    let root = PathBuf::from(&payload.working_copy_root);
+    let mut command = Command::new(&payload.svn_executable);
+    match payload.kind {
+        SvnOperationKind::Update => {
+            command.arg("update").arg(&root);
+            append_task_log(state, task_id, "执行 svn update");
+        }
+        SvnOperationKind::Cleanup => {
+            command.arg("cleanup").arg(&root);
+            append_task_log(state, task_id, "执行 svn cleanup");
+        }
+        SvnOperationKind::RevertFile => {
+            let Some(file_path) = payload.file_path.as_deref() else {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "Revert 参数缺失",
+                    Some("缺少要 revert 的文件路径。".to_string()),
+                );
+                return;
+            };
+            command.arg("revert").arg(root.join(file_path));
+            append_task_log(state, task_id, &format!("执行 svn revert：{file_path}"));
+        }
+    }
+    command.current_dir(&root);
+
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(state, task_id, TaskStatus::Success, "SVN 操作执行成功", None);
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 操作执行失败",
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 命令启动失败",
                 Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
             );
         }
@@ -524,18 +656,41 @@ fn normalize_commit_files(files: &[String]) -> Result<Vec<String>, NovaError> {
 
     let mut normalized = Vec::with_capacity(files.len());
     for file in files {
-        let trimmed = file.trim();
-        let path = Path::new(trimmed);
-        if trimmed.is_empty() || path.is_absolute() || trimmed.contains("..") {
-            return Err(NovaError::command(
-                "COMMIT_FILE_PATH_INVALID",
-                "提交文件路径无效",
-                Some("提交文件必须是工作副本内的相对路径。".to_string()),
-                true,
-            ));
-        }
-        normalized.push(trimmed.replace('\\', "/"));
+        normalized.push(normalize_relative_file_path(
+            file,
+            "COMMIT_FILE_PATH_INVALID",
+            "提交文件路径无效",
+        )?);
     }
 
     Ok(normalized)
+}
+
+fn normalize_relative_file_path(
+    file: &str,
+    code: &'static str,
+    message: &'static str,
+) -> Result<String, NovaError> {
+    let trimmed = file.trim();
+    let path = Path::new(trimmed);
+    if trimmed.is_empty() || path.is_absolute() || trimmed.contains("..") {
+        return Err(NovaError::command(
+            code,
+            message,
+            Some("文件路径必须是工作副本内的相对路径。".to_string()),
+            true,
+        ));
+    }
+
+    Ok(trimmed.replace('\\', "/"))
+}
+
+fn operation_title(kind: &SvnOperationKind, file_path: Option<&str>) -> String {
+    match kind {
+        SvnOperationKind::Update => "更新工作副本".to_string(),
+        SvnOperationKind::Cleanup => "清理工作副本".to_string(),
+        SvnOperationKind::RevertFile => {
+            format!("撤销文件 {}", file_path.unwrap_or(""))
+        }
+    }
 }

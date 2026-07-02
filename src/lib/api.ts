@@ -5,6 +5,7 @@ import type {
   CommandResponse,
   CreateCommitTaskRequest,
   CreateMockTaskRequest,
+  CreateSvnOperationTaskRequest,
   DetectSvnRequest,
   FileDiff,
   GetFileDiffRequest,
@@ -56,6 +57,12 @@ export function createMockTask(request: CreateMockTaskRequest): Promise<Task> {
 
 export function createCommitTask(request: CreateCommitTaskRequest): Promise<Task> {
   return callBackend<Task>("create_commit_task", { request });
+}
+
+export function createSvnOperationTask(
+  request: CreateSvnOperationTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_svn_operation_task", { request });
 }
 
 export function listTasks(): Promise<TaskSnapshot> {

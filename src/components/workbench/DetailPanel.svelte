@@ -22,6 +22,7 @@
   export let onDetectSvn: () => void;
   export let onDetectSvnWithInput: () => void;
   export let onSvnExecutableInput: (value: string) => void;
+  export let onRevertFile: (path: string) => void;
 </script>
 
 <aside class="detail-panel" aria-label="详情">
@@ -79,7 +80,12 @@
   </section>
 
   <section class="detail-block">
-    <h3>文件详情</h3>
+    <div class="detail-heading">
+      <h3>文件详情</h3>
+      <button type="button" on:click={() => selectedFile && onRevertFile(selectedFile.path)} disabled={!selectedFile}>
+        撤销文件
+      </button>
+    </div>
     {#if selectedFile}
       <dl class="info-list">
         <div>

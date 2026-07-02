@@ -23,6 +23,8 @@
   export let onChooseWorkspace: () => void;
   export let onOpenWorkspace: () => void;
   export let onRefreshStatus: () => void;
+  export let onUpdateWorkspace: () => void;
+  export let onCleanupWorkspace: () => void;
   export let onWorkspacePathInput: (value: string) => void;
   export let onSearchTextInput: (value: string) => void;
   export let onToggleGroupByStatus: () => void;
@@ -121,6 +123,12 @@
           disabled={!workspace || statusLoading}
         >
           {statusLoading ? "刷新中" : "刷新状态"}
+        </button>
+        <button type="button" on:click={onUpdateWorkspace} disabled={!workspace}>
+          更新
+        </button>
+        <button type="button" on:click={onCleanupWorkspace} disabled={!workspace}>
+          清理
         </button>
       </div>
     </div>

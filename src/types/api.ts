@@ -60,6 +60,15 @@ export interface CreateCommitTaskRequest {
   svn_executable?: string;
 }
 
+export type SvnOperationKind = "update" | "cleanup" | "revert_file";
+
+export interface CreateSvnOperationTaskRequest {
+  working_copy_root: string;
+  kind: SvnOperationKind;
+  file_path?: string;
+  svn_executable?: string;
+}
+
 export interface SvnDetection {
   available: boolean;
   version: string;

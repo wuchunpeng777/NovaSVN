@@ -4,6 +4,7 @@ import {
   chooseWorkspaceDirectory,
   createCommitTask,
   createMockTask,
+  createSvnOperationTask,
   detectSvn,
   getFileDiff,
   getRecentWorkspace,
@@ -18,6 +19,7 @@ import type {
   CommandError,
   FileDiff,
   MockTaskOutcome,
+  SvnOperationKind,
   SvnDetection,
   Task,
   TaskSnapshot,
@@ -135,6 +137,34 @@ function createTaskStore() {
     }
   }
 
+  async function createSvnOperation(request: {
+    workingCopyRoot: string;
+    kind: SvnOperationKind;
+    filePath?: string | null;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createSvnOperationTask({
+        working_copy_root: request.workingCopyRoot,
+        kind: request.kind,
+        file_path: request.filePath || undefined,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function select(taskId: string) {
     selectedTaskId = taskId;
     await refresh();
@@ -180,6 +210,7 @@ function createTaskStore() {
     refresh,
     create,
     createCommit,
+    createSvnOperation,
     select,
     cancel,
     startPolling,
@@ -287,6 +318,8 @@ export interface WorkspaceStoreState {
   commitMessage: string;
   commitError: string | null;
   pendingCommitTaskId: string | null;
+  pendingSvnOperationTaskId: string | null;
+  pendingSvnOperationKind: SvnOperationKind | null;
   pathInput: string;
   loading: boolean;
   statusLoading: boolean;
@@ -307,6 +340,8 @@ const initialWorkspaceState: WorkspaceStoreState = {
   commitMessage: "",
   commitError: null,
   pendingCommitTaskId: null,
+  pendingSvnOperationTaskId: null,
+  pendingSvnOperationKind: null,
   pathInput: "",
   loading: false,
   statusLoading: false,
@@ -335,6 +370,8 @@ function createWorkspaceStore() {
         commitMessage: "",
         commitError: null,
         pendingCommitTaskId: null,
+        pendingSvnOperationTaskId: null,
+        pendingSvnOperationKind: null,
         pathInput: state.pathInput || root || "",
         loading: false,
         error: null,
@@ -375,6 +412,8 @@ function createWorkspaceStore() {
         commitMessage: "",
         commitError: null,
         pendingCommitTaskId: null,
+        pendingSvnOperationTaskId: null,
+        pendingSvnOperationKind: null,
         pathInput: current.working_copy_root,
         loading: false,
         error: null,
@@ -516,6 +555,14 @@ function createWorkspaceStore() {
     }));
   }
 
+  function markSvnOperationTask(taskId: string | null, kind: SvnOperationKind | null) {
+    update((state) => ({
+      ...state,
+      pendingSvnOperationTaskId: taskId,
+      pendingSvnOperationKind: kind,
+    }));
+  }
+
   function clearCommittedFiles(paths: string[]) {
     const committed = new Set(paths);
     update((state) => ({
@@ -652,6 +699,7 @@ function createWorkspaceStore() {
     unstageFile,
     validateStagedFilesForCommit,
     markCommitTask,
+    markSvnOperationTask,
     clearCommittedFiles,
     refreshStatus,
     refreshFileDiff,

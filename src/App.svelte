@@ -56,6 +56,32 @@
     workspaceStore.markCommitTask(task.task_id);
   }
 
+  async function runSvnOperation(kind: "update" | "cleanup" | "revert_file", filePath?: string) {
+    if (!$workspaceStore.current) {
+      return;
+    }
+
+    if (kind === "revert_file") {
+      const confirmed = window.confirm(`确定要撤销文件改动吗？\n${filePath ?? ""}`);
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    const task = await taskStore.createSvnOperation({
+      workingCopyRoot: $workspaceStore.current.working_copy_root,
+      kind,
+      filePath,
+      svnExecutable: $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    });
+
+    if (!task) {
+      return;
+    }
+
+    workspaceStore.markSvnOperationTask(task.task_id, kind);
+  }
+
   $: if (
     $workspaceStore.pendingCommitTaskId &&
     $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
@@ -79,6 +105,37 @@
       $taskStore.selectedTask.status === "cancelled")
   ) {
     workspaceStore.markCommitTask(null);
+  }
+
+  $: if (
+    $workspaceStore.pendingSvnOperationTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingSvnOperationTaskId &&
+    $taskStore.selectedTask.status === "success"
+  ) {
+    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+    const operationKind = $workspaceStore.pendingSvnOperationKind;
+    workspaceStore.markSvnOperationTask(null, null);
+    if (workingCopyRoot) {
+      if (operationKind === "update") {
+        void workspaceStore.openPath(
+          $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+        );
+      } else {
+        void workspaceStore.refreshStatus(
+          $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+          workingCopyRoot,
+        );
+      }
+    }
+  }
+
+  $: if (
+    $workspaceStore.pendingSvnOperationTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingSvnOperationTaskId &&
+    ($taskStore.selectedTask.status === "failed" ||
+      $taskStore.selectedTask.status === "cancelled")
+  ) {
+    workspaceStore.markSvnOperationTask(null, null);
   }
 
   onMount(() => {
@@ -133,6 +190,8 @@
           workspaceStore.refreshStatus(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
           )}
+        onUpdateWorkspace={() => runSvnOperation("update")}
+        onCleanupWorkspace={() => runSvnOperation("cleanup")}
         onWorkspacePathInput={workspaceStore.setPathInput}
         onSearchTextInput={workspaceStore.setSearchText}
         onToggleGroupByStatus={workspaceStore.toggleGroupByStatus}
@@ -161,6 +220,7 @@
       onDetectSvn={svnStore.detect}
       onDetectSvnWithInput={svnStore.detectWithInput}
       onSvnExecutableInput={svnStore.setExecutableInput}
+      onRevertFile={(path) => runSvnOperation("revert_file", path)}
     />
     </div>
 
