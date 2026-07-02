@@ -135,9 +135,26 @@ export interface GetFileDiffRequest {
   svn_executable?: string;
 }
 
+export interface GetFileContentDiffRequest {
+  working_copy_root: string;
+  file_path: string;
+  svn_executable?: string;
+  max_bytes?: number;
+}
+
 export interface FileDiff {
   path: string;
   text: string;
   binary: boolean;
   empty: boolean;
+}
+
+export interface FileContentDiff {
+  path: string;
+  original_text: string;
+  modified_text: string;
+  language: string;
+  binary: boolean;
+  too_large: boolean;
+  max_bytes: number;
 }

@@ -53,8 +53,10 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 - SVN Operation UI: 主工作区顶部提供工作副本级“更新”和“清理”；右侧文件详情提供单文件“撤销文件”，执行前使用二次确认。
 - SVN Operation Refresh: SVN 操作任务成功后刷新状态；update 成功后重新打开当前工作副本以更新 revision。
 - File Diff: `get_file_diff` command 执行 `svn diff <path>`，请求包含工作副本 root、文件相对路径和可选 SVN 可执行文件路径。
-- Diff UI: 右侧详情区显示普通文本 diff，二进制文件显示不可预览提示；Monaco diff 放到后续阶段。
-- Diff State: 当前文件 diff、加载状态和错误保存在 `workspaceStore.selectedFileDiff`、`diffLoading`、`diffError`。
+- Content Diff: `get_file_content_diff` command 返回 base / working 文本内容、语言标识、二进制和大文件降级状态；默认内容加载上限为 512KB。
+- Diff UI: 右侧详情区使用 `MonacoDiffViewer` 展示只读 Monaco diff，支持双栏/行内切换和空白字符显示；二进制与大文件降级为提示。
+- Diff State: 当前文本 diff、Monaco content diff、加载状态和错误保存在 `workspaceStore.selectedFileDiff`、`selectedFileContentDiff`、`diffLoading`、`contentDiffLoading`、`diffError`、`contentDiffError`。
+- Monaco Setup: 前端依赖 `monaco-editor`，在 `MonacoDiffViewer.svelte` 中动态加载 editor API、常用语言贡献和 editor worker；Vite chunk warning 阈值为 3000KB。
 - Dialog Plugin: 目录选择使用 `@tauri-apps/plugin-dialog` 和 Rust `tauri-plugin-dialog`，权限配置在 `src-tauri/capabilities/default.json`。
 - Task Queue: 后端任务队列由 `src-tauri/src/task.rs` 提供，当前为内存存储和串行执行模型，通过 Tauri managed state 注入。
 - Task Commands: 任务相关 commands 包括创建模拟任务、读取任务列表、读取任务详情和取消任务；任务错误继续走统一 `NovaError`。

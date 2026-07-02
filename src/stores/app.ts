@@ -6,6 +6,7 @@ import {
   createMockTask,
   createSvnOperationTask,
   detectSvn,
+  getFileContentDiff,
   getFileDiff,
   getRecentWorkspace,
   getTask,
@@ -17,6 +18,7 @@ import type { AppView } from "../types/app";
 import type {
   ChangedFile,
   CommandError,
+  FileContentDiff,
   FileDiff,
   MockTaskOutcome,
   SvnOperationKind,
@@ -311,6 +313,7 @@ export interface WorkspaceStoreState {
   groupByStatus: boolean;
   selectedFilePath: string | null;
   selectedFileDiff: FileDiff | null;
+  selectedFileContentDiff: FileContentDiff | null;
   stagedFiles: Array<{
     path: string;
     status: string;
@@ -324,9 +327,11 @@ export interface WorkspaceStoreState {
   loading: boolean;
   statusLoading: boolean;
   diffLoading: boolean;
+  contentDiffLoading: boolean;
   error: CommandError | null;
   statusError: CommandError | null;
   diffError: CommandError | null;
+  contentDiffError: CommandError | null;
 }
 
 const initialWorkspaceState: WorkspaceStoreState = {
@@ -336,6 +341,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   groupByStatus: true,
   selectedFilePath: null,
   selectedFileDiff: null,
+  selectedFileContentDiff: null,
   stagedFiles: [],
   commitMessage: "",
   commitError: null,
@@ -346,9 +352,11 @@ const initialWorkspaceState: WorkspaceStoreState = {
   loading: false,
   statusLoading: false,
   diffLoading: false,
+  contentDiffLoading: false,
   error: null,
   statusError: null,
   diffError: null,
+  contentDiffError: null,
 };
 
 function createWorkspaceStore() {
@@ -366,6 +374,7 @@ function createWorkspaceStore() {
         status: null,
         selectedFilePath: null,
         selectedFileDiff: null,
+        selectedFileContentDiff: null,
         stagedFiles: [],
         commitMessage: "",
         commitError: null,
@@ -408,6 +417,7 @@ function createWorkspaceStore() {
         status: null,
         selectedFilePath: null,
         selectedFileDiff: null,
+        selectedFileContentDiff: null,
         stagedFiles: [],
         commitMessage: "",
         commitError: null,
@@ -485,6 +495,7 @@ function createWorkspaceStore() {
     update((state) => ({
       ...state,
       selectedFileDiff: null,
+      selectedFileContentDiff: null,
       selectedFilePath: path,
     }));
     update((state) => {
@@ -493,7 +504,10 @@ function createWorkspaceStore() {
     });
 
     if (root) {
-      await refreshFileDiff(svnExecutable, root, path);
+      await Promise.all([
+        refreshFileDiff(svnExecutable, root, path),
+        refreshFileContentDiff(svnExecutable, root, path),
+      ]);
     }
   }
 
@@ -621,12 +635,17 @@ function createWorkspaceStore() {
         selectedFilePath,
         selectedFileDiff:
           selectedFilePath === state.selectedFilePath ? state.selectedFileDiff : null,
+        selectedFileContentDiff:
+          selectedFilePath === state.selectedFilePath ? state.selectedFileContentDiff : null,
         stagedFiles: reconcileStagedFiles(state.stagedFiles, status.files),
         statusLoading: false,
         statusError: null,
       }));
       if (selectedFilePath) {
-        await refreshFileDiff(svnExecutable, root, selectedFilePath);
+        await Promise.all([
+          refreshFileDiff(svnExecutable, root, selectedFilePath),
+          refreshFileContentDiff(svnExecutable, root, selectedFilePath),
+        ]);
       }
     } catch (error) {
       update((state) => ({
@@ -685,6 +704,55 @@ function createWorkspaceStore() {
     }
   }
 
+  async function refreshFileContentDiff(
+    svnExecutable?: string | null,
+    workingCopyRoot?: string,
+    filePath?: string | null,
+  ) {
+    let root = workingCopyRoot ?? "";
+    let path = filePath ?? "";
+    update((state) => {
+      root = root || state.current?.working_copy_root || "";
+      path = path || state.selectedFilePath || "";
+      return {
+        ...state,
+        contentDiffLoading: true,
+        contentDiffError: null,
+      };
+    });
+
+    if (!root || !path) {
+      update((state) => ({
+        ...state,
+        selectedFileContentDiff: null,
+        contentDiffLoading: false,
+      }));
+      return;
+    }
+
+    try {
+      const selectedFileContentDiff = await getFileContentDiff({
+        working_copy_root: root,
+        file_path: path,
+        svn_executable: svnExecutable || undefined,
+        max_bytes: 512 * 1024,
+      });
+      update((state) => ({
+        ...state,
+        selectedFileContentDiff,
+        contentDiffLoading: false,
+        contentDiffError: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        selectedFileContentDiff: null,
+        contentDiffLoading: false,
+        contentDiffError: error as CommandError,
+      }));
+    }
+  }
+
   return {
     subscribe,
     loadRecent,
@@ -703,6 +771,7 @@ function createWorkspaceStore() {
     clearCommittedFiles,
     refreshStatus,
     refreshFileDiff,
+    refreshFileContentDiff,
   };
 }
 

@@ -1,8 +1,10 @@
 <script lang="ts">
   import ErrorNotice from "../ErrorNotice.svelte";
+  import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
   import type {
     ChangedFile,
     CommandError,
+    FileContentDiff,
     FileDiff,
     SvnDetection,
   } from "../../types/api";
@@ -13,8 +15,11 @@
   export let backendMessage = "";
   export let selectedFile: ChangedFile | null = null;
   export let selectedFileDiff: FileDiff | null = null;
+  export let selectedFileContentDiff: FileContentDiff | null = null;
   export let diffLoading = false;
+  export let contentDiffLoading = false;
   export let diffError: CommandError | null = null;
+  export let contentDiffError: CommandError | null = null;
   export let svnDetection: SvnDetection | null = null;
   export let svnError: CommandError | null = null;
   export let svnExecutableInput = "";
@@ -23,6 +28,9 @@
   export let onDetectSvnWithInput: () => void;
   export let onSvnExecutableInput: (value: string) => void;
   export let onRevertFile: (path: string) => void;
+
+  let inlineDiff = false;
+  let showWhitespace = false;
 </script>
 
 <aside class="detail-panel" aria-label="详情">
@@ -111,12 +119,38 @@
   </section>
 
   <section class="detail-block diff-block">
-    <h3>Diff</h3>
+    <div class="detail-heading">
+      <h3>Diff</h3>
+      <div class="diff-actions">
+        <button type="button" class:active={!inlineDiff} on:click={() => (inlineDiff = false)}>
+          双栏
+        </button>
+        <button type="button" class:active={inlineDiff} on:click={() => (inlineDiff = true)}>
+          行内
+        </button>
+        <button
+          type="button"
+          class:active={showWhitespace}
+          on:click={() => (showWhitespace = !showWhitespace)}
+        >
+          空白
+        </button>
+      </div>
+    </div>
     <ErrorNotice error={diffError} />
-    {#if diffLoading}
+    <ErrorNotice error={contentDiffError} />
+    {#if diffLoading || contentDiffLoading}
       <p>正在读取 Diff...</p>
+    {:else if selectedFileContentDiff?.too_large}
+      <p>文件超过 {Math.round(selectedFileContentDiff.max_bytes / 1024)} KB，已停止加载 Monaco Diff。</p>
     {:else if selectedFileDiff?.binary}
       <p>该文件是二进制文件，当前不可预览文本 Diff。</p>
+    {:else if selectedFileContentDiff && !selectedFileContentDiff.binary}
+      <MonacoDiffViewer
+        contentDiff={selectedFileContentDiff}
+        inlineMode={inlineDiff}
+        showWhitespace={showWhitespace}
+      />
     {:else if selectedFileDiff && !selectedFileDiff.empty}
       <pre>{selectedFileDiff.text}</pre>
     {:else if selectedFile}

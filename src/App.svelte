@@ -211,8 +211,11 @@
         (file) => file.path === $workspaceStore.selectedFilePath,
       ) ?? null}
       selectedFileDiff={$workspaceStore.selectedFileDiff}
+      selectedFileContentDiff={$workspaceStore.selectedFileContentDiff}
       diffLoading={$workspaceStore.diffLoading}
+      contentDiffLoading={$workspaceStore.contentDiffLoading}
       diffError={$workspaceStore.diffError}
+      contentDiffError={$workspaceStore.contentDiffError}
       svnDetection={$svnStore.detection}
       svnError={$svnStore.error}
       svnExecutableInput={$svnStore.executableInput}

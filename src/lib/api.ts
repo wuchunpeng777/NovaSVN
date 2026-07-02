@@ -8,6 +8,8 @@ import type {
   CreateSvnOperationTaskRequest,
   DetectSvnRequest,
   FileDiff,
+  FileContentDiff,
+  GetFileContentDiffRequest,
   GetFileDiffRequest,
   OpenWorkspaceRequest,
   RecentWorkspace,
@@ -99,6 +101,12 @@ export function scanWorkspaceStatus(
 
 export function getFileDiff(request: GetFileDiffRequest): Promise<FileDiff> {
   return callBackend<FileDiff>("get_file_diff", { request });
+}
+
+export function getFileContentDiff(
+  request: GetFileContentDiffRequest,
+): Promise<FileContentDiff> {
+  return callBackend<FileContentDiff>("get_file_content_diff", { request });
 }
 
 export async function chooseWorkspaceDirectory(): Promise<string | null> {

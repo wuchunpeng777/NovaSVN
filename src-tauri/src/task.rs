@@ -406,11 +406,7 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
     }
 }
 
-fn run_mock_task(
-    state: &Arc<Mutex<TaskQueueState>>,
-    task_id: &str,
-    outcome: MockTaskOutcome,
-) {
+fn run_mock_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, outcome: MockTaskOutcome) {
     update_task(state, task_id, TaskStatus::Running, "任务开始执行", None);
     thread::sleep(Duration::from_millis(450));
     append_task_log(state, task_id, "准备模拟命令环境");
@@ -432,12 +428,14 @@ fn run_mock_task(
     }
 }
 
-fn run_commit_task(
-    state: &Arc<Mutex<TaskQueueState>>,
-    task_id: &str,
-    payload: CommitTaskPayload,
-) {
-    update_task(state, task_id, TaskStatus::Running, "提交任务开始执行", None);
+fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: CommitTaskPayload) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "提交任务开始执行",
+        None,
+    );
     append_task_log(
         state,
         task_id,
@@ -491,7 +489,13 @@ fn run_svn_operation_task(
     task_id: &str,
     payload: SvnOperationTaskPayload,
 ) {
-    update_task(state, task_id, TaskStatus::Running, "SVN 操作开始执行", None);
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "SVN 操作开始执行",
+        None,
+    );
 
     let root = PathBuf::from(&payload.working_copy_root);
     let mut command = Command::new(&payload.svn_executable);
@@ -524,7 +528,13 @@ fn run_svn_operation_task(
     match command.output() {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
-            update_task(state, task_id, TaskStatus::Success, "SVN 操作执行成功", None);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                "SVN 操作执行成功",
+                None,
+            );
         }
         Ok(output) => {
             append_command_output(state, task_id, &output);

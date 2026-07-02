@@ -1,5 +1,6 @@
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -72,12 +73,31 @@ pub struct GetFileDiffRequest {
     pub svn_executable: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetFileContentDiffRequest {
+    pub working_copy_root: String,
+    pub file_path: String,
+    pub svn_executable: Option<String>,
+    pub max_bytes: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FileDiff {
     pub path: String,
     pub text: String,
     pub binary: bool,
     pub empty: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FileContentDiff {
+    pub path: String,
+    pub original_text: String,
+    pub modified_text: String,
+    pub language: String,
+    pub binary: bool,
+    pub too_large: bool,
+    pub max_bytes: u64,
 }
 
 pub fn open_workspace(
@@ -175,6 +195,43 @@ pub fn get_file_diff(request: GetFileDiffRequest) -> Result<FileDiff, NovaError>
     })
 }
 
+pub fn get_file_content_diff(
+    request: GetFileContentDiffRequest,
+) -> Result<FileContentDiff, NovaError> {
+    let root = normalize_workspace_path(&request.working_copy_root)?;
+    let file_path = normalize_relative_file_path(&request.file_path)?;
+    let target = root.join(&file_path);
+    let max_bytes = request.max_bytes.unwrap_or(512 * 1024);
+    let executable = request
+        .svn_executable
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "svn".to_string());
+
+    let working = read_limited_text_file(&target, max_bytes)?;
+    let original = read_svn_base_text(&executable, &root, &target, max_bytes)?;
+    let binary = working.binary || original.binary;
+    let too_large = working.too_large || original.too_large;
+
+    Ok(FileContentDiff {
+        path: file_path.replace('\\', "/"),
+        original_text: if binary || too_large {
+            String::new()
+        } else {
+            original.text
+        },
+        modified_text: if binary || too_large {
+            String::new()
+        } else {
+            working.text
+        },
+        language: language_for_path(&file_path),
+        binary,
+        too_large,
+        max_bytes,
+    })
+}
+
 pub fn scan_workspace_status(
     request: ScanWorkspaceStatusRequest,
 ) -> Result<WorkingCopyStatus, NovaError> {
@@ -248,6 +305,161 @@ fn is_binary_diff(text: &str) -> bool {
     lowered.contains("cannot display: file marked as a binary type")
         || lowered.contains("cannot display: file marked as binary")
         || lowered.contains("diff of binary files")
+}
+
+#[derive(Debug)]
+struct LimitedText {
+    text: String,
+    binary: bool,
+    too_large: bool,
+}
+
+fn read_limited_text_file(path: &Path, max_bytes: u64) -> Result<LimitedText, NovaError> {
+    if !path.exists() {
+        return Ok(LimitedText {
+            text: String::new(),
+            binary: false,
+            too_large: false,
+        });
+    }
+
+    let metadata = fs::metadata(path).map_err(|error| {
+        NovaError::command(
+            "FILE_CONTENT_METADATA_FAILED",
+            "无法读取文件信息",
+            Some(format!("路径：{}。错误：{error}", path.display())),
+            true,
+        )
+    })?;
+
+    if metadata.len() > max_bytes {
+        return Ok(LimitedText {
+            text: String::new(),
+            binary: false,
+            too_large: true,
+        });
+    }
+
+    let mut file = fs::File::open(path).map_err(|error| {
+        NovaError::command(
+            "FILE_CONTENT_READ_FAILED",
+            "无法读取文件内容",
+            Some(format!("路径：{}。错误：{error}", path.display())),
+            true,
+        )
+    })?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.read_to_end(&mut bytes).map_err(|error| {
+        NovaError::command(
+            "FILE_CONTENT_READ_FAILED",
+            "无法读取文件内容",
+            Some(format!("路径：{}。错误：{error}", path.display())),
+            true,
+        )
+    })?;
+
+    bytes_to_limited_text(bytes, false)
+}
+
+fn read_svn_base_text(
+    executable: &str,
+    root: &Path,
+    target: &Path,
+    max_bytes: u64,
+) -> Result<LimitedText, NovaError> {
+    let output = Command::new(executable)
+        .arg("cat")
+        .arg(target)
+        .current_dir(root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_CAT_FAILED",
+                "无法读取文件基线内容",
+                Some(format!(
+                    "执行 `{executable} cat {}` 失败：{error}",
+                    target.display()
+                )),
+                true,
+            )
+        })?;
+
+    if !output.status.success() {
+        return Ok(LimitedText {
+            text: String::new(),
+            binary: false,
+            too_large: false,
+        });
+    }
+
+    if output.stdout.len() as u64 > max_bytes {
+        return Ok(LimitedText {
+            text: String::new(),
+            binary: false,
+            too_large: true,
+        });
+    }
+
+    bytes_to_limited_text(output.stdout, false)
+}
+
+fn bytes_to_limited_text(bytes: Vec<u8>, too_large: bool) -> Result<LimitedText, NovaError> {
+    if bytes.iter().any(|byte| *byte == 0) {
+        return Ok(LimitedText {
+            text: String::new(),
+            binary: true,
+            too_large,
+        });
+    }
+
+    let text = String::from_utf8(bytes).map_err(|error| {
+        NovaError::command(
+            "FILE_CONTENT_NOT_UTF8",
+            "文件不是 UTF-8 文本",
+            Some(error.to_string()),
+            true,
+        )
+    })?;
+
+    Ok(LimitedText {
+        text,
+        binary: false,
+        too_large,
+    })
+}
+
+fn language_for_path(path: &str) -> String {
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    match extension.as_str() {
+        "rs" => "rust",
+        "ts" | "tsx" => "typescript",
+        "js" | "jsx" | "mjs" | "cjs" => "javascript",
+        "svelte" => "html",
+        "json" => "json",
+        "md" | "markdown" => "markdown",
+        "css" => "css",
+        "scss" | "sass" => "scss",
+        "html" | "htm" => "html",
+        "xml" => "xml",
+        "toml" => "toml",
+        "yaml" | "yml" => "yaml",
+        "py" => "python",
+        "java" => "java",
+        "c" | "h" => "c",
+        "cpp" | "cc" | "cxx" | "hpp" => "cpp",
+        "cs" => "csharp",
+        "go" => "go",
+        "sql" => "sql",
+        "sh" | "bash" => "shell",
+        "ps1" => "powershell",
+        _ => "plaintext",
+    }
+    .to_string()
 }
 
 pub fn read_recent_workspace(app: &AppHandle) -> Result<RecentWorkspace, NovaError> {

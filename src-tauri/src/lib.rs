@@ -11,8 +11,8 @@ use task::{
     TaskSnapshot,
 };
 use workspace::{
-    FileDiff, GetFileDiffRequest, OpenWorkspaceRequest, RecentWorkspace,
-    ScanWorkspaceStatusRequest, WorkingCopyStatus, WorkspaceSummary,
+    FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, OpenWorkspaceRequest,
+    RecentWorkspace, ScanWorkspaceStatusRequest, WorkingCopyStatus, WorkspaceSummary,
 };
 
 #[tauri::command]
@@ -117,6 +117,14 @@ fn get_file_diff(request: GetFileDiffRequest) -> CommandResult<FileDiff> {
     Ok(CommandResponse::success(workspace::get_file_diff(request)?))
 }
 
+#[tauri::command]
+fn get_file_content_diff(request: GetFileContentDiffRequest) -> CommandResult<FileContentDiff> {
+    println!("[NovaSVN] get_file_content_diff command received");
+    Ok(CommandResponse::success(workspace::get_file_content_diff(
+        request,
+    )?))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(TaskQueue::new())
@@ -135,6 +143,7 @@ pub fn run() {
             get_recent_workspace,
             scan_workspace_status,
             get_file_diff,
+            get_file_content_diff,
         ])
         .run(tauri::generate_context!())
         .expect("启动 NovaSVN 失败");
