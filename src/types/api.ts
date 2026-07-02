@@ -80,3 +80,35 @@ export interface OpenWorkspaceRequest {
 export interface RecentWorkspace {
   workspace: WorkspaceSummary | null;
 }
+
+export interface ScanWorkspaceStatusRequest {
+  working_copy_root: string;
+  svn_executable?: string;
+  offset?: number;
+  limit?: number;
+}
+
+export interface ChangedFile {
+  path: string;
+  status: string;
+  property_status: string | null;
+  property_changed: boolean;
+  abnormal: boolean;
+}
+
+export interface WorkingCopyStatus {
+  working_copy_root: string;
+  total: number;
+  returned: number;
+  offset: number;
+  limit: number;
+  modified: number;
+  added: number;
+  deleted: number;
+  missing: number;
+  unversioned: number;
+  conflicted: number;
+  obstructed: number;
+  property_changed: number;
+  files: ChangedFile[];
+}

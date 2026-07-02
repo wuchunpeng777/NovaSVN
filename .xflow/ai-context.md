@@ -39,6 +39,9 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 - Workspace Commands: 工作副本 commands 包括 `open_workspace` 和 `get_recent_workspace`，错误继续走统一 `NovaError`。
 - Workspace UI: 主工作区顶部展示工作副本打开面板，前端状态由 `src/stores/app.ts` 的 `workspaceStore` 管理。
 - Recent Workspace: 最近工作副本当前保存到应用数据目录下的 `recent-workspace.json`，只保存一个摘要。
+- Status Scan: `scan_workspace_status` command 执行 `svn status --xml <working_copy_root>`，返回 `WorkingCopyStatus` 和 `ChangedFile`。
+- Status UI: 主工作区显示状态统计和基础文件状态列表，打开工作副本后会自动扫描，也支持手动刷新。
+- Status Limit: 当前状态扫描返回前 500 项，保留 offset/limit 扩展字段；搜索、过滤、分组和虚拟滚动后续实现。
 - Dialog Plugin: 目录选择使用 `@tauri-apps/plugin-dialog` 和 Rust `tauri-plugin-dialog`，权限配置在 `src-tauri/capabilities/default.json`。
 - Task Queue: 后端任务队列由 `src-tauri/src/task.rs` 提供，当前为内存存储和串行执行模型，通过 Tauri managed state 注入。
 - Task Commands: 任务相关 commands 包括创建模拟任务、读取任务列表、读取任务详情和取消任务；任务错误继续走统一 `NovaError`。

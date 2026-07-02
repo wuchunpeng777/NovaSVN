@@ -351,7 +351,10 @@ button {
 
 .work-row h3,
 .detail-block h3 {
+  overflow: hidden;
   font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .work-row p,
@@ -368,6 +371,16 @@ button {
   color: #227873;
   padding: 4px 8px;
   font-size: 12px;
+}
+
+.work-row.abnormal {
+  border-color: #e2b3a9;
+  background: #fff8f6;
+}
+
+.work-row.abnormal span {
+  background: #fff0ec;
+  color: #a33f2f;
 }
 
 .detail-block {

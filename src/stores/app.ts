@@ -8,6 +8,7 @@ import {
   getTask,
   listTasks,
   openWorkspace,
+  scanWorkspaceStatus,
 } from "../lib/api";
 import type { AppView } from "../types/app";
 import type {
@@ -16,6 +17,7 @@ import type {
   SvnDetection,
   Task,
   TaskSnapshot,
+  WorkingCopyStatus,
   WorkspaceSummary,
 } from "../types/api";
 
@@ -240,16 +242,22 @@ export const svnStore = createSvnStore();
 
 export interface WorkspaceStoreState {
   current: WorkspaceSummary | null;
+  status: WorkingCopyStatus | null;
   pathInput: string;
   loading: boolean;
+  statusLoading: boolean;
   error: CommandError | null;
+  statusError: CommandError | null;
 }
 
 const initialWorkspaceState: WorkspaceStoreState = {
   current: null,
+  status: null,
   pathInput: "",
   loading: false,
+  statusLoading: false,
   error: null,
+  statusError: null,
 };
 
 function createWorkspaceStore() {
@@ -260,13 +268,18 @@ function createWorkspaceStore() {
 
     try {
       const recent = await getRecentWorkspace();
+      const root = recent.workspace?.working_copy_root;
       update((state) => ({
         ...state,
         current: recent.workspace,
-        pathInput: state.pathInput || recent.workspace?.working_copy_root || "",
+        status: null,
+        pathInput: state.pathInput || root || "",
         loading: false,
         error: null,
       }));
+      if (root) {
+        await refreshStatus(null, root);
+      }
     } catch (error) {
       update((state) => ({
         ...state,
@@ -293,10 +306,12 @@ function createWorkspaceStore() {
       update((state) => ({
         ...state,
         current,
+        status: null,
         pathInput: current.working_copy_root,
         loading: false,
         error: null,
       }));
+      await refreshStatus(svnExecutable, current.working_copy_root);
     } catch (error) {
       update((state) => ({
         ...state,
@@ -336,12 +351,63 @@ function createWorkspaceStore() {
     }));
   }
 
+  async function refreshStatus(
+    svnExecutable?: string | null,
+    workingCopyRoot?: string,
+  ) {
+    let root = workingCopyRoot ?? "";
+    update((state) => {
+      root = root || state.current?.working_copy_root || "";
+      return {
+        ...state,
+        statusLoading: true,
+        statusError: null,
+      };
+    });
+
+    if (!root) {
+      update((state) => ({
+        ...state,
+        statusLoading: false,
+        statusError: {
+          code: "WORKSPACE_REQUIRED",
+          message: "请先打开 SVN 工作副本",
+          detail: null,
+          recoverable: true,
+        },
+      }));
+      return;
+    }
+
+    try {
+      const status = await scanWorkspaceStatus({
+        working_copy_root: root,
+        svn_executable: svnExecutable || undefined,
+        offset: 0,
+        limit: 500,
+      });
+      update((state) => ({
+        ...state,
+        status,
+        statusLoading: false,
+        statusError: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        statusLoading: false,
+        statusError: error as CommandError,
+      }));
+    }
+  }
+
   return {
     subscribe,
     loadRecent,
     openPath,
     chooseAndOpen,
     setPathInput,
+    refreshStatus,
   };
 }
 

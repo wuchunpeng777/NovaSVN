@@ -7,7 +7,10 @@ mod workspace;
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
 use task::{CreateMockTaskRequest, Task, TaskQueue, TaskSnapshot};
-use workspace::{OpenWorkspaceRequest, RecentWorkspace, WorkspaceSummary};
+use workspace::{
+    OpenWorkspaceRequest, RecentWorkspace, ScanWorkspaceStatusRequest, WorkingCopyStatus,
+    WorkspaceSummary,
+};
 
 #[tauri::command]
 fn ping() -> CommandResult<HealthPayload> {
@@ -77,6 +80,14 @@ fn get_recent_workspace(app: tauri::AppHandle) -> CommandResult<RecentWorkspace>
     )?))
 }
 
+#[tauri::command]
+fn scan_workspace_status(request: ScanWorkspaceStatusRequest) -> CommandResult<WorkingCopyStatus> {
+    println!("[NovaSVN] scan_workspace_status command received");
+    Ok(CommandResponse::success(workspace::scan_workspace_status(
+        request,
+    )?))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(TaskQueue::new())
@@ -91,6 +102,7 @@ pub fn run() {
             detect_svn,
             open_workspace,
             get_recent_workspace,
+            scan_workspace_status,
         ])
         .run(tauri::generate_context!())
         .expect("启动 NovaSVN 失败");

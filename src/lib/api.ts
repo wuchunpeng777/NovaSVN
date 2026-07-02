@@ -7,9 +7,11 @@ import type {
   DetectSvnRequest,
   OpenWorkspaceRequest,
   RecentWorkspace,
+  ScanWorkspaceStatusRequest,
   SvnDetection,
   Task,
   TaskSnapshot,
+  WorkingCopyStatus,
   WorkspaceSummary,
 } from "../types/api";
 
@@ -73,6 +75,12 @@ export function openWorkspace(
 
 export function getRecentWorkspace(): Promise<RecentWorkspace> {
   return callBackend<RecentWorkspace>("get_recent_workspace");
+}
+
+export function scanWorkspaceStatus(
+  request: ScanWorkspaceStatusRequest,
+): Promise<WorkingCopyStatus> {
+  return callBackend<WorkingCopyStatus>("scan_workspace_status", { request });
 }
 
 export async function chooseWorkspaceDirectory(): Promise<string | null> {

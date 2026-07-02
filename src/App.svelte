@@ -69,12 +69,19 @@
         workspacePathInput={$workspaceStore.pathInput}
         workspaceLoading={$workspaceStore.loading}
         workspaceError={$workspaceStore.error}
+        workingCopyStatus={$workspaceStore.status}
+        statusLoading={$workspaceStore.statusLoading}
+        statusError={$workspaceStore.statusError}
         onChooseWorkspace={() =>
           workspaceStore.chooseAndOpen(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
           )}
         onOpenWorkspace={() =>
           workspaceStore.openPath(
+            $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+          )}
+        onRefreshStatus={() =>
+          workspaceStore.refreshStatus(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
           )}
         onWorkspacePathInput={workspaceStore.setPathInput}
