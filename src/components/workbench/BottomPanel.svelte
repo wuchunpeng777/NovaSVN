@@ -24,6 +24,7 @@
   export let onCommitTemplateInput: (value: string) => void;
   export let onUseCommitHistoryMessage: (value: string) => void;
   export let onConfirmSafetyWarnings: () => void;
+  export let onClearWorkspaceDraft: () => void;
   export let onCommit: () => void;
   export let onSelectTask: (taskId: string) => void;
   export let onCancelTask: (taskId: string) => void;
@@ -66,7 +67,12 @@
   <section class="commit-placeholder">
     <div class="bottom-section-heading">
       <strong>提交区</strong>
-      <span>{stagedFiles.length} 个已暂存</span>
+      <div class="commit-heading-actions">
+        <span>{stagedFiles.length} 个已暂存</span>
+        <button class="clear-draft-action" type="button" on:click={onClearWorkspaceDraft}>
+          清空草稿
+        </button>
+      </div>
     </div>
 
     <div class="staged-summary" aria-label="已暂存摘要">

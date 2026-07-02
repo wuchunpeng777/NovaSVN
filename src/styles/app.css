@@ -997,6 +997,24 @@ button {
   min-width: 0;
 }
 
+.commit-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.clear-draft-action {
+  height: 24px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #44515f;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .task-log-panel,
 .task-queue-panel {
   align-content: stretch;

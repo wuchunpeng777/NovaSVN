@@ -326,6 +326,7 @@
       onCommitTemplateInput={workspaceStore.setCommitTemplate}
       onUseCommitHistoryMessage={workspaceStore.useCommitHistoryMessage}
       onConfirmSafetyWarnings={workspaceStore.confirmSafetyWarnings}
+      onClearWorkspaceDraft={workspaceStore.clearWorkspaceDraft}
       onCommit={submitStagedFiles}
       onSelectTask={taskStore.select}
       onCancelTask={taskStore.cancel}

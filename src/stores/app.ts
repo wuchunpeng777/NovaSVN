@@ -394,7 +394,7 @@ function createWorkspaceStore() {
     try {
       const recent = await getRecentWorkspace();
       const root = recent.workspace?.working_copy_root;
-      const reviewedFiles = recent.workspace ? loadReviewedFiles(recent.workspace) : [];
+      const draft = recent.workspace ? loadWorkspaceDraft(recent.workspace) : emptyWorkspaceDraft();
       const commitSettings = loadCommitMessageSettings();
       update((state) => ({
         ...state,
@@ -403,12 +403,15 @@ function createWorkspaceStore() {
         selectedFilePath: null,
         selectedFileDiff: null,
         selectedFileContentDiff: null,
-        stagedFiles: [],
-        safetyCheck: emptySafetyCheck(),
-        reviewedFiles,
+        stagedFiles: draft.stagedFiles,
+        safetyCheck: {
+          ...emptySafetyCheck(),
+          confirmedWarningIds: draft.confirmedWarningIds,
+        },
+        reviewedFiles: draft.reviewedFiles,
         commitTemplate: commitSettings.template,
         commitHistory: commitSettings.history,
-        commitMessage: commitSettings.template,
+        commitMessage: draft.commitMessage || commitSettings.template,
         commitError: null,
         pendingCommitTaskId: null,
         pendingSvnOperationTaskId: null,
@@ -443,7 +446,7 @@ function createWorkspaceStore() {
         path,
         svn_executable: svnExecutable || undefined,
       });
-      const reviewedFiles = loadReviewedFiles(current);
+      const draft = loadWorkspaceDraft(current);
       const commitSettings = loadCommitMessageSettings();
       update((state) => ({
         ...state,
@@ -452,12 +455,15 @@ function createWorkspaceStore() {
         selectedFilePath: null,
         selectedFileDiff: null,
         selectedFileContentDiff: null,
-        stagedFiles: [],
-        safetyCheck: emptySafetyCheck(),
-        reviewedFiles,
+        stagedFiles: draft.stagedFiles,
+        safetyCheck: {
+          ...emptySafetyCheck(),
+          confirmedWarningIds: draft.confirmedWarningIds,
+        },
+        reviewedFiles: draft.reviewedFiles,
         commitTemplate: commitSettings.template,
         commitHistory: commitSettings.history,
-        commitMessage: commitSettings.template,
+        commitMessage: draft.commitMessage || commitSettings.template,
         commitError: null,
         pendingCommitTaskId: null,
         pendingSvnOperationTaskId: null,
@@ -514,11 +520,18 @@ function createWorkspaceStore() {
   }
 
   function setCommitMessage(value: string) {
-    update((state) => ({
-      ...state,
-      commitMessage: value,
-      commitError: null,
-    }));
+    update((state) => {
+      saveWorkspaceDraftFromState({
+        ...state,
+        commitMessage: value,
+      });
+
+      return {
+        ...state,
+        commitMessage: value,
+        commitError: null,
+      };
+    });
   }
 
   function setCommitTemplate(value: string) {
@@ -528,21 +541,33 @@ function createWorkspaceStore() {
         template: commitTemplate,
         history: state.commitHistory,
       });
+      const commitMessage = state.commitMessage.trim() ? state.commitMessage : commitTemplate;
+      saveWorkspaceDraftFromState({
+        ...state,
+        commitMessage,
+      });
 
       return {
         ...state,
         commitTemplate,
-        commitMessage: state.commitMessage.trim() ? state.commitMessage : commitTemplate,
+        commitMessage,
       };
     });
   }
 
   function useCommitHistoryMessage(value: string) {
-    update((state) => ({
-      ...state,
-      commitMessage: value,
-      commitError: null,
-    }));
+    update((state) => {
+      saveWorkspaceDraftFromState({
+        ...state,
+        commitMessage: value,
+      });
+
+      return {
+        ...state,
+        commitMessage: value,
+        commitError: null,
+      };
+    });
   }
 
   function toggleGroupByStatus() {
@@ -639,15 +664,17 @@ function createWorkspaceStore() {
         ...state.stagedFiles,
         { path: file.path, status: file.status, contentDigest: file.content_digest },
       ];
+      const safetyCheck = buildSafetyCheck(
+        state.status?.files ?? [],
+        stagedFiles,
+        state.safetyCheck.confirmedWarningIds,
+      );
+      saveWorkspaceDraftFromState({ ...state, stagedFiles, safetyCheck });
 
       return {
         ...state,
         stagedFiles,
-        safetyCheck: buildSafetyCheck(
-          state.status?.files ?? [],
-          stagedFiles,
-          state.safetyCheck.confirmedWarningIds,
-        ),
+        safetyCheck,
         commitError: null,
       };
     });
@@ -656,15 +683,17 @@ function createWorkspaceStore() {
   function unstageFile(path: string) {
     update((state) => {
       const stagedFiles = state.stagedFiles.filter((file) => file.path !== path);
+      const safetyCheck = buildSafetyCheck(
+        state.status?.files ?? [],
+        stagedFiles,
+        reconcileSafetyWarningConfirmations(state.safetyCheck, stagedFiles).confirmedWarningIds,
+      );
+      saveWorkspaceDraftFromState({ ...state, stagedFiles, safetyCheck });
 
       return {
         ...state,
         stagedFiles,
-        safetyCheck: buildSafetyCheck(
-          state.status?.files ?? [],
-          stagedFiles,
-          reconcileSafetyWarningConfirmations(state.safetyCheck, stagedFiles).confirmedWarningIds,
-        ),
+        safetyCheck,
         commitError: null,
       };
     });
@@ -682,7 +711,7 @@ function createWorkspaceStore() {
         contentDigest: file.content_digest,
         reviewedAt: Date.now(),
       });
-      saveReviewedFiles(state.current, nextReviewedFiles);
+      saveWorkspaceDraftFromState({ ...state, reviewedFiles: nextReviewedFiles });
 
       return {
         ...state,
@@ -698,7 +727,7 @@ function createWorkspaceStore() {
       }
 
       const nextReviewedFiles = state.reviewedFiles.filter((file) => file.path !== path);
-      saveReviewedFiles(state.current, nextReviewedFiles);
+      saveWorkspaceDraftFromState({ ...state, reviewedFiles: nextReviewedFiles });
 
       return {
         ...state,
@@ -732,6 +761,11 @@ function createWorkspaceStore() {
       }
 
       valid = commitError === null;
+      saveWorkspaceDraftFromState({
+        ...state,
+        stagedFiles: reconciled,
+        safetyCheck,
+      });
 
       return {
         ...state,
@@ -752,14 +786,20 @@ function createWorkspaceStore() {
         reconciled,
         state.safetyCheck.confirmedWarningIds,
       );
+      const nextSafetyCheck = {
+        ...safetyCheck,
+        confirmedWarningIds: safetyCheck.warnings.map((item) => item.id),
+      };
+      saveWorkspaceDraftFromState({
+        ...state,
+        stagedFiles: reconciled,
+        safetyCheck: nextSafetyCheck,
+      });
 
       return {
         ...state,
         stagedFiles: reconciled,
-        safetyCheck: {
-          ...safetyCheck,
-          confirmedWarningIds: safetyCheck.warnings.map((item) => item.id),
-        },
+        safetyCheck: nextSafetyCheck,
         commitError: null,
       };
     });
@@ -785,16 +825,25 @@ function createWorkspaceStore() {
     const committed = new Set(paths);
     update((state) => {
       const stagedFiles = state.stagedFiles.filter((file) => !committed.has(file.path));
+      const commitHistory = recordCommitHistory(
+        state.commitMessage,
+        state.commitHistory,
+        state.commitTemplate,
+      );
+      const nextState = {
+        ...state,
+        stagedFiles,
+        safetyCheck: buildSafetyCheck(state.status?.files ?? [], stagedFiles),
+        commitHistory,
+        commitMessage: state.commitTemplate,
+      };
+      saveWorkspaceDraftFromState(nextState);
 
       return {
         ...state,
         stagedFiles,
-        safetyCheck: buildSafetyCheck(state.status?.files ?? [], stagedFiles),
-        commitHistory: recordCommitHistory(
-          state.commitMessage,
-          state.commitHistory,
-          state.commitTemplate,
-        ),
+        safetyCheck: nextState.safetyCheck,
+        commitHistory,
         commitMessage: state.commitTemplate,
         commitError: null,
         pendingCommitTaskId: null,
@@ -843,24 +892,31 @@ function createWorkspaceStore() {
         limit: 500,
       });
       const selectedFilePath = resolveSelectedFilePath(status.files, previousSelectedFilePath);
-      update((state) => ({
-        ...state,
-        status,
-        selectedFilePath,
-        selectedFileDiff:
-          selectedFilePath === state.selectedFilePath ? state.selectedFileDiff : null,
-        selectedFileContentDiff:
-          selectedFilePath === state.selectedFilePath ? state.selectedFileContentDiff : null,
-        stagedFiles: reconcileStagedFiles(state.stagedFiles, status.files),
-        safetyCheck: buildSafetyCheck(
+      update((state) => {
+        const stagedFiles = reconcileStagedFiles(state.stagedFiles, status.files);
+        const reviewedFiles = reconcileReviewedFiles(state.reviewedFiles, status.files);
+        const safetyCheck = buildSafetyCheck(
           status.files,
-          reconcileStagedFiles(state.stagedFiles, status.files),
+          stagedFiles,
           state.safetyCheck.confirmedWarningIds,
-        ),
-        reviewedFiles: reconcileReviewedFiles(state.reviewedFiles, status.files, state.current),
-        statusLoading: false,
-        statusError: null,
-      }));
+        );
+        const nextState = {
+          ...state,
+          status,
+          selectedFilePath,
+          selectedFileDiff:
+            selectedFilePath === state.selectedFilePath ? state.selectedFileDiff : null,
+          selectedFileContentDiff:
+            selectedFilePath === state.selectedFilePath ? state.selectedFileContentDiff : null,
+          stagedFiles,
+          safetyCheck,
+          reviewedFiles,
+          statusLoading: false,
+          statusError: null,
+        };
+        saveWorkspaceDraftFromState(nextState);
+        return nextState;
+      });
       if (selectedFilePath) {
         await Promise.all([
           refreshFileDiff(svnExecutable, root, selectedFilePath),
@@ -874,6 +930,23 @@ function createWorkspaceStore() {
         statusError: error as CommandError,
       }));
     }
+  }
+
+  function clearWorkspaceDraft() {
+    update((state) => {
+      if (state.current) {
+        clearWorkspaceDraftStorage(state.current);
+      }
+
+      return {
+        ...state,
+        stagedFiles: [],
+        reviewedFiles: [],
+        safetyCheck: emptySafetyCheck(),
+        commitMessage: state.commitTemplate,
+        commitError: null,
+      };
+    });
   }
 
   async function refreshFileDiff(
@@ -1000,6 +1073,7 @@ function createWorkspaceStore() {
     markCommitTask,
     markSvnOperationTask,
     clearCommittedFiles,
+    clearWorkspaceDraft,
     refreshStatus,
     refreshFileDiff,
     refreshFileContentDiff,
@@ -1224,61 +1298,140 @@ function upsertReviewedFile(
 function reconcileReviewedFiles(
   reviewedFiles: ReviewedFileState[],
   currentFiles: ChangedFile[],
-  workspace: WorkspaceSummary | null,
 ) {
-  const nextReviewedFiles = reviewedFiles.filter((reviewedFile) => {
+  return reviewedFiles.filter((reviewedFile) => {
     const current = currentFiles.find((file) => file.path === reviewedFile.path);
     return current && current.content_digest === reviewedFile.contentDigest;
   });
-
-  if (workspace && nextReviewedFiles.length !== reviewedFiles.length) {
-    saveReviewedFiles(workspace, nextReviewedFiles);
-  }
-
-  return nextReviewedFiles;
 }
 
-function reviewedStorageKey(workspace: WorkspaceSummary) {
+interface WorkspaceDraft {
+  version: number;
+  stagedFiles: Array<{
+    path: string;
+    status: string;
+    contentDigest: string;
+  }>;
+  reviewedFiles: ReviewedFileState[];
+  confirmedWarningIds: string[];
+  commitMessage: string;
+  updatedAt: number;
+}
+
+function emptyWorkspaceDraft(): WorkspaceDraft {
+  return {
+    version: 1,
+    stagedFiles: [],
+    reviewedFiles: [],
+    confirmedWarningIds: [],
+    commitMessage: "",
+    updatedAt: 0,
+  };
+}
+
+function workspaceDraftStorageKey(workspace: WorkspaceSummary) {
+  return `novasvn:workspace-draft:${workspace.working_copy_root}:${workspace.repository_url}`;
+}
+
+function legacyReviewedStorageKey(workspace: WorkspaceSummary) {
   return `novasvn:reviewed-files:${workspace.working_copy_root}:${workspace.repository_url}`;
 }
 
-function loadReviewedFiles(workspace: WorkspaceSummary) {
+function loadWorkspaceDraft(workspace: WorkspaceSummary): WorkspaceDraft {
   if (typeof window === "undefined") {
-    return [];
+    return emptyWorkspaceDraft();
   }
 
   try {
-    const raw = window.localStorage.getItem(reviewedStorageKey(workspace));
+    const raw = window.localStorage.getItem(workspaceDraftStorageKey(workspace));
     if (!raw) {
-      return [];
+      return {
+        ...emptyWorkspaceDraft(),
+        reviewedFiles: loadLegacyReviewedFiles(workspace),
+      };
     }
 
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed.filter(isReviewedFileState);
+    const parsed = JSON.parse(raw) as Partial<WorkspaceDraft>;
+    return {
+      version: 1,
+      stagedFiles: Array.isArray(parsed.stagedFiles)
+        ? parsed.stagedFiles.filter(isStagedFileDraft)
+        : [],
+      reviewedFiles: Array.isArray(parsed.reviewedFiles)
+        ? parsed.reviewedFiles.filter(isReviewedFileState)
+        : loadLegacyReviewedFiles(workspace),
+      confirmedWarningIds: Array.isArray(parsed.confirmedWarningIds)
+        ? parsed.confirmedWarningIds.filter((item): item is string => typeof item === "string")
+        : [],
+      commitMessage: typeof parsed.commitMessage === "string" ? parsed.commitMessage : "",
+      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
+    };
   } catch {
-    return [];
+    return {
+      ...emptyWorkspaceDraft(),
+      reviewedFiles: loadLegacyReviewedFiles(workspace),
+    };
   }
 }
 
-function saveReviewedFiles(
-  workspace: WorkspaceSummary,
-  reviewedFiles: ReviewedFileState[],
-) {
+function saveWorkspaceDraftFromState(state: Pick<
+  WorkspaceStoreState,
+  "current" | "stagedFiles" | "reviewedFiles" | "safetyCheck" | "commitMessage"
+>) {
+  if (!state.current) {
+    return;
+  }
+
+  saveWorkspaceDraft(state.current, {
+    version: 1,
+    stagedFiles: state.stagedFiles,
+    reviewedFiles: state.reviewedFiles,
+    confirmedWarningIds: state.safetyCheck.confirmedWarningIds,
+    commitMessage: state.commitMessage,
+    updatedAt: Date.now(),
+  });
+}
+
+function saveWorkspaceDraft(workspace: WorkspaceSummary, draft: WorkspaceDraft) {
   if (typeof window === "undefined") {
     return;
   }
 
   try {
-    window.localStorage.setItem(
-      reviewedStorageKey(workspace),
-      JSON.stringify(reviewedFiles),
-    );
+    window.localStorage.setItem(workspaceDraftStorageKey(workspace), JSON.stringify(draft));
   } catch {
-    // 本地持久化失败不应阻断工作副本操作。
+    // 本地草稿保存失败不应阻断工作副本操作。
+  }
+}
+
+function clearWorkspaceDraftStorage(workspace: WorkspaceSummary) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(workspaceDraftStorageKey(workspace));
+    window.localStorage.removeItem(legacyReviewedStorageKey(workspace));
+  } catch {
+    // 清理本地草稿失败不应阻断当前会话。
+  }
+}
+
+function loadLegacyReviewedFiles(workspace: WorkspaceSummary) {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(legacyReviewedStorageKey(workspace));
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(isReviewedFileState) : [];
+  } catch {
+    return [];
   }
 }
 
@@ -1292,6 +1445,28 @@ function isReviewedFileState(value: unknown): value is ReviewedFileState {
     typeof candidate.path === "string" &&
     typeof candidate.contentDigest === "string" &&
     typeof candidate.reviewedAt === "number"
+  );
+}
+
+function isStagedFileDraft(value: unknown): value is {
+  path: string;
+  status: string;
+  contentDigest: string;
+} {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as {
+    path?: unknown;
+    status?: unknown;
+    contentDigest?: unknown;
+  };
+
+  return (
+    typeof candidate.path === "string" &&
+    typeof candidate.status === "string" &&
+    typeof candidate.contentDigest === "string"
   );
 }
 
