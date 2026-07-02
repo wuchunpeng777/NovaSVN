@@ -333,11 +333,36 @@ button {
   overflow: auto;
 }
 
+.virtual-work-list {
+  display: block;
+  position: relative;
+  outline: none;
+}
+
+.virtual-work-list:focus-visible {
+  box-shadow: 0 0 0 2px rgba(91, 169, 165, 0.22);
+}
+
+.virtual-work-spacer {
+  position: relative;
+  min-height: 100%;
+}
+
+.virtual-list-item {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  padding-bottom: 8px;
+  will-change: transform;
+}
+
 .work-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  height: 68px;
   min-height: 68px;
   padding: 13px;
   text-align: left;
@@ -412,6 +437,25 @@ button {
   font-size: 13px;
 }
 
+.stage-section-heading,
+.status-group-heading {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  margin: 0;
+}
+
+.stage-section-heading {
+  color: #44515f;
+  font-size: 13px;
+}
+
+.status-group-heading {
+  color: #637282;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .empty-stage {
   margin: 0;
   border: 1px dashed #cfd7df;
@@ -420,6 +464,11 @@ button {
   color: #7a8794;
   padding: 13px;
   font-size: 13px;
+}
+
+.virtual-empty {
+  height: 46px;
+  line-height: 18px;
 }
 
 .stage-action {

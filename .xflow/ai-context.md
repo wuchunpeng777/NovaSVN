@@ -40,9 +40,12 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 - Workspace UI: 主工作区顶部展示工作副本打开面板，前端状态由 `src/stores/app.ts` 的 `workspaceStore` 管理。
 - Recent Workspace: 最近工作副本当前保存到应用数据目录下的 `recent-workspace.json`，只保存一个摘要。
 - Status Scan: `scan_workspace_status` command 执行 `svn status --xml <working_copy_root>`，返回 `WorkingCopyStatus` 和 `ChangedFile`。
-- Status UI: 主工作区显示状态统计和基础文件状态列表，打开工作副本后会自动扫描，也支持手动刷新。
-- Status Limit: 当前状态扫描返回前 500 项，保留 offset/limit 扩展字段；搜索、过滤、分组和虚拟滚动后续实现。
-- Changes List: 本地改动列表在前端基于 `workspaceStore.status.files` 派生，支持路径搜索、按状态分组和选中文件。
+- Status UI: 主工作区显示状态统计和虚拟化文件状态列表，打开工作副本后会自动扫描，也支持手动刷新。
+- Status Limit: 当前状态扫描返回前 500 项，保留 offset/limit 扩展字段；后续更大规模数据需要分页/全量扫描能力配合。
+- Changes List: 本地改动列表在前端基于 `workspaceStore.status.files` 派生，支持路径搜索、按状态分组、已暂存/未暂存分区、选中文件和虚拟滚动。
+- Virtual List: 中间改动列表由 `MainWorkspace.svelte` 构建扁平虚拟行模型，分区标题、状态标题、空状态和文件行共享同一个滚动容器。
+- Virtual Row Height: 虚拟列表文件行高度固定为 76px，文件行内部视觉高度为 68px；后续修改行高时必须同步虚拟高度常量和 CSS。
+- Virtual Selection: 文件选择状态仍由 `workspaceStore.selectedFilePath` 管理；列表方向键上下选择只移动当前过滤后可见文件，并滚动选中项到可见区域。
 - Selected File: 当前选中文件路径保存在 `workspaceStore.selectedFilePath`，右侧详情区展示选中文件摘要，后续 diff 可复用该选择状态。
 - Virtual Staging: 文件级虚拟暂存由 `workspaceStore.stagedFiles` 保存在前端运行内存中，只记录文件路径和状态，不持久化，也不修改真实 SVN 工作副本或 `.svn` 元数据。
 - Staging Rules: `missing`、`conflicted`、`obstructed` 默认不可暂存；状态刷新后会移除不存在、状态变化或变为不可暂存的 staged 文件。
