@@ -675,6 +675,195 @@ button {
   font-size: 12px;
 }
 
+.repository-layout-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.repository-layout-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.repository-layout-header h3,
+.repository-layout-header p,
+.repository-layout-summary p,
+.repository-layout-lists p,
+.repository-layout-lists h4 {
+  margin: 0;
+}
+
+.repository-layout-header h3 {
+  font-size: 14px;
+}
+
+.repository-layout-header p {
+  margin-top: 3px;
+  color: #637282;
+  font-size: 12px;
+}
+
+.repository-layout-header button {
+  height: 30px;
+  border: 1px solid #5ba9a5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #227873;
+  cursor: pointer;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.repository-layout-header button:disabled {
+  border-color: #cfd7df;
+  color: #7a8794;
+  cursor: default;
+}
+
+.repository-layout-inputs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.repository-layout-inputs label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.repository-layout-inputs span {
+  color: #637282;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.repository-layout-inputs input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  color: #17202a;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.repository-layout-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.repository-layout-summary article {
+  min-width: 0;
+  border: 1px solid #edf1f4;
+  border-radius: 8px;
+  background: #f8fafb;
+  padding: 9px;
+}
+
+.repository-layout-summary article.active {
+  border-color: #b7d9d6;
+  background: #f2fbfa;
+}
+
+.repository-layout-summary span,
+.repository-layout-summary strong,
+.repository-layout-summary p {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repository-layout-summary span {
+  color: #637282;
+  font-size: 11px;
+}
+
+.repository-layout-summary strong {
+  margin-top: 3px;
+  font-size: 16px;
+}
+
+.repository-layout-summary p {
+  margin-top: 4px;
+  color: #7a8794;
+  font-size: 11px;
+}
+
+.repository-layout-lists {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.repository-layout-lists section {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #edf1f4;
+  border-radius: 8px;
+  background: #f8fafb;
+  padding: 8px;
+}
+
+.repository-layout-lists h4 {
+  color: #44515f;
+  font-size: 12px;
+}
+
+.repository-layout-lists button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  border: 1px solid #d7dde3;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17202a;
+  cursor: pointer;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.repository-layout-lists button:hover,
+.repository-layout-lists button:focus-visible {
+  border-color: #5ba9a5;
+  background: #f2fbfa;
+  outline: none;
+}
+
+.repository-layout-lists span,
+.repository-layout-lists small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repository-layout-lists span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.repository-layout-lists small,
+.repository-layout-lists p {
+  color: #637282;
+  font-size: 11px;
+}
+
 .repository-list {
   min-height: 0;
   overflow: auto;

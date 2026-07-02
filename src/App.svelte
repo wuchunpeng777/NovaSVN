@@ -19,6 +19,7 @@
 
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
+  const repositoryLayoutTaskChecks = new Set<string>();
 
   $: activeView = workbenchViews[$currentView];
   $: sidebarFilterStats = buildSidebarFilterStats(
@@ -180,6 +181,52 @@
     workspaceStore.markRepositoryListTask(task.task_id, targetUrl);
   }
 
+  async function detectRepositoryLayout() {
+    const root = ($workspaceStore.repositoryUrlInput || $workspaceStore.current?.repository_root || "")
+      .trim()
+      .replace(/\/+$/, "");
+    if (!root) {
+      workspaceStore.failRepositoryList("请输入仓库 URL 或先打开 SVN 工作副本");
+      return;
+    }
+
+    const layout = $workspaceStore.repositoryLayout;
+    const targets: Array<{
+      kind: "trunk" | "branches" | "tags";
+      path: string;
+    }> = [
+      { kind: "trunk", path: layout.trunkPath },
+      { kind: "branches", path: layout.branchesPath },
+      { kind: "tags", path: layout.tagsPath },
+    ];
+
+    for (const target of targets) {
+      const url = joinRepositoryUrl(root, target.path);
+      const task = await taskStore.createRepositoryList({
+        url,
+        svnExecutable: $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+      });
+
+      if (task) {
+        workspaceStore.markRepositoryLayoutTask(target.kind, task.task_id);
+      } else {
+        workspaceStore.failRepositoryLayoutResult(
+          target.kind,
+          $taskStore.error?.message ?? "仓库布局识别任务创建失败",
+        );
+      }
+    }
+  }
+
+  function joinRepositoryUrl(root: string, path: string) {
+    const normalizedPath = path.trim().replace(/^\/+|\/+$/g, "");
+    if (!normalizedPath) {
+      return root.replace(/\/+$/, "");
+    }
+
+    return `${root.replace(/\/+$/, "")}/${normalizedPath}`;
+  }
+
   $: if (
     $workspaceStore.pendingCommitTaskId &&
     $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
@@ -284,6 +331,46 @@
     );
   }
 
+  async function checkRepositoryLayoutTask(
+    kind: "trunk" | "branches" | "tags",
+    taskId: string,
+  ) {
+    if (repositoryLayoutTaskChecks.has(taskId)) {
+      return;
+    }
+
+    repositoryLayoutTaskChecks.add(taskId);
+    const task = await taskStore.getTaskById(taskId);
+    repositoryLayoutTaskChecks.delete(taskId);
+    if (!task) {
+      return;
+    }
+
+    if (task.status === "success") {
+      const result = task.result?.repository_list;
+      if (result) {
+        workspaceStore.applyRepositoryLayoutResult(kind, result);
+      } else {
+        workspaceStore.failRepositoryLayoutResult(kind, "仓库布局任务没有返回结果");
+      }
+      return;
+    }
+
+    if (task.status === "failed" || task.status === "cancelled") {
+      workspaceStore.failRepositoryLayoutResult(
+        kind,
+        task.error ?? "仓库布局识别失败",
+      );
+    }
+  }
+
+  $: for (const kind of ["trunk", "branches", "tags"] as const) {
+    const taskId = $workspaceStore.repositoryLayoutTasks[kind];
+    if (taskId) {
+      void checkRepositoryLayoutTask(kind, taskId);
+    }
+  }
+
   onMount(() => {
     taskStore.startPolling();
     void svnStore.detect();
@@ -381,6 +468,10 @@
         repositoryList={$workspaceStore.repositoryList}
         repositoryLoading={$workspaceStore.repositoryLoading}
         repositoryError={$workspaceStore.repositoryError}
+        repositoryLayout={$workspaceStore.repositoryLayout}
+        repositoryLayoutResults={$workspaceStore.repositoryLayoutResults}
+        repositoryLayoutErrors={$workspaceStore.repositoryLayoutErrors}
+        repositoryLayoutLoading={$workspaceStore.repositoryLayoutLoading}
         onChooseWorkspace={() =>
           workspaceStore.chooseAndOpen(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
@@ -411,6 +502,8 @@
         onRepositoryUrlInput={workspaceStore.setRepositoryUrlInput}
         onUseWorkspaceRepositoryRoot={workspaceStore.useWorkspaceRepositoryRoot}
         onLoadRepositoryUrl={loadRepositoryUrl}
+        onRepositoryLayoutPathInput={workspaceStore.setRepositoryLayoutPath}
+        onDetectRepositoryLayout={detectRepositoryLayout}
       />
       <DetailPanel
         sections={detailSections}

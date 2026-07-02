@@ -37,6 +37,30 @@
   export let repositoryList: RepositoryListResult | null = null;
   export let repositoryLoading = false;
   export let repositoryError: string | null = null;
+  export let repositoryLayout = {
+    trunkPath: "trunk",
+    branchesPath: "branches",
+    tagsPath: "tags",
+  };
+  export let repositoryLayoutResults: {
+    trunk: RepositoryListResult | null;
+    branches: RepositoryListResult | null;
+    tags: RepositoryListResult | null;
+  } = {
+    trunk: null,
+    branches: null,
+    tags: null,
+  };
+  export let repositoryLayoutErrors: {
+    trunk: string | null;
+    branches: string | null;
+    tags: string | null;
+  } = {
+    trunk: null,
+    branches: null,
+    tags: null,
+  };
+  export let repositoryLayoutLoading = false;
   export let onChooseWorkspace: () => void;
   export let onOpenWorkspace: () => void;
   export let onRefreshStatus: () => void;
@@ -54,6 +78,11 @@
   export let onRepositoryUrlInput: (value: string) => void;
   export let onUseWorkspaceRepositoryRoot: () => void;
   export let onLoadRepositoryUrl: (url?: string) => void;
+  export let onRepositoryLayoutPathInput: (
+    kind: "trunk" | "branches" | "tags",
+    value: string,
+  ) => void;
+  export let onDetectRepositoryLayout: () => void;
 
   const fileRowHeight = 76;
   const sectionHeaderHeight = 32;
@@ -522,6 +551,13 @@
   $: repositoryFileCount = repositoryEntries.filter((entry) => entry.kind !== "dir").length;
   $: repositoryCurrentUrl = repositoryList?.url ?? repositoryUrlInput.trim();
   $: breadcrumbs = repositoryBreadcrumbs(repositoryCurrentUrl);
+  $: branchEntries = repositoryLayoutResults.branches?.entries.filter(
+    (entry) => entry.kind === "dir",
+  ) ?? [];
+  $: tagEntries = repositoryLayoutResults.tags?.entries.filter(
+    (entry) => entry.kind === "dir",
+  ) ?? [];
+  $: trunkDetected = repositoryLayoutResults.trunk !== null && !repositoryLayoutErrors.trunk;
 </script>
 
 <section class="main-workspace" aria-label={view.title}>
@@ -642,6 +678,142 @@
       {#if repositoryError}
         <p class="inline-error">{repositoryError}</p>
       {/if}
+
+      <section class="repository-layout-panel" aria-label="分支和标签识别">
+        <div class="repository-layout-header">
+          <div>
+            <h3>分支和标签</h3>
+            <p>标准布局默认识别 trunk、branches、tags</p>
+          </div>
+          <button
+            type="button"
+            on:click={onDetectRepositoryLayout}
+            disabled={repositoryLayoutLoading || !repositoryUrlInput.trim()}
+          >
+            {repositoryLayoutLoading ? "识别中" : "识别布局"}
+          </button>
+        </div>
+
+        <div class="repository-layout-inputs">
+          <label>
+            <span>trunk</span>
+            <input
+              type="text"
+              value={repositoryLayout.trunkPath}
+              on:input={(event) =>
+                onRepositoryLayoutPathInput(
+                  "trunk",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+          </label>
+          <label>
+            <span>branches</span>
+            <input
+              type="text"
+              value={repositoryLayout.branchesPath}
+              on:input={(event) =>
+                onRepositoryLayoutPathInput(
+                  "branches",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+          </label>
+          <label>
+            <span>tags</span>
+            <input
+              type="text"
+              value={repositoryLayout.tagsPath}
+              on:input={(event) =>
+                onRepositoryLayoutPathInput(
+                  "tags",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+          </label>
+        </div>
+
+        <div class="repository-layout-summary">
+          <article class:active={trunkDetected}>
+            <span>trunk</span>
+            <strong>{trunkDetected ? "已识别" : "未识别"}</strong>
+            {#if repositoryLayoutErrors.trunk}
+              <p>{repositoryLayoutErrors.trunk}</p>
+            {:else if repositoryLayoutResults.trunk}
+              <p>{repositoryLayoutResults.trunk.url}</p>
+            {:else}
+              <p>等待识别</p>
+            {/if}
+          </article>
+          <article class:active={branchEntries.length > 0}>
+            <span>branches</span>
+            <strong>{branchEntries.length}</strong>
+            {#if repositoryLayoutErrors.branches}
+              <p>{repositoryLayoutErrors.branches}</p>
+            {:else if repositoryLayoutResults.branches}
+              <p>{repositoryLayoutResults.branches.url}</p>
+            {:else}
+              <p>等待识别</p>
+            {/if}
+          </article>
+          <article class:active={tagEntries.length > 0}>
+            <span>tags</span>
+            <strong>{tagEntries.length}</strong>
+            {#if repositoryLayoutErrors.tags}
+              <p>{repositoryLayoutErrors.tags}</p>
+            {:else if repositoryLayoutResults.tags}
+              <p>{repositoryLayoutResults.tags.url}</p>
+            {:else}
+              <p>等待识别</p>
+            {/if}
+          </article>
+        </div>
+
+        <div class="repository-layout-lists">
+          <section>
+            <h4>分支</h4>
+            {#if branchEntries.length > 0}
+              {#each branchEntries as entry (entry.name)}
+                <button
+                  type="button"
+                  on:click={() =>
+                    repositoryLayoutResults.branches &&
+                    onLoadRepositoryUrl(
+                      joinRepositoryUrl(repositoryLayoutResults.branches.url, entry.name),
+                    )}
+                >
+                  <span>{entry.name}</span>
+                  <small>r{entry.revision || "-"} · {entry.author || "-"}</small>
+                  <small>{formatRepositoryDate(entry.date)}</small>
+                </button>
+              {/each}
+            {:else}
+              <p>暂无分支结果</p>
+            {/if}
+          </section>
+          <section>
+            <h4>标签</h4>
+            {#if tagEntries.length > 0}
+              {#each tagEntries as entry (entry.name)}
+                <button
+                  type="button"
+                  on:click={() =>
+                    repositoryLayoutResults.tags &&
+                    onLoadRepositoryUrl(
+                      joinRepositoryUrl(repositoryLayoutResults.tags.url, entry.name),
+                    )}
+                >
+                  <span>{entry.name}</span>
+                  <small>r{entry.revision || "-"} · {entry.author || "-"}</small>
+                  <small>{formatRepositoryDate(entry.date)}</small>
+                </button>
+              {/each}
+            {:else}
+              <p>暂无标签结果</p>
+            {/if}
+          </section>
+        </div>
+      </section>
 
       {#if breadcrumbs.length > 0}
         <nav class="repository-breadcrumbs" aria-label="仓库路径">

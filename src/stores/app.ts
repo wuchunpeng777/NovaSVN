@@ -293,6 +293,14 @@ function createTaskStore() {
     }
   }
 
+  async function getTaskById(taskId: string) {
+    try {
+      return await getTask(taskId);
+    } catch {
+      return null;
+    }
+  }
+
   function startPolling() {
     if (pollTimer !== null) {
       return;
@@ -324,6 +332,7 @@ function createTaskStore() {
     createRepositoryList,
     select,
     cancel,
+    getTaskById,
     startPolling,
     stopPolling,
   };
@@ -454,6 +463,27 @@ export interface WorkspaceStoreState {
   repositoryCurrentUrl: string;
   repositoryList: RepositoryListResult | null;
   pendingRepositoryListTaskId: string | null;
+  repositoryLayout: {
+    trunkPath: string;
+    branchesPath: string;
+    tagsPath: string;
+  };
+  repositoryLayoutTasks: {
+    trunk: string | null;
+    branches: string | null;
+    tags: string | null;
+  };
+  repositoryLayoutResults: {
+    trunk: RepositoryListResult | null;
+    branches: RepositoryListResult | null;
+    tags: RepositoryListResult | null;
+  };
+  repositoryLayoutErrors: {
+    trunk: string | null;
+    branches: string | null;
+    tags: string | null;
+  };
+  repositoryLayoutLoading: boolean;
   repositoryLoading: boolean;
   repositoryError: string | null;
   shadowStatus: ShadowWorkspaceStatus | null;
@@ -504,6 +534,27 @@ const initialWorkspaceState: WorkspaceStoreState = {
   repositoryCurrentUrl: "",
   repositoryList: null,
   pendingRepositoryListTaskId: null,
+  repositoryLayout: {
+    trunkPath: "trunk",
+    branchesPath: "branches",
+    tagsPath: "tags",
+  },
+  repositoryLayoutTasks: {
+    trunk: null,
+    branches: null,
+    tags: null,
+  },
+  repositoryLayoutResults: {
+    trunk: null,
+    branches: null,
+    tags: null,
+  },
+  repositoryLayoutErrors: {
+    trunk: null,
+    branches: null,
+    tags: null,
+  },
+  repositoryLayoutLoading: false,
   repositoryLoading: false,
   repositoryError: null,
   shadowStatus: null,
@@ -561,6 +612,10 @@ function createWorkspaceStore() {
         repositoryCurrentUrl: "",
         repositoryList: null,
         pendingRepositoryListTaskId: null,
+        repositoryLayoutTasks: emptyRepositoryLayoutTasks(),
+        repositoryLayoutResults: emptyRepositoryLayoutResults(),
+        repositoryLayoutErrors: emptyRepositoryLayoutErrors(),
+        repositoryLayoutLoading: false,
         repositoryLoading: false,
         repositoryError: null,
         shadowStatus: null,
@@ -624,6 +679,10 @@ function createWorkspaceStore() {
         repositoryCurrentUrl: "",
         repositoryList: null,
         pendingRepositoryListTaskId: null,
+        repositoryLayoutTasks: emptyRepositoryLayoutTasks(),
+        repositoryLayoutResults: emptyRepositoryLayoutResults(),
+        repositoryLayoutErrors: emptyRepositoryLayoutErrors(),
+        repositoryLayoutLoading: false,
         repositoryLoading: false,
         repositoryError: null,
         shadowStatus: null,
@@ -1037,6 +1096,90 @@ function createWorkspaceStore() {
       repositoryLoading: false,
       repositoryError: message ?? "仓库目录加载失败",
     }));
+  }
+
+  function setRepositoryLayoutPath(kind: "trunk" | "branches" | "tags", value: string) {
+    update((state) => ({
+      ...state,
+      repositoryLayout: {
+        ...state.repositoryLayout,
+        [`${kind}Path`]: value,
+      },
+      repositoryLayoutErrors: {
+        ...state.repositoryLayoutErrors,
+        [kind]: null,
+      },
+    }));
+  }
+
+  function markRepositoryLayoutTask(
+    kind: "trunk" | "branches" | "tags",
+    taskId: string | null,
+  ) {
+    update((state) => {
+      const tasks = {
+        ...state.repositoryLayoutTasks,
+        [kind]: taskId,
+      };
+
+      return {
+        ...state,
+        repositoryLayoutTasks: tasks,
+        repositoryLayoutLoading: Object.values(tasks).some(Boolean),
+        repositoryLayoutErrors: {
+          ...state.repositoryLayoutErrors,
+          [kind]: null,
+        },
+      };
+    });
+  }
+
+  function applyRepositoryLayoutResult(
+    kind: "trunk" | "branches" | "tags",
+    result: RepositoryListResult,
+  ) {
+    update((state) => {
+      const tasks = {
+        ...state.repositoryLayoutTasks,
+        [kind]: null,
+      };
+
+      return {
+        ...state,
+        repositoryLayoutTasks: tasks,
+        repositoryLayoutResults: {
+          ...state.repositoryLayoutResults,
+          [kind]: result,
+        },
+        repositoryLayoutErrors: {
+          ...state.repositoryLayoutErrors,
+          [kind]: null,
+        },
+        repositoryLayoutLoading: Object.values(tasks).some(Boolean),
+      };
+    });
+  }
+
+  function failRepositoryLayoutResult(
+    kind: "trunk" | "branches" | "tags",
+    message: string | null,
+  ) {
+    update((state) => {
+      const tasks = {
+        ...state.repositoryLayoutTasks,
+        [kind]: null,
+      };
+
+      return {
+        ...state,
+        repositoryLayoutTasks: tasks,
+        repositoryLayoutErrors: {
+          ...state.repositoryLayoutErrors,
+          [kind]: message ?? "仓库布局识别失败",
+        },
+        repositoryLayoutLoading: Object.values(tasks).some(Boolean),
+      };
+    });
   }
 
   function clearCommittedFiles(paths: string[]) {
@@ -1482,6 +1625,10 @@ function createWorkspaceStore() {
     markRepositoryListTask,
     applyRepositoryListResult,
     failRepositoryList,
+    setRepositoryLayoutPath,
+    markRepositoryLayoutTask,
+    applyRepositoryLayoutResult,
+    failRepositoryLayoutResult,
     clearCommittedFiles,
     clearWorkspaceDraft,
     refreshStatus,
@@ -1495,6 +1642,30 @@ function createWorkspaceStore() {
 }
 
 export const workspaceStore = createWorkspaceStore();
+
+function emptyRepositoryLayoutTasks() {
+  return {
+    trunk: null,
+    branches: null,
+    tags: null,
+  };
+}
+
+function emptyRepositoryLayoutResults() {
+  return {
+    trunk: null,
+    branches: null,
+    tags: null,
+  };
+}
+
+function emptyRepositoryLayoutErrors() {
+  return {
+    trunk: null,
+    branches: null,
+    tags: null,
+  };
+}
 
 function resolveSelectedFilePath(
   files: ChangedFile[],
