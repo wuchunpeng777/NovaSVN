@@ -1,12 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import type {
   CommandError,
   CommandResponse,
   CreateMockTaskRequest,
   DetectSvnRequest,
+  OpenWorkspaceRequest,
+  RecentWorkspace,
   SvnDetection,
   Task,
   TaskSnapshot,
+  WorkspaceSummary,
 } from "../types/api";
 
 function normalizeError(error: unknown): CommandError {
@@ -59,4 +63,24 @@ export function cancelTask(taskId: string): Promise<Task> {
 
 export function detectSvn(request: DetectSvnRequest = {}): Promise<SvnDetection> {
   return callBackend<SvnDetection>("detect_svn", { request });
+}
+
+export function openWorkspace(
+  request: OpenWorkspaceRequest,
+): Promise<WorkspaceSummary> {
+  return callBackend<WorkspaceSummary>("open_workspace", { request });
+}
+
+export function getRecentWorkspace(): Promise<RecentWorkspace> {
+  return callBackend<RecentWorkspace>("get_recent_workspace");
+}
+
+export async function chooseWorkspaceDirectory(): Promise<string | null> {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "选择 SVN 工作副本",
+  });
+
+  return typeof selected === "string" ? selected : null;
 }

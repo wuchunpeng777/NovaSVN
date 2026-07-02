@@ -63,3 +63,20 @@ export interface SvnDetection {
 export interface DetectSvnRequest {
   executable?: string;
 }
+
+export interface WorkspaceSummary {
+  local_path: string;
+  working_copy_root: string;
+  repository_url: string;
+  repository_root: string;
+  revision: string;
+}
+
+export interface OpenWorkspaceRequest {
+  path: string;
+  svn_executable?: string;
+}
+
+export interface RecentWorkspace {
+  workspace: WorkspaceSummary | null;
+}

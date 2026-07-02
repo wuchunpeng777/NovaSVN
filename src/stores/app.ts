@@ -1,10 +1,13 @@
 import { writable } from "svelte/store";
 import {
   cancelTask,
+  chooseWorkspaceDirectory,
   createMockTask,
   detectSvn,
+  getRecentWorkspace,
   getTask,
   listTasks,
+  openWorkspace,
 } from "../lib/api";
 import type { AppView } from "../types/app";
 import type {
@@ -13,6 +16,7 @@ import type {
   SvnDetection,
   Task,
   TaskSnapshot,
+  WorkspaceSummary,
 } from "../types/api";
 
 export const currentView = writable<AppView>("changes");
@@ -233,3 +237,112 @@ function createSvnStore() {
 }
 
 export const svnStore = createSvnStore();
+
+export interface WorkspaceStoreState {
+  current: WorkspaceSummary | null;
+  pathInput: string;
+  loading: boolean;
+  error: CommandError | null;
+}
+
+const initialWorkspaceState: WorkspaceStoreState = {
+  current: null,
+  pathInput: "",
+  loading: false,
+  error: null,
+};
+
+function createWorkspaceStore() {
+  const { subscribe, update } = writable<WorkspaceStoreState>(initialWorkspaceState);
+
+  async function loadRecent() {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const recent = await getRecentWorkspace();
+      update((state) => ({
+        ...state,
+        current: recent.workspace,
+        pathInput: state.pathInput || recent.workspace?.working_copy_root || "",
+        loading: false,
+        error: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+    }
+  }
+
+  async function openPath(svnExecutable?: string | null) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    let path = "";
+    update((state) => {
+      path = state.pathInput.trim();
+      return state;
+    });
+
+    try {
+      const current = await openWorkspace({
+        path,
+        svn_executable: svnExecutable || undefined,
+      });
+      update((state) => ({
+        ...state,
+        current,
+        pathInput: current.working_copy_root,
+        loading: false,
+        error: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+    }
+  }
+
+  async function chooseAndOpen(svnExecutable?: string | null) {
+    update((state) => ({ ...state, error: null }));
+
+    try {
+      const selected = await chooseWorkspaceDirectory();
+      if (!selected) {
+        return;
+      }
+
+      update((state) => ({
+        ...state,
+        pathInput: selected,
+      }));
+      await openPath(svnExecutable);
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+    }
+  }
+
+  function setPathInput(value: string) {
+    update((state) => ({
+      ...state,
+      pathInput: value,
+    }));
+  }
+
+  return {
+    subscribe,
+    loadRecent,
+    openPath,
+    chooseAndOpen,
+    setPathInput,
+  };
+}
+
+export const workspaceStore = createWorkspaceStore();

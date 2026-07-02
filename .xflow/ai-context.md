@@ -35,6 +35,11 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 - SVN Detection Command: `detect_svn` command 执行 `svn --version --quiet` 获取版本，并在 Windows 下通过 `where` 尽力解析路径。
 - SVN Detection UI: 右侧详情区展示 SVN 命令行状态、版本和路径，前端状态由 `src/stores/app.ts` 的 `svnStore` 管理。
 - SVN Path Settings: 当前手动 SVN 路径只保存在前端运行态，持久化设置后续单独实现。
+- Workspace Open: `src-tauri/src/workspace.rs` 负责打开工作副本，执行 `svn info --xml <path>` 并解析工作副本 root、仓库 URL、repository root 和 revision。
+- Workspace Commands: 工作副本 commands 包括 `open_workspace` 和 `get_recent_workspace`，错误继续走统一 `NovaError`。
+- Workspace UI: 主工作区顶部展示工作副本打开面板，前端状态由 `src/stores/app.ts` 的 `workspaceStore` 管理。
+- Recent Workspace: 最近工作副本当前保存到应用数据目录下的 `recent-workspace.json`，只保存一个摘要。
+- Dialog Plugin: 目录选择使用 `@tauri-apps/plugin-dialog` 和 Rust `tauri-plugin-dialog`，权限配置在 `src-tauri/capabilities/default.json`。
 - Task Queue: 后端任务队列由 `src-tauri/src/task.rs` 提供，当前为内存存储和串行执行模型，通过 Tauri managed state 注入。
 - Task Commands: 任务相关 commands 包括创建模拟任务、读取任务列表、读取任务详情和取消任务；任务错误继续走统一 `NovaError`。
 - Task UI: 前端任务状态集中在 `src/stores/app.ts` 的 `taskStore`，底部任务队列 UI 位于 `src/components/workbench/BottomPanel.svelte`。

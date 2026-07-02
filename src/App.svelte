@@ -7,7 +7,13 @@
   import { onDestroy, onMount } from "svelte";
   import { callBackend } from "./lib/api";
   import { detailSections, navigationItems, workbenchViews } from "./lib/workbench";
-  import { currentView, setCurrentView, svnStore, taskStore } from "./stores/app";
+  import {
+    currentView,
+    setCurrentView,
+    svnStore,
+    taskStore,
+    workspaceStore,
+  } from "./stores/app";
   import type { CommandError, HealthPayload } from "./types/api";
 
   let backendMessage = "等待连接后端";
@@ -33,6 +39,7 @@
   onMount(() => {
     taskStore.startPolling();
     void svnStore.detect();
+    void workspaceStore.loadRecent();
   });
 
   onDestroy(() => {
@@ -56,7 +63,22 @@
     />
 
     <div class="workspace-grid">
-      <MainWorkspace view={activeView} />
+      <MainWorkspace
+        view={activeView}
+        workspace={$workspaceStore.current}
+        workspacePathInput={$workspaceStore.pathInput}
+        workspaceLoading={$workspaceStore.loading}
+        workspaceError={$workspaceStore.error}
+        onChooseWorkspace={() =>
+          workspaceStore.chooseAndOpen(
+            $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+          )}
+        onOpenWorkspace={() =>
+          workspaceStore.openPath(
+            $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+          )}
+        onWorkspacePathInput={workspaceStore.setPathInput}
+      />
       <DetailPanel
       sections={detailSections}
       commandError={commandError}
