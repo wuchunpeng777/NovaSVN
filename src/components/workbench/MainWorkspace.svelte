@@ -2,6 +2,7 @@
   import { tick } from "svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
   import type {
+    BranchPool,
     ChangedFile,
     CommandError,
     RepositoryCopyKind,
@@ -77,6 +78,16 @@
   };
   export let repositoryCopyError: string | null = null;
   export let repositoryCopyRunning = false;
+  export let branchPool: BranchPool = { entries: [] };
+  export let branchPoolForm = {
+    branchUrl: "",
+    localPath: "",
+    revision: "",
+  };
+  export let branchPoolLoading = false;
+  export let branchPoolError: CommandError | null = null;
+  export let branchCheckoutError: string | null = null;
+  export let branchCheckoutRunning = false;
   export let onChooseWorkspace: () => void;
   export let onOpenWorkspace: () => void;
   export let onRefreshStatus: () => void;
@@ -108,6 +119,15 @@
     targetBaseUrl?: string | null,
   ) => void;
   export let onCreateRepositoryCopy: () => void;
+  export let onBranchPoolFormInput: (
+    field: keyof typeof branchPoolForm,
+    value: string,
+  ) => void;
+  export let onUseBranchUrlForPool: (branchUrl: string) => void;
+  export let onCheckoutBranchPoolEntry: () => void;
+  export let onReuseBranchPoolEntry: () => void;
+  export let onOpenBranchPoolEntry: (localPath: string) => void;
+  export let onRemoveBranchPoolEntry: (entryId: string) => void;
 
   const fileRowHeight = 76;
   const sectionHeaderHeight = 32;
@@ -583,6 +603,10 @@
     (entry) => entry.kind === "dir",
   ) ?? [];
   $: trunkDetected = repositoryLayoutResults.trunk !== null && !repositoryLayoutErrors.trunk;
+  $: totalBranchLocalChanges = branchPool.entries.reduce(
+    (total, entry) => total + entry.local_changes,
+    0,
+  );
 </script>
 
 <section class="main-workspace" aria-label={view.title}>
@@ -654,7 +678,145 @@
     {/if}
   </section>
 
-  {#if view.id === "repository"}
+  {#if view.id === "branches"}
+    <div class="metric-row">
+      <div class="metric">
+        <span>池项</span>
+        <strong>{branchPool.entries.length}</strong>
+      </div>
+      <div class="metric">
+        <span>本地改动</span>
+        <strong>{totalBranchLocalChanges}</strong>
+      </div>
+      <div class="metric">
+        <span>当前</span>
+        <strong>{workspace ? "已打开" : "未打开"}</strong>
+      </div>
+      <div class="metric">
+        <span>状态</span>
+        <strong>{branchCheckoutRunning ? "Checkout" : "就绪"}</strong>
+      </div>
+      <div class="metric">
+        <span>保存</span>
+        <strong>{branchPoolLoading ? "同步" : "本地"}</strong>
+      </div>
+    </div>
+
+    <section class="branch-pool-panel" aria-label="分支工作副本池">
+      <div class="repository-layout-header">
+        <div>
+          <h3>分支工作副本池</h3>
+          <p>切换池项会打开对应工作副本，不执行 svn switch</p>
+        </div>
+      </div>
+
+      <div class="branch-pool-form">
+        <label>
+          <span>分支 URL</span>
+          <input
+            type="url"
+            value={branchPoolForm.branchUrl}
+            on:input={(event) =>
+              onBranchPoolFormInput(
+                "branchUrl",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
+          />
+        </label>
+        <label>
+          <span>本地路径</span>
+          <input
+            type="text"
+            value={branchPoolForm.localPath}
+            on:input={(event) =>
+              onBranchPoolFormInput(
+                "localPath",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
+          />
+        </label>
+        <label>
+          <span>Revision</span>
+          <input
+            type="text"
+            value={branchPoolForm.revision}
+            placeholder="留空使用 HEAD"
+            on:input={(event) =>
+              onBranchPoolFormInput(
+                "revision",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
+          />
+        </label>
+      </div>
+
+      {#if branchCheckoutError}
+        <p class="inline-error">{branchCheckoutError}</p>
+      {/if}
+      <ErrorNotice error={branchPoolError} />
+
+      <div class="branch-pool-actions">
+        <button
+          type="button"
+          on:click={onCheckoutBranchPoolEntry}
+          disabled={branchCheckoutRunning}
+        >
+          {branchCheckoutRunning ? "Checkout 中" : "Checkout 创建"}
+        </button>
+        <button type="button" on:click={onReuseBranchPoolEntry} disabled={branchPoolLoading}>
+          复用已有
+        </button>
+      </div>
+    </section>
+
+    <section class="branch-pool-list" aria-label="分支工作副本池列表">
+      {#if branchPool.entries.length > 0}
+        {#each branchPool.entries as entry (entry.id)}
+          <article class="branch-pool-entry">
+            <div>
+              <h3>{entry.branch_url}</h3>
+              <p>{entry.local_path}</p>
+            </div>
+            <span>r{entry.revision || "-"}</span>
+            <span>{entry.local_changes} 改动</span>
+            <button type="button" on:click={() => onOpenBranchPoolEntry(entry.local_path)}>
+              切换
+            </button>
+            <button type="button" on:click={() => onRemoveBranchPoolEntry(entry.id)}>
+              移除
+            </button>
+          </article>
+        {/each}
+      {:else}
+        <article class="repository-empty">暂无分支工作副本池项</article>
+      {/if}
+    </section>
+
+    {#if branchEntries.length > 0}
+      <section class="branch-pool-panel" aria-label="已识别分支">
+        <div class="repository-layout-header">
+          <div>
+            <h3>已识别分支</h3>
+            <p>从仓库视图识别结果快速填入分支 URL</p>
+          </div>
+        </div>
+        <div class="branch-url-picks">
+          {#each branchEntries as entry (entry.name)}
+            <button
+              type="button"
+              on:click={() =>
+                repositoryLayoutResults.branches &&
+                onUseBranchUrlForPool(
+                  joinRepositoryUrl(repositoryLayoutResults.branches.url, entry.name),
+                )}
+            >
+              {entry.name}
+            </button>
+          {/each}
+        </div>
+      </section>
+    {/if}
+  {:else if view.id === "repository"}
     <div class="metric-row">
       <div class="metric">
         <span>目录</span>

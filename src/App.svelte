@@ -8,6 +8,7 @@
   import { callBackend } from "./lib/api";
   import { detailSections, navigationItems, workbenchViews } from "./lib/workbench";
   import {
+    branchPoolStore,
     currentView,
     setCurrentView,
     svnStore,
@@ -258,6 +259,65 @@
     workspaceStore.markRepositoryCopyTask(task.task_id);
   }
 
+  async function checkoutBranchPoolEntry() {
+    const form = $branchPoolStore.form;
+    if (!form.branchUrl.trim() || !form.localPath.trim()) {
+      branchPoolStore.failCheckoutTask("请输入分支 URL 和本地路径");
+      return;
+    }
+
+    const task = await taskStore.createBranchCheckout({
+      branchUrl: form.branchUrl,
+      localPath: form.localPath,
+      revision: form.revision,
+      svnExecutable: $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    });
+
+    if (!task) {
+      branchPoolStore.failCheckoutTask($taskStore.error?.message ?? "分支 checkout 任务创建失败");
+      return;
+    }
+
+    branchPoolStore.markCheckoutTask(task.task_id);
+  }
+
+  async function reuseBranchPoolEntry() {
+    const form = $branchPoolStore.form;
+    if (!form.branchUrl.trim() || !form.localPath.trim()) {
+      branchPoolStore.failCheckoutTask("请输入分支 URL 和已有工作副本路径");
+      return;
+    }
+
+    await branchPoolStore.saveExisting({
+      branchUrl: form.branchUrl,
+      localPath: form.localPath,
+      revision: form.revision,
+      localChanges: 0,
+    });
+  }
+
+  async function openBranchPoolEntry(localPath: string) {
+    workspaceStore.setPathInput(localPath);
+    await workspaceStore.openPath(
+      $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    );
+    setCurrentView("changes");
+  }
+
+  async function removeBranchPoolEntry(entryId: string) {
+    const entry = $branchPoolStore.pool.entries.find((item) => item.id === entryId);
+    if (!entry) {
+      return;
+    }
+
+    const confirmed = window.confirm(`确定从分支池移除该工作副本吗？\n${entry.local_path}`);
+    if (!confirmed) {
+      return;
+    }
+
+    await branchPoolStore.remove(entry);
+  }
+
   $: if (
     $workspaceStore.pendingCommitTaskId &&
     $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
@@ -381,6 +441,25 @@
     );
   }
 
+  $: if (
+    $branchPoolStore.pendingCheckoutTaskId &&
+    $taskStore.selectedTask?.task_id === $branchPoolStore.pendingCheckoutTaskId &&
+    $taskStore.selectedTask.status === "success"
+  ) {
+    void branchPoolStore.completeCheckoutTask();
+  }
+
+  $: if (
+    $branchPoolStore.pendingCheckoutTaskId &&
+    $taskStore.selectedTask?.task_id === $branchPoolStore.pendingCheckoutTaskId &&
+    ($taskStore.selectedTask.status === "failed" ||
+      $taskStore.selectedTask.status === "cancelled")
+  ) {
+    branchPoolStore.failCheckoutTask(
+      $taskStore.selectedTask.error ?? "分支 checkout 失败",
+    );
+  }
+
   async function checkRepositoryLayoutTask(
     kind: "trunk" | "branches" | "tags",
     taskId: string,
@@ -425,6 +504,7 @@
     taskStore.startPolling();
     void svnStore.detect();
     void workspaceStore.loadRecent();
+    void branchPoolStore.load();
   });
 
   onDestroy(() => {
@@ -525,6 +605,12 @@
         repositoryCopyForm={$workspaceStore.repositoryCopyForm}
         repositoryCopyError={$workspaceStore.repositoryCopyError}
         repositoryCopyRunning={$workspaceStore.pendingRepositoryCopyTaskId !== null}
+        branchPool={$branchPoolStore.pool}
+        branchPoolForm={$branchPoolStore.form}
+        branchPoolLoading={$branchPoolStore.loading}
+        branchPoolError={$branchPoolStore.error}
+        branchCheckoutError={$branchPoolStore.checkoutError}
+        branchCheckoutRunning={$branchPoolStore.pendingCheckoutTaskId !== null}
         onChooseWorkspace={() =>
           workspaceStore.chooseAndOpen(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
@@ -560,6 +646,12 @@
         onRepositoryCopyFormInput={workspaceStore.setRepositoryCopyForm}
         onPrepareRepositoryCopyTarget={workspaceStore.prepareRepositoryCopyTarget}
         onCreateRepositoryCopy={createRepositoryCopy}
+        onBranchPoolFormInput={branchPoolStore.setFormField}
+        onUseBranchUrlForPool={branchPoolStore.useBranchUrl}
+        onCheckoutBranchPoolEntry={checkoutBranchPoolEntry}
+        onReuseBranchPoolEntry={reuseBranchPoolEntry}
+        onOpenBranchPoolEntry={openBranchPoolEntry}
+        onRemoveBranchPoolEntry={removeBranchPoolEntry}
       />
       <DetailPanel
         sections={detailSections}

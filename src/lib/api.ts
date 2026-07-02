@@ -3,7 +3,9 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type {
   CommandError,
   CommandResponse,
+  BranchPool,
   CreateCommitTaskRequest,
+  CreateBranchCheckoutTaskRequest,
   CreateMockTaskRequest,
   CreatePartialCommitTaskRequest,
   CreateRepositoryCopyTaskRequest,
@@ -19,7 +21,9 @@ import type {
   OpenWorkspaceRequest,
   ParsedDiff,
   RecentWorkspace,
+  RemoveBranchPoolEntryRequest,
   ScanWorkspaceStatusRequest,
+  SaveBranchPoolEntryRequest,
   SvnDetection,
   SelectedPatch,
   ShadowWorkspaceRequest,
@@ -98,6 +102,28 @@ export function createRepositoryCopyTask(
   request: CreateRepositoryCopyTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_repository_copy_task", { request });
+}
+
+export function createBranchCheckoutTask(
+  request: CreateBranchCheckoutTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_branch_checkout_task", { request });
+}
+
+export function getBranchPool(): Promise<BranchPool> {
+  return callBackend<BranchPool>("get_branch_pool");
+}
+
+export function saveBranchPoolEntry(
+  request: SaveBranchPoolEntryRequest,
+): Promise<BranchPool> {
+  return callBackend<BranchPool>("save_branch_pool_entry", { request });
+}
+
+export function removeBranchPoolEntry(
+  request: RemoveBranchPoolEntryRequest,
+): Promise<BranchPool> {
+  return callBackend<BranchPool>("remove_branch_pool_entry", { request });
 }
 
 export function listTasks(): Promise<TaskSnapshot> {

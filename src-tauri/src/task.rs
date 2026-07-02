@@ -152,6 +152,14 @@ pub struct CreateRepositoryCopyTaskRequest {
     pub svn_executable: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateBranchCheckoutTaskRequest {
+    pub branch_url: String,
+    pub local_path: String,
+    pub revision: Option<String>,
+    pub svn_executable: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskResult {
     pub repository_list: Option<RepositoryListResult>,
@@ -181,6 +189,7 @@ enum TaskPayload {
     PartialCommit(PartialCommitTaskPayload),
     RepositoryList(RepositoryListTaskPayload),
     RepositoryCopy(RepositoryCopyTaskPayload),
+    BranchCheckout(BranchCheckoutTaskPayload),
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +237,14 @@ struct RepositoryCopyTaskPayload {
     target_url: String,
     revision: Option<String>,
     message: String,
+    svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct BranchCheckoutTaskPayload {
+    branch_url: String,
+    local_path: String,
+    revision: Option<String>,
     svn_executable: String,
 }
 
@@ -579,6 +596,47 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_branch_checkout_task(
+        &self,
+        request: CreateBranchCheckoutTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let branch_url = normalize_repository_url(&request.branch_url)?;
+        let local_path = normalize_checkout_path(&request.local_path)?;
+        let revision = request
+            .revision
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let svn_executable = request
+            .svn_executable
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "svn".to_string());
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!("Checkout 分支 {}", compact_repository_url(&branch_url)),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "分支 checkout 任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::BranchCheckout(BranchCheckoutTaskPayload {
+                branch_url,
+                local_path,
+                revision,
+                svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn list_tasks(&self) -> TaskSnapshot {
         let state = self.state.lock().expect("任务队列锁已损坏");
         TaskSnapshot {
@@ -728,12 +786,17 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             TaskPayload::ShadowWorkspace(payload) => {
                 run_shadow_workspace_task(&state, &task_id, payload)
             }
-            TaskPayload::PartialCommit(payload) => run_partial_commit_task(&state, &task_id, payload),
+            TaskPayload::PartialCommit(payload) => {
+                run_partial_commit_task(&state, &task_id, payload)
+            }
             TaskPayload::RepositoryList(payload) => {
                 run_repository_list_task(&state, &task_id, payload)
             }
             TaskPayload::RepositoryCopy(payload) => {
                 run_repository_copy_task(&state, &task_id, payload)
+            }
+            TaskPayload::BranchCheckout(payload) => {
+                run_branch_checkout_task(&state, &task_id, payload)
             }
         }
     }
@@ -937,7 +1000,12 @@ fn run_shadow_workspace_task(
 
     if exists {
         command.arg("update");
-        if let Some(revision) = payload.request.revision.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(revision) = payload
+            .request
+            .revision
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
             command.arg("-r").arg(revision);
         }
         command.arg(&shadow_path).current_dir(&shadow_path);
@@ -956,7 +1024,12 @@ fn run_shadow_workspace_task(
             }
         }
         command.arg("checkout");
-        if let Some(revision) = payload.request.revision.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(revision) = payload
+            .request
+            .revision
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
             command.arg("-r").arg(revision);
         }
         command
@@ -1028,12 +1101,24 @@ fn run_partial_commit_task(
 
     if !shadow_path.join(".svn").exists() {
         append_task_log(state, task_id, "影子工作副本不存在，先执行 checkout");
-        if !run_shadow_checkout_or_update(state, task_id, &payload.shadow_request, &shadow_path, &executable) {
+        if !run_shadow_checkout_or_update(
+            state,
+            task_id,
+            &payload.shadow_request,
+            &shadow_path,
+            &executable,
+        ) {
             return;
         }
     } else {
         append_task_log(state, task_id, "更新影子工作副本");
-        if !run_shadow_checkout_or_update(state, task_id, &payload.shadow_request, &shadow_path, &executable) {
+        if !run_shadow_checkout_or_update(
+            state,
+            task_id,
+            &payload.shadow_request,
+            &shadow_path,
+            &executable,
+        ) {
             return;
         }
     }
@@ -1120,7 +1205,10 @@ fn run_partial_commit_task(
     for file in &payload.files {
         commit.arg(shadow_path.join(file));
     }
-    commit.arg("-m").arg(&payload.message).current_dir(&shadow_path);
+    commit
+        .arg("-m")
+        .arg(&payload.message)
+        .current_dir(&shadow_path);
 
     match commit.output() {
         Ok(output) if output.status.success() => {
@@ -1167,7 +1255,11 @@ fn run_repository_list_task(
         "仓库目录加载开始执行",
         None,
     );
-    append_task_log(state, task_id, &format!("执行 svn list --xml：{}", payload.url));
+    append_task_log(
+        state,
+        task_id,
+        &format!("执行 svn list --xml：{}", payload.url),
+    );
 
     let output = Command::new(&payload.svn_executable)
         .args(["list", "--xml"])
@@ -1268,7 +1360,13 @@ fn run_repository_copy_task(
     match command.output() {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
-            update_task(state, task_id, TaskStatus::Success, &format!("{title}成功"), None);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                &format!("{title}成功"),
+                None,
+            );
         }
         Ok(output) => {
             append_command_output(state, task_id, &output);
@@ -1277,6 +1375,67 @@ fn run_repository_copy_task(
                 task_id,
                 TaskStatus::Failed,
                 &format!("{title}失败"),
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn run_branch_checkout_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: BranchCheckoutTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "分支 checkout 开始执行",
+        None,
+    );
+    append_task_log(
+        state,
+        task_id,
+        &format!(
+            "执行 svn checkout：{} -> {}",
+            payload.branch_url, payload.local_path
+        ),
+    );
+
+    let mut command = Command::new(&payload.svn_executable);
+    command.arg("checkout");
+    if let Some(revision) = payload.revision.as_deref() {
+        command.arg("-r").arg(revision);
+    }
+    command.arg(&payload.branch_url).arg(&payload.local_path);
+
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                "分支 checkout 成功",
+                None,
+            );
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "分支 checkout 失败",
                 Some(command_error_detail(&payload.svn_executable, &output)),
             );
         }
@@ -1303,7 +1462,11 @@ fn run_shadow_checkout_or_update(
     let mut command = Command::new(executable);
     if exists {
         command.arg("update");
-        if let Some(revision) = request.revision.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(revision) = request
+            .revision
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
             command.arg("-r").arg(revision);
         }
         command.arg(shadow_path).current_dir(shadow_path);
@@ -1321,7 +1484,11 @@ fn run_shadow_checkout_or_update(
             }
         }
         command.arg("checkout");
-        if let Some(revision) = request.revision.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(revision) = request
+            .revision
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
             command.arg("-r").arg(revision);
         }
         command.arg(&request.repository_url).arg(shadow_path);
@@ -1534,6 +1701,20 @@ fn normalize_repository_url(url: &str) -> Result<String, NovaError> {
     Ok(trimmed.trim_end_matches('/').to_string())
 }
 
+fn normalize_checkout_path(path: &str) -> Result<String, NovaError> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(NovaError::command(
+            "CHECKOUT_PATH_REQUIRED",
+            "请输入本地工作副本路径",
+            None,
+            true,
+        ));
+    }
+
+    Ok(trimmed.to_string())
+}
+
 fn compact_repository_url(url: &str) -> String {
     const MAX_CHARS: usize = 48;
     if url.chars().count() <= MAX_CHARS {
@@ -1551,10 +1732,7 @@ fn compact_repository_url(url: &str) -> String {
     format!("...{tail}")
 }
 
-fn parse_repository_list_xml(
-    xml: &str,
-    url: &str,
-) -> Result<RepositoryListResult, NovaError> {
+fn parse_repository_list_xml(xml: &str, url: &str) -> Result<RepositoryListResult, NovaError> {
     let document = Document::parse(xml).map_err(|error| {
         NovaError::command(
             "SVN_LIST_XML_PARSE_FAILED",
@@ -1565,12 +1743,13 @@ fn parse_repository_list_xml(
     })?;
 
     let mut entries = Vec::new();
-    for entry in document.descendants().filter(|node| node.has_tag_name("entry")) {
+    for entry in document
+        .descendants()
+        .filter(|node| node.has_tag_name("entry"))
+    {
         let kind = entry.attribute("kind").unwrap_or("file").to_string();
         let name = text_child(entry, "name").unwrap_or_default();
-        let commit = entry
-            .children()
-            .find(|node| node.has_tag_name("commit"));
+        let commit = entry.children().find(|node| node.has_tag_name("commit"));
         let revision = commit
             .and_then(|node| node.attribute("revision"))
             .unwrap_or("")

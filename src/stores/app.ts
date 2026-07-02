@@ -2,6 +2,7 @@ import { get, writable } from "svelte/store";
 import {
   cancelTask,
   chooseWorkspaceDirectory,
+  createBranchCheckoutTask,
   createCommitTask,
   createMockTask,
   createPartialCommitTask,
@@ -12,6 +13,7 @@ import {
   detectSvn,
   getFileContentDiff,
   getFileDiff,
+  getBranchPool,
   generateSelectedPatch,
   getShadowWorkspaceStatus,
   getRecentWorkspace,
@@ -19,7 +21,9 @@ import {
   listTasks,
   openWorkspace,
   parseUnifiedDiff,
+  removeBranchPoolEntry,
   scanWorkspaceStatus,
+  saveBranchPoolEntry,
 } from "../lib/api";
 import type {
   AppView,
@@ -31,6 +35,8 @@ import type {
 } from "../types/app";
 import type {
   ChangedFile,
+  BranchPool,
+  BranchPoolEntry,
   CommandError,
   FileContentDiff,
   FileDiff,
@@ -307,6 +313,34 @@ function createTaskStore() {
     }
   }
 
+  async function createBranchCheckout(request: {
+    branchUrl: string;
+    localPath: string;
+    revision?: string | null;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createBranchCheckoutTask({
+        branch_url: request.branchUrl,
+        local_path: request.localPath,
+        revision: request.revision || undefined,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function select(taskId: string) {
     selectedTaskId = taskId;
     await refresh();
@@ -365,6 +399,7 @@ function createTaskStore() {
     createPartialCommit,
     createRepositoryList,
     createRepositoryCopy,
+    createBranchCheckout,
     select,
     cancel,
     getTaskById,
@@ -458,6 +493,212 @@ function createSvnStore() {
 }
 
 export const svnStore = createSvnStore();
+
+export interface BranchPoolStoreState {
+  pool: BranchPool;
+  form: {
+    branchUrl: string;
+    localPath: string;
+    revision: string;
+  };
+  pendingCheckoutTaskId: string | null;
+  pendingCheckoutEntry: {
+    branchUrl: string;
+    localPath: string;
+    revision: string;
+  } | null;
+  loading: boolean;
+  error: CommandError | null;
+  checkoutError: string | null;
+}
+
+const initialBranchPoolState: BranchPoolStoreState = {
+  pool: {
+    entries: [],
+  },
+  form: {
+    branchUrl: "",
+    localPath: "",
+    revision: "",
+  },
+  pendingCheckoutTaskId: null,
+  pendingCheckoutEntry: null,
+  loading: false,
+  error: null,
+  checkoutError: null,
+};
+
+function createBranchPoolStore() {
+  const { subscribe, update } = writable<BranchPoolStoreState>(initialBranchPoolState);
+
+  async function load() {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const pool = await getBranchPool();
+      update((state) => ({
+        ...state,
+        pool,
+        loading: false,
+        error: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+    }
+  }
+
+  function setFormField(field: keyof BranchPoolStoreState["form"], value: string) {
+    update((state) => ({
+      ...state,
+      form: {
+        ...state.form,
+        [field]: value,
+      },
+      checkoutError: null,
+    }));
+  }
+
+  function useBranchUrl(branchUrl: string) {
+    update((state) => ({
+      ...state,
+      form: {
+        ...state.form,
+        branchUrl,
+      },
+      checkoutError: null,
+    }));
+  }
+
+  async function saveExisting(entry: {
+    branchUrl: string;
+    localPath: string;
+    revision?: string | null;
+    localChanges?: number;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const pool = await saveBranchPoolEntry({
+        branch_url: entry.branchUrl,
+        local_path: entry.localPath,
+        revision: entry.revision || undefined,
+        local_changes: entry.localChanges,
+      });
+      update((state) => ({
+        ...state,
+        pool,
+        loading: false,
+        error: null,
+        checkoutError: null,
+      }));
+      return pool;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
+  async function remove(entry: BranchPoolEntry) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const pool = await removeBranchPoolEntry({ id: entry.id });
+      update((state) => ({
+        ...state,
+        pool,
+        loading: false,
+        error: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+    }
+  }
+
+  function markCheckoutTask(taskId: string | null) {
+    update((state) => ({
+      ...state,
+      pendingCheckoutTaskId: taskId,
+      pendingCheckoutEntry: taskId
+        ? {
+            branchUrl: state.form.branchUrl,
+            localPath: state.form.localPath,
+            revision: state.form.revision,
+          }
+        : null,
+      checkoutError: null,
+    }));
+  }
+
+  async function completeCheckoutTask() {
+    const entry = get({ subscribe }).pendingCheckoutEntry;
+    if (!entry) {
+      markCheckoutTask(null);
+      return;
+    }
+
+    try {
+      const pool = await saveBranchPoolEntry({
+        branch_url: entry.branchUrl,
+        local_path: entry.localPath,
+        revision: entry.revision || undefined,
+        local_changes: 0,
+      });
+      update((state) => ({
+        ...state,
+        pool,
+        form: {
+          ...state.form,
+          localPath: "",
+        },
+        pendingCheckoutTaskId: null,
+        pendingCheckoutEntry: null,
+        checkoutError: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        pendingCheckoutTaskId: null,
+        pendingCheckoutEntry: null,
+        checkoutError: (error as CommandError).message,
+      }));
+    }
+  }
+
+  function failCheckoutTask(message: string | null) {
+    update((state) => ({
+      ...state,
+      pendingCheckoutTaskId: null,
+      pendingCheckoutEntry: null,
+      checkoutError: message ?? "分支 checkout 失败",
+    }));
+  }
+
+  return {
+    subscribe,
+    load,
+    setFormField,
+    useBranchUrl,
+    saveExisting,
+    remove,
+    markCheckoutTask,
+    completeCheckoutTask,
+    failCheckoutTask,
+  };
+}
+
+export const branchPoolStore = createBranchPoolStore();
 
 export interface WorkspaceStoreState {
   current: WorkspaceSummary | null;

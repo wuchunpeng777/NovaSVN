@@ -1,3 +1,4 @@
+mod branch_pool;
 mod diff;
 mod error;
 mod shadow;
@@ -6,14 +7,16 @@ mod svn;
 mod task;
 mod workspace;
 
+use branch_pool::{BranchPool, RemoveBranchPoolEntryRequest, SaveBranchPoolEntryRequest};
 use diff::{GenerateSelectedPatchRequest, ParsedDiff, SelectedPatch};
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
 use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
 use task::{
-    CreateCommitTaskRequest, CreateMockTaskRequest, CreatePartialCommitTaskRequest,
-    CreateRepositoryCopyTaskRequest, CreateRepositoryListTaskRequest,
-    CreateShadowWorkspaceTaskRequest, CreateSvnOperationTaskRequest, Task, TaskQueue, TaskSnapshot,
+    CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest, CreateMockTaskRequest,
+    CreatePartialCommitTaskRequest, CreateRepositoryCopyTaskRequest,
+    CreateRepositoryListTaskRequest, CreateShadowWorkspaceTaskRequest,
+    CreateSvnOperationTaskRequest, Task, TaskQueue, TaskSnapshot,
 };
 use workspace::{
     FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, OpenWorkspaceRequest,
@@ -116,6 +119,44 @@ fn create_repository_copy_task(
 }
 
 #[tauri::command]
+fn create_branch_checkout_task(
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateBranchCheckoutTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_branch_checkout_task command received");
+    Ok(CommandResponse::success(
+        queue.create_branch_checkout_task(request)?,
+    ))
+}
+
+#[tauri::command]
+fn get_branch_pool(app: tauri::AppHandle) -> CommandResult<BranchPool> {
+    Ok(CommandResponse::success(branch_pool::read_branch_pool(
+        &app,
+    )?))
+}
+
+#[tauri::command]
+fn save_branch_pool_entry(
+    app: tauri::AppHandle,
+    request: SaveBranchPoolEntryRequest,
+) -> CommandResult<BranchPool> {
+    Ok(CommandResponse::success(
+        branch_pool::save_branch_pool_entry(&app, request)?,
+    ))
+}
+
+#[tauri::command]
+fn remove_branch_pool_entry(
+    app: tauri::AppHandle,
+    request: RemoveBranchPoolEntryRequest,
+) -> CommandResult<BranchPool> {
+    Ok(CommandResponse::success(
+        branch_pool::remove_branch_pool_entry(&app, request)?,
+    ))
+}
+
+#[tauri::command]
 fn list_tasks(queue: tauri::State<'_, TaskQueue>) -> CommandResult<TaskSnapshot> {
     Ok(CommandResponse::success(queue.list_tasks()))
 }
@@ -179,7 +220,9 @@ fn get_file_content_diff(request: GetFileContentDiffRequest) -> CommandResult<Fi
 #[tauri::command]
 fn parse_unified_diff(diff_text: String) -> CommandResult<ParsedDiff> {
     println!("[NovaSVN] parse_unified_diff command received");
-    Ok(CommandResponse::success(diff::parse_unified_diff(&diff_text)))
+    Ok(CommandResponse::success(diff::parse_unified_diff(
+        &diff_text,
+    )))
 }
 
 #[tauri::command]
@@ -196,7 +239,9 @@ fn get_shadow_workspace_status(
     request: ShadowWorkspaceRequest,
 ) -> CommandResult<ShadowWorkspaceStatus> {
     println!("[NovaSVN] get_shadow_workspace_status command received");
-    Ok(CommandResponse::success(shadow::shadow_status(&app, &request)?))
+    Ok(CommandResponse::success(shadow::shadow_status(
+        &app, &request,
+    )?))
 }
 
 pub fn run() {
@@ -213,6 +258,10 @@ pub fn run() {
             create_partial_commit_task,
             create_repository_list_task,
             create_repository_copy_task,
+            create_branch_checkout_task,
+            get_branch_pool,
+            save_branch_pool_entry,
+            remove_branch_pool_entry,
             list_tasks,
             get_task,
             cancel_task,

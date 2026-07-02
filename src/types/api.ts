@@ -106,6 +106,38 @@ export interface CreateRepositoryCopyTaskRequest {
   svn_executable?: string;
 }
 
+export interface CreateBranchCheckoutTaskRequest {
+  branch_url: string;
+  local_path: string;
+  revision?: string;
+  svn_executable?: string;
+}
+
+export interface BranchPoolEntry {
+  id: string;
+  branch_url: string;
+  local_path: string;
+  revision: string;
+  local_changes: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface BranchPool {
+  entries: BranchPoolEntry[];
+}
+
+export interface SaveBranchPoolEntryRequest {
+  branch_url: string;
+  local_path: string;
+  revision?: string;
+  local_changes?: number;
+}
+
+export interface RemoveBranchPoolEntryRequest {
+  id: string;
+}
+
 export interface TaskResult {
   repository_list: RepositoryListResult | null;
 }

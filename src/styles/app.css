@@ -954,6 +954,128 @@ button {
   padding: 8px;
 }
 
+.branch-pool-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.branch-pool-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 120px;
+  gap: 8px;
+}
+
+.branch-pool-form label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.branch-pool-form span {
+  color: #637282;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.branch-pool-form input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  color: #17202a;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.branch-pool-actions,
+.branch-url-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.branch-pool-actions button,
+.branch-url-picks button,
+.branch-pool-entry button {
+  height: 30px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17202a;
+  cursor: pointer;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.branch-pool-actions button:first-child {
+  border-color: #5ba9a5;
+  background: #eef8f7;
+  color: #227873;
+}
+
+.branch-pool-actions button:disabled {
+  border-color: #cfd7df;
+  background: #f7f9fb;
+  color: #7a8794;
+  cursor: default;
+}
+
+.branch-pool-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.branch-pool-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 80px 90px auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.branch-pool-entry div {
+  min-width: 0;
+}
+
+.branch-pool-entry h3,
+.branch-pool-entry p {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-pool-entry h3 {
+  font-size: 13px;
+}
+
+.branch-pool-entry p {
+  margin-top: 4px;
+  color: #637282;
+  font-size: 12px;
+}
+
+.branch-pool-entry > span {
+  overflow: hidden;
+  color: #44515f;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
 .repository-list {
   min-height: 0;
   overflow: auto;
