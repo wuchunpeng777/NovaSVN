@@ -1,10 +1,17 @@
 <script lang="ts">
   import type { CommandError, Task, TaskStatus, TaskSummary } from "../../types/api";
+  import type { SafetyCheckSummary } from "../../types/app";
 
   export let tasks: TaskSummary[] = [];
   export let selectedTask: Task | null = null;
   export let runningTaskId: string | null = null;
   export let stagedFiles: Array<{ path: string; status: string }> = [];
+  export let safetyCheck: SafetyCheckSummary = {
+    blockers: [],
+    warnings: [],
+    infos: [],
+    confirmedWarningIds: [],
+  };
   export let commitMessage = "";
   export let commitError: string | null = null;
   export let commitDisabled = false;
@@ -12,6 +19,7 @@
   export let error: CommandError | null = null;
   export let onCreateTask: (outcome: "success" | "failed") => void;
   export let onCommitMessageInput: (value: string) => void;
+  export let onConfirmSafetyWarnings: () => void;
   export let onCommit: () => void;
   export let onSelectTask: (taskId: string) => void;
   export let onCancelTask: (taskId: string) => void;
@@ -43,6 +51,10 @@
       second: "2-digit",
     });
   }
+
+  $: unconfirmedWarningCount = safetyCheck.warnings.filter(
+    (item) => !safetyCheck.confirmedWarningIds.includes(item.id),
+  ).length;
 </script>
 
 <footer class="bottom-panel">
@@ -78,6 +90,25 @@
 
     {#if commitError}
       <p class="commit-error">{commitError}</p>
+    {/if}
+
+    {#if safetyCheck.blockers.length > 0 || safetyCheck.warnings.length > 0 || safetyCheck.infos.length > 0}
+      <div class="safety-summary" aria-label="安全检查结果">
+        {#if safetyCheck.blockers.length > 0}
+          <p class="safety-blocker">阻塞 {safetyCheck.blockers.length}</p>
+        {/if}
+        {#if safetyCheck.warnings.length > 0}
+          <p class="safety-warning">警告 {safetyCheck.warnings.length}</p>
+        {/if}
+        {#if safetyCheck.infos.length > 0}
+          <p class="safety-info">提示 {safetyCheck.infos.length}</p>
+        {/if}
+        {#if unconfirmedWarningCount > 0 && safetyCheck.blockers.length === 0}
+          <button type="button" on:click={onConfirmSafetyWarnings}>
+            确认警告
+          </button>
+        {/if}
+      </div>
     {/if}
 
     <button

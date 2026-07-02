@@ -17,6 +17,8 @@ import {
 import type {
   AppView,
   ReviewedFileState,
+  SafetyCheckItem,
+  SafetyCheckSummary,
   WorkspaceGroupMode,
   WorkspaceStageFilter,
 } from "../types/app";
@@ -327,7 +329,9 @@ export interface WorkspaceStoreState {
   stagedFiles: Array<{
     path: string;
     status: string;
+    contentDigest: string;
   }>;
+  safetyCheck: SafetyCheckSummary;
   reviewedFiles: ReviewedFileState[];
   commitMessage: string;
   commitError: string | null;
@@ -359,6 +363,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   selectedFileDiff: null,
   selectedFileContentDiff: null,
   stagedFiles: [],
+  safetyCheck: emptySafetyCheck(),
   reviewedFiles: [],
   commitMessage: "",
   commitError: null,
@@ -394,6 +399,7 @@ function createWorkspaceStore() {
         selectedFileDiff: null,
         selectedFileContentDiff: null,
         stagedFiles: [],
+        safetyCheck: emptySafetyCheck(),
         reviewedFiles,
         commitMessage: "",
         commitError: null,
@@ -439,6 +445,7 @@ function createWorkspaceStore() {
         selectedFileDiff: null,
         selectedFileContentDiff: null,
         stagedFiles: [],
+        safetyCheck: emptySafetyCheck(),
         reviewedFiles,
         commitMessage: "",
         commitError: null,
@@ -594,21 +601,39 @@ function createWorkspaceStore() {
       if (!file || !isStageable(file) || state.stagedFiles.some((item) => item.path === path)) {
         return state;
       }
+      const stagedFiles = [
+        ...state.stagedFiles,
+        { path: file.path, status: file.status, contentDigest: file.content_digest },
+      ];
 
       return {
         ...state,
-        stagedFiles: [...state.stagedFiles, { path: file.path, status: file.status }],
+        stagedFiles,
+        safetyCheck: buildSafetyCheck(
+          state.status?.files ?? [],
+          stagedFiles,
+          state.safetyCheck.confirmedWarningIds,
+        ),
         commitError: null,
       };
     });
   }
 
   function unstageFile(path: string) {
-    update((state) => ({
-      ...state,
-      stagedFiles: state.stagedFiles.filter((file) => file.path !== path),
-      commitError: null,
-    }));
+    update((state) => {
+      const stagedFiles = state.stagedFiles.filter((file) => file.path !== path);
+
+      return {
+        ...state,
+        stagedFiles,
+        safetyCheck: buildSafetyCheck(
+          state.status?.files ?? [],
+          stagedFiles,
+          reconcileSafetyWarningConfirmations(state.safetyCheck, stagedFiles).confirmedWarningIds,
+        ),
+        commitError: null,
+      };
+    });
   }
 
   function markFileReviewed(path: string) {
@@ -652,6 +677,11 @@ function createWorkspaceStore() {
     let valid = false;
     update((state) => {
       const reconciled = reconcileStagedFiles(state.stagedFiles, state.status?.files ?? []);
+      const safetyCheck = buildSafetyCheck(
+        state.status?.files ?? [],
+        reconciled,
+        state.safetyCheck.confirmedWarningIds,
+      );
       const message = state.commitMessage.trim();
       let commitError: string | null = null;
 
@@ -661,6 +691,10 @@ function createWorkspaceStore() {
         commitError = "请先暂存要提交的文件";
       } else if (!message) {
         commitError = "请输入提交信息";
+      } else if (safetyCheck.blockers.length > 0) {
+        commitError = "安全检查存在阻塞项，请先处理冲突、缺失或阻塞文件";
+      } else if (unconfirmedWarnings(safetyCheck).length > 0) {
+        commitError = "安全检查存在警告项，请确认警告后再提交";
       }
 
       valid = commitError === null;
@@ -668,11 +702,33 @@ function createWorkspaceStore() {
       return {
         ...state,
         stagedFiles: reconciled,
+        safetyCheck,
         commitError,
       };
     });
 
     return valid;
+  }
+
+  function confirmSafetyWarnings() {
+    update((state) => {
+      const reconciled = reconcileStagedFiles(state.stagedFiles, state.status?.files ?? []);
+      const safetyCheck = buildSafetyCheck(
+        state.status?.files ?? [],
+        reconciled,
+        state.safetyCheck.confirmedWarningIds,
+      );
+
+      return {
+        ...state,
+        stagedFiles: reconciled,
+        safetyCheck: {
+          ...safetyCheck,
+          confirmedWarningIds: safetyCheck.warnings.map((item) => item.id),
+        },
+        commitError: null,
+      };
+    });
   }
 
   function markCommitTask(taskId: string | null) {
@@ -693,13 +749,18 @@ function createWorkspaceStore() {
 
   function clearCommittedFiles(paths: string[]) {
     const committed = new Set(paths);
-    update((state) => ({
-      ...state,
-      stagedFiles: state.stagedFiles.filter((file) => !committed.has(file.path)),
-      commitMessage: "",
-      commitError: null,
-      pendingCommitTaskId: null,
-    }));
+    update((state) => {
+      const stagedFiles = state.stagedFiles.filter((file) => !committed.has(file.path));
+
+      return {
+        ...state,
+        stagedFiles,
+        safetyCheck: buildSafetyCheck(state.status?.files ?? [], stagedFiles),
+        commitMessage: "",
+        commitError: null,
+        pendingCommitTaskId: null,
+      };
+    });
   }
 
   async function refreshStatus(
@@ -752,6 +813,11 @@ function createWorkspaceStore() {
         selectedFileContentDiff:
           selectedFilePath === state.selectedFilePath ? state.selectedFileContentDiff : null,
         stagedFiles: reconcileStagedFiles(state.stagedFiles, status.files),
+        safetyCheck: buildSafetyCheck(
+          status.files,
+          reconcileStagedFiles(state.stagedFiles, status.files),
+          state.safetyCheck.confirmedWarningIds,
+        ),
         reviewedFiles: reconcileReviewedFiles(state.reviewedFiles, status.files, state.current),
         statusLoading: false,
         statusError: null,
@@ -889,6 +955,7 @@ function createWorkspaceStore() {
     markFileReviewed,
     markFileUnreviewed,
     validateStagedFilesForCommit,
+    confirmSafetyWarnings,
     markCommitTask,
     markSvnOperationTask,
     clearCommittedFiles,
@@ -916,13 +983,191 @@ function isStageable(file: ChangedFile) {
 }
 
 function reconcileStagedFiles(
-  stagedFiles: Array<{ path: string; status: string }>,
+  stagedFiles: Array<{ path: string; status: string; contentDigest: string }>,
   currentFiles: ChangedFile[],
 ) {
-  return stagedFiles.filter((stagedFile) => {
+  return stagedFiles.flatMap((stagedFile) => {
     const current = currentFiles.find((file) => file.path === stagedFile.path);
-    return current && current.status === stagedFile.status && isStageable(current);
+    if (!current || current.status !== stagedFile.status || !isStageable(current)) {
+      return [];
+    }
+
+    return [
+      {
+        path: current.path,
+        status: current.status,
+        contentDigest: current.content_digest,
+      },
+    ];
   });
+}
+
+function emptySafetyCheck(): SafetyCheckSummary {
+  return {
+    blockers: [],
+    warnings: [],
+    infos: [],
+    confirmedWarningIds: [],
+  };
+}
+
+function buildSafetyCheck(
+  files: ChangedFile[],
+  stagedFiles: Array<{ path: string; status: string; contentDigest: string }>,
+  confirmedWarningIds: string[] = [],
+): SafetyCheckSummary {
+  const stagedPaths = new Set(stagedFiles.map((file) => file.path));
+  const blockers: SafetyCheckItem[] = [];
+  const warnings: SafetyCheckItem[] = [];
+  const infos: SafetyCheckItem[] = [];
+
+  for (const file of files) {
+    if (["conflicted", "missing", "obstructed"].includes(file.status)) {
+      blockers.push({
+        id: `blocker:${file.status}:${file.path}:${file.content_digest}`,
+        severity: "blocker",
+        title: labelSafetyStatus(file.status),
+        detail: `${file.path} 当前为 ${labelSafetyStatus(file.status)}，提交前需要先处理。`,
+        filePath: file.path,
+      });
+    }
+
+    if (file.status === "unversioned") {
+      warnings.push({
+        id: `warning:unversioned:${file.path}:${file.content_digest}`,
+        severity: "warning",
+        title: "未版本控制文件",
+        detail: `${file.path} 未加入版本控制，请确认是否需要 add 或忽略。`,
+        filePath: file.path,
+      });
+    }
+
+    if (looksLikeGeneratedOrTemporary(file.path)) {
+      warnings.push({
+        id: `warning:generated:${file.path}:${file.content_digest}`,
+        severity: "warning",
+        title: "疑似临时或生成文件",
+        detail: `${file.path} 命中日志、临时文件或生成目录规则，请确认是否应提交。`,
+        filePath: file.path,
+      });
+    }
+
+    if (looksLikeLargeBinary(file.path)) {
+      warnings.push({
+        id: `warning:binary:${file.path}:${file.content_digest}`,
+        severity: "warning",
+        title: "疑似大型二进制文件",
+        detail: `${file.path} 是常见二进制资源类型，提交前请确认体积和必要性。`,
+        filePath: file.path,
+      });
+    }
+  }
+
+  if (stagedFiles.some((file) => !files.some((current) => current.path === file.path))) {
+    blockers.push({
+      id: "blocker:staged-missing",
+      severity: "blocker",
+      title: "暂存项已失效",
+      detail: "部分已暂存文件不在当前状态扫描结果中，请刷新状态后重新暂存。",
+      filePath: null,
+    });
+  }
+
+  infos.push({
+    id: "info:mixed-revision:not-implemented",
+    severity: "info",
+    title: "Mixed revision 待扩展检测",
+    detail: "当前状态扫描尚未返回 revision 维度，后续会在工作副本状态模型扩展后接入真实检测。",
+    filePath: null,
+  });
+
+  const warningIds = new Set(warnings.map((item) => item.id));
+  const stagedDigestIds = new Set(
+    stagedFiles.map((file) => `${file.path}:${file.contentDigest}`),
+  );
+
+  return {
+    blockers,
+    warnings,
+    infos,
+    confirmedWarningIds: confirmedWarningIds.filter((id) => {
+      if (warningIds.has(id)) {
+        return true;
+      }
+
+      return stagedDigestIds.has(id);
+    }),
+  };
+}
+
+function reconcileSafetyWarningConfirmations(
+  safetyCheck: SafetyCheckSummary,
+  stagedFiles: Array<{ path: string; status: string; contentDigest: string }>,
+) {
+  const stagedPaths = new Set(stagedFiles.map((file) => file.path));
+  return {
+    ...safetyCheck,
+    confirmedWarningIds: safetyCheck.confirmedWarningIds.filter((id) => {
+      const item = safetyCheck.warnings.find((warning) => warning.id === id);
+      return !item?.filePath || stagedPaths.has(item.filePath);
+    }),
+  };
+}
+
+function unconfirmedWarnings(safetyCheck: SafetyCheckSummary) {
+  const confirmed = new Set(safetyCheck.confirmedWarningIds);
+  return safetyCheck.warnings.filter((item) => !confirmed.has(item.id));
+}
+
+function labelSafetyStatus(status: string) {
+  const labels: Record<string, string> = {
+    conflicted: "冲突文件",
+    missing: "缺失文件",
+    obstructed: "阻塞文件",
+  };
+
+  return labels[status] ?? status;
+}
+
+function looksLikeGeneratedOrTemporary(path: string) {
+  const normalized = path.replaceAll("\\", "/").toLowerCase();
+  const segments = normalized.split("/");
+  const fileName = segments.at(-1) ?? normalized;
+
+  return (
+    segments.some((segment) =>
+      ["dist", "build", "target", "node_modules", ".cache", "coverage"].includes(segment),
+    ) ||
+    fileName.endsWith(".log") ||
+    fileName.endsWith(".tmp") ||
+    fileName.endsWith(".temp") ||
+    fileName.endsWith(".bak") ||
+    fileName.endsWith(".swp") ||
+    fileName === ".ds_store"
+  );
+}
+
+function looksLikeLargeBinary(path: string) {
+  const extension = path.replaceAll("\\", "/").split(".").pop()?.toLowerCase() ?? "";
+  return [
+    "7z",
+    "avi",
+    "dmg",
+    "exe",
+    "gif",
+    "ico",
+    "iso",
+    "jpg",
+    "jpeg",
+    "mov",
+    "mp4",
+    "pdf",
+    "png",
+    "psd",
+    "rar",
+    "webp",
+    "zip",
+  ].includes(extension);
 }
 
 function upsertReviewedFile(

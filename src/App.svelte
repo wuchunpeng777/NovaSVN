@@ -33,6 +33,12 @@
   $: selectedFileReviewed =
     selectedFile !== null &&
     $workspaceStore.reviewedFiles.some((file) => file.path === selectedFile.path);
+  $: unconfirmedSafetyWarnings =
+    $workspaceStore.safetyCheck.warnings.filter(
+      (item) => !$workspaceStore.safetyCheck.confirmedWarningIds.includes(item.id),
+    ).length;
+  $: commitSafetyBlocked =
+    $workspaceStore.safetyCheck.blockers.length > 0 || unconfirmedSafetyWarnings > 0;
 
   async function pingBackend() {
     commandError = null;
@@ -278,6 +284,7 @@
         backendMessage={backendMessage}
         selectedFile={selectedFile}
         selectedFileReviewed={selectedFileReviewed}
+        safetyCheck={$workspaceStore.safetyCheck}
         selectedFileDiff={$workspaceStore.selectedFileDiff}
         selectedFileContentDiff={$workspaceStore.selectedFileContentDiff}
         diffLoading={$workspaceStore.diffLoading}
@@ -304,14 +311,17 @@
       loading={$taskStore.loading}
       error={$taskStore.error}
       stagedFiles={$workspaceStore.stagedFiles}
+      safetyCheck={$workspaceStore.safetyCheck}
       commitMessage={$workspaceStore.commitMessage}
       commitError={$workspaceStore.commitError}
       commitDisabled={
         $workspaceStore.stagedFiles.length === 0 ||
+        commitSafetyBlocked ||
         $taskStore.snapshot.running_task_id !== null
       }
       onCreateTask={taskStore.create}
       onCommitMessageInput={workspaceStore.setCommitMessage}
+      onConfirmSafetyWarnings={workspaceStore.confirmSafetyWarnings}
       onCommit={submitStagedFiles}
       onSelectTask={taskStore.select}
       onCancelTask={taskStore.cancel}

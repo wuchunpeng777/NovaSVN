@@ -8,13 +8,19 @@
     FileDiff,
     SvnDetection,
   } from "../../types/api";
-  import type { DetailSection } from "../../types/app";
+  import type { DetailSection, SafetyCheckSummary } from "../../types/app";
 
   export let sections: DetailSection[] = [];
   export let commandError: CommandError | null = null;
   export let backendMessage = "";
   export let selectedFile: ChangedFile | null = null;
   export let selectedFileReviewed = false;
+  export let safetyCheck: SafetyCheckSummary = {
+    blockers: [],
+    warnings: [],
+    infos: [],
+    confirmedWarningIds: [],
+  };
   export let selectedFileDiff: FileDiff | null = null;
   export let selectedFileContentDiff: FileContentDiff | null = null;
   export let diffLoading = false;
@@ -188,6 +194,37 @@
     {:else}
       <p>选择一个改动文件后显示 Diff。</p>
     {/if}
+  </section>
+
+  <section class="detail-block">
+    <h3>安全检查</h3>
+    <div class="safety-list">
+      {#if safetyCheck.blockers.length === 0 && safetyCheck.warnings.length === 0 && safetyCheck.infos.length === 0}
+        <p>暂无安全检查结果。</p>
+      {:else}
+        {#each safetyCheck.blockers as item}
+          <article class="safety-item blocker">
+            <strong>{item.title}</strong>
+            <p>{item.detail}</p>
+          </article>
+        {/each}
+        {#each safetyCheck.warnings as item}
+          <article
+            class="safety-item warning"
+            class:confirmed={safetyCheck.confirmedWarningIds.includes(item.id)}
+          >
+            <strong>{item.title}</strong>
+            <p>{item.detail}</p>
+          </article>
+        {/each}
+        {#each safetyCheck.infos as item}
+          <article class="safety-item info">
+            <strong>{item.title}</strong>
+            <p>{item.detail}</p>
+          </article>
+        {/each}
+      {/if}
+    </div>
   </section>
 
   {#each sections as section}

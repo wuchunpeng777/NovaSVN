@@ -9,6 +9,23 @@ export type WorkspaceStageFilter = "all" | "staged" | "unstaged";
 
 export type WorkspaceGroupMode = "status" | "directory" | "extension";
 
+export type SafetyCheckSeverity = "blocker" | "warning" | "info";
+
+export interface SafetyCheckItem {
+  id: string;
+  severity: SafetyCheckSeverity;
+  title: string;
+  detail: string;
+  filePath: string | null;
+}
+
+export interface SafetyCheckSummary {
+  blockers: SafetyCheckItem[];
+  warnings: SafetyCheckItem[];
+  infos: SafetyCheckItem[];
+  confirmedWarningIds: string[];
+}
+
 export interface NavigationItem {
   id: AppView;
   label: string;
