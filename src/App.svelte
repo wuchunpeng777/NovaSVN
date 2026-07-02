@@ -70,6 +70,9 @@
         workspaceLoading={$workspaceStore.loading}
         workspaceError={$workspaceStore.error}
         workingCopyStatus={$workspaceStore.status}
+        searchText={$workspaceStore.searchText}
+        groupByStatus={$workspaceStore.groupByStatus}
+        selectedFilePath={$workspaceStore.selectedFilePath}
         statusLoading={$workspaceStore.statusLoading}
         statusError={$workspaceStore.statusError}
         onChooseWorkspace={() =>
@@ -85,11 +88,17 @@
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
           )}
         onWorkspacePathInput={workspaceStore.setPathInput}
+        onSearchTextInput={workspaceStore.setSearchText}
+        onToggleGroupByStatus={workspaceStore.toggleGroupByStatus}
+        onSelectFile={workspaceStore.selectFile}
       />
       <DetailPanel
       sections={detailSections}
       commandError={commandError}
       backendMessage={backendMessage}
+      selectedFile={$workspaceStore.status?.files.find(
+        (file) => file.path === $workspaceStore.selectedFilePath,
+      ) ?? null}
       svnDetection={$svnStore.detection}
       svnError={$svnStore.error}
       svnExecutableInput={$svnStore.executableInput}

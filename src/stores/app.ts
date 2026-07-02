@@ -12,6 +12,7 @@ import {
 } from "../lib/api";
 import type { AppView } from "../types/app";
 import type {
+  ChangedFile,
   CommandError,
   MockTaskOutcome,
   SvnDetection,
@@ -243,6 +244,9 @@ export const svnStore = createSvnStore();
 export interface WorkspaceStoreState {
   current: WorkspaceSummary | null;
   status: WorkingCopyStatus | null;
+  searchText: string;
+  groupByStatus: boolean;
+  selectedFilePath: string | null;
   pathInput: string;
   loading: boolean;
   statusLoading: boolean;
@@ -253,6 +257,9 @@ export interface WorkspaceStoreState {
 const initialWorkspaceState: WorkspaceStoreState = {
   current: null,
   status: null,
+  searchText: "",
+  groupByStatus: true,
+  selectedFilePath: null,
   pathInput: "",
   loading: false,
   statusLoading: false,
@@ -273,6 +280,7 @@ function createWorkspaceStore() {
         ...state,
         current: recent.workspace,
         status: null,
+        selectedFilePath: null,
         pathInput: state.pathInput || root || "",
         loading: false,
         error: null,
@@ -307,6 +315,7 @@ function createWorkspaceStore() {
         ...state,
         current,
         status: null,
+        selectedFilePath: null,
         pathInput: current.working_copy_root,
         loading: false,
         error: null,
@@ -351,6 +360,27 @@ function createWorkspaceStore() {
     }));
   }
 
+  function setSearchText(value: string) {
+    update((state) => ({
+      ...state,
+      searchText: value,
+    }));
+  }
+
+  function toggleGroupByStatus() {
+    update((state) => ({
+      ...state,
+      groupByStatus: !state.groupByStatus,
+    }));
+  }
+
+  function selectFile(path: string) {
+    update((state) => ({
+      ...state,
+      selectedFilePath: path,
+    }));
+  }
+
   async function refreshStatus(
     svnExecutable?: string | null,
     workingCopyRoot?: string,
@@ -389,6 +419,7 @@ function createWorkspaceStore() {
       update((state) => ({
         ...state,
         status,
+        selectedFilePath: resolveSelectedFilePath(status.files, state.selectedFilePath),
         statusLoading: false,
         statusError: null,
       }));
@@ -407,8 +438,22 @@ function createWorkspaceStore() {
     openPath,
     chooseAndOpen,
     setPathInput,
+    setSearchText,
+    toggleGroupByStatus,
+    selectFile,
     refreshStatus,
   };
 }
 
 export const workspaceStore = createWorkspaceStore();
+
+function resolveSelectedFilePath(
+  files: ChangedFile[],
+  selectedFilePath: string | null,
+) {
+  if (selectedFilePath && files.some((file) => file.path === selectedFilePath)) {
+    return selectedFilePath;
+  }
+
+  return files[0]?.path ?? null;
+}

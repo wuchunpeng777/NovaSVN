@@ -42,6 +42,9 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 - Status Scan: `scan_workspace_status` command 执行 `svn status --xml <working_copy_root>`，返回 `WorkingCopyStatus` 和 `ChangedFile`。
 - Status UI: 主工作区显示状态统计和基础文件状态列表，打开工作副本后会自动扫描，也支持手动刷新。
 - Status Limit: 当前状态扫描返回前 500 项，保留 offset/limit 扩展字段；搜索、过滤、分组和虚拟滚动后续实现。
+- Changes List: 本地改动列表在前端基于 `workspaceStore.status.files` 派生，支持路径搜索、按状态分组和选中文件。
+- Selected File: 当前选中文件路径保存在 `workspaceStore.selectedFilePath`，右侧详情区展示选中文件摘要，后续 diff 可复用该选择状态。
+- Staging Placeholder: 虚拟暂存尚未实现，当前已暂存统计固定为 0，未暂存等于扫描到的改动数。
 - Dialog Plugin: 目录选择使用 `@tauri-apps/plugin-dialog` 和 Rust `tauri-plugin-dialog`，权限配置在 `src-tauri/capabilities/default.json`。
 - Task Queue: 后端任务队列由 `src-tauri/src/task.rs` 提供，当前为内存存储和串行执行模型，通过 Tauri managed state 注入。
 - Task Commands: 任务相关 commands 包括创建模拟任务、读取任务列表、读取任务详情和取消任务；任务错误继续走统一 `NovaError`。

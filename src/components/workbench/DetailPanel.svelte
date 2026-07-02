@@ -1,11 +1,12 @@
 <script lang="ts">
   import ErrorNotice from "../ErrorNotice.svelte";
-  import type { CommandError, SvnDetection } from "../../types/api";
+  import type { ChangedFile, CommandError, SvnDetection } from "../../types/api";
   import type { DetailSection } from "../../types/app";
 
   export let sections: DetailSection[] = [];
   export let commandError: CommandError | null = null;
   export let backendMessage = "";
+  export let selectedFile: ChangedFile | null = null;
   export let svnDetection: SvnDetection | null = null;
   export let svnError: CommandError | null = null;
   export let svnExecutableInput = "";
@@ -67,6 +68,32 @@
         使用此路径
       </button>
     </div>
+  </section>
+
+  <section class="detail-block">
+    <h3>文件详情</h3>
+    {#if selectedFile}
+      <dl class="info-list">
+        <div>
+          <dt>路径</dt>
+          <dd>{selectedFile.path}</dd>
+        </div>
+        <div>
+          <dt>状态</dt>
+          <dd>{selectedFile.status}</dd>
+        </div>
+        <div>
+          <dt>属性</dt>
+          <dd>{selectedFile.property_changed ? selectedFile.property_status : "无变更"}</dd>
+        </div>
+        <div>
+          <dt>异常</dt>
+          <dd>{selectedFile.abnormal ? "是" : "否"}</dd>
+        </div>
+      </dl>
+    {:else}
+      <p>选择一个改动文件后显示详情。</p>
+    {/if}
   </section>
 
   {#each sections as section}

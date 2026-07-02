@@ -14,12 +14,18 @@
   export let workspaceLoading = false;
   export let workspaceError: CommandError | null = null;
   export let workingCopyStatus: WorkingCopyStatus | null = null;
+  export let searchText = "";
+  export let groupByStatus = true;
+  export let selectedFilePath: string | null = null;
   export let statusLoading = false;
   export let statusError: CommandError | null = null;
   export let onChooseWorkspace: () => void;
   export let onOpenWorkspace: () => void;
   export let onRefreshStatus: () => void;
   export let onWorkspacePathInput: (value: string) => void;
+  export let onSearchTextInput: (value: string) => void;
+  export let onToggleGroupByStatus: () => void;
+  export let onSelectFile: (path: string) => void;
 
   const statusLabels: Record<string, string> = {
     modified: "修改",
@@ -40,6 +46,32 @@
       ? `${file.path} · 属性 ${file.property_status}`
       : file.path;
   }
+
+  function buildGroups(files: ChangedFile[]) {
+    const groups: Array<{ status: string; files: ChangedFile[] }> = [];
+
+    for (const file of files) {
+      let group = groups.find((item) => item.status === file.status);
+      if (!group) {
+        group = { status: file.status, files: [] };
+        groups.push(group);
+      }
+      group.files.push(file);
+    }
+
+    return groups;
+  }
+
+  $: changedFiles = workingCopyStatus?.files ?? [];
+  $: normalizedSearch = searchText.trim().toLowerCase();
+  $: filteredFiles = normalizedSearch
+    ? changedFiles.filter((file) => file.path.toLowerCase().includes(normalizedSearch))
+    : changedFiles;
+  $: groupedFiles = buildGroups(filteredFiles);
+  $: abnormalCount =
+    (workingCopyStatus?.missing ?? 0) +
+    (workingCopyStatus?.conflicted ?? 0) +
+    (workingCopyStatus?.obstructed ?? 0);
 </script>
 
 <section class="main-workspace" aria-label={view.title}>
@@ -111,30 +143,78 @@
       <strong>{workingCopyStatus?.total ?? 0}</strong>
     </div>
     <div class="metric">
-      <span>未版本控制</span>
-      <strong>{workingCopyStatus?.unversioned ?? 0}</strong>
+      <span>未暂存</span>
+      <strong>{workingCopyStatus?.total ?? 0}</strong>
     </div>
     <div class="metric">
       <span>异常</span>
-      <strong>
-        {(workingCopyStatus?.missing ?? 0) +
-          (workingCopyStatus?.conflicted ?? 0) +
-          (workingCopyStatus?.obstructed ?? 0)}
-      </strong>
+      <strong>{abnormalCount}</strong>
     </div>
   </div>
 
+  <section class="changes-toolbar">
+    <input
+      type="search"
+      value={searchText}
+      placeholder="搜索文件路径"
+      on:input={(event) =>
+        onSearchTextInput((event.currentTarget as HTMLInputElement).value)}
+    />
+    <button type="button" class:active={groupByStatus} on:click={onToggleGroupByStatus}>
+      按状态分组
+    </button>
+    <span>已暂存 0</span>
+    <span>显示 {filteredFiles.length}</span>
+  </section>
+
   <div class="work-list">
-    {#if workingCopyStatus && workingCopyStatus.files.length > 0}
-      {#each workingCopyStatus.files as file}
-        <article class:abnormal={file.abnormal} class="work-row">
-          <div>
-            <h3>{file.path}</h3>
-            <p>{statusMeta(file)}</p>
-          </div>
-          <span>{labelStatus(file.status)}</span>
-        </article>
-      {/each}
+    {#if workingCopyStatus && filteredFiles.length > 0}
+      {#if groupByStatus}
+        {#each groupedFiles as group}
+          <section class="status-group">
+            <h3>{labelStatus(group.status)} · {group.files.length}</h3>
+            {#each group.files as file}
+              <button
+                type="button"
+                class:abnormal={file.abnormal}
+                class:active={selectedFilePath === file.path}
+                class="work-row"
+                on:click={() => onSelectFile(file.path)}
+              >
+                <div>
+                  <h3>{file.path}</h3>
+                  <p>{statusMeta(file)}</p>
+                </div>
+                <span>{labelStatus(file.status)}</span>
+              </button>
+            {/each}
+          </section>
+        {/each}
+      {:else}
+        {#each filteredFiles as file}
+          <button
+            type="button"
+            class:abnormal={file.abnormal}
+            class:active={selectedFilePath === file.path}
+            class="work-row"
+            on:click={() => onSelectFile(file.path)}
+          >
+            <div>
+              <h3>{file.path}</h3>
+              <p>{statusMeta(file)}</p>
+            </div>
+            <span>{labelStatus(file.status)}</span>
+          </button>
+        {/each}
+      {/if}
+    {:else if workingCopyStatus && changedFiles.length > 0}
+      <article class="work-row">
+        <div>
+          <h3>没有匹配结果</h3>
+          <p>调整搜索内容后重试</p>
+        </div>
+        <span>过滤</span>
+      </article>
     {:else if workspace}
       <article class="work-row">
         <div>
