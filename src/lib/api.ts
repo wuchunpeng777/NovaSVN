@@ -5,6 +5,7 @@ import type {
   CommandResponse,
   CreateCommitTaskRequest,
   CreateMockTaskRequest,
+  CreateShadowWorkspaceTaskRequest,
   CreateSvnOperationTaskRequest,
   DetectSvnRequest,
   FileDiff,
@@ -18,6 +19,8 @@ import type {
   ScanWorkspaceStatusRequest,
   SvnDetection,
   SelectedPatch,
+  ShadowWorkspaceRequest,
+  ShadowWorkspaceStatus,
   Task,
   TaskSnapshot,
   WorkingCopyStatus,
@@ -70,6 +73,12 @@ export function createSvnOperationTask(
   return callBackend<Task>("create_svn_operation_task", { request });
 }
 
+export function createShadowWorkspaceTask(
+  request: CreateShadowWorkspaceTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_shadow_workspace_task", { request });
+}
+
 export function listTasks(): Promise<TaskSnapshot> {
   return callBackend<TaskSnapshot>("list_tasks");
 }
@@ -114,6 +123,12 @@ export function getFileContentDiff(
 
 export function parseUnifiedDiff(diffText: string): Promise<ParsedDiff> {
   return callBackend<ParsedDiff>("parse_unified_diff", { diffText });
+}
+
+export function getShadowWorkspaceStatus(
+  request: ShadowWorkspaceRequest,
+): Promise<ShadowWorkspaceStatus> {
+  return callBackend<ShadowWorkspaceStatus>("get_shadow_workspace_status", { request });
 }
 
 export function generateSelectedPatch(

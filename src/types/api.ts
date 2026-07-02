@@ -69,6 +69,31 @@ export interface CreateSvnOperationTaskRequest {
   svn_executable?: string;
 }
 
+export type ShadowWorkspaceOperationKind = "create_or_update" | "rebuild";
+
+export interface CreateShadowWorkspaceTaskRequest {
+  working_copy_root: string;
+  repository_url: string;
+  revision?: string;
+  svn_executable?: string;
+  kind: ShadowWorkspaceOperationKind;
+}
+
+export interface ShadowWorkspaceRequest {
+  working_copy_root: string;
+  repository_url: string;
+  revision?: string;
+  svn_executable?: string;
+}
+
+export interface ShadowWorkspaceStatus {
+  shadow_path: string;
+  exists: boolean;
+  valid: boolean;
+  revision: string | null;
+  message: string;
+}
+
 export interface SvnDetection {
   available: boolean;
   version: string;

@@ -8,6 +8,7 @@
     FileDiff,
     ParsedFileDiff,
     SelectedPatch,
+    ShadowWorkspaceStatus,
     SvnDetection,
   } from "../../types/api";
   import type { DetailSection, SafetyCheckSummary } from "../../types/app";
@@ -39,6 +40,9 @@
   export let svnError: CommandError | null = null;
   export let svnExecutableInput = "";
   export let svnLoading = false;
+  export let shadowStatus: ShadowWorkspaceStatus | null = null;
+  export let shadowLoading = false;
+  export let shadowError: CommandError | null = null;
   export let onDetectSvn: () => void;
   export let onDetectSvnWithInput: () => void;
   export let onSvnExecutableInput: (value: string) => void;
@@ -47,6 +51,9 @@
   export let onMarkFileUnreviewed: (path: string) => void;
   export let onToggleHunkSelection: (filePath: string, hunkId: string) => void;
   export let onPreviewSelectedPatch: () => void;
+  export let onRefreshShadowStatus: () => void;
+  export let onPrepareShadowWorkspace: () => void;
+  export let onRebuildShadowWorkspace: () => void;
 
   let inlineDiff = false;
   let showWhitespace = false;
@@ -240,6 +247,46 @@
           <pre class="selected-patch-preview">{selectedPatch.text}</pre>
         {/if}
       </div>
+    {/if}
+  </section>
+
+  <section class="detail-block">
+    <div class="detail-heading">
+      <h3>影子工作副本</h3>
+      <div class="detail-actions">
+        <button type="button" on:click={onRefreshShadowStatus} disabled={shadowLoading}>
+          {shadowLoading ? "检查中" : "检查"}
+        </button>
+        <button type="button" on:click={onPrepareShadowWorkspace}>
+          准备
+        </button>
+        <button type="button" on:click={onRebuildShadowWorkspace}>
+          重建
+        </button>
+      </div>
+    </div>
+    <ErrorNotice error={shadowError} />
+    {#if shadowStatus}
+      <dl class="info-list">
+        <div>
+          <dt>状态</dt>
+          <dd>{shadowStatus.valid ? "可用" : shadowStatus.exists ? "异常" : "未创建"}</dd>
+        </div>
+        <div>
+          <dt>Revision</dt>
+          <dd>{shadowStatus.revision ?? "未知"}</dd>
+        </div>
+        <div>
+          <dt>路径</dt>
+          <dd>{shadowStatus.shadow_path}</dd>
+        </div>
+        <div>
+          <dt>说明</dt>
+          <dd>{shadowStatus.message}</dd>
+        </div>
+      </dl>
+    {:else}
+      <p>尚未检查影子工作副本。</p>
     {/if}
   </section>
 

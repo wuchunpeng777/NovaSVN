@@ -1,5 +1,6 @@
 mod diff;
 mod error;
+mod shadow;
 mod staging;
 mod svn;
 mod task;
@@ -7,10 +8,11 @@ mod workspace;
 
 use diff::{GenerateSelectedPatchRequest, ParsedDiff, SelectedPatch};
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
+use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
 use task::{
-    CreateCommitTaskRequest, CreateMockTaskRequest, CreateSvnOperationTaskRequest, Task, TaskQueue,
-    TaskSnapshot,
+    CreateCommitTaskRequest, CreateMockTaskRequest, CreateShadowWorkspaceTaskRequest,
+    CreateSvnOperationTaskRequest, Task, TaskQueue, TaskSnapshot,
 };
 use workspace::{
     FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, OpenWorkspaceRequest,
@@ -63,6 +65,18 @@ fn create_svn_operation_task(
     println!("[NovaSVN] create_svn_operation_task command received");
     Ok(CommandResponse::success(
         queue.create_svn_operation_task(request)?,
+    ))
+}
+
+#[tauri::command]
+fn create_shadow_workspace_task(
+    app: tauri::AppHandle,
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateShadowWorkspaceTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_shadow_workspace_task command received");
+    Ok(CommandResponse::success(
+        queue.create_shadow_workspace_task(&app, request)?,
     ))
 }
 
@@ -141,6 +155,15 @@ fn generate_selected_patch(request: GenerateSelectedPatchRequest) -> CommandResu
     )))
 }
 
+#[tauri::command]
+fn get_shadow_workspace_status(
+    app: tauri::AppHandle,
+    request: ShadowWorkspaceRequest,
+) -> CommandResult<ShadowWorkspaceStatus> {
+    println!("[NovaSVN] get_shadow_workspace_status command received");
+    Ok(CommandResponse::success(shadow::shadow_status(&app, &request)?))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(TaskQueue::new())
@@ -151,6 +174,7 @@ pub fn run() {
             create_mock_task,
             create_commit_task,
             create_svn_operation_task,
+            create_shadow_workspace_task,
             list_tasks,
             get_task,
             cancel_task,
@@ -162,6 +186,7 @@ pub fn run() {
             get_file_content_diff,
             parse_unified_diff,
             generate_selected_patch,
+            get_shadow_workspace_status,
         ])
         .run(tauri::generate_context!())
         .expect("启动 NovaSVN 失败");

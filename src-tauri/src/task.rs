@@ -11,8 +11,12 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
 
-use crate::error::NovaError;
+use crate::{
+    error::NovaError,
+    shadow::{self, ShadowWorkspaceRequest},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -96,11 +100,28 @@ pub struct CreateSvnOperationTaskRequest {
     pub svn_executable: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShadowWorkspaceOperationKind {
+    CreateOrUpdate,
+    Rebuild,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateShadowWorkspaceTaskRequest {
+    pub working_copy_root: String,
+    pub repository_url: String,
+    pub revision: Option<String>,
+    pub svn_executable: Option<String>,
+    pub kind: ShadowWorkspaceOperationKind,
+}
+
 #[derive(Debug, Clone)]
 enum TaskPayload {
     Mock(MockTaskOutcome),
     SvnCommit(CommitTaskPayload),
     SvnOperation(SvnOperationTaskPayload),
+    ShadowWorkspace(ShadowWorkspaceTaskPayload),
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +138,13 @@ struct SvnOperationTaskPayload {
     kind: SvnOperationKind,
     file_path: Option<String>,
     svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct ShadowWorkspaceTaskPayload {
+    app: AppHandle,
+    request: ShadowWorkspaceRequest,
+    kind: ShadowWorkspaceOperationKind,
 }
 
 #[derive(Debug)]
@@ -249,6 +277,56 @@ impl TaskQueue {
                 kind: request.kind,
                 file_path,
                 svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
+    pub fn create_shadow_workspace_task(
+        &self,
+        app: &AppHandle,
+        request: CreateShadowWorkspaceTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
+        if request.repository_url.trim().is_empty() {
+            return Err(NovaError::command(
+                "SHADOW_REPOSITORY_URL_REQUIRED",
+                "缺少仓库 URL",
+                None,
+                true,
+            ));
+        }
+
+        let shadow_request = ShadowWorkspaceRequest {
+            working_copy_root: working_copy_root.display().to_string(),
+            repository_url: request.repository_url,
+            revision: request.revision,
+            svn_executable: request.svn_executable,
+        };
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let title = match request.kind {
+            ShadowWorkspaceOperationKind::CreateOrUpdate => "准备影子工作副本",
+            ShadowWorkspaceOperationKind::Rebuild => "重建影子工作副本",
+        }
+        .to_string();
+        let task = Task {
+            task_id: task_id.clone(),
+            title,
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "影子工作副本任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::ShadowWorkspace(ShadowWorkspaceTaskPayload {
+                app: app.clone(),
+                request: shadow_request,
+                kind: request.kind,
             }),
         };
 
@@ -402,6 +480,9 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             TaskPayload::Mock(outcome) => run_mock_task(&state, &task_id, outcome),
             TaskPayload::SvnCommit(payload) => run_commit_task(&state, &task_id, payload),
             TaskPayload::SvnOperation(payload) => run_svn_operation_task(&state, &task_id, payload),
+            TaskPayload::ShadowWorkspace(payload) => {
+                run_shadow_workspace_task(&state, &task_id, payload)
+            }
         }
     }
 }
@@ -553,6 +634,113 @@ fn run_svn_operation_task(
                 TaskStatus::Failed,
                 "SVN 命令启动失败",
                 Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn run_shadow_workspace_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: ShadowWorkspaceTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "影子工作副本任务开始执行",
+        None,
+    );
+
+    if matches!(payload.kind, ShadowWorkspaceOperationKind::Rebuild) {
+        append_task_log(state, task_id, "删除旧影子工作副本");
+        if let Err(error) = shadow::remove_shadow_workspace(&payload.app, &payload.request) {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "影子工作副本删除失败",
+                Some(error.to_string()),
+            );
+            return;
+        }
+    }
+
+    let shadow_path = match shadow::shadow_workspace_path(&payload.app, &payload.request) {
+        Ok(path) => path,
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "影子路径计算失败",
+                Some(error.to_string()),
+            );
+            return;
+        }
+    };
+    let executable = shadow::svn_executable(&payload.request);
+    let exists = shadow_path.join(".svn").exists();
+    let mut command = Command::new(&executable);
+
+    if exists {
+        command.arg("update");
+        if let Some(revision) = payload.request.revision.as_deref().filter(|value| !value.is_empty()) {
+            command.arg("-r").arg(revision);
+        }
+        command.arg(&shadow_path).current_dir(&shadow_path);
+        append_task_log(state, task_id, "执行 svn update 更新影子工作副本");
+    } else {
+        if let Some(parent) = shadow_path.parent() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "创建影子目录失败",
+                    Some(error.to_string()),
+                );
+                return;
+            }
+        }
+        command.arg("checkout");
+        if let Some(revision) = payload.request.revision.as_deref().filter(|value| !value.is_empty()) {
+            command.arg("-r").arg(revision);
+        }
+        command
+            .arg(&payload.request.repository_url)
+            .arg(&shadow_path);
+        append_task_log(state, task_id, "执行 svn checkout 创建影子工作副本");
+    }
+
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                "影子工作副本准备完成",
+                None,
+            );
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "影子工作副本任务失败",
+                Some(command_error_detail(&executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 命令启动失败",
+                Some(format!("无法执行 `{executable}`：{error}")),
             );
         }
     }

@@ -111,6 +111,26 @@
     workspaceStore.markSvnOperationTask(task.task_id, kind);
   }
 
+  async function runShadowWorkspace(kind: "create_or_update" | "rebuild") {
+    if (!$workspaceStore.current) {
+      return;
+    }
+
+    const task = await taskStore.createShadowWorkspace({
+      workingCopyRoot: $workspaceStore.current.working_copy_root,
+      repositoryUrl: $workspaceStore.current.repository_url,
+      revision: $workspaceStore.current.revision,
+      kind,
+      svnExecutable: $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    });
+
+    if (!task) {
+      return;
+    }
+
+    taskStore.startPolling();
+  }
+
   $: if (
     $workspaceStore.pendingCommitTaskId &&
     $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
@@ -311,6 +331,9 @@
         svnError={$svnStore.error}
         svnExecutableInput={$svnStore.executableInput}
         svnLoading={$svnStore.loading}
+        shadowStatus={$workspaceStore.shadowStatus}
+        shadowLoading={$workspaceStore.shadowLoading}
+        shadowError={$workspaceStore.shadowError}
         onDetectSvn={svnStore.detect}
         onDetectSvnWithInput={svnStore.detectWithInput}
         onSvnExecutableInput={svnStore.setExecutableInput}
@@ -319,6 +342,12 @@
         onMarkFileUnreviewed={workspaceStore.markFileUnreviewed}
         onToggleHunkSelection={workspaceStore.toggleHunkSelection}
         onPreviewSelectedPatch={workspaceStore.previewSelectedPatch}
+        onRefreshShadowStatus={() =>
+          workspaceStore.refreshShadowStatus(
+            $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+          )}
+        onPrepareShadowWorkspace={() => runShadowWorkspace("create_or_update")}
+        onRebuildShadowWorkspace={() => runShadowWorkspace("rebuild")}
       />
     </div>
 

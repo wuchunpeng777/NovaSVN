@@ -1,14 +1,16 @@
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import {
   cancelTask,
   chooseWorkspaceDirectory,
   createCommitTask,
   createMockTask,
+  createShadowWorkspaceTask,
   createSvnOperationTask,
   detectSvn,
   getFileContentDiff,
   getFileDiff,
   generateSelectedPatch,
+  getShadowWorkspaceStatus,
   getRecentWorkspace,
   getTask,
   listTasks,
@@ -32,6 +34,8 @@ import type {
   MockTaskOutcome,
   ParsedFileDiff,
   SelectedPatch,
+  ShadowWorkspaceOperationKind,
+  ShadowWorkspaceStatus,
   SvnOperationKind,
   SvnDetection,
   Task,
@@ -178,6 +182,36 @@ function createTaskStore() {
     }
   }
 
+  async function createShadowWorkspace(request: {
+    workingCopyRoot: string;
+    repositoryUrl: string;
+    revision?: string | null;
+    kind: ShadowWorkspaceOperationKind;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createShadowWorkspaceTask({
+        working_copy_root: request.workingCopyRoot,
+        repository_url: request.repositoryUrl,
+        revision: request.revision || undefined,
+        kind: request.kind,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function select(taskId: string) {
     selectedTaskId = taskId;
     await refresh();
@@ -224,6 +258,7 @@ function createTaskStore() {
     create,
     createCommit,
     createSvnOperation,
+    createShadowWorkspace,
     select,
     cancel,
     startPolling,
@@ -351,6 +386,9 @@ export interface WorkspaceStoreState {
   pendingCommitTaskId: string | null;
   pendingSvnOperationTaskId: string | null;
   pendingSvnOperationKind: SvnOperationKind | null;
+  shadowStatus: ShadowWorkspaceStatus | null;
+  shadowLoading: boolean;
+  shadowError: CommandError | null;
   pathInput: string;
   loading: boolean;
   statusLoading: boolean;
@@ -391,6 +429,9 @@ const initialWorkspaceState: WorkspaceStoreState = {
   pendingCommitTaskId: null,
   pendingSvnOperationTaskId: null,
   pendingSvnOperationKind: null,
+  shadowStatus: null,
+  shadowLoading: false,
+  shadowError: null,
   pathInput: "",
   loading: false,
   statusLoading: false,
@@ -438,6 +479,8 @@ function createWorkspaceStore() {
         pendingCommitTaskId: null,
         pendingSvnOperationTaskId: null,
         pendingSvnOperationKind: null,
+        shadowStatus: null,
+        shadowError: null,
         pathInput: state.pathInput || root || "",
         loading: false,
         error: null,
@@ -492,6 +535,8 @@ function createWorkspaceStore() {
         pendingCommitTaskId: null,
         pendingSvnOperationTaskId: null,
         pendingSvnOperationKind: null,
+        shadowStatus: null,
+        shadowError: null,
         pathInput: current.working_copy_root,
         loading: false,
         error: null,
@@ -1212,6 +1257,52 @@ function createWorkspaceStore() {
     }
   }
 
+  async function refreshShadowStatus(svnExecutable?: string | null) {
+    const current = get({ subscribe }).current;
+    update((state) => {
+      return {
+        ...state,
+        shadowLoading: true,
+        shadowError: null,
+      };
+    });
+
+    if (!current) {
+      update((state) => ({
+        ...state,
+        shadowLoading: false,
+        shadowError: {
+          code: "WORKSPACE_REQUIRED",
+          message: "请先打开 SVN 工作副本",
+          detail: null,
+          recoverable: true,
+        },
+      }));
+      return;
+    }
+
+    try {
+      const shadowStatus = await getShadowWorkspaceStatus({
+        working_copy_root: current.working_copy_root,
+        repository_url: current.repository_url,
+        revision: current.revision,
+        svn_executable: svnExecutable || undefined,
+      });
+      update((state) => ({
+        ...state,
+        shadowStatus,
+        shadowLoading: false,
+        shadowError: null,
+      }));
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        shadowLoading: false,
+        shadowError: error as CommandError,
+      }));
+    }
+  }
+
   return {
     subscribe,
     loadRecent,
@@ -1246,6 +1337,7 @@ function createWorkspaceStore() {
     refreshParsedDiff,
     toggleHunkSelection,
     previewSelectedPatch,
+    refreshShadowStatus,
   };
 }
 
