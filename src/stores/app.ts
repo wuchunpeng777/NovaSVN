@@ -10,6 +10,7 @@ import {
   createRepositoryListTask,
   createShadowWorkspaceTask,
   createSvnOperationTask,
+  createSvnSwitchTask,
   detectSvn,
   getFileContentDiff,
   getFileDiff,
@@ -346,6 +347,32 @@ function createTaskStore() {
     }
   }
 
+  async function createSvnSwitch(request: {
+    workingCopyRoot: string;
+    targetUrl: string;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createSvnSwitchTask({
+        working_copy_root: request.workingCopyRoot,
+        target_url: request.targetUrl,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function select(taskId: string) {
     selectedTaskId = taskId;
     await refresh();
@@ -405,6 +432,7 @@ function createTaskStore() {
     createRepositoryList,
     createRepositoryCopy,
     createBranchCheckout,
+    createSvnSwitch,
     select,
     cancel,
     getTaskById,
@@ -918,6 +946,9 @@ export interface WorkspaceStoreState {
   };
   pendingRepositoryCopyTaskId: string | null;
   repositoryCopyError: string | null;
+  svnSwitchTargetUrl: string;
+  pendingSvnSwitchTaskId: string | null;
+  svnSwitchError: string | null;
   repositoryLoading: boolean;
   repositoryError: string | null;
   shadowStatus: ShadowWorkspaceStatus | null;
@@ -998,6 +1029,9 @@ const initialWorkspaceState: WorkspaceStoreState = {
   },
   pendingRepositoryCopyTaskId: null,
   repositoryCopyError: null,
+  svnSwitchTargetUrl: "",
+  pendingSvnSwitchTaskId: null,
+  svnSwitchError: null,
   repositoryLoading: false,
   repositoryError: null,
   shadowStatus: null,
@@ -1066,6 +1100,9 @@ function createWorkspaceStore() {
         },
         pendingRepositoryCopyTaskId: null,
         repositoryCopyError: null,
+        svnSwitchTargetUrl: recent.workspace?.repository_url ?? "",
+        pendingSvnSwitchTaskId: null,
+        svnSwitchError: null,
         repositoryLoading: false,
         repositoryError: null,
         shadowStatus: null,
@@ -1140,6 +1177,9 @@ function createWorkspaceStore() {
         },
         pendingRepositoryCopyTaskId: null,
         repositoryCopyError: null,
+        svnSwitchTargetUrl: current.repository_url,
+        pendingSvnSwitchTaskId: null,
+        svnSwitchError: null,
         repositoryLoading: false,
         repositoryError: null,
         shadowStatus: null,
@@ -1706,6 +1746,30 @@ function createWorkspaceStore() {
     }));
   }
 
+  function setSvnSwitchTargetUrl(value: string) {
+    update((state) => ({
+      ...state,
+      svnSwitchTargetUrl: value,
+      svnSwitchError: null,
+    }));
+  }
+
+  function markSvnSwitchTask(taskId: string | null) {
+    update((state) => ({
+      ...state,
+      pendingSvnSwitchTaskId: taskId,
+      svnSwitchError: null,
+    }));
+  }
+
+  function failSvnSwitchTask(message: string | null) {
+    update((state) => ({
+      ...state,
+      pendingSvnSwitchTaskId: null,
+      svnSwitchError: message ?? "svn switch 失败",
+    }));
+  }
+
   function exportTaskWorkspaceDraft() {
     const state = get({ subscribe });
     return buildTaskWorkspaceDraftSnapshot(state);
@@ -2192,6 +2256,9 @@ function createWorkspaceStore() {
     markRepositoryCopyTask,
     completeRepositoryCopyTask,
     failRepositoryCopyTask,
+    setSvnSwitchTargetUrl,
+    markSvnSwitchTask,
+    failSvnSwitchTask,
     exportTaskWorkspaceDraft,
     importTaskWorkspaceDraft,
     clearCommittedFiles,

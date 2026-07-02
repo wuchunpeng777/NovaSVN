@@ -1203,6 +1203,45 @@ button {
   font-size: 12px;
 }
 
+.svn-switch-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.svn-switch-panel input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  color: #17202a;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.svn-switch-panel button {
+  height: 30px;
+  border: 1px solid #e0a85c;
+  border-radius: 6px;
+  background: #fff8ef;
+  color: #8a5a18;
+  cursor: pointer;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.svn-switch-panel button:disabled {
+  border-color: #cfd7df;
+  background: #f7f9fb;
+  color: #7a8794;
+  cursor: default;
+}
+
 .repository-list {
   min-height: 0;
   overflow: auto;

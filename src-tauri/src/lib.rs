@@ -17,7 +17,7 @@ use task::{
     CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest, CreateMockTaskRequest,
     CreatePartialCommitTaskRequest, CreateRepositoryCopyTaskRequest,
     CreateRepositoryListTaskRequest, CreateShadowWorkspaceTaskRequest,
-    CreateSvnOperationTaskRequest, Task, TaskQueue, TaskSnapshot,
+    CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest, Task, TaskQueue, TaskSnapshot,
 };
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use workspace::{
@@ -128,6 +128,17 @@ fn create_branch_checkout_task(
     println!("[NovaSVN] create_branch_checkout_task command received");
     Ok(CommandResponse::success(
         queue.create_branch_checkout_task(request)?,
+    ))
+}
+
+#[tauri::command]
+fn create_svn_switch_task(
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateSvnSwitchTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_svn_switch_task command received");
+    Ok(CommandResponse::success(
+        queue.create_svn_switch_task(request)?,
     ))
 }
 
@@ -288,6 +299,7 @@ pub fn run() {
             create_repository_list_task,
             create_repository_copy_task,
             create_branch_checkout_task,
+            create_svn_switch_task,
             get_branch_pool,
             save_branch_pool_entry,
             remove_branch_pool_entry,

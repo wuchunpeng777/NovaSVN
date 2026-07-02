@@ -97,6 +97,9 @@
   export let activeTaskWorkspaceId: string | null = null;
   export let taskWorkspaceLoading = false;
   export let taskWorkspaceError: CommandError | null = null;
+  export let svnSwitchTargetUrl = "";
+  export let svnSwitchError: string | null = null;
+  export let svnSwitchRunning = false;
   export let onChooseWorkspace: () => void;
   export let onOpenWorkspace: () => void;
   export let onRefreshStatus: () => void;
@@ -144,6 +147,8 @@
   export let onCreateTaskWorkspace: () => void;
   export let onSwitchTaskWorkspace: (taskId: string) => void;
   export let onRemoveTaskWorkspace: (taskId: string) => void;
+  export let onSvnSwitchTargetInput: (value: string) => void;
+  export let onRunSvnSwitch: () => void;
 
   const fileRowHeight = 76;
   const sectionHeaderHeight = 32;
@@ -1319,6 +1324,34 @@
         <strong>{unreviewedCount}</strong>
       </div>
     </div>
+
+    {#if view.id === "changes"}
+      <section class="svn-switch-panel" aria-label="svn switch">
+        <div class="repository-layout-header">
+          <div>
+            <h3>svn switch</h3>
+            <p>高级入口，会在当前工作副本上切换 URL</p>
+          </div>
+          <button
+            type="button"
+            on:click={onRunSvnSwitch}
+            disabled={!workspace || svnSwitchRunning || !svnSwitchTargetUrl.trim()}
+          >
+            {svnSwitchRunning ? "Switch 中" : "执行 switch"}
+          </button>
+        </div>
+        <input
+          type="url"
+          value={svnSwitchTargetUrl}
+          placeholder="输入 switch 目标 URL"
+          on:input={(event) =>
+            onSvnSwitchTargetInput((event.currentTarget as HTMLInputElement).value)}
+        />
+        {#if svnSwitchError}
+          <p class="inline-error">{svnSwitchError}</p>
+        {/if}
+      </section>
+    {/if}
 
     <section class="changes-toolbar">
       <input

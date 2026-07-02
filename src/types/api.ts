@@ -113,6 +113,12 @@ export interface CreateBranchCheckoutTaskRequest {
   svn_executable?: string;
 }
 
+export interface CreateSvnSwitchTaskRequest {
+  working_copy_root: string;
+  target_url: string;
+  svn_executable?: string;
+}
+
 export interface BranchPoolEntry {
   id: string;
   branch_url: string;

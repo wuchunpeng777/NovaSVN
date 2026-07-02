@@ -12,6 +12,7 @@ import type {
   CreateRepositoryListTaskRequest,
   CreateShadowWorkspaceTaskRequest,
   CreateSvnOperationTaskRequest,
+  CreateSvnSwitchTaskRequest,
   DetectSvnRequest,
   FileDiff,
   FileContentDiff,
@@ -111,6 +112,10 @@ export function createBranchCheckoutTask(
   request: CreateBranchCheckoutTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_branch_checkout_task", { request });
+}
+
+export function createSvnSwitchTask(request: CreateSvnSwitchTaskRequest): Promise<Task> {
+  return callBackend<Task>("create_svn_switch_task", { request });
 }
 
 export function getBranchPool(): Promise<BranchPool> {

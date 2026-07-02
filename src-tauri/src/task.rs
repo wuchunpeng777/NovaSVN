@@ -160,6 +160,13 @@ pub struct CreateBranchCheckoutTaskRequest {
     pub svn_executable: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateSvnSwitchTaskRequest {
+    pub working_copy_root: String,
+    pub target_url: String,
+    pub svn_executable: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskResult {
     pub repository_list: Option<RepositoryListResult>,
@@ -190,6 +197,7 @@ enum TaskPayload {
     RepositoryList(RepositoryListTaskPayload),
     RepositoryCopy(RepositoryCopyTaskPayload),
     BranchCheckout(BranchCheckoutTaskPayload),
+    SvnSwitch(SvnSwitchTaskPayload),
 }
 
 #[derive(Debug, Clone)]
@@ -245,6 +253,13 @@ struct BranchCheckoutTaskPayload {
     branch_url: String,
     local_path: String,
     revision: Option<String>,
+    svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct SvnSwitchTaskPayload {
+    working_copy_root: String,
+    target_url: String,
     svn_executable: String,
 }
 
@@ -637,6 +652,42 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_svn_switch_task(
+        &self,
+        request: CreateSvnSwitchTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
+        let target_url = normalize_repository_url(&request.target_url)?;
+        let svn_executable = request
+            .svn_executable
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "svn".to_string());
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!("Switch 到 {}", compact_repository_url(&target_url)),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "svn switch 任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::SvnSwitch(SvnSwitchTaskPayload {
+                working_copy_root: working_copy_root.display().to_string(),
+                target_url,
+                svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn list_tasks(&self) -> TaskSnapshot {
         let state = self.state.lock().expect("任务队列锁已损坏");
         TaskSnapshot {
@@ -798,6 +849,7 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             TaskPayload::BranchCheckout(payload) => {
                 run_branch_checkout_task(&state, &task_id, payload)
             }
+            TaskPayload::SvnSwitch(payload) => run_svn_switch_task(&state, &task_id, payload),
         }
     }
 }
@@ -1436,6 +1488,59 @@ fn run_branch_checkout_task(
                 task_id,
                 TaskStatus::Failed,
                 "分支 checkout 失败",
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn run_svn_switch_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: SvnSwitchTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "svn switch 开始执行",
+        None,
+    );
+    append_task_log(
+        state,
+        task_id,
+        &format!("执行 svn switch：{}", payload.target_url),
+    );
+
+    let root = PathBuf::from(&payload.working_copy_root);
+    let output = Command::new(&payload.svn_executable)
+        .arg("switch")
+        .arg(&payload.target_url)
+        .arg(&root)
+        .current_dir(&root)
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(state, task_id, TaskStatus::Success, "svn switch 成功", None);
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "svn switch 失败",
                 Some(command_error_detail(&payload.svn_executable, &output)),
             );
         }

@@ -369,6 +369,42 @@
     await taskWorkspaceStore.remove(entry);
   }
 
+  async function runSvnSwitch() {
+    if (!$workspaceStore.current) {
+      workspaceStore.failSvnSwitchTask("请先打开 SVN 工作副本");
+      return;
+    }
+
+    const targetUrl = $workspaceStore.svnSwitchTargetUrl.trim();
+    if (!targetUrl) {
+      workspaceStore.failSvnSwitchTask("请输入 switch 目标 URL");
+      return;
+    }
+
+    const localChanges = $workspaceStore.status?.files.length ?? 0;
+    if (localChanges > 0) {
+      const confirmed = window.confirm(
+        `当前工作副本有 ${localChanges} 个本地改动。继续 svn switch 可能产生冲突，确定执行吗？`,
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    const task = await taskStore.createSvnSwitch({
+      workingCopyRoot: $workspaceStore.current.working_copy_root,
+      targetUrl,
+      svnExecutable: $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    });
+
+    if (!task) {
+      workspaceStore.failSvnSwitchTask($taskStore.error?.message ?? "svn switch 任务创建失败");
+      return;
+    }
+
+    workspaceStore.markSvnSwitchTask(task.task_id);
+  }
+
   $: if (
     $workspaceStore.pendingCommitTaskId &&
     $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
@@ -509,6 +545,26 @@
     branchPoolStore.failCheckoutTask(
       $taskStore.selectedTask.error ?? "分支 checkout 失败",
     );
+  }
+
+  $: if (
+    $workspaceStore.pendingSvnSwitchTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingSvnSwitchTaskId &&
+    $taskStore.selectedTask.status === "success"
+  ) {
+    workspaceStore.markSvnSwitchTask(null);
+    void workspaceStore.openPath(
+      $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    );
+  }
+
+  $: if (
+    $workspaceStore.pendingSvnSwitchTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingSvnSwitchTaskId &&
+    ($taskStore.selectedTask.status === "failed" ||
+      $taskStore.selectedTask.status === "cancelled")
+  ) {
+    workspaceStore.failSvnSwitchTask($taskStore.selectedTask.error ?? "svn switch 失败");
   }
 
   async function checkRepositoryLayoutTask(
@@ -668,6 +724,9 @@
         activeTaskWorkspaceId={$taskWorkspaceStore.activeTaskId}
         taskWorkspaceLoading={$taskWorkspaceStore.loading}
         taskWorkspaceError={$taskWorkspaceStore.error}
+        svnSwitchTargetUrl={$workspaceStore.svnSwitchTargetUrl}
+        svnSwitchError={$workspaceStore.svnSwitchError}
+        svnSwitchRunning={$workspaceStore.pendingSvnSwitchTaskId !== null}
         onChooseWorkspace={() =>
           workspaceStore.chooseAndOpen(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
@@ -713,6 +772,8 @@
         onCreateTaskWorkspace={createTaskWorkspace}
         onSwitchTaskWorkspace={switchTaskWorkspace}
         onRemoveTaskWorkspace={removeTaskWorkspace}
+        onSvnSwitchTargetInput={workspaceStore.setSvnSwitchTargetUrl}
+        onRunSvnSwitch={runSvnSwitch}
       />
       <DetailPanel
         sections={detailSections}
