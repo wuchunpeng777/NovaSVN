@@ -4,9 +4,10 @@
   import DetailPanel from "./components/workbench/DetailPanel.svelte";
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
   import Toolbar from "./components/workbench/Toolbar.svelte";
+  import { onDestroy, onMount } from "svelte";
   import { callBackend } from "./lib/api";
   import { detailSections, navigationItems, workbenchViews } from "./lib/workbench";
-  import { currentView, setCurrentView } from "./stores/app";
+  import { currentView, setCurrentView, taskStore } from "./stores/app";
   import type { CommandError, HealthPayload } from "./types/api";
 
   let backendMessage = "等待连接后端";
@@ -28,6 +29,14 @@
       commandError = error as CommandError;
     }
   }
+
+  onMount(() => {
+    taskStore.startPolling();
+  });
+
+  onDestroy(() => {
+    taskStore.stopPolling();
+  });
 </script>
 
 <main class="app-shell">
@@ -54,6 +63,15 @@
       />
     </div>
 
-    <BottomPanel />
+    <BottomPanel
+      tasks={$taskStore.snapshot.tasks}
+      selectedTask={$taskStore.selectedTask}
+      runningTaskId={$taskStore.snapshot.running_task_id}
+      loading={$taskStore.loading}
+      error={$taskStore.error}
+      onCreateTask={taskStore.create}
+      onSelectTask={taskStore.select}
+      onCancelTask={taskStore.cancel}
+    />
   </section>
 </main>

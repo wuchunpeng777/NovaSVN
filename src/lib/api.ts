@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CommandError, CommandResponse } from "../types/api";
+import type {
+  CommandError,
+  CommandResponse,
+  CreateMockTaskRequest,
+  Task,
+  TaskSnapshot,
+} from "../types/api";
 
 function normalizeError(error: unknown): CommandError {
   if (typeof error === "object" && error !== null) {
@@ -31,4 +37,20 @@ export async function callBackend<T>(
   } catch (error) {
     throw normalizeError(error);
   }
+}
+
+export function createMockTask(request: CreateMockTaskRequest): Promise<Task> {
+  return callBackend<Task>("create_mock_task", { request });
+}
+
+export function listTasks(): Promise<TaskSnapshot> {
+  return callBackend<TaskSnapshot>("list_tasks");
+}
+
+export function getTask(taskId: string): Promise<Task> {
+  return callBackend<Task>("get_task", { taskId });
+}
+
+export function cancelTask(taskId: string): Promise<Task> {
+  return callBackend<Task>("cancel_task", { taskId });
 }

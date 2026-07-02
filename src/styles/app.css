@@ -309,9 +309,9 @@ button {
 
 .bottom-panel {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(260px, 1fr) 180px;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(320px, 1.3fr) 320px;
   gap: 12px;
-  min-height: 76px;
+  height: 168px;
   border-top: 1px solid #d7dde3;
   background: #ffffff;
   color: #637282;
@@ -320,9 +320,10 @@ button {
 
 .bottom-panel section {
   display: grid;
-  align-content: center;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 4px;
   min-width: 0;
+  min-height: 0;
 }
 
 .bottom-panel strong {
@@ -334,5 +335,142 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+}
+
+.commit-placeholder {
+  align-content: center;
+}
+
+.bottom-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.task-log-panel,
+.task-queue-panel {
+  align-content: stretch;
+}
+
+.task-log-list,
+.task-list {
+  min-height: 0;
+  overflow: auto;
+}
+
+.task-log-list {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  border: 1px solid #d7dde3;
+  border-radius: 6px;
+  background: #f7f9fb;
+  padding: 8px;
+}
+
+.task-log-list p,
+.task-error {
+  margin: 0;
+  color: #44515f;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.task-log-list time {
+  display: inline-block;
+  margin-right: 8px;
+  color: #7a8794;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-log-error,
+.task-error {
+  color: #9c3838;
+}
+
+.task-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.task-actions button,
+.cancel-task,
+.task-list button {
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17202a;
+  cursor: pointer;
+}
+
+.task-actions button {
+  height: 28px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.task-actions button:disabled,
+.cancel-task:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.task-list {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+}
+
+.task-list button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 5px 7px;
+  text-align: left;
+}
+
+.task-list button.active,
+.task-list button:hover {
+  border-color: #5ba9a5;
+  background: #eef8f7;
+}
+
+.task-list small {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.task-status {
+  color: #637282;
+}
+
+.status-running {
+  color: #1f6fa8;
+}
+
+.status-success {
+  color: #227873;
+}
+
+.status-failed {
+  color: #9c3838;
+}
+
+.status-cancelled {
+  color: #7a8794;
+}
+
+.running {
+  color: #1f6fa8;
+  font-weight: 600;
+}
+
+.cancel-task {
+  height: 28px;
   font-size: 12px;
 }
