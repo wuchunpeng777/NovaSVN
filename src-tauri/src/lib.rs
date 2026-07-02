@@ -22,7 +22,8 @@ use task::{
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use workspace::{
     FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, OpenWorkspaceRequest,
-    RecentWorkspace, ScanWorkspaceStatusRequest, WorkingCopyStatus, WorkspaceSummary,
+    RecentWorkspace, ScanWorkspaceStatusRequest, SvnLog, GetSvnLogRequest, WorkingCopyStatus,
+    WorkspaceSummary,
 };
 
 #[tauri::command]
@@ -258,6 +259,12 @@ fn get_file_content_diff(request: GetFileContentDiffRequest) -> CommandResult<Fi
 }
 
 #[tauri::command]
+fn get_svn_log(request: GetSvnLogRequest) -> CommandResult<SvnLog> {
+    println!("[NovaSVN] get_svn_log command received");
+    Ok(CommandResponse::success(workspace::get_svn_log(request)?))
+}
+
+#[tauri::command]
 fn parse_unified_diff(diff_text: String) -> CommandResult<ParsedDiff> {
     println!("[NovaSVN] parse_unified_diff command received");
     Ok(CommandResponse::success(diff::parse_unified_diff(
@@ -315,6 +322,7 @@ pub fn run() {
             scan_workspace_status,
             get_file_diff,
             get_file_content_diff,
+            get_svn_log,
             parse_unified_diff,
             generate_selected_patch,
             get_shadow_workspace_status,

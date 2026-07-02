@@ -15,6 +15,7 @@ import {
   getFileContentDiff,
   getFileDiff,
   getBranchPool,
+  getSvnLog,
   getTaskWorkspaces,
   generateSelectedPatch,
   getShadowWorkspaceStatus,
@@ -53,6 +54,7 @@ import type {
   ShadowWorkspaceStatus,
   SvnOperationKind,
   SvnDetection,
+  SvnLog,
   Task,
   TaskSnapshot,
   TaskWorkspaceEntry,
@@ -966,6 +968,15 @@ export interface WorkspaceStoreState {
   contentDiffError: CommandError | null;
   parsedDiffError: CommandError | null;
   selectedPatchError: CommandError | null;
+  svnLog: SvnLog | null;
+  svnLogLoading: boolean;
+  svnLogError: CommandError | null;
+  svnLogAuthorFilter: string;
+  svnLogKeywordFilter: string;
+  svnLogDateFromFilter: string;
+  svnLogDateToFilter: string;
+  svnLogFileOnly: boolean;
+  svnLogLimit: number;
 }
 
 const initialWorkspaceState: WorkspaceStoreState = {
@@ -1049,6 +1060,15 @@ const initialWorkspaceState: WorkspaceStoreState = {
   contentDiffError: null,
   parsedDiffError: null,
   selectedPatchError: null,
+  svnLog: null,
+  svnLogLoading: false,
+  svnLogError: null,
+  svnLogAuthorFilter: "",
+  svnLogKeywordFilter: "",
+  svnLogDateFromFilter: "",
+  svnLogDateToFilter: "",
+  svnLogFileOnly: false,
+  svnLogLimit: 50,
 };
 
 function createWorkspaceStore() {
@@ -2215,6 +2235,78 @@ function createWorkspaceStore() {
     }
   }
 
+  async function refreshSvnLog(svnExecutable?: string | null) {
+    const state = get({ subscribe });
+    if (!state.current) {
+      update((current) => ({
+        ...current,
+        svnLogError: {
+          code: "WORKSPACE_REQUIRED",
+          message: "请先打开 SVN 工作副本",
+          detail: null,
+          recoverable: true,
+        },
+      }));
+      return;
+    }
+
+    update((current) => ({
+      ...current,
+      svnLogLoading: true,
+      svnLogError: null,
+    }));
+
+    try {
+      const svnLog = await getSvnLog({
+        working_copy_root: state.current.working_copy_root,
+        file_path: state.svnLogFileOnly ? state.selectedFilePath || undefined : undefined,
+        svn_executable: svnExecutable || undefined,
+        limit: state.svnLogLimit,
+      });
+      update((current) => ({
+        ...current,
+        svnLog,
+        svnLogLoading: false,
+        svnLogError: null,
+      }));
+    } catch (error) {
+      update((current) => ({
+        ...current,
+        svnLog: null,
+        svnLogLoading: false,
+        svnLogError: error as CommandError,
+      }));
+    }
+  }
+
+  function setSvnLogFilter(
+    field:
+      | "svnLogAuthorFilter"
+      | "svnLogKeywordFilter"
+      | "svnLogDateFromFilter"
+      | "svnLogDateToFilter",
+    value: string,
+  ) {
+    update((state) => ({
+      ...state,
+      [field]: value,
+    }));
+  }
+
+  function setSvnLogFileOnly(value: boolean) {
+    update((state) => ({
+      ...state,
+      svnLogFileOnly: value,
+    }));
+  }
+
+  function setSvnLogLimit(value: number) {
+    update((state) => ({
+      ...state,
+      svnLogLimit: Math.min(Math.max(value, 1), 200),
+    }));
+  }
+
   return {
     subscribe,
     loadRecent,
@@ -2270,6 +2362,10 @@ function createWorkspaceStore() {
     toggleHunkSelection,
     previewSelectedPatch,
     refreshShadowStatus,
+    refreshSvnLog,
+    setSvnLogFilter,
+    setSvnLogFileOnly,
+    setSvnLogLimit,
   };
 }
 

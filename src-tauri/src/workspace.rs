@@ -82,6 +82,14 @@ pub struct GetFileContentDiffRequest {
     pub max_bytes: Option<u64>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetSvnLogRequest {
+    pub working_copy_root: String,
+    pub file_path: Option<String>,
+    pub svn_executable: Option<String>,
+    pub limit: Option<usize>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FileDiff {
     pub path: String,
@@ -99,6 +107,30 @@ pub struct FileContentDiff {
     pub binary: bool,
     pub too_large: bool,
     pub max_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SvnLog {
+    pub target: String,
+    pub entries: Vec<SvnLogEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SvnLogEntry {
+    pub revision: String,
+    pub author: String,
+    pub date: String,
+    pub message: String,
+    pub changed_paths: Vec<SvnChangedPath>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SvnChangedPath {
+    pub path: String,
+    pub action: String,
+    pub kind: String,
+    pub copy_from_path: Option<String>,
+    pub copy_from_revision: Option<String>,
 }
 
 pub fn open_workspace(
@@ -141,6 +173,54 @@ pub fn open_workspace(
     let summary = parse_svn_info_xml(&xml, &path)?;
     save_recent_workspace(app, &summary)?;
     Ok(summary)
+}
+
+pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
+    let root = normalize_workspace_path(&request.working_copy_root)?;
+    let file_path = request
+        .file_path
+        .as_deref()
+        .map(normalize_relative_file_path)
+        .transpose()?;
+    let target = file_path
+        .as_ref()
+        .map(|path| root.join(path))
+        .unwrap_or_else(|| root.clone());
+    let executable = request
+        .svn_executable
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "svn".to_string());
+    let limit = request.limit.unwrap_or(50).clamp(1, 200).to_string();
+
+    let output = Command::new(&executable)
+        .args(["log", "--xml", "--verbose", "--limit"])
+        .arg(&limit)
+        .arg(&target)
+        .current_dir(&root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_LOG_FAILED",
+                "无法读取 SVN 日志",
+                Some(format!(
+                    "执行 `{executable} log --xml --verbose --limit {limit}` 失败：{error}"
+                )),
+                true,
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "SVN_LOG_COMMAND_FAILED",
+            "SVN 日志读取失败",
+            Some(command_error_detail(&executable, "log", &output)),
+            true,
+        ));
+    }
+
+    let xml = String::from_utf8_lossy(&output.stdout);
+    parse_svn_log_xml(&xml, &display_status_path(&target.display().to_string(), &root))
 }
 
 pub fn get_file_diff(request: GetFileDiffRequest) -> Result<FileDiff, NovaError> {
@@ -732,6 +812,49 @@ fn parse_svn_info_xml(xml: &str, requested_path: &Path) -> Result<WorkspaceSumma
     })
 }
 
+fn parse_svn_log_xml(xml: &str, target: &str) -> Result<SvnLog, NovaError> {
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "SVN_LOG_XML_PARSE_FAILED",
+            "解析 SVN 日志失败",
+            Some(format!("svn log --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+
+    let mut entries = Vec::new();
+    for logentry in document.descendants().filter(|node| node.has_tag_name("logentry")) {
+        let revision = logentry.attribute("revision").unwrap_or("").to_string();
+        let author = optional_text_child(logentry, "author").unwrap_or_default();
+        let date = optional_text_child(logentry, "date").unwrap_or_default();
+        let message = optional_text_child(logentry, "msg").unwrap_or_default();
+        let changed_paths = logentry
+            .descendants()
+            .filter(|node| node.has_tag_name("path"))
+            .map(|path| SvnChangedPath {
+                path: path.text().map(str::trim).unwrap_or("").to_string(),
+                action: path.attribute("action").unwrap_or("").to_string(),
+                kind: path.attribute("kind").unwrap_or("").to_string(),
+                copy_from_path: path.attribute("copyfrom-path").map(ToString::to_string),
+                copy_from_revision: path.attribute("copyfrom-rev").map(ToString::to_string),
+            })
+            .collect();
+
+        entries.push(SvnLogEntry {
+            revision,
+            author,
+            date,
+            message,
+            changed_paths,
+        });
+    }
+
+    Ok(SvnLog {
+        target: target.to_string(),
+        entries,
+    })
+}
+
 fn text_child(node: roxmltree::Node<'_, '_>, tag_name: &str) -> Result<String, NovaError> {
     node.descendants()
         .find(|child| child.has_tag_name(tag_name))
@@ -747,6 +870,15 @@ fn text_child(node: roxmltree::Node<'_, '_>, tag_name: &str) -> Result<String, N
                 true,
             )
         })
+}
+
+fn optional_text_child(node: roxmltree::Node<'_, '_>, tag_name: &str) -> Option<String> {
+    node.children()
+        .find(|child| child.has_tag_name(tag_name))
+        .and_then(|child| child.text())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 fn save_recent_workspace(app: &AppHandle, workspace: &WorkspaceSummary) -> Result<(), NovaError> {
@@ -815,6 +947,24 @@ fn svn_status_error_detail(executable: &str, path: &Path, output: &std::process:
     format!(
         "`{executable} status --xml {}` 返回退出码 {:?}，但没有输出。",
         path.display(),
+        output.status.code()
+    )
+}
+
+fn command_error_detail(executable: &str, subcommand: &str, output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if !stderr.is_empty() {
+        return format!("`{executable} {subcommand}` 返回失败：{stderr}");
+    }
+
+    if !stdout.is_empty() {
+        return format!("`{executable} {subcommand}` 返回失败：{stdout}");
+    }
+
+    format!(
+        "`{executable} {subcommand}` 返回退出码 {:?}，但没有输出。",
         output.status.code()
     )
 }

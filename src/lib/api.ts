@@ -19,6 +19,7 @@ import type {
   GenerateSelectedPatchRequest,
   GetFileContentDiffRequest,
   GetFileDiffRequest,
+  GetSvnLogRequest,
   OpenWorkspaceRequest,
   ParsedDiff,
   RecentWorkspace,
@@ -28,6 +29,7 @@ import type {
   SaveBranchPoolEntryRequest,
   SaveTaskWorkspaceRequest,
   SvnDetection,
+  SvnLog,
   SelectedPatch,
   ShadowWorkspaceRequest,
   ShadowWorkspaceStatus,
@@ -190,6 +192,10 @@ export function getFileContentDiff(
   request: GetFileContentDiffRequest,
 ): Promise<FileContentDiff> {
   return callBackend<FileContentDiff>("get_file_content_diff", { request });
+}
+
+export function getSvnLog(request: GetSvnLogRequest): Promise<SvnLog> {
+  return callBackend<SvnLog>("get_svn_log", { request });
 }
 
 export function parseUnifiedDiff(diffText: string): Promise<ParsedDiff> {

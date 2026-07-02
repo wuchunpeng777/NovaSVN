@@ -7,6 +7,7 @@
     CommandError,
     RepositoryCopyKind,
     RepositoryListResult,
+    SvnLog,
     TaskWorkspaceList,
     WorkingCopyStatus,
     WorkspaceSummary,
@@ -100,6 +101,15 @@
   export let svnSwitchTargetUrl = "";
   export let svnSwitchError: string | null = null;
   export let svnSwitchRunning = false;
+  export let svnLog: SvnLog | null = null;
+  export let svnLogLoading = false;
+  export let svnLogError: CommandError | null = null;
+  export let svnLogAuthorFilter = "";
+  export let svnLogKeywordFilter = "";
+  export let svnLogDateFromFilter = "";
+  export let svnLogDateToFilter = "";
+  export let svnLogFileOnly = false;
+  export let svnLogLimit = 50;
   export let onChooseWorkspace: () => void;
   export let onOpenWorkspace: () => void;
   export let onRefreshStatus: () => void;
@@ -149,6 +159,17 @@
   export let onRemoveTaskWorkspace: (taskId: string) => void;
   export let onSvnSwitchTargetInput: (value: string) => void;
   export let onRunSvnSwitch: () => void;
+  export let onRefreshSvnLog: () => void;
+  export let onSvnLogFilterInput: (
+    field:
+      | "svnLogAuthorFilter"
+      | "svnLogKeywordFilter"
+      | "svnLogDateFromFilter"
+      | "svnLogDateToFilter",
+    value: string,
+  ) => void;
+  export let onSvnLogFileOnlyInput: (value: boolean) => void;
+  export let onSvnLogLimitInput: (value: number) => void;
 
   const fileRowHeight = 76;
   const sectionHeaderHeight = 32;
@@ -571,6 +592,42 @@
     return date.toLocaleString();
   }
 
+  function filterLogEntries(
+    entries: SvnLog["entries"],
+    author: string,
+    keyword: string,
+    dateFrom: string,
+    dateTo: string,
+  ) {
+    const normalizedAuthor = author.trim().toLowerCase();
+    const normalizedKeyword = keyword.trim().toLowerCase();
+    const fromTime = dateFrom ? new Date(dateFrom).getTime() : null;
+    const toTime = dateTo ? new Date(`${dateTo}T23:59:59`).getTime() : null;
+
+    return entries.filter((entry) => {
+      const entryTime = new Date(entry.date).getTime();
+      if (normalizedAuthor && !entry.author.toLowerCase().includes(normalizedAuthor)) {
+        return false;
+      }
+      if (
+        normalizedKeyword &&
+        !`${entry.revision} ${entry.message} ${entry.changed_paths.map((path) => path.path).join(" ")}`
+          .toLowerCase()
+          .includes(normalizedKeyword)
+      ) {
+        return false;
+      }
+      if (fromTime !== null && !Number.isNaN(entryTime) && entryTime < fromTime) {
+        return false;
+      }
+      if (toTime !== null && !Number.isNaN(entryTime) && entryTime > toTime) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
   $: changedFiles = workingCopyStatus?.files ?? [];
   $: normalizedSearch = searchText.trim().toLowerCase();
   $: stagedFilePaths = new Set(stagedFiles.map((file) => file.path));
@@ -630,6 +687,13 @@
   );
   $: selectedTaskBranch = branchPool.entries.find(
     (entry) => entry.id === taskWorkspaceForm.branchPoolEntryId,
+  );
+  $: filteredLogEntries = filterLogEntries(
+    svnLog?.entries ?? [],
+    svnLogAuthorFilter,
+    svnLogKeywordFilter,
+    svnLogDateFromFilter,
+    svnLogDateToFilter,
   );
 </script>
 
@@ -702,7 +766,125 @@
     {/if}
   </section>
 
-  {#if view.id === "staging"}
+  {#if view.id === "history"}
+    <div class="metric-row">
+      <div class="metric">
+        <span>Revision</span>
+        <strong>{svnLog?.entries.length ?? 0}</strong>
+      </div>
+      <div class="metric">
+        <span>显示</span>
+        <strong>{filteredLogEntries.length}</strong>
+      </div>
+      <div class="metric">
+        <span>目标</span>
+        <strong>{svnLogFileOnly ? "文件" : "工作副本"}</strong>
+      </div>
+      <div class="metric">
+        <span>Limit</span>
+        <strong>{svnLogLimit}</strong>
+      </div>
+      <div class="metric">
+        <span>状态</span>
+        <strong>{svnLogLoading ? "加载" : svnLog ? "完成" : "待查"}</strong>
+      </div>
+    </div>
+
+    <section class="svn-log-panel" aria-label="SVN 日志过滤">
+      <div class="repository-layout-header">
+        <div>
+          <h3>SVN Log</h3>
+          <p>{svnLog?.target ?? "读取工作副本或选中文件历史"}</p>
+        </div>
+        <button type="button" on:click={onRefreshSvnLog} disabled={!workspace || svnLogLoading}>
+          {svnLogLoading ? "加载中" : "读取日志"}
+        </button>
+      </div>
+
+      <div class="svn-log-filters">
+        <input
+          type="search"
+          value={svnLogAuthorFilter}
+          placeholder="作者"
+          on:input={(event) =>
+            onSvnLogFilterInput(
+              "svnLogAuthorFilter",
+              (event.currentTarget as HTMLInputElement).value,
+            )}
+        />
+        <input
+          type="search"
+          value={svnLogKeywordFilter}
+          placeholder="关键字"
+          on:input={(event) =>
+            onSvnLogFilterInput(
+              "svnLogKeywordFilter",
+              (event.currentTarget as HTMLInputElement).value,
+            )}
+        />
+        <input
+          type="date"
+          value={svnLogDateFromFilter}
+          on:input={(event) =>
+            onSvnLogFilterInput(
+              "svnLogDateFromFilter",
+              (event.currentTarget as HTMLInputElement).value,
+            )}
+        />
+        <input
+          type="date"
+          value={svnLogDateToFilter}
+          on:input={(event) =>
+            onSvnLogFilterInput(
+              "svnLogDateToFilter",
+              (event.currentTarget as HTMLInputElement).value,
+            )}
+        />
+        <input
+          type="number"
+          min="1"
+          max="200"
+          value={svnLogLimit}
+          on:input={(event) =>
+            onSvnLogLimitInput(Number((event.currentTarget as HTMLInputElement).value))}
+        />
+        <label>
+          <input
+            type="checkbox"
+            checked={svnLogFileOnly}
+            on:change={(event) =>
+              onSvnLogFileOnlyInput((event.currentTarget as HTMLInputElement).checked)}
+          />
+          <span>选中文件</span>
+        </label>
+      </div>
+      <ErrorNotice error={svnLogError} />
+    </section>
+
+    <section class="svn-log-list" aria-label="SVN 日志列表">
+      {#if filteredLogEntries.length > 0}
+        {#each filteredLogEntries as entry (entry.revision)}
+          <article class="svn-log-entry">
+            <header>
+              <strong>r{entry.revision}</strong>
+              <span>{entry.author || "-"}</span>
+              <span>{formatRepositoryDate(entry.date)}</span>
+            </header>
+            <p>{entry.message || "无提交信息"}</p>
+            <div class="svn-log-paths">
+              {#each entry.changed_paths as path (`${entry.revision}:${path.path}:${path.action}`)}
+                <span>{path.action || "-"} {path.path}</span>
+              {/each}
+            </div>
+          </article>
+        {/each}
+      {:else if svnLog}
+        <article class="repository-empty">没有匹配的日志</article>
+      {:else}
+        <article class="repository-empty">点击读取日志开始查看历史</article>
+      {/if}
+    </section>
+  {:else if view.id === "staging"}
     <div class="metric-row">
       <div class="metric">
         <span>任务</span>

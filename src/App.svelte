@@ -727,6 +727,15 @@
         svnSwitchTargetUrl={$workspaceStore.svnSwitchTargetUrl}
         svnSwitchError={$workspaceStore.svnSwitchError}
         svnSwitchRunning={$workspaceStore.pendingSvnSwitchTaskId !== null}
+        svnLog={$workspaceStore.svnLog}
+        svnLogLoading={$workspaceStore.svnLogLoading}
+        svnLogError={$workspaceStore.svnLogError}
+        svnLogAuthorFilter={$workspaceStore.svnLogAuthorFilter}
+        svnLogKeywordFilter={$workspaceStore.svnLogKeywordFilter}
+        svnLogDateFromFilter={$workspaceStore.svnLogDateFromFilter}
+        svnLogDateToFilter={$workspaceStore.svnLogDateToFilter}
+        svnLogFileOnly={$workspaceStore.svnLogFileOnly}
+        svnLogLimit={$workspaceStore.svnLogLimit}
         onChooseWorkspace={() =>
           workspaceStore.chooseAndOpen(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
@@ -774,6 +783,13 @@
         onRemoveTaskWorkspace={removeTaskWorkspace}
         onSvnSwitchTargetInput={workspaceStore.setSvnSwitchTargetUrl}
         onRunSvnSwitch={runSvnSwitch}
+        onRefreshSvnLog={() =>
+          workspaceStore.refreshSvnLog(
+            $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+          )}
+        onSvnLogFilterInput={workspaceStore.setSvnLogFilter}
+        onSvnLogFileOnlyInput={workspaceStore.setSvnLogFileOnly}
+        onSvnLogLimitInput={workspaceStore.setSvnLogLimit}
       />
       <DetailPanel
         sections={detailSections}

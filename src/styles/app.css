@@ -1242,6 +1242,124 @@ button {
   cursor: default;
 }
 
+.svn-log-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.svn-log-panel button {
+  height: 30px;
+  border: 1px solid #5ba9a5;
+  border-radius: 6px;
+  background: #eef8f7;
+  color: #227873;
+  cursor: pointer;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.svn-log-panel button:disabled {
+  border-color: #cfd7df;
+  background: #f7f9fb;
+  color: #7a8794;
+  cursor: default;
+}
+
+.svn-log-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) 128px 128px 84px auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.svn-log-filters input:not([type="checkbox"]) {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  color: #17202a;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.svn-log-filters label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #44515f;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.svn-log-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.svn-log-entry {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.svn-log-entry header {
+  display: grid;
+  grid-template-columns: 90px 140px minmax(160px, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.svn-log-entry strong,
+.svn-log-entry span,
+.svn-log-entry p {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.svn-log-entry strong {
+  color: #227873;
+  font-size: 13px;
+}
+
+.svn-log-entry span,
+.svn-log-entry p {
+  color: #44515f;
+  font-size: 12px;
+}
+
+.svn-log-entry p {
+  color: #17202a;
+}
+
+.svn-log-paths {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.svn-log-paths span {
+  max-width: 100%;
+  border-radius: 999px;
+  background: #eef2f5;
+  color: #44515f;
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
 .repository-list {
   min-height: 0;
   overflow: auto;

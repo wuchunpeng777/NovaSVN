@@ -278,6 +278,13 @@ export interface GetFileContentDiffRequest {
   max_bytes?: number;
 }
 
+export interface GetSvnLogRequest {
+  working_copy_root: string;
+  file_path?: string;
+  svn_executable?: string;
+  limit?: number;
+}
+
 export interface FileDiff {
   path: string;
   text: string;
@@ -293,6 +300,27 @@ export interface FileContentDiff {
   binary: boolean;
   too_large: boolean;
   max_bytes: number;
+}
+
+export interface SvnLog {
+  target: string;
+  entries: SvnLogEntry[];
+}
+
+export interface SvnLogEntry {
+  revision: string;
+  author: string;
+  date: string;
+  message: string;
+  changed_paths: SvnChangedPath[];
+}
+
+export interface SvnChangedPath {
+  path: string;
+  action: string;
+  kind: string;
+  copy_from_path: string | null;
+  copy_from_revision: string | null;
 }
 
 export type DiffLineKind = "context" | "added" | "removed" | "no_newline";
