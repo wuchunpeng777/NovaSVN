@@ -2865,6 +2865,78 @@ mod tests {
     }
 
     #[test]
+    fn creates_lock_and_resolve_operation_tasks_with_normalized_paths() {
+        let queue = TaskQueue::new();
+        let dir = test_temp_dir("svn-operation-paths");
+
+        let lock_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: dir.display().to_string(),
+                kind: SvnOperationKind::LockFile,
+                file_path: Some(" Assets\\Scenes\\Main.unity ".to_string()),
+                svn_executable: None,
+            })
+            .expect("lock task should be created");
+        assert_eq!(lock_task.title, "锁定文件 Assets/Scenes/Main.unity");
+        match lock_task.payload {
+            TaskPayload::SvnOperation(payload) => {
+                assert!(matches!(payload.kind, SvnOperationKind::LockFile));
+                assert_eq!(payload.file_path.as_deref(), Some("Assets/Scenes/Main.unity"));
+            }
+            _ => panic!("expected svn operation payload"),
+        }
+
+        let resolve_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: dir.display().to_string(),
+                kind: SvnOperationKind::ResolveTheirsFull,
+                file_path: Some("src\\conflict.txt".to_string()),
+                svn_executable: None,
+            })
+            .expect("resolve task should be created");
+        assert_eq!(resolve_task.title, "使用 theirs 解决 src/conflict.txt");
+        match resolve_task.payload {
+            TaskPayload::SvnOperation(payload) => {
+                assert!(matches!(payload.kind, SvnOperationKind::ResolveTheirsFull));
+                assert_eq!(payload.file_path.as_deref(), Some("src/conflict.txt"));
+            }
+            _ => panic!("expected svn operation payload"),
+        }
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn rejects_lock_unlock_and_resolve_operations_without_file_paths() {
+        let queue = TaskQueue::new();
+        let dir = test_temp_dir("svn-operation-missing-path");
+
+        for (kind, expected_code) in [
+            (SvnOperationKind::LockFile, "LOCK_FILE_PATH_INVALID"),
+            (SvnOperationKind::UnlockFile, "UNLOCK_FILE_PATH_INVALID"),
+            (SvnOperationKind::ForceUnlockFile, "UNLOCK_FILE_PATH_INVALID"),
+            (SvnOperationKind::ResolveWorking, "RESOLVE_FILE_PATH_INVALID"),
+            (SvnOperationKind::ResolveMineFull, "RESOLVE_FILE_PATH_INVALID"),
+            (SvnOperationKind::ResolveTheirsFull, "RESOLVE_FILE_PATH_INVALID"),
+        ] {
+            let error = queue
+                .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                    working_copy_root: dir.display().to_string(),
+                    kind,
+                    file_path: None,
+                    svn_executable: None,
+                })
+                .expect_err("file operation without path must be rejected");
+
+            match error {
+                NovaError::Command { code, .. } => assert_eq!(code, expected_code),
+            }
+        }
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     fn rejects_repository_copy_to_same_url() {
         let queue = TaskQueue::new();
         let error = queue
