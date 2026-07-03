@@ -1432,6 +1432,9 @@ mod tests {
       <wc-status item="conflicted" props="none" />
       <tree-conflict operation="update" />
     </entry>
+    <entry path="C:\wc\Assets\Blocked.asset">
+      <wc-status item="obstructed" props="none" />
+    </entry>
   </target>
 </status>
 "#;
@@ -1445,14 +1448,16 @@ mod tests {
         )
         .expect("status parses");
 
-        assert_eq!(status.total, 2);
+        assert_eq!(status.total, 3);
         assert_eq!(status.revision_range.as_deref(), Some("41:42M"));
         assert!(status.mixed_revision);
         assert_eq!(status.modified, 1);
         assert_eq!(status.conflicted, 1);
+        assert_eq!(status.obstructed, 1);
         assert_eq!(status.files[0].path, "Assets/Player.prefab");
         assert_eq!(status.files[0].lock_owner.as_deref(), Some("alice"));
         assert_eq!(status.files[1].conflict_kind.as_deref(), Some("tree:update"));
+        assert!(status.files[2].abnormal);
     }
 
     #[test]
