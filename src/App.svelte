@@ -85,6 +85,52 @@
     );
   }
 
+  function currentSvnExecutable() {
+    return $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable;
+  }
+
+  async function refreshStatusAndSyncBranchPool(workingCopyRoot?: string | null) {
+    const root = workingCopyRoot ?? $workspaceStore.current?.working_copy_root;
+    if (!root) {
+      return;
+    }
+
+    await workspaceStore.refreshStatus(currentSvnExecutable(), root);
+    await syncCurrentBranchPoolEntry();
+  }
+
+  async function syncCurrentBranchPoolEntry() {
+    const workspace = $workspaceStore.current;
+    const status = $workspaceStore.status;
+    if (!workspace || !status) {
+      return;
+    }
+
+    const branchEntry = $branchPoolStore.pool.entries.find(
+      (entry) =>
+        normalizeLocalPath(entry.local_path) === normalizeLocalPath(workspace.working_copy_root),
+    );
+    if (!branchEntry) {
+      return;
+    }
+
+    const revision = status.revision_range ?? workspace.revision;
+    if (branchEntry.revision === revision && branchEntry.local_changes === status.total) {
+      return;
+    }
+
+    await branchPoolStore.saveExisting({
+      branchUrl: branchEntry.branch_url,
+      localPath: branchEntry.local_path,
+      revision,
+      localChanges: status.total,
+    });
+  }
+
+  function normalizeLocalPath(path: string) {
+    return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+  }
+
   async function previewError() {
     commandError = null;
     try {
@@ -461,6 +507,7 @@
     await workspaceStore.openPath(
       $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
     );
+    await syncCurrentBranchPoolEntry();
     setCurrentView("changes");
   }
 
@@ -693,10 +740,7 @@
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
     workspaceStore.clearCommittedFiles(committedPaths);
     if (workingCopyRoot) {
-      void workspaceStore.refreshStatus(
-        $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
-        workingCopyRoot,
-      );
+      void refreshStatusAndSyncBranchPool(workingCopyRoot);
     }
   }
 
@@ -717,10 +761,7 @@
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
     workspaceStore.completePartialCommit();
     if (workingCopyRoot) {
-      void workspaceStore.refreshStatus(
-        $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
-        workingCopyRoot,
-      );
+      void refreshStatusAndSyncBranchPool(workingCopyRoot);
     }
   }
 
@@ -745,12 +786,9 @@
       if (operationKind === "update") {
         void workspaceStore.openPath(
           $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
-        );
+        ).then(() => syncCurrentBranchPoolEntry());
       } else {
-        void workspaceStore.refreshStatus(
-          $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
-          workingCopyRoot,
-        );
+        void refreshStatusAndSyncBranchPool(workingCopyRoot);
       }
     }
   }
@@ -878,10 +916,7 @@
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
     workspaceStore.completeMergeTask($taskStore.selectedTask.result?.merge_result ?? null);
     if (workingCopyRoot && !$workspaceStore.mergeForm.dryRun) {
-      void workspaceStore.refreshStatus(
-        $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
-        workingCopyRoot,
-      ).then(() => {
+      void refreshStatusAndSyncBranchPool(workingCopyRoot).then(() => {
         if (($workspaceStore.status?.conflicted ?? 0) > 0) {
           setCurrentView("changes");
           workspaceStore.focusConflictFilter();
@@ -1081,17 +1116,14 @@
         revisionDiffResult={$workspaceStore.revisionDiffResult}
         appSettings={$appSettingsStore}
         onChooseWorkspace={() =>
-          workspaceStore.chooseAndOpen(
-            $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
-          )}
+          workspaceStore
+            .chooseAndOpen($svnStore.detection?.resolved_path ?? $svnStore.detection?.executable)
+            .then(() => syncCurrentBranchPoolEntry())}
         onOpenWorkspace={() =>
-          workspaceStore.openPath(
-            $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
-          )}
-        onRefreshStatus={() =>
-          workspaceStore.refreshStatus(
-            $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
-          )}
+          workspaceStore
+            .openPath($svnStore.detection?.resolved_path ?? $svnStore.detection?.executable)
+            .then(() => syncCurrentBranchPoolEntry())}
+        onRefreshStatus={() => refreshStatusAndSyncBranchPool()}
         onLoadMoreStatus={() =>
           workspaceStore.loadMoreStatus(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,

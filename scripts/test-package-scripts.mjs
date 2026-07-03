@@ -262,11 +262,21 @@ if (!mainWorkspace.includes("导出诊断日志") || !mainWorkspace.includes("on
   failed = true;
 }
 
+if (!appSvelte.includes("refreshStatusAndSyncBranchPool")) {
+  console.error("状态刷新后必须同步分支工作副本池统计");
+  failed = true;
+}
+
+if (!appSvelte.includes("syncCurrentBranchPoolEntry") || !appSvelte.includes("localChanges: status.total")) {
+  console.error("分支工作副本池必须回写当前工作副本 revision 和本地改动数量");
+  failed = true;
+}
+
 if (failed) {
   process.exit(1);
 }
 
-console.log("发布脚本、性能基准入口、系统入口脚本、诊断导出和更新日志检查通过");
+console.log("发布脚本、性能基准入口、系统入口脚本、分支池同步、诊断导出和更新日志检查通过");
 
 function extractSwitchCase(content, action) {
   const start = content.indexOf(`case "${action}":`);
