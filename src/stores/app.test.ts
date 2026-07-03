@@ -9,6 +9,7 @@ vi.mock("../lib/api", () => ({
   removeTaskWorkspace: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
   saveTaskWorkspace: vi.fn(),
+  setSvnProperty: vi.fn(),
 }));
 
 import { get } from "svelte/store";
@@ -22,6 +23,7 @@ import {
   removeTaskWorkspace,
   scanWorkspaceStatus,
   saveTaskWorkspace,
+  setSvnProperty,
 } from "../lib/api";
 import type {
   BranchPoolEntry,
@@ -52,6 +54,7 @@ const openWorkspaceMock = vi.mocked(openWorkspace);
 const removeTaskWorkspaceMock = vi.mocked(removeTaskWorkspace);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 const saveTaskWorkspaceMock = vi.mocked(saveTaskWorkspace);
+const setSvnPropertyMock = vi.mocked(setSvnProperty);
 
 beforeEach(() => {
   createRevisionDiffTaskMock.mockReset();
@@ -62,6 +65,7 @@ beforeEach(() => {
   removeTaskWorkspaceMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
   saveTaskWorkspaceMock.mockReset();
+  setSvnPropertyMock.mockReset();
   window.localStorage.clear();
   appSettingsStore.load();
   svnStore.setExecutableInput("");
@@ -236,6 +240,22 @@ describe("appSettingsStore", () => {
       externalDiffTool: "外部 Diff 工具需要是命令名、绝对路径或 ~/ 开头路径",
       externalMergeTool: "外部 Merge 工具不能包含控制字符",
       branchPoolBasePath: "工作副本池路径需要是绝对路径或 ~/ 开头路径",
+    });
+  });
+});
+
+describe("workspaceStore svn properties", () => {
+  it("reports a workspace error when saving properties without an open workspace", async () => {
+    workspaceStore.setPropertyEditForm("name", "svn:ignore");
+    workspaceStore.setPropertyEditForm("value", "dist");
+
+    await workspaceStore.saveSvnProperty();
+
+    expect(setSvnPropertyMock).not.toHaveBeenCalled();
+    expect(get(workspaceStore).svnPropertiesError).toMatchObject({
+      code: "WORKSPACE_REQUIRED",
+      message: "请先打开 SVN 工作副本",
+      recoverable: true,
     });
   });
 });

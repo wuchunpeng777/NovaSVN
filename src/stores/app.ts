@@ -2830,6 +2830,15 @@ function createWorkspaceStore() {
   async function saveSvnProperty(svnExecutable?: string | null) {
     const state = get({ subscribe });
     if (!state.current) {
+      update((current) => ({
+        ...current,
+        svnPropertiesError: {
+          code: "WORKSPACE_REQUIRED",
+          message: "请先打开 SVN 工作副本",
+          detail: null,
+          recoverable: true,
+        },
+      }));
       return;
     }
 
