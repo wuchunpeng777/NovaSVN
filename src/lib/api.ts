@@ -26,6 +26,8 @@ import type {
   GetSvnPropertiesRequest,
   ExternalToolLaunch,
   LaunchExternalToolRequest,
+  OpenFileLocation,
+  OpenFileLocationRequest,
   OpenWorkspaceRequest,
   ParsedDiff,
   RecentWorkspace,
@@ -93,6 +95,12 @@ export function launchExternalTool(
   request: LaunchExternalToolRequest,
 ): Promise<ExternalToolLaunch> {
   return callBackend<ExternalToolLaunch>("launch_external_tool", { request });
+}
+
+export function openFileLocation(
+  request: OpenFileLocationRequest,
+): Promise<OpenFileLocation> {
+  return callBackend<OpenFileLocation>("open_file_location", { request });
 }
 
 export function exportDiagnostics(): Promise<DiagnosticExport> {

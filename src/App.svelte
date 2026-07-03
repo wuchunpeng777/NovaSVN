@@ -5,7 +5,7 @@
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
   import Toolbar from "./components/workbench/Toolbar.svelte";
   import { onDestroy, onMount } from "svelte";
-  import { callBackend, getStartupIntent, launchExternalTool } from "./lib/api";
+  import { callBackend, getStartupIntent, launchExternalTool, openFileLocation } from "./lib/api";
   import { detailSections, navigationItems, workbenchViews } from "./lib/workbench";
   import {
     branchPoolStore,
@@ -98,6 +98,30 @@
         file_path: filePath,
       });
       backendMessage = `已启动外部 ${kind === "diff" ? "Diff" : "Merge"} 工具：${result.target_path}`;
+    } catch (error) {
+      commandError = error as CommandError;
+    }
+  }
+
+  async function openSelectedFileLocation(filePath: string) {
+    commandError = null;
+    const root = $workspaceStore.current?.working_copy_root;
+    if (!root) {
+      commandError = {
+        code: "WORKSPACE_REQUIRED",
+        message: "请先打开 SVN 工作副本",
+        detail: null,
+        recoverable: true,
+      };
+      return;
+    }
+
+    try {
+      const result = await openFileLocation({
+        working_copy_root: root,
+        file_path: filePath,
+      });
+      backendMessage = `已打开文件位置：${result.target_path}`;
     } catch (error) {
       commandError = error as CommandError;
     }
@@ -1088,6 +1112,7 @@
         onResolveWorking={(path) => runSvnOperation("resolve_working", path)}
         onResolveMineFull={(path) => runSvnOperation("resolve_mine_full", path)}
         onResolveTheirsFull={(path) => runSvnOperation("resolve_theirs_full", path)}
+        onOpenFileLocation={openSelectedFileLocation}
         onLaunchExternalTool={openExternalTool}
         onMarkFileReviewed={workspaceStore.markFileReviewed}
         onMarkFileUnreviewed={workspaceStore.markFileUnreviewed}

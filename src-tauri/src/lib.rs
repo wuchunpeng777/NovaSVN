@@ -15,7 +15,9 @@ use branch_pool::{BranchPool, RemoveBranchPoolEntryRequest, SaveBranchPoolEntryR
 use diagnostics::DiagnosticExport;
 use diff::{GenerateSelectedPatchRequest, ParsedDiff, SelectedPatch};
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
-use external_tool::{ExternalToolLaunch, LaunchExternalToolRequest};
+use external_tool::{
+    ExternalToolLaunch, LaunchExternalToolRequest, OpenFileLocation, OpenFileLocationRequest,
+};
 use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
 use system_integration::StartupIntent;
@@ -66,6 +68,14 @@ fn launch_external_tool(request: LaunchExternalToolRequest) -> CommandResult<Ext
     println!("[NovaSVN] launch_external_tool command received");
     Ok(CommandResponse::success(
         external_tool::launch_external_tool(request)?,
+    ))
+}
+
+#[tauri::command]
+fn open_file_location(request: OpenFileLocationRequest) -> CommandResult<OpenFileLocation> {
+    println!("[NovaSVN] open_file_location command received");
+    Ok(CommandResponse::success(
+        external_tool::open_file_location(request)?,
     ))
 }
 
@@ -374,6 +384,7 @@ pub fn run() {
             fail_for_preview,
             get_startup_intent,
             launch_external_tool,
+            open_file_location,
             create_mock_task,
             create_commit_task,
             create_svn_operation_task,

@@ -23,10 +23,21 @@ pub struct LaunchExternalToolRequest {
     pub file_path: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct OpenFileLocationRequest {
+    pub working_copy_root: String,
+    pub file_path: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ExternalToolLaunch {
     pub kind: String,
     pub tool_path: String,
+    pub target_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenFileLocation {
     pub target_path: String,
 }
 
@@ -66,6 +77,40 @@ pub fn launch_external_tool(
             ExternalToolKind::Merge => "merge".to_string(),
         },
         tool_path: executable.display().to_string(),
+        target_path: target.display().to_string(),
+    })
+}
+
+pub fn open_file_location(
+    request: OpenFileLocationRequest,
+) -> Result<OpenFileLocation, NovaError> {
+    let root = normalize_root(&request.working_copy_root)?;
+    let target = normalize_file_path(&root, &request.file_path)?;
+
+    let mut command = if cfg!(target_os = "windows") {
+        let mut command = Command::new("explorer");
+        command.arg("/select,").arg(&target);
+        command
+    } else if cfg!(target_os = "macos") {
+        let mut command = Command::new("open");
+        command.arg("-R").arg(&target);
+        command
+    } else {
+        let mut command = Command::new("xdg-open");
+        command.arg(target.parent().unwrap_or(&root));
+        command
+    };
+
+    command.spawn().map_err(|error| {
+        NovaError::command(
+            "OPEN_FILE_LOCATION_FAILED",
+            "无法打开文件位置",
+            Some(format!("目标：{}。错误：{error}", target.display())),
+            true,
+        )
+    })?;
+
+    Ok(OpenFileLocation {
         target_path: target.display().to_string(),
     })
 }

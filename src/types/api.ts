@@ -99,9 +99,18 @@ export interface LaunchExternalToolRequest {
   file_path: string;
 }
 
+export interface OpenFileLocationRequest {
+  working_copy_root: string;
+  file_path: string;
+}
+
 export interface ExternalToolLaunch {
   kind: ExternalToolKind | string;
   tool_path: string;
+  target_path: string;
+}
+
+export interface OpenFileLocation {
   target_path: string;
 }
 

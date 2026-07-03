@@ -67,6 +67,7 @@
   export let onResolveWorking: (path: string) => void;
   export let onResolveMineFull: (path: string) => void;
   export let onResolveTheirsFull: (path: string) => void;
+  export let onOpenFileLocation: (path: string) => void;
   export let onLaunchExternalTool: (kind: ExternalToolKind, path: string) => void;
   export let onMarkFileReviewed: (path: string) => void;
   export let onMarkFileUnreviewed: (path: string) => void;
@@ -89,11 +90,6 @@
     showWhitespace = defaultShowWhitespace;
     initializedDiffPreferences = true;
   }
-
-  $: selectedFileUrl =
-    selectedFile && workspaceRoot
-      ? `file:///${workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "")}/${selectedFile.path.replaceAll("\\", "/")}`
-      : null;
 
   function formatFileSize(bytes: number | null) {
     if (bytes === null) {
@@ -221,8 +217,8 @@
         </button>
         <button
           type="button"
-          on:click={() => selectedFileUrl && window.open(selectedFileUrl)}
-          disabled={!selectedFileUrl}
+          on:click={() => selectedFile && onOpenFileLocation(selectedFile.path)}
+          disabled={!selectedFile}
         >
           打开
         </button>
