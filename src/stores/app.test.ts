@@ -215,6 +215,59 @@ describe("workspaceStore safety warnings", () => {
     expect(state.safetyCheck.confirmedWarningIds).toEqual([]);
   });
 
+  it("keeps a partial-status safety info until all status pages are loaded", async () => {
+    const workspace = makeWorkspace();
+    const firstPage = makeStatus(
+      [
+        makeFile({
+          path: "src/a.ts",
+          content_digest: "digest-a",
+        }),
+      ],
+      { total: 3, returned: 1, limit: 1 },
+    );
+    const secondPage = makeStatus(
+      [
+        makeFile({
+          path: "src/b.ts",
+          content_digest: "digest-b",
+        }),
+        makeFile({
+          path: "src/c.ts",
+          content_digest: "digest-c",
+        }),
+      ],
+      { total: 3, returned: 2, offset: 1, limit: 2 },
+    );
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage);
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+
+    expect(get(workspaceStore).safetyCheck.infos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "info:status-partial:1:3",
+          title: "状态列表尚未全部加载",
+        }),
+      ]),
+    );
+
+    await workspaceStore.loadMoreStatus();
+
+    const state = get(workspaceStore);
+    expect(state.status?.files.map((file) => file.path)).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+      "src/c.ts",
+    ]);
+    expect(state.safetyCheck.infos.map((item) => item.id)).not.toContain(
+      "info:status-partial:1:3",
+    );
+  });
+
   it("warns about Unity meta pairing issues and preserves confirmations in drafts", async () => {
     const workspace = makeWorkspace({
       unity: {
@@ -579,7 +632,10 @@ function makeTaskWorkspaceList(entries: TaskWorkspaceEntry[]): TaskWorkspaceList
   };
 }
 
-function makeStatus(files: ChangedFile[]): WorkingCopyStatus {
+function makeStatus(
+  files: ChangedFile[],
+  status: Partial<WorkingCopyStatus> = {},
+): WorkingCopyStatus {
   return {
     working_copy_root: "C:/repo/wc",
     total: files.length,
@@ -597,6 +653,7 @@ function makeStatus(files: ChangedFile[]): WorkingCopyStatus {
     obstructed: files.filter((file) => file.status === "obstructed").length,
     property_changed: files.filter((file) => file.property_changed).length,
     files,
+    ...status,
   };
 }
 
