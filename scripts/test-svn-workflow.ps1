@@ -73,6 +73,14 @@ try {
   Assert-Contains $missingXml 'item="missing"' "missing 状态未出现"
 
   Invoke-Svn @("revert", $missingPath) | Out-Null
+  $obstructedPath = Join-Path $srcDir "main.txt"
+  Remove-Item -LiteralPath $obstructedPath -Force
+  New-Item -ItemType Directory -Path $obstructedPath -Force | Out-Null
+  $obstructedXml = (Invoke-Svn @("status", "--xml", $wcPath)) -join "`n"
+  Assert-Contains $obstructedXml 'item="obstructed"' "obstructed 状态未出现"
+  Remove-Item -LiteralPath $obstructedPath -Recurse -Force
+  Invoke-Svn @("revert", $obstructedPath) | Out-Null
+
   Invoke-Svn @("commit", (Join-Path $srcDir "added.txt"), (Join-Path $srcDir "delete-me.txt"), "-m", "验证文件级提交") | Out-Null
 
   Add-Content -LiteralPath $missingPath -Value "line 3"
