@@ -145,6 +145,7 @@
     diffMode: "side_by_side",
     showWhitespace: false,
     commitTemplate: "",
+    branchPoolBasePath: "",
     largeFileThresholdMb: 20,
     unityRulesEnabled: true,
     unityGroupRules: {
@@ -161,6 +162,7 @@
     diagnosticExportError: null,
     validationErrors: {
       svnExecutable: null,
+      branchPoolBasePath: null,
       externalDiffTool: null,
       externalMergeTool: null,
     },
@@ -1180,6 +1182,22 @@
               (event.currentTarget as HTMLTextAreaElement).value,
             )}
         ></textarea>
+      </label>
+      <label>
+        <span>工作副本池路径</span>
+        <input
+          type="text"
+          value={appSettings.branchPoolBasePath}
+          placeholder="~/NovaSVN/branches"
+          on:input={(event) =>
+            onAppSettingInput(
+              "branchPoolBasePath",
+              (event.currentTarget as HTMLInputElement).value,
+            )}
+        />
+        {#if appSettings.validationErrors.branchPoolBasePath}
+          <small class="settings-field-error">{appSettings.validationErrors.branchPoolBasePath}</small>
+        {/if}
       </label>
       <label>
         <span>默认 Diff 模式</span>

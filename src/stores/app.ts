@@ -83,6 +83,7 @@ const initialAppSettings: AppSettingsState = {
   diffMode: "side_by_side",
   showWhitespace: false,
   commitTemplate: "",
+  branchPoolBasePath: "",
   largeFileThresholdMb: 20,
   unityRulesEnabled: true,
   unityGroupRules: {
@@ -124,6 +125,9 @@ function createAppSettingsStore() {
       }
       if (field === "commitTemplate") {
         workspaceStore.setCommitTemplate(String(value));
+      }
+      if (field === "branchPoolBasePath") {
+        branchPoolStore.applyBasePath(String(value));
       }
       return next;
     });
@@ -759,12 +763,20 @@ function createBranchPoolStore() {
       form: {
         ...state.form,
         [field]: value,
+        ...(field === "branchUrl" && !state.form.localPath.trim()
+          ? { localPath: suggestBranchPoolLocalPath(value, loadAppSettings().branchPoolBasePath) }
+          : {}),
       },
       formErrors: {
         ...state.formErrors,
         localPath:
-          field === "localPath"
-            ? validateAbsoluteOrHomePath(value, "本地路径")
+          field === "localPath" || (field === "branchUrl" && !state.form.localPath.trim())
+            ? validateOptionalAbsoluteOrHomePath(
+                field === "localPath"
+                  ? value
+                  : suggestBranchPoolLocalPath(value, loadAppSettings().branchPoolBasePath),
+                "本地路径",
+              )
             : state.formErrors.localPath,
       },
       checkoutError: null,
@@ -777,9 +789,33 @@ function createBranchPoolStore() {
       form: {
         ...state.form,
         branchUrl,
+        localPath: state.form.localPath.trim()
+          ? state.form.localPath
+          : suggestBranchPoolLocalPath(branchUrl, loadAppSettings().branchPoolBasePath),
       },
       checkoutError: null,
     }));
+  }
+
+  function applyBasePath(basePath: string) {
+    update((state) => {
+      if (state.form.localPath.trim() || !state.form.branchUrl.trim()) {
+        return state;
+      }
+
+      const localPath = suggestBranchPoolLocalPath(state.form.branchUrl, basePath);
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          localPath,
+        },
+        formErrors: {
+          ...state.formErrors,
+          localPath: validateOptionalAbsoluteOrHomePath(localPath, "本地路径"),
+        },
+      };
+    });
   }
 
   async function saveExisting(entry: {
@@ -933,6 +969,7 @@ function createBranchPoolStore() {
     load,
     setFormField,
     useBranchUrl,
+    applyBasePath,
     saveExisting,
     remove,
     validateForm,
@@ -2953,6 +2990,8 @@ function loadAppSettings(): AppSettingsState {
         typeof parsed.showWhitespace === "boolean" ? parsed.showWhitespace : false,
       commitTemplate:
         typeof parsed.commitTemplate === "string" ? parsed.commitTemplate : "",
+      branchPoolBasePath:
+        typeof parsed.branchPoolBasePath === "string" ? parsed.branchPoolBasePath : "",
       largeFileThresholdMb:
         typeof parsed.largeFileThresholdMb === "number"
           ? Math.min(Math.max(parsed.largeFileThresholdMb, 1), 2048)
@@ -2968,6 +3007,10 @@ function loadAppSettings(): AppSettingsState {
       diagnosticExportError: null,
       validationErrors: {
         svnExecutable: validateExecutableSetting(parsed.svnExecutable, "SVN 路径"),
+        branchPoolBasePath: validateOptionalAbsoluteOrHomePath(
+          parsed.branchPoolBasePath,
+          "工作副本池路径",
+        ),
         externalDiffTool: validateExecutableSetting(parsed.externalDiffTool, "外部 Diff 工具"),
         externalMergeTool: validateExecutableSetting(parsed.externalMergeTool, "外部 Merge 工具"),
       },
@@ -2980,6 +3023,7 @@ function loadAppSettings(): AppSettingsState {
 function emptyAppSettingsValidationErrors() {
   return {
     svnExecutable: null,
+    branchPoolBasePath: null,
     externalDiffTool: null,
     externalMergeTool: null,
   };
@@ -3011,21 +3055,41 @@ function validateAppSettingsField<K extends keyof AppSettingsState>(
   field: K,
   value: AppSettingsState[K],
 ) {
-  if (field !== "svnExecutable" && field !== "externalDiffTool" && field !== "externalMergeTool") {
+  if (
+    field !== "svnExecutable" &&
+    field !== "branchPoolBasePath" &&
+    field !== "externalDiffTool" &&
+    field !== "externalMergeTool"
+  ) {
     return current;
   }
 
   const settingField = field as keyof AppSettingsState["validationErrors"];
   const labels: Record<keyof AppSettingsState["validationErrors"], string> = {
     svnExecutable: "SVN 路径",
+    branchPoolBasePath: "工作副本池路径",
     externalDiffTool: "外部 Diff 工具",
     externalMergeTool: "外部 Merge 工具",
   };
+
+  if (field === "branchPoolBasePath") {
+    return {
+      ...current,
+      branchPoolBasePath: validateOptionalAbsoluteOrHomePath(value, labels.branchPoolBasePath),
+    };
+  }
 
   return {
     ...current,
     [settingField]: validateExecutableSetting(value, labels[settingField]),
   };
+}
+
+function validateOptionalAbsoluteOrHomePath(value: unknown, label: string) {
+  if (typeof value !== "string" || value.trim() === "") {
+    return null;
+  }
+  return validateAbsoluteOrHomePath(value, label);
 }
 
 function validateExecutableSetting(value: unknown, label: string) {
@@ -3056,6 +3120,26 @@ function validateAbsoluteOrHomePath(value: string, label: string) {
     return `${label}需要是绝对路径或 ~/ 开头路径`;
   }
   return null;
+}
+
+function suggestBranchPoolLocalPath(branchUrl: string, basePath: string) {
+  const base = basePath.trim();
+  const localPathError = validateOptionalAbsoluteOrHomePath(base, "工作副本池路径");
+  if (!branchUrl.trim() || !base || localPathError) {
+    return "";
+  }
+
+  const branchName =
+    branchUrl
+      .trim()
+      .replace(/[?#].*$/, "")
+      .replace(/\/+$/, "")
+      .split("/")
+      .pop() ?? "branch";
+  const safeName = branchName.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const directoryName = safeName || "branch";
+  const separator = base.includes("\\") && !base.includes("/") ? "\\" : "/";
+  return `${base.replace(/[\\/]+$/, "")}${separator}${directoryName}`;
 }
 
 function hasControlCharacter(value: string) {

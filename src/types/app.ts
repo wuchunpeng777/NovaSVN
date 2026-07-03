@@ -77,6 +77,7 @@ export interface AppSettingsState {
   diffMode: "side_by_side" | "inline";
   showWhitespace: boolean;
   commitTemplate: string;
+  branchPoolBasePath: string;
   largeFileThresholdMb: number;
   unityRulesEnabled: boolean;
   unityGroupRules: UnityGroupRules;
@@ -86,6 +87,7 @@ export interface AppSettingsState {
   diagnosticExportError: string | null;
   validationErrors: {
     svnExecutable: string | null;
+    branchPoolBasePath: string | null;
     externalDiffTool: string | null;
     externalMergeTool: string | null;
   };
