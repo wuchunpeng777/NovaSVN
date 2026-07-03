@@ -43,10 +43,8 @@ foreach ($root in $roots) {
     New-Item -Path $commandPath -Force | Out-Null
     New-ItemProperty -Path $keyPath -Name "MUIVerb" -Value $item.Label -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $keyPath -Name "Icon" -Value $NovaSvnExe -PropertyType String -Force | Out-Null
-    $command = "`"$NovaSvnExe`" --novasvn-action `"$($item.Action)`" --novasvn-path `"%V`""
-    if ($root -like "*\*\shell") {
-      $command = "`"$NovaSvnExe`" --novasvn-action `"$($item.Action)`" --novasvn-path `"%1`""
-    }
+    $pathPlaceholder = if ($root -like "*\Directory\Background\shell") { "%V" } else { "%1" }
+    $command = "`"$NovaSvnExe`" --novasvn-action `"$($item.Action)`" --novasvn-path `"$pathPlaceholder`""
     (Get-Item -LiteralPath $commandPath).SetValue("", $command)
   }
 }
