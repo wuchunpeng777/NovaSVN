@@ -10,6 +10,7 @@
     "test:components": "vitest run --dir src",
     "test:svn": "powershell -ExecutionPolicy Bypass -File scripts/test-svn-workflow.ps1",
     "test:svn:partial": "powershell -ExecutionPolicy Bypass -File scripts/test-svn-partial-commit.ps1",
+    "test:scripts": "node scripts/test-package-scripts.mjs",
     "test:e2e": "playwright test",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
@@ -17,8 +18,8 @@
     "version:sync": "node scripts/sync-version.mjs",
     "version:print": "node scripts/sync-version.mjs --print",
     "version:check": "node scripts/sync-version.mjs --check",
-    "release:windows": "tauri build --bundles nsis",
-    "release:macos": "tauri build --bundles dmg"
+    "release:windows": "npm run version:check && tauri build --bundles nsis",
+    "release:macos": "npm run version:check && tauri build --bundles dmg"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
