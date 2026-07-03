@@ -104,6 +104,11 @@ export interface OpenFileLocationRequest {
   file_path: string;
 }
 
+export interface OpenWorkspaceFileRequest {
+  working_copy_root: string;
+  file_path: string;
+}
+
 export interface ExternalToolLaunch {
   kind: ExternalToolKind | string;
   tool_path: string;
@@ -111,6 +116,10 @@ export interface ExternalToolLaunch {
 }
 
 export interface OpenFileLocation {
+  target_path: string;
+}
+
+export interface OpenWorkspaceFile {
   target_path: string;
 }
 

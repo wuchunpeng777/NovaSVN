@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 
 import DetailPanel from "./DetailPanel.svelte";
@@ -58,5 +58,33 @@ describe("DetailPanel", () => {
 
     expect(screen.getByText("行内")).toHaveClass("active");
     expect(screen.getByText("空白")).toHaveClass("active");
+  });
+
+  it("opens conflicted files from conflict actions", async () => {
+    const onOpenWorkspaceFile = vi.fn();
+
+    render(DetailPanel, {
+      props: {
+        selectedFile: {
+          path: "src/main.ts",
+          status: "conflicted",
+          revision: null,
+          property_status: null,
+          property_changed: false,
+          abnormal: true,
+          lock_state: "none",
+          lock_owner: null,
+          lock_comment: null,
+          conflict_kind: "text",
+          file_size: 12,
+          content_digest: "digest",
+        },
+        onOpenWorkspaceFile,
+      },
+    });
+
+    await fireEvent.click(screen.getByText("打开冲突文件"));
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith("src/main.ts");
   });
 });

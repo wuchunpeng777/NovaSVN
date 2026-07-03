@@ -29,6 +29,12 @@ pub struct OpenFileLocationRequest {
     pub file_path: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct OpenWorkspaceFileRequest {
+    pub working_copy_root: String,
+    pub file_path: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ExternalToolLaunch {
     pub kind: String,
@@ -38,6 +44,11 @@ pub struct ExternalToolLaunch {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OpenFileLocation {
+    pub target_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenWorkspaceFile {
     pub target_path: String,
 }
 
@@ -105,6 +116,30 @@ pub fn open_file_location(
     })
 }
 
+pub fn open_workspace_file(
+    request: OpenWorkspaceFileRequest,
+) -> Result<OpenWorkspaceFile, NovaError> {
+    let root = normalize_root(&request.working_copy_root)?;
+    let target = normalize_file_path(&root, &request.file_path)?;
+
+    let (program, args) = open_workspace_file_command(&target);
+    let mut command = Command::new(program);
+    command.args(args);
+
+    command.spawn().map_err(|error| {
+        NovaError::command(
+            "OPEN_WORKSPACE_FILE_FAILED",
+            "无法打开文件",
+            Some(format!("目标：{}。错误：{error}", target.display())),
+            true,
+        )
+    })?;
+
+    Ok(OpenWorkspaceFile {
+        target_path: target.display().to_string(),
+    })
+}
+
 fn open_file_location_command(root: &Path, target: &Path) -> (&'static str, Vec<String>) {
     if cfg!(target_os = "windows") {
         return ("explorer", vec![format!("/select,{}", target.display())]);
@@ -121,6 +156,26 @@ fn open_file_location_command(root: &Path, target: &Path) -> (&'static str, Vec<
         "xdg-open",
         vec![target.parent().unwrap_or(root).display().to_string()],
     )
+}
+
+fn open_workspace_file_command(target: &Path) -> (&'static str, Vec<String>) {
+    if cfg!(target_os = "windows") {
+        return (
+            "cmd",
+            vec![
+                "/C".to_string(),
+                "start".to_string(),
+                "".to_string(),
+                target.display().to_string(),
+            ],
+        );
+    }
+
+    if cfg!(target_os = "macos") {
+        return ("open", vec![target.display().to_string()]);
+    }
+
+    ("xdg-open", vec![target.display().to_string()])
 }
 
 fn expand_home_path(value: &str) -> PathBuf {
@@ -254,6 +309,24 @@ mod tests {
 
         assert_eq!(program, "explorer");
         assert_eq!(args, vec![format!("/select,{}", target.display())]);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn opens_workspace_file_with_default_windows_application() {
+        let target = Path::new("C:\\wc\\src\\main.rs");
+        let (program, args) = open_workspace_file_command(target);
+
+        assert_eq!(program, "cmd");
+        assert_eq!(
+            args,
+            vec![
+                "/C".to_string(),
+                "start".to_string(),
+                "".to_string(),
+                target.display().to_string()
+            ]
+        );
     }
 
     #[cfg(not(target_os = "windows"))]

@@ -28,6 +28,8 @@ import type {
   LaunchExternalToolRequest,
   OpenFileLocation,
   OpenFileLocationRequest,
+  OpenWorkspaceFile,
+  OpenWorkspaceFileRequest,
   OpenWorkspaceRequest,
   ParsedDiff,
   RecentWorkspace,
@@ -101,6 +103,12 @@ export function openFileLocation(
   request: OpenFileLocationRequest,
 ): Promise<OpenFileLocation> {
   return callBackend<OpenFileLocation>("open_file_location", { request });
+}
+
+export function openWorkspaceFile(
+  request: OpenWorkspaceFileRequest,
+): Promise<OpenWorkspaceFile> {
+  return callBackend<OpenWorkspaceFile>("open_workspace_file", { request });
 }
 
 export function exportDiagnostics(): Promise<DiagnosticExport> {

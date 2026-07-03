@@ -70,6 +70,7 @@
   export let onResolveMineFull: (path: string) => void;
   export let onResolveTheirsFull: (path: string) => void;
   export let onOpenFileLocation: (path: string) => void;
+  export let onOpenWorkspaceFile: (path: string) => void;
   export let onLaunchExternalTool: (kind: ExternalToolKind, path: string) => void;
   export let onMarkFileReviewed: (path: string) => void;
   export let onMarkFileUnreviewed: (path: string) => void;
@@ -224,10 +225,17 @@
         </button>
         <button
           type="button"
+          on:click={() => selectedFile && onOpenWorkspaceFile(selectedFile.path)}
+          disabled={!selectedFile}
+        >
+          打开文件
+        </button>
+        <button
+          type="button"
           on:click={() => selectedFile && onOpenFileLocation(selectedFile.path)}
           disabled={!selectedFile}
         >
-          打开
+          定位
         </button>
       </div>
     </div>
@@ -294,6 +302,9 @@
       </div>
       {#if selectedFile.status === "conflicted" || selectedFile.conflict_kind}
         <div class="conflict-actions">
+          <button type="button" on:click={() => onOpenWorkspaceFile(selectedFile.path)}>
+            打开冲突文件
+          </button>
           <button type="button" on:click={() => onResolveWorking(selectedFile.path)}>
             标记已解决
           </button>

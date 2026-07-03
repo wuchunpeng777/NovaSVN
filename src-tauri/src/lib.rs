@@ -18,6 +18,7 @@ use diff::{GenerateSelectedPatchRequest, ParsedDiff, SelectedPatch};
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
 use external_tool::{
     ExternalToolLaunch, LaunchExternalToolRequest, OpenFileLocation, OpenFileLocationRequest,
+    OpenWorkspaceFile, OpenWorkspaceFileRequest,
 };
 use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
@@ -77,6 +78,14 @@ fn open_file_location(request: OpenFileLocationRequest) -> CommandResult<OpenFil
     println!("[NovaSVN] open_file_location command received");
     Ok(CommandResponse::success(
         external_tool::open_file_location(request)?,
+    ))
+}
+
+#[tauri::command]
+fn open_workspace_file(request: OpenWorkspaceFileRequest) -> CommandResult<OpenWorkspaceFile> {
+    println!("[NovaSVN] open_workspace_file command received");
+    Ok(CommandResponse::success(
+        external_tool::open_workspace_file(request)?,
     ))
 }
 
@@ -386,6 +395,7 @@ pub fn run() {
             get_startup_intent,
             launch_external_tool,
             open_file_location,
+            open_workspace_file,
             create_mock_task,
             create_commit_task,
             create_svn_operation_task,
