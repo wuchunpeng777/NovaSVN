@@ -198,8 +198,9 @@
       return;
     }
 
-    const files = Array.from(
-      new Set($workspaceStore.selectedHunks.map((item) => item.filePath)),
+    const files = selectedCurrentHunkFiles(
+      $workspaceStore.selectedHunks,
+      $workspaceStore.status?.files ?? [],
     );
     const task = await taskStore.createPartialCommit({
       workingCopyRoot: $workspaceStore.current.working_copy_root,
@@ -216,6 +217,19 @@
     }
 
     workspaceStore.markPartialCommitTask(task.task_id);
+  }
+
+  function selectedCurrentHunkFiles(
+    selectedHunks: Array<{ filePath: string; fileDigest: string }>,
+    currentFiles: ChangedFile[],
+  ) {
+    return currentFiles.flatMap((file) => {
+      const hasCurrentHunk = selectedHunks.some(
+        (item) => item.filePath === file.path && item.fileDigest === file.content_digest,
+      );
+
+      return hasCurrentHunk ? [file.path] : [];
+    });
   }
 
   async function runSvnOperation(kind: SvnOperationKind, filePath?: string) {
