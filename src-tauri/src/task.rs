@@ -2318,6 +2318,15 @@ fn normalize_relative_file_path(
         ));
     }
 
+    if trimmed.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            code,
+            message,
+            Some("文件路径不能包含控制字符。".to_string()),
+            true,
+        ));
+    }
+
     Ok(trimmed.replace('\\', "/"))
 }
 
@@ -2675,6 +2684,22 @@ mod tests {
             "invalid",
         )
         .is_err());
+    }
+
+    #[test]
+    fn rejects_control_characters_in_task_file_paths() {
+        let error = normalize_relative_file_path(
+            "src/main.rs\nnext",
+            "INVALID",
+            "invalid",
+        )
+        .expect_err("task file path with control characters must be rejected");
+
+        match error {
+            NovaError::Command { code, .. } => {
+                assert_eq!(code, "INVALID");
+            }
+        }
     }
 
     #[test]
