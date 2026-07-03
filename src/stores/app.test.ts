@@ -259,6 +259,42 @@ describe("workspaceStore safety warnings", () => {
   });
 });
 
+describe("workspaceStore review state", () => {
+  it("invalidates reviewed files when content digest changes", async () => {
+    const workspace = makeWorkspace();
+    const firstStatus = makeStatus([
+      makeFile({
+        path: "src/main.ts",
+        content_digest: "digest-a",
+      }),
+    ]);
+    const changedStatus = makeStatus([
+      makeFile({
+        path: "src/main.ts",
+        content_digest: "digest-b",
+      }),
+    ]);
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(firstStatus).mockResolvedValueOnce(changedStatus);
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    workspaceStore.markFileReviewed("src/main.ts");
+
+    expect(get(workspaceStore).reviewedFiles).toEqual([
+      expect.objectContaining({
+        path: "src/main.ts",
+        contentDigest: "digest-a",
+      }),
+    ]);
+
+    await workspaceStore.refreshStatus();
+
+    expect(get(workspaceStore).reviewedFiles).toEqual([]);
+  });
+});
+
 function makeWorkspace(workspace: Partial<WorkspaceSummary> = {}): WorkspaceSummary {
   return {
     local_path: "C:/repo/wc",
