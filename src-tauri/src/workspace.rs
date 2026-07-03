@@ -539,6 +539,15 @@ fn normalize_relative_file_path(path: &str) -> Result<String, NovaError> {
         ));
     }
 
+    if trimmed.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "DIFF_PATH_INVALID",
+            "Diff 文件路径无效",
+            Some("文件路径不能包含控制字符。".to_string()),
+            true,
+        ));
+    }
+
     let path = PathBuf::from(trimmed);
     if path.is_absolute() || trimmed.contains("..") {
         return Err(NovaError::command(
@@ -1569,6 +1578,18 @@ mod tests {
         match error {
             NovaError::Command { code, .. } => {
                 assert_eq!(code, "WORKSPACE_PATH_INVALID");
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_relative_file_paths_with_control_characters() {
+        let error = normalize_relative_file_path("src/main.rs\nnext")
+            .expect_err("relative file path with control characters must be rejected");
+
+        match error {
+            NovaError::Command { code, .. } => {
+                assert_eq!(code, "DIFF_PATH_INVALID");
             }
         }
     }
