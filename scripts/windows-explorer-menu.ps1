@@ -10,6 +10,10 @@ if ($Mode -eq "Install" -and [string]::IsNullOrWhiteSpace($NovaSvnExe)) {
   $NovaSvnExe = Join-Path $PSScriptRoot "..\src-tauri\target\release\NovaSVN.exe"
 }
 
+if ($Mode -eq "Install" -and !(Test-Path -LiteralPath $NovaSvnExe -PathType Leaf)) {
+  throw "NovaSVN executable not found: $NovaSvnExe. Build the app first or pass -NovaSvnExe with the installed NovaSVN.exe path."
+}
+
 $actions = @(
   @{ Key = "Open"; Label = "Open in NovaSVN"; Action = "open" },
   @{ Key = "Commit"; Label = "NovaSVN Commit"; Action = "commit" },
