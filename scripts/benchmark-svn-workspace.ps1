@@ -59,6 +59,19 @@ $results += Measure-Step "svn diff first file" {
   & $SvnExe diff (Join-Path $dataDir "file-00000.txt") | Out-Null
 }
 $results += Measure-Step "svn diff working copy" { & $SvnExe diff $wcPath | Out-Null }
+$results += Measure-Step "commit prepare staged files" {
+  $stagedFiles = @()
+  for ($i = 0; $i -lt [Math]::Min($ChangedCount, $FileCount); $i++) {
+    $stagedFiles += Join-Path $dataDir ("file-{0:D5}.txt" -f $i)
+  }
+  $commitArgs = @("commit") + $stagedFiles + @("-m", "benchmark commit prepare")
+  $commitSummary = [pscustomobject]@{
+    file_count = $stagedFiles.Count
+    argv_count = $commitArgs.Count
+    message_length = "benchmark commit prepare".Length
+  }
+  $commitSummary | ConvertTo-Json -Compress | Out-Null
+}
 
 $payload = [pscustomobject]@{
   created_at = (Get-Date).ToString("o")
