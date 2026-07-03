@@ -45,7 +45,6 @@
   export let shadowStatus: ShadowWorkspaceStatus | null = null;
   export let shadowLoading = false;
   export let shadowError: CommandError | null = null;
-  export let workspaceRoot: string | null = null;
   export let externalDiffTool = "";
   export let externalMergeTool = "";
   export let externalDiffToolError: string | null = null;

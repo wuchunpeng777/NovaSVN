@@ -1216,7 +1216,6 @@
         shadowStatus={$workspaceStore.shadowStatus}
         shadowLoading={$workspaceStore.shadowLoading}
         shadowError={$workspaceStore.shadowError}
-        workspaceRoot={$workspaceStore.current?.working_copy_root ?? null}
         externalDiffTool={$appSettingsStore.externalDiffTool}
         externalMergeTool={$appSettingsStore.externalMergeTool}
         externalDiffToolError={$appSettingsStore.validationErrors.externalDiffTool}
