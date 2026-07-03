@@ -1279,7 +1279,19 @@ fn run_shadow_workspace_task(
             return;
         }
     };
-    let executable = shadow::svn_executable(&payload.request);
+    let executable = match shadow::svn_executable(&payload.request) {
+        Ok(executable) => executable,
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 可执行路径无效",
+                Some(error.to_string()),
+            );
+            return;
+        }
+    };
     let exists = shadow_path.join(".svn").exists();
     let mut command = Command::new(&executable);
 
@@ -1382,7 +1394,19 @@ fn run_partial_commit_task(
             return;
         }
     };
-    let executable = shadow::svn_executable(&payload.shadow_request);
+    let executable = match shadow::svn_executable(&payload.shadow_request) {
+        Ok(executable) => executable,
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 可执行路径无效",
+                Some(error.to_string()),
+            );
+            return;
+        }
+    };
 
     if !shadow_path.join(".svn").exists() {
         append_task_log(state, task_id, "影子工作副本不存在，先执行 checkout");
