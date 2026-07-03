@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
+  createRevisionDiffTask: vi.fn(),
   detectSvn: vi.fn(),
   getSvnLog: vi.fn(),
   getTaskWorkspaces: vi.fn(),
@@ -13,6 +14,7 @@ vi.mock("../lib/api", () => ({
 import { get } from "svelte/store";
 
 import {
+  createRevisionDiffTask,
   detectSvn,
   getSvnLog,
   getTaskWorkspaces,
@@ -24,6 +26,7 @@ import {
 import type {
   BranchPoolEntry,
   ChangedFile,
+  RevisionDiffResult,
   SvnLog,
   SvnLogEntry,
   TaskWorkspaceEntry,
@@ -41,6 +44,7 @@ import {
   workspaceStore,
 } from "./app";
 
+const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
 const detectSvnMock = vi.mocked(detectSvn);
 const getSvnLogMock = vi.mocked(getSvnLog);
 const getTaskWorkspacesMock = vi.mocked(getTaskWorkspaces);
@@ -50,6 +54,7 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 const saveTaskWorkspaceMock = vi.mocked(saveTaskWorkspace);
 
 beforeEach(() => {
+  createRevisionDiffTaskMock.mockReset();
   detectSvnMock.mockReset();
   getSvnLogMock.mockReset();
   getTaskWorkspacesMock.mockReset();
@@ -76,6 +81,61 @@ describe("revisionDiffPatchFileName", () => {
 
     expect(name).toBe("novasvn-urls-branches-feature-to-trunk-bad-name-1783036800000.patch");
     expect(name).not.toMatch(/[\\/:*?"<>|]/);
+  });
+
+  it("exports non-truncated revision diff patches and ignores unsafe results", () => {
+    const createObjectURL = vi
+      .spyOn(window.URL, "createObjectURL")
+      .mockReturnValue("blob:novasvn-diff");
+    const revokeObjectURL = vi.spyOn(window.URL, "revokeObjectURL").mockImplementation(() => {});
+    const click = vi.fn();
+    const createElement = vi.spyOn(window.document, "createElement");
+    createElement.mockImplementation(((tagName: string) => {
+      const element = document.createElementNS("http://www.w3.org/1999/xhtml", tagName);
+      if (tagName.toLowerCase() === "a") {
+        Object.defineProperty(element, "click", {
+          configurable: true,
+          value: click,
+        });
+      }
+      return element;
+    }) as typeof document.createElement);
+
+    workspaceStore.applyRevisionDiffResult(
+      makeRevisionDiffResult({
+        diff_text: "Index: src/main.ts\n",
+        target: "branches/feature",
+      }),
+    );
+
+    workspaceStore.exportRevisionDiffPatch();
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:novasvn-diff");
+
+    createObjectURL.mockClear();
+    click.mockClear();
+    workspaceStore.applyRevisionDiffResult(makeRevisionDiffResult({ diff_text: "" }));
+    workspaceStore.exportRevisionDiffPatch();
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(click).not.toHaveBeenCalled();
+
+    workspaceStore.applyRevisionDiffResult(
+      makeRevisionDiffResult({
+        diff_text: "Index: src/large.ts\n",
+        truncated: true,
+      }),
+    );
+    workspaceStore.exportRevisionDiffPatch();
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(click).not.toHaveBeenCalled();
+
+    createElement.mockRestore();
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
   });
 });
 
@@ -753,6 +813,19 @@ function makeSvnLogEntry(entry: Partial<SvnLogEntry> & Pick<SvnLogEntry, "revisi
         copy_from_revision: null,
       },
     ],
+  };
+}
+
+function makeRevisionDiffResult(result: Partial<RevisionDiffResult> = {}): RevisionDiffResult {
+  return {
+    mode: "revisions",
+    target: "C:/repo/wc r1:r2",
+    diff_text: "Index: src/main.ts\n",
+    file_count: 1,
+    line_count: 1,
+    truncated: false,
+    max_bytes: 1024,
+    ...result,
   };
 }
 

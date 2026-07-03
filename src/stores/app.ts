@@ -3021,7 +3021,7 @@ function createWorkspaceStore() {
 
   function exportRevisionDiffPatch() {
     const result = get({ subscribe }).revisionDiffResult;
-    if (!result || result.truncated || typeof window === "undefined") {
+    if (!result || result.truncated || !result.diff_text || typeof window === "undefined") {
       return;
     }
 
