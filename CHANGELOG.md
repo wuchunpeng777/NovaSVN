@@ -22,6 +22,7 @@
 - Windows 安装包：`npm run release:windows`。
 - macOS 安装包：`npm run release:macos`。
 - 版本同步：`npm run version:sync -- --set <version>`。
+- 版本校验：`npm run version:check`。
 
 ### 已知限制
 

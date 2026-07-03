@@ -9,6 +9,7 @@ const tauriConfigPath = path.join(root, "src-tauri", "tauri.conf.json");
 const args = process.argv.slice(2);
 const setIndex = args.indexOf("--set");
 const shouldPrint = args.includes("--print");
+const shouldCheck = args.includes("--check");
 const requestedVersion = setIndex >= 0 ? args[setIndex + 1] : null;
 
 if (setIndex >= 0 && !requestedVersion) {
@@ -24,6 +25,26 @@ const version = requestedVersion ?? packageJson.version;
 
 if (!version) {
   fail("package.json 中缺少 version 字段");
+}
+
+if (shouldCheck) {
+  const cargoToml = fs.readFileSync(cargoPath, "utf8");
+  const cargoVersion = readPackageVersion(cargoToml);
+  const tauriConfig = readJson(tauriConfigPath);
+  const mismatches = [
+    ["src-tauri/Cargo.toml", cargoVersion],
+    ["src-tauri/tauri.conf.json", tauriConfig.version],
+  ].filter(([, current]) => current !== version);
+
+  if (mismatches.length > 0) {
+    for (const [filePath, current] of mismatches) {
+      console.error(`${filePath} 版本 ${current ?? "<missing>"} 与 package.json ${version} 不一致`);
+    }
+    process.exit(1);
+  }
+
+  console.log(`NovaSVN 版本一致：${version}`);
+  process.exit(0);
 }
 
 packageJson.version = version;
@@ -73,6 +94,25 @@ function replacePackageVersion(content, version) {
   }
 
   return lines.join("\n");
+}
+
+function readPackageVersion(content) {
+  let inPackageSection = false;
+
+  for (const line of content.split(/\r?\n/)) {
+    if (/^\[.+\]\s*$/.test(line)) {
+      inPackageSection = line.trim() === "[package]";
+    }
+
+    if (inPackageSection) {
+      const match = line.match(/^version\s*=\s*"([^"]+)"/);
+      if (match) {
+        return match[1];
+      }
+    }
+  }
+
+  return null;
 }
 
 function fail(message) {

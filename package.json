@@ -16,6 +16,7 @@
     "tauri:build": "tauri build",
     "version:sync": "node scripts/sync-version.mjs",
     "version:print": "node scripts/sync-version.mjs --print",
+    "version:check": "node scripts/sync-version.mjs --check",
     "release:windows": "tauri build --bundles nsis",
     "release:macos": "tauri build --bundles dmg"
   },
