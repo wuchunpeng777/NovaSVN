@@ -1,4 +1,5 @@
 use std::{
+    env,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -45,7 +46,9 @@ pub fn launch_external_tool(
     let root = normalize_root(&request.working_copy_root)?;
     let target = normalize_file_path(&root, &request.file_path)?;
 
-    Command::new(tool).arg(&target).spawn().map_err(|error| {
+    let executable = expand_home_path(tool);
+
+    Command::new(&executable).arg(&target).spawn().map_err(|error| {
         NovaError::command(
             "EXTERNAL_TOOL_LAUNCH_FAILED",
             "无法启动外部工具",
@@ -62,9 +65,34 @@ pub fn launch_external_tool(
             ExternalToolKind::Diff => "diff".to_string(),
             ExternalToolKind::Merge => "merge".to_string(),
         },
-        tool_path: tool.to_string(),
+        tool_path: executable.display().to_string(),
         target_path: target.display().to_string(),
     })
+}
+
+fn expand_home_path(value: &str) -> PathBuf {
+    let path = value.trim();
+    if path == "~" || path.starts_with("~/") || path.starts_with("~\\") {
+        if let Some(home) = home_dir() {
+            let relative = path
+                .trim_start_matches('~')
+                .trim_start_matches(['/', '\\']);
+            return home.join(relative);
+        }
+    }
+
+    PathBuf::from(path)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("USERPROFILE")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
 }
 
 fn normalize_root(path: &str) -> Result<PathBuf, NovaError> {
@@ -103,4 +131,20 @@ fn normalize_file_path(root: &Path, file_path: &str) -> Result<PathBuf, NovaErro
     }
 
     Ok(root.join(relative))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keeps_plain_command_names() {
+        assert_eq!(expand_home_path("code"), PathBuf::from("code"));
+    }
+
+    #[test]
+    fn rejects_absolute_or_parent_file_targets() {
+        assert!(normalize_file_path(Path::new("C:\\wc"), "..\\secret.txt").is_err());
+        assert!(normalize_file_path(Path::new("C:\\wc"), "C:\\other\\a.txt").is_err());
+    }
 }
