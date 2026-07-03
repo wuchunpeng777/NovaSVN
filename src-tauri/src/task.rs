@@ -2507,6 +2507,14 @@ fn normalize_revision_diff_payload(
                 "REVISION_DIFF_RIGHT_REQUIRED",
                 "请输入右侧 revision",
             )?;
+            if left_revision == right_revision {
+                return Err(NovaError::command(
+                    "REVISION_DIFF_REVISIONS_SAME",
+                    "左右 revision 不能相同",
+                    Some("比较两个 revision 时需要选择不同的版本号。".to_string()),
+                    true,
+                ));
+            }
 
             Ok(RevisionDiffTaskPayload {
                 mode: RevisionDiffMode::Revisions,
@@ -2977,6 +2985,31 @@ mod tests {
                 assert_eq!(code, "REVISION_DIFF_URLS_SAME");
             }
         }
+    }
+
+    #[test]
+    fn rejects_revision_diff_with_same_revisions() {
+        let queue = TaskQueue::new();
+        let dir = test_temp_dir("revision-diff-same-revision");
+        let error = queue
+            .create_revision_diff_task(CreateRevisionDiffTaskRequest {
+                mode: RevisionDiffMode::Revisions,
+                working_copy_root: Some(dir.display().to_string()),
+                left_revision: Some(" 42 ".to_string()),
+                right_revision: Some("42".to_string()),
+                left_url: None,
+                right_url: None,
+                svn_executable: None,
+            })
+            .expect_err("same revisions must be rejected");
+
+        match error {
+            NovaError::Command { code, .. } => {
+                assert_eq!(code, "REVISION_DIFF_REVISIONS_SAME");
+            }
+        }
+
+        fs::remove_dir_all(dir).ok();
     }
 
     #[test]
