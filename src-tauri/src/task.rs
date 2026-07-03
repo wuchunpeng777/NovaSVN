@@ -2463,6 +2463,14 @@ fn normalize_revision_diff_payload(
         RevisionDiffMode::Urls => {
             let left_url = normalize_repository_url(request.left_url.as_deref().unwrap_or(""))?;
             let right_url = normalize_repository_url(request.right_url.as_deref().unwrap_or(""))?;
+            if left_url == right_url {
+                return Err(NovaError::command(
+                    "REVISION_DIFF_URLS_SAME",
+                    "左右 URL 不能相同",
+                    Some("比较两个分支 URL 时需要选择不同的仓库地址。".to_string()),
+                    true,
+                ));
+            }
 
             Ok(RevisionDiffTaskPayload {
                 mode: RevisionDiffMode::Urls,
@@ -2726,6 +2734,28 @@ mod tests {
         match error {
             NovaError::Command { code, .. } => {
                 assert_eq!(code, "REPOSITORY_COPY_TARGET_SAME_AS_SOURCE");
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_revision_diff_with_same_urls() {
+        let queue = TaskQueue::new();
+        let error = queue
+            .create_revision_diff_task(CreateRevisionDiffTaskRequest {
+                mode: RevisionDiffMode::Urls,
+                working_copy_root: None,
+                left_revision: None,
+                right_revision: None,
+                left_url: Some("https://example.com/svn/branches/feature/".to_string()),
+                right_url: Some(" https://example.com/svn/branches/feature ".to_string()),
+                svn_executable: None,
+            })
+            .expect_err("same revision diff URLs must be rejected");
+
+        match error {
+            NovaError::Command { code, .. } => {
+                assert_eq!(code, "REVISION_DIFF_URLS_SAME");
             }
         }
     }
