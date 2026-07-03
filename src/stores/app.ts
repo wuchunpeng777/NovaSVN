@@ -2927,6 +2927,8 @@ function buildSafetyCheck(
     }
   }
 
+  appendUnityMetaWarnings(files, warnings);
+
   if (stagedFiles.some((file) => !files.some((current) => current.path === file.path))) {
     blockers.push({
       id: "blocker:staged-missing",
@@ -2962,6 +2964,86 @@ function buildSafetyCheck(
       return stagedDigestIds.has(id);
     }),
   };
+}
+
+function appendUnityMetaWarnings(files: ChangedFile[], warnings: SafetyCheckItem[]) {
+  const unityFiles = files.filter((file) => isUnityProjectPath(file.path));
+  if (unityFiles.length === 0) {
+    return;
+  }
+
+  const byPath = new Map(unityFiles.map((file) => [normalizeWorkspacePath(file.path), file]));
+  for (const file of unityFiles) {
+    const normalized = normalizeWorkspacePath(file.path);
+    if (isIgnoredUnityMetaPath(normalized)) {
+      continue;
+    }
+
+    if (normalized.endsWith(".meta")) {
+      const assetPath = normalized.slice(0, -5);
+      const asset = byPath.get(assetPath);
+      if (!asset || asset.status === "missing" || asset.status === "deleted") {
+        warnings.push({
+          id: `warning:unity-meta-orphan:${normalized}:${file.content_digest}`,
+          severity: "warning",
+          title: "Unity meta 缺少资源",
+          detail: `${file.path} 对应资源未出现在当前改动中，请确认资源和 .meta 是否同步。`,
+          filePath: file.path,
+        });
+      }
+      continue;
+    }
+
+    const meta = byPath.get(`${normalized}.meta`);
+    if (!meta) {
+      warnings.push({
+        id: `warning:unity-meta-missing:${normalized}:${file.content_digest}`,
+        severity: "warning",
+        title: "Unity 资源缺少 meta",
+        detail: `${file.path} 没有匹配的 .meta 改动，请确认 .meta 已加入版本控制。`,
+        filePath: file.path,
+      });
+      continue;
+    }
+
+    if (["added", "unversioned"].includes(file.status) && !["added", "unversioned"].includes(meta.status)) {
+      warnings.push({
+        id: `warning:unity-meta-add:${normalized}:${file.content_digest}`,
+        severity: "warning",
+        title: "Unity 新增资源 meta 未同步新增",
+        detail: `${file.path} 是新增资源，但对应 .meta 状态为 ${meta.status}。`,
+        filePath: file.path,
+      });
+    }
+
+    if (["deleted", "missing"].includes(file.status) && !["deleted", "missing"].includes(meta.status)) {
+      warnings.push({
+        id: `warning:unity-meta-delete:${normalized}:${file.content_digest}`,
+        severity: "warning",
+        title: "Unity 删除资源 meta 未同步删除",
+        detail: `${file.path} 是删除资源，但对应 .meta 状态为 ${meta.status}。`,
+        filePath: file.path,
+      });
+    }
+  }
+}
+
+function isUnityProjectPath(path: string) {
+  const normalized = normalizeWorkspacePath(path);
+  return (
+    normalized.startsWith("Assets/") ||
+    normalized === "Assets" ||
+    normalized.startsWith("ProjectSettings/") ||
+    normalized.startsWith("Packages/")
+  );
+}
+
+function isIgnoredUnityMetaPath(path: string) {
+  return path === "Assets" || path === "ProjectSettings" || path === "Packages";
+}
+
+function normalizeWorkspacePath(path: string) {
+  return path.replaceAll("\\", "/").replace(/^\/+/, "");
 }
 
 function reconcileSafetyWarningConfirmations(
