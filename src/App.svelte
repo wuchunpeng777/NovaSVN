@@ -768,7 +768,7 @@
     $taskStore.selectedTask.status === "success"
   ) {
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
-    workspaceStore.completeMergeTask();
+    workspaceStore.completeMergeTask($taskStore.selectedTask.result?.merge_result ?? null);
     if (workingCopyRoot && !$workspaceStore.mergeForm.dryRun) {
       void workspaceStore.refreshStatus(
         $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
@@ -943,6 +943,7 @@
         mergeForm={$workspaceStore.mergeForm}
         mergeRunning={$workspaceStore.pendingMergeTaskId !== null}
         mergeError={$workspaceStore.mergeError}
+        mergeResult={$workspaceStore.mergeResult}
         taskWorkspaces={$taskWorkspaceStore.list}
         taskWorkspaceForm={$taskWorkspaceStore.form}
         activeTaskWorkspaceId={$taskWorkspaceStore.activeTaskId}

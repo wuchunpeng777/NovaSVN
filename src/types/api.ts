@@ -232,6 +232,7 @@ export interface RemoveTaskWorkspaceRequest {
 export interface TaskResult {
   repository_list: RepositoryListResult | null;
   revision_diff: RevisionDiffResult | null;
+  merge_result: MergeResult | null;
 }
 
 export interface RepositoryListResult {
@@ -251,6 +252,15 @@ export interface RevisionDiffResult {
   mode: RevisionDiffMode | string;
   target: string;
   diff_text: string;
+  file_count: number;
+  line_count: number;
+}
+
+export interface MergeResult {
+  dry_run: boolean;
+  source_url: string;
+  revision_range: string;
+  output_text: string;
   file_count: number;
   line_count: number;
 }

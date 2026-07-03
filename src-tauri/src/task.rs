@@ -206,6 +206,7 @@ pub struct CreateMergeTaskRequest {
 pub struct TaskResult {
     pub repository_list: Option<RepositoryListResult>,
     pub revision_diff: Option<RevisionDiffResult>,
+    pub merge_result: Option<MergeResult>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -228,6 +229,16 @@ pub struct RevisionDiffResult {
     pub mode: String,
     pub target: String,
     pub diff_text: String,
+    pub file_count: usize,
+    pub line_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MergeResult {
+    pub dry_run: bool,
+    pub source_url: String,
+    pub revision_range: String,
+    pub output_text: String,
     pub file_count: usize,
     pub line_count: usize,
 }
@@ -1573,6 +1584,7 @@ fn run_repository_list_task(
                         TaskResult {
                             repository_list: Some(result),
                             revision_diff: None,
+                            merge_result: None,
                         },
                     );
                     update_task(
@@ -1761,6 +1773,7 @@ fn run_revision_diff_task(
                 TaskResult {
                     repository_list: None,
                     revision_diff: Some(result),
+                    merge_result: None,
                 },
             );
             update_task(
@@ -1829,6 +1842,24 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
     match command.output() {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
+            let output_text = merge_output_text(&output);
+            let result = MergeResult {
+                dry_run: payload.dry_run,
+                source_url: payload.source_url.clone(),
+                revision_range: merge_revision_label(&payload.start_revision, &payload.end_revision),
+                file_count: count_merge_output_files(&output_text),
+                line_count: output_text.lines().count(),
+                output_text,
+            };
+            set_task_result(
+                state,
+                task_id,
+                TaskResult {
+                    repository_list: None,
+                    revision_diff: None,
+                    merge_result: Some(result),
+                },
+            );
             update_task(
                 state,
                 task_id,
@@ -2411,6 +2442,34 @@ fn merge_revision_arg(start_revision: &Option<String>, end_revision: &Option<Str
     }
 }
 
+fn merge_revision_label(start_revision: &Option<String>, end_revision: &Option<String>) -> String {
+    merge_revision_arg(start_revision, end_revision).unwrap_or_else(|| "默认".to_string())
+}
+
+fn merge_output_text(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (false, false) => format!("{stdout}\n{stderr}"),
+        (false, true) => stdout,
+        (true, false) => stderr,
+        (true, true) => "svn merge 没有输出。".to_string(),
+    }
+}
+
+fn count_merge_output_files(output: &str) -> usize {
+    output
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            matches!(
+                trimmed.chars().next(),
+                Some('A' | 'D' | 'U' | 'C' | 'G' | 'M' | 'R' | 'E')
+            ) && trimmed.chars().nth(1).is_some_and(char::is_whitespace)
+        })
+        .count()
+}
+
 fn revision_diff_mode_label(mode: &RevisionDiffMode) -> &'static str {
     match mode {
         RevisionDiffMode::Revisions => "revisions",
@@ -2460,6 +2519,13 @@ mod tests {
 
         assert_eq!(range, (Some("10".to_string()), Some("12".to_string())));
         assert!(normalize_merge_revision_range(Some("10".to_string()), None).is_err());
+    }
+
+    #[test]
+    fn counts_merge_output_file_lines() {
+        let output = "U    src/a.txt\nA    src/b.txt\n--- Merging r1 through r2 into '.':\n";
+
+        assert_eq!(count_merge_output_files(output), 2);
     }
 
     #[test]

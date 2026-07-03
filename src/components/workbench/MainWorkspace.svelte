@@ -5,6 +5,7 @@
     BranchPool,
     ChangedFile,
     CommandError,
+    MergeResult,
     RepositoryCopyKind,
     RepositoryListResult,
     RevisionDiffMode,
@@ -104,6 +105,7 @@
   };
   export let mergeRunning = false;
   export let mergeError: string | null = null;
+  export let mergeResult: MergeResult | null = null;
   export let taskWorkspaces: TaskWorkspaceList = { entries: [] };
   export let taskWorkspaceForm = {
     name: "",
@@ -1659,6 +1661,17 @@
 
       {#if mergeError}
         <p class="inline-error">{mergeError}</p>
+      {/if}
+
+      {#if mergeResult}
+        <div class="merge-result">
+          <div>
+            <span>{mergeResult.dry_run ? "Dry-run 结果" : "Merge 结果"}</span>
+            <strong>{mergeResult.file_count} 个文件 · {mergeResult.line_count} 行</strong>
+          </div>
+          <small>{mergeResult.source_url} · r{mergeResult.revision_range}</small>
+          <pre>{mergeResult.output_text || "svn merge 没有输出。"}</pre>
+        </div>
       {/if}
     </section>
 

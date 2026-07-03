@@ -1133,6 +1133,59 @@ button {
   min-height: 30px;
 }
 
+.merge-result {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid #d7dde3;
+  border-radius: 6px;
+  background: #f8fafc;
+  padding: 9px;
+}
+
+.merge-result > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.merge-result span {
+  color: #44515f;
+  font-size: 12px;
+}
+
+.merge-result strong {
+  color: #17202a;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.merge-result small {
+  overflow: hidden;
+  color: #637282;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.merge-result pre {
+  overflow: auto;
+  max-height: 180px;
+  margin: 0;
+  border: 1px solid #dfe5eb;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #23313f;
+  padding: 8px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .settings-panel {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

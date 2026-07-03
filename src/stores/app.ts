@@ -51,6 +51,7 @@ import type {
   CommandError,
   FileContentDiff,
   FileDiff,
+  MergeResult,
   MockTaskOutcome,
   ParsedFileDiff,
   RepositoryListResult,
@@ -1245,6 +1246,7 @@ export interface WorkspaceStoreState {
   };
   pendingMergeTaskId: string | null;
   mergeError: string | null;
+  mergeResult: MergeResult | null;
   svnProperties: SvnProperties | null;
   svnPropertiesLoading: boolean;
   svnPropertiesError: CommandError | null;
@@ -1363,6 +1365,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   },
   pendingMergeTaskId: null,
   mergeError: null,
+  mergeResult: null,
   svnProperties: null,
   svnPropertiesLoading: false,
   svnPropertiesError: null,
@@ -2901,14 +2904,16 @@ function createWorkspaceStore() {
       ...state,
       pendingMergeTaskId: taskId,
       mergeError: null,
+      mergeResult: null,
     }));
   }
 
-  function completeMergeTask() {
+  function completeMergeTask(result: MergeResult | null) {
     update((state) => ({
       ...state,
       pendingMergeTaskId: null,
       mergeError: null,
+      mergeResult: result,
     }));
   }
 
