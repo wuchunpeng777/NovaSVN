@@ -875,6 +875,8 @@
         onDetectSvnWithInput={svnStore.detectWithInput}
         onSvnExecutableInput={svnStore.setExecutableInput}
         onRevertFile={(path) => runSvnOperation("revert_file", path)}
+        onLockFile={(path) => runSvnOperation("lock_file", path)}
+        onUnlockFile={(path) => runSvnOperation("unlock_file", path)}
         onMarkFileReviewed={workspaceStore.markFileReviewed}
         onMarkFileUnreviewed={workspaceStore.markFileUnreviewed}
         onToggleHunkSelection={workspaceStore.toggleHunkSelection}

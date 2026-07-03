@@ -47,6 +47,8 @@
   export let onDetectSvnWithInput: () => void;
   export let onSvnExecutableInput: (value: string) => void;
   export let onRevertFile: (path: string) => void;
+  export let onLockFile: (path: string) => void;
+  export let onUnlockFile: (path: string) => void;
   export let onMarkFileReviewed: (path: string) => void;
   export let onMarkFileUnreviewed: (path: string) => void;
   export let onToggleHunkSelection: (filePath: string, hunkId: string) => void;
@@ -141,6 +143,20 @@
         >
           撤销文件
         </button>
+        <button
+          type="button"
+          on:click={() => selectedFile && onLockFile(selectedFile.path)}
+          disabled={!selectedFile}
+        >
+          Lock
+        </button>
+        <button
+          type="button"
+          on:click={() => selectedFile && onUnlockFile(selectedFile.path)}
+          disabled={!selectedFile}
+        >
+          Unlock
+        </button>
       </div>
     </div>
     {#if selectedFile}
@@ -164,6 +180,18 @@
         <div>
           <dt>审查</dt>
           <dd>{selectedFileReviewed ? "已审" : "未审"}</dd>
+        </div>
+        <div>
+          <dt>锁状态</dt>
+          <dd>{selectedFile.lock_state === "none" ? "未锁定" : selectedFile.lock_state}</dd>
+        </div>
+        <div>
+          <dt>持锁人</dt>
+          <dd>{selectedFile.lock_owner ?? "-"}</dd>
+        </div>
+        <div>
+          <dt>锁说明</dt>
+          <dd>{selectedFile.lock_comment ?? "-"}</dd>
         </div>
       </dl>
     {:else}

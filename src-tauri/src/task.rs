@@ -92,6 +92,8 @@ pub enum SvnOperationKind {
     Update,
     Cleanup,
     RevertFile,
+    LockFile,
+    UnlockFile,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -409,6 +411,16 @@ impl TaskQueue {
                 request.file_path.as_deref().unwrap_or_default(),
                 "REVERT_FILE_PATH_INVALID",
                 "Revert 文件路径无效",
+            )?),
+            SvnOperationKind::LockFile => Some(normalize_relative_file_path(
+                request.file_path.as_deref().unwrap_or_default(),
+                "LOCK_FILE_PATH_INVALID",
+                "Lock 文件路径无效",
+            )?),
+            SvnOperationKind::UnlockFile => Some(normalize_relative_file_path(
+                request.file_path.as_deref().unwrap_or_default(),
+                "UNLOCK_FILE_PATH_INVALID",
+                "Unlock 文件路径无效",
             )?),
             SvnOperationKind::Update | SvnOperationKind::Cleanup => None,
         };
@@ -1048,6 +1060,34 @@ fn run_svn_operation_task(
             };
             command.arg("revert").arg(root.join(file_path));
             append_task_log(state, task_id, &format!("执行 svn revert：{file_path}"));
+        }
+        SvnOperationKind::LockFile => {
+            let Some(file_path) = payload.file_path.as_deref() else {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "Lock 参数缺失",
+                    Some("缺少要 lock 的文件路径。".to_string()),
+                );
+                return;
+            };
+            command.arg("lock").arg(root.join(file_path));
+            append_task_log(state, task_id, &format!("执行 svn lock：{file_path}"));
+        }
+        SvnOperationKind::UnlockFile => {
+            let Some(file_path) = payload.file_path.as_deref() else {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "Unlock 参数缺失",
+                    Some("缺少要 unlock 的文件路径。".to_string()),
+                );
+                return;
+            };
+            command.arg("unlock").arg(root.join(file_path));
+            append_task_log(state, task_id, &format!("执行 svn unlock：{file_path}"));
         }
     }
     command.current_dir(&root);
@@ -1967,6 +2007,12 @@ fn operation_title(kind: &SvnOperationKind, file_path: Option<&str>) -> String {
         SvnOperationKind::Cleanup => "清理工作副本".to_string(),
         SvnOperationKind::RevertFile => {
             format!("撤销文件 {}", file_path.unwrap_or(""))
+        }
+        SvnOperationKind::LockFile => {
+            format!("锁定文件 {}", file_path.unwrap_or(""))
+        }
+        SvnOperationKind::UnlockFile => {
+            format!("解锁文件 {}", file_path.unwrap_or(""))
         }
     }
 }

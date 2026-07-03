@@ -64,6 +64,9 @@ pub struct ChangedFile {
     pub property_status: Option<String>,
     pub property_changed: bool,
     pub abnormal: bool,
+    pub lock_state: String,
+    pub lock_owner: Option<String>,
+    pub lock_comment: Option<String>,
     pub content_digest: String,
 }
 
@@ -220,7 +223,10 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
     }
 
     let xml = String::from_utf8_lossy(&output.stdout);
-    parse_svn_log_xml(&xml, &display_status_path(&target.display().to_string(), &root))
+    parse_svn_log_xml(
+        &xml,
+        &display_status_path(&target.display().to_string(), &root),
+    )
 }
 
 pub fn get_file_diff(request: GetFileDiffRequest) -> Result<FileDiff, NovaError> {
@@ -611,6 +617,7 @@ fn parse_svn_status_xml(
             .as_deref()
             .map(|value| value != "none" && value != "normal")
             .unwrap_or(false);
+        let (lock_state, lock_owner, lock_comment) = parse_lock_info(entry, wc_status);
 
         let display_path = display_status_path(raw_path, working_copy_root);
         let target_path = status_target_path(raw_path, working_copy_root);
@@ -621,6 +628,9 @@ fn parse_svn_status_xml(
             property_status: props,
             property_changed,
             abnormal: is_abnormal_status(&item),
+            lock_state,
+            lock_owner,
+            lock_comment,
             content_digest: changed_file_digest(&target_path, &item),
         });
     }
@@ -668,6 +678,32 @@ fn is_abnormal_status(status: &str) -> bool {
     matches!(
         status,
         "missing" | "conflicted" | "obstructed" | "incomplete"
+    )
+}
+
+fn parse_lock_info<'a, 'input>(
+    entry: roxmltree::Node<'a, 'input>,
+    wc_status: roxmltree::Node<'a, 'input>,
+) -> (String, Option<String>, Option<String>) {
+    let repos_status = entry
+        .children()
+        .find(|node| node.has_tag_name("repos-status"));
+    let lock_node = wc_status
+        .children()
+        .find(|node| node.has_tag_name("lock"))
+        .or_else(|| {
+            repos_status.and_then(|node| node.children().find(|child| child.has_tag_name("lock")))
+        });
+    let lock_state = wc_status
+        .attribute("wc-locked")
+        .or_else(|| repos_status.and_then(|node| node.attribute("item")))
+        .unwrap_or("none")
+        .to_string();
+
+    (
+        lock_state,
+        lock_node.and_then(|node| optional_text_child(node, "owner")),
+        lock_node.and_then(|node| optional_text_child(node, "comment")),
     )
 }
 
@@ -823,7 +859,10 @@ fn parse_svn_log_xml(xml: &str, target: &str) -> Result<SvnLog, NovaError> {
     })?;
 
     let mut entries = Vec::new();
-    for logentry in document.descendants().filter(|node| node.has_tag_name("logentry")) {
+    for logentry in document
+        .descendants()
+        .filter(|node| node.has_tag_name("logentry"))
+    {
         let revision = logentry.attribute("revision").unwrap_or("").to_string();
         let author = optional_text_child(logentry, "author").unwrap_or_default();
         let date = optional_text_child(logentry, "date").unwrap_or_default();
@@ -951,7 +990,11 @@ fn svn_status_error_detail(executable: &str, path: &Path, output: &std::process:
     )
 }
 
-fn command_error_detail(executable: &str, subcommand: &str, output: &std::process::Output) -> String {
+fn command_error_detail(
+    executable: &str,
+    subcommand: &str,
+    output: &std::process::Output,
+) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
 

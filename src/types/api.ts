@@ -61,7 +61,12 @@ export interface CreateCommitTaskRequest {
   svn_executable?: string;
 }
 
-export type SvnOperationKind = "update" | "cleanup" | "revert_file";
+export type SvnOperationKind =
+  | "update"
+  | "cleanup"
+  | "revert_file"
+  | "lock_file"
+  | "unlock_file";
 
 export interface CreateSvnOperationTaskRequest {
   working_copy_root: string;
@@ -266,6 +271,9 @@ export interface ChangedFile {
   property_status: string | null;
   property_changed: boolean;
   abnormal: boolean;
+  lock_state: string;
+  lock_owner: string | null;
+  lock_comment: string | null;
   content_digest: string;
 }
 
