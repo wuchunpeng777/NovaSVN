@@ -2984,7 +2984,7 @@ function createWorkspaceStore() {
     const url = window.URL.createObjectURL(blob);
     const anchor = window.document.createElement("a");
     anchor.href = url;
-    anchor.download = `novasvn-${Date.now()}.patch`;
+    anchor.download = revisionDiffPatchFileName(result);
     anchor.click();
     window.URL.revokeObjectURL(url);
   }
@@ -3123,6 +3123,23 @@ function createWorkspaceStore() {
 
 export const workspaceStore = createWorkspaceStore();
 export const appSettingsStore = createAppSettingsStore();
+
+export function revisionDiffPatchFileName(result: Pick<RevisionDiffResult, "mode" | "target">) {
+  const mode = sanitizePatchFileNamePart(String(result.mode || "revision-diff"));
+  const target = sanitizePatchFileNamePart(result.target || "target");
+  return `novasvn-${mode}-${target}-${Date.now()}.patch`;
+}
+
+function sanitizePatchFileNamePart(value: string) {
+  const normalized = value
+    .trim()
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  return (normalized || "diff").slice(0, 80);
+}
 
 function emptyRepositoryLayoutTasks() {
   return {
