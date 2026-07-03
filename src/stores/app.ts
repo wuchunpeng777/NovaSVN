@@ -3160,6 +3160,15 @@ export function revisionDiffPatchFileName(result: Pick<RevisionDiffResult, "mode
   return `novasvn-${mode}-${target}-${Date.now()}.patch`;
 }
 
+export function isSameRepositoryUrl(left: string | null | undefined, right: string | null | undefined) {
+  const normalize = (value: string | null | undefined) =>
+    (value ?? "").trim().replace(/\/+$/, "");
+
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
+  return normalizedLeft !== "" && normalizedLeft === normalizedRight;
+}
+
 function sanitizePatchFileNamePart(value: string) {
   const normalized = value
     .trim()

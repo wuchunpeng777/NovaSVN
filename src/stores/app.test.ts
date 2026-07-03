@@ -5,7 +5,7 @@ vi.mock("../lib/api", () => ({
 }));
 
 import { detectSvn } from "../lib/api";
-import { revisionDiffPatchFileName, svnStore } from "./app";
+import { isSameRepositoryUrl, revisionDiffPatchFileName, svnStore } from "./app";
 
 const detectSvnMock = vi.mocked(detectSvn);
 
@@ -51,5 +51,23 @@ describe("svnStore", () => {
     });
     expect(detectSvnMock).toHaveBeenNthCalledWith(2);
     expect(detection?.resolved_path).toBe("C:\\Tools\\svn.exe");
+  });
+});
+
+describe("isSameRepositoryUrl", () => {
+  it("normalizes whitespace and trailing slashes", () => {
+    expect(
+      isSameRepositoryUrl(
+        " https://example.com/svn/trunk/ ",
+        "https://example.com/svn/trunk",
+      ),
+    ).toBe(true);
+    expect(
+      isSameRepositoryUrl(
+        "https://example.com/svn/branches/feature",
+        "https://example.com/svn/trunk",
+      ),
+    ).toBe(false);
+    expect(isSameRepositoryUrl("", "https://example.com/svn/trunk")).toBe(false);
   });
 });

@@ -12,6 +12,7 @@
     appSettingsStore,
     currentView,
     setCurrentView,
+    isSameRepositoryUrl,
     svnStore,
     taskStore,
     taskWorkspaceStore,
@@ -629,6 +630,10 @@
     const form = $workspaceStore.mergeForm;
     if (!form.sourceUrl.trim()) {
       workspaceStore.failMergeTask("请输入 merge 源 URL");
+      return;
+    }
+    if (isSameRepositoryUrl(form.sourceUrl, $workspaceStore.current.repository_url)) {
+      workspaceStore.failMergeTask("Merge 源 URL 不能和当前工作副本 URL 相同");
       return;
     }
 
