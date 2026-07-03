@@ -24,6 +24,8 @@ import {
 import type {
   BranchPoolEntry,
   ChangedFile,
+  SvnLog,
+  SvnLogEntry,
   TaskWorkspaceEntry,
   TaskWorkspaceList,
   WorkingCopyStatus,
@@ -60,6 +62,7 @@ beforeEach(() => {
   svnStore.setExecutableInput("");
   workspaceStore.clearWorkspaceDraft();
   workspaceStore.setCommitMessage("");
+  workspaceStore.setSvnLogFileOnly(false);
 });
 
 describe("revisionDiffPatchFileName", () => {
@@ -518,6 +521,37 @@ describe("workspaceStore svn log", () => {
       recoverable: true,
     });
   });
+
+  it("merges additional log pages without duplicating revisions", async () => {
+    const workspace = makeWorkspace();
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(makeStatus([]));
+    getSvnLogMock
+      .mockResolvedValueOnce(makeSvnLog([
+        makeSvnLogEntry({ revision: "12", message: "first page" }),
+        makeSvnLogEntry({ revision: "11", message: "already loaded" }),
+      ], { has_more: true, next_start_revision: "11" }))
+      .mockResolvedValueOnce(makeSvnLog([
+        makeSvnLogEntry({ revision: "11", message: "duplicate" }),
+        makeSvnLogEntry({ revision: "10", message: "next page" }),
+      ], { has_more: false, next_start_revision: null }));
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    await workspaceStore.refreshSvnLog();
+    await workspaceStore.loadMoreSvnLog();
+
+    expect(getSvnLogMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      start_revision: "11",
+    }));
+    expect(get(workspaceStore).svnLog?.entries.map((entry) => entry.revision)).toEqual([
+      "12",
+      "11",
+      "10",
+    ]);
+    expect(get(workspaceStore).svnLog?.has_more).toBe(false);
+  });
 });
 
 describe("taskWorkspaceStore drafts", () => {
@@ -688,6 +722,37 @@ function makeTaskWorkspace(entry: Partial<TaskWorkspaceEntry> = {}): TaskWorkspa
 function makeTaskWorkspaceList(entries: TaskWorkspaceEntry[]): TaskWorkspaceList {
   return {
     entries,
+  };
+}
+
+function makeSvnLog(
+  entries: SvnLogEntry[],
+  log: Partial<SvnLog> = {},
+): SvnLog {
+  return {
+    target: "C:/repo/wc",
+    entries,
+    has_more: false,
+    next_start_revision: null,
+    ...log,
+  };
+}
+
+function makeSvnLogEntry(entry: Partial<SvnLogEntry> & Pick<SvnLogEntry, "revision">): SvnLogEntry {
+  return {
+    revision: entry.revision,
+    author: entry.author ?? "dev",
+    date: entry.date ?? "2026-07-03T00:00:00Z",
+    message: entry.message ?? "",
+    changed_paths: entry.changed_paths ?? [
+      {
+        path: "/trunk/src/main.ts",
+        action: "M",
+        kind: "file",
+        copy_from_path: null,
+        copy_from_revision: null,
+      },
+    ],
   };
 }
 
