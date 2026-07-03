@@ -667,10 +667,11 @@ impl TaskQueue {
             ));
         }
 
-        let revision = request
-            .revision
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
+        let revision = normalize_optional_revision_value(
+            request.revision.as_deref(),
+            "REPOSITORY_COPY_REVISION_INVALID",
+            "创建分支或标签的 revision 无效",
+        )?;
         let svn_executable = request
             .svn_executable
             .map(|value| value.trim().to_string())
@@ -714,10 +715,11 @@ impl TaskQueue {
     ) -> Result<Task, NovaError> {
         let branch_url = normalize_repository_url(&request.branch_url)?;
         let local_path = normalize_checkout_path(&request.local_path)?;
-        let revision = request
-            .revision
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
+        let revision = normalize_optional_revision_value(
+            request.revision.as_deref(),
+            "CHECKOUT_REVISION_INVALID",
+            "分支 checkout revision 无效",
+        )?;
         let svn_executable = request
             .svn_executable
             .map(|value| value.trim().to_string())
@@ -2444,6 +2446,27 @@ fn normalize_revision_value(
     Ok(value.to_string())
 }
 
+fn normalize_optional_revision_value(
+    revision: Option<&str>,
+    code: &'static str,
+    message: &'static str,
+) -> Result<Option<String>, NovaError> {
+    let Some(value) = revision.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+
+    if value.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            code,
+            message,
+            Some("Revision 不能包含控制字符。".to_string()),
+            true,
+        ));
+    }
+
+    Ok(Some(value.to_string()))
+}
+
 fn normalize_merge_revision_range(
     start_revision: Option<String>,
     end_revision: Option<String>,
@@ -2585,6 +2608,19 @@ mod tests {
         assert!(normalize_checkout_path("~/NovaSVN/feature").is_ok());
         assert!(normalize_checkout_path("relative\\feature").is_err());
         assert!(normalize_checkout_path("C:\\wc\nfeature").is_err());
+    }
+
+    #[test]
+    fn validates_optional_revision_values() {
+        assert_eq!(
+            normalize_optional_revision_value(Some(" 42 "), "INVALID", "invalid").unwrap(),
+            Some("42".to_string())
+        );
+        assert_eq!(
+            normalize_optional_revision_value(Some(" "), "INVALID", "invalid").unwrap(),
+            None
+        );
+        assert!(normalize_optional_revision_value(Some("42\n43"), "INVALID", "invalid").is_err());
     }
 
     #[test]
