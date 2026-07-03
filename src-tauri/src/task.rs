@@ -823,6 +823,16 @@ impl TaskQueue {
         let (start_revision, end_revision) =
             normalize_merge_revision_range(request.start_revision, request.end_revision)?;
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        if !request.dry_run
+            && merge_workspace_has_local_changes(&svn_executable, &working_copy_root)?
+        {
+            return Err(NovaError::command(
+                "SVN_MERGE_LOCAL_CHANGES",
+                "当前工作副本有本地改动",
+                Some("执行真实 merge 前请先提交、暂存外处理或清理当前工作副本改动；dry-run 仍可用于预览预计变更。".to_string()),
+                true,
+            ));
+        }
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
         let task = Task {
@@ -2190,6 +2200,38 @@ fn normalize_svn_executable(executable: Option<&str>) -> Result<String, NovaErro
 }
 
 fn workspace_has_local_changes(executable: &str, root: &Path) -> Result<bool, NovaError> {
+    workspace_has_local_changes_with_error(
+        executable,
+        root,
+        "SVN_SWITCH_STATUS_FAILED",
+        "SVN_SWITCH_STATUS_XML_PARSE_FAILED",
+    )
+}
+
+fn merge_workspace_has_local_changes(executable: &str, root: &Path) -> Result<bool, NovaError> {
+    workspace_has_local_changes_with_error(
+        executable,
+        root,
+        "SVN_MERGE_STATUS_FAILED",
+        "SVN_MERGE_STATUS_XML_PARSE_FAILED",
+    )
+}
+
+fn workspace_has_local_changes_with_error(
+    executable: &str,
+    root: &Path,
+    status_error_code: &'static str,
+    parse_error_code: &'static str,
+) -> Result<bool, NovaError> {
+    let xml = svn_status_xml_for_guard(executable, root, status_error_code)?;
+    status_xml_has_entries_with_error(&xml, parse_error_code)
+}
+
+fn svn_status_xml_for_guard(
+    executable: &str,
+    root: &Path,
+    status_error_code: &'static str,
+) -> Result<String, NovaError> {
     let output = Command::new(executable)
         .args(["status", "--xml"])
         .arg(root)
@@ -2197,7 +2239,7 @@ fn workspace_has_local_changes(executable: &str, root: &Path) -> Result<bool, No
         .output()
         .map_err(|error| {
             NovaError::command(
-                "SVN_SWITCH_STATUS_FAILED",
+                status_error_code,
                 "无法检查工作副本本地改动",
                 Some(format!(
                     "执行 `{executable} status --xml {}` 失败：{error}",
@@ -2209,20 +2251,28 @@ fn workspace_has_local_changes(executable: &str, root: &Path) -> Result<bool, No
 
     if !output.status.success() {
         return Err(NovaError::command(
-            "SVN_SWITCH_STATUS_FAILED",
+            status_error_code,
             "无法检查工作副本本地改动",
             Some(command_error_detail(executable, &output)),
             true,
         ));
     }
 
-    status_xml_has_entries(&String::from_utf8_lossy(&output.stdout))
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+#[cfg(test)]
 fn status_xml_has_entries(xml: &str) -> Result<bool, NovaError> {
+    status_xml_has_entries_with_error(xml, "SVN_SWITCH_STATUS_XML_PARSE_FAILED")
+}
+
+fn status_xml_has_entries_with_error(
+    xml: &str,
+    parse_error_code: &'static str,
+) -> Result<bool, NovaError> {
     let document = Document::parse(xml).map_err(|error| {
         NovaError::command(
-            "SVN_SWITCH_STATUS_XML_PARSE_FAILED",
+            parse_error_code,
             "解析工作副本本地改动状态失败",
             Some(format!("svn status --xml 返回了无法解析的 XML：{error}")),
             true,
@@ -2638,6 +2688,44 @@ fn count_diff_files(diff_text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(windows))]
+    use std::os::unix::fs::PermissionsExt;
+    use std::{fs, io::Write};
+
+    fn test_temp_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("novasvn-task-test-{name}-{}", timestamp_millis()));
+        fs::create_dir_all(&dir).expect("create temp test dir");
+        dir
+    }
+
+    #[cfg(windows)]
+    fn write_svn_status_stub(dir: &Path, status_xml: &str) -> PathBuf {
+        let path = dir.join("svn-status-stub.cmd");
+        let escaped_xml = status_xml
+            .replace('^', "^^")
+            .replace('&', "^&")
+            .replace('<', "^<")
+            .replace('>', "^>")
+            .replace('|', "^|");
+        let mut file = fs::File::create(&path).expect("create svn status stub");
+        writeln!(file, "@echo off").expect("write stub");
+        writeln!(file, "echo {escaped_xml}").expect("write stub");
+        path
+    }
+
+    #[cfg(not(windows))]
+    fn write_svn_status_stub(dir: &Path, status_xml: &str) -> PathBuf {
+        let path = dir.join("svn-status-stub.sh");
+        let mut file = fs::File::create(&path).expect("create svn status stub");
+        writeln!(file, "#!/bin/sh").expect("write stub");
+        writeln!(file, "printf '%s\\n' '{}'", status_xml).expect("write stub");
+        drop(file);
+        let mut permissions = fs::metadata(&path).expect("stub metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("make stub executable");
+        path
+    }
 
     #[test]
     fn normalizes_relative_commit_files() {
@@ -2799,6 +2887,60 @@ mod tests {
         let output = "U    src/a.txt\nA    src/b.txt\n--- Merging r1 through r2 into '.':\n";
 
         assert_eq!(count_merge_output_files(output), 2);
+    }
+
+    #[test]
+    fn blocks_non_dry_run_merge_when_workspace_has_changes() {
+        let queue = TaskQueue::new();
+        let dir = test_temp_dir("merge-guard");
+        let svn = write_svn_status_stub(
+            &dir,
+            r#"<status><target path="wc"><entry path="a.txt"><wc-status item="modified" /></entry></target></status>"#,
+        );
+
+        let error = queue
+            .create_merge_task(CreateMergeTaskRequest {
+                working_copy_root: dir.display().to_string(),
+                source_url: "https://example.com/svn/branches/feature".to_string(),
+                start_revision: Some("10".to_string()),
+                end_revision: Some("12".to_string()),
+                dry_run: false,
+                svn_executable: Some(svn.display().to_string()),
+            })
+            .expect_err("non dry-run merge must be blocked for dirty workspace");
+
+        match error {
+            NovaError::Command { code, .. } => {
+                assert_eq!(code, "SVN_MERGE_LOCAL_CHANGES");
+            }
+        }
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn allows_dry_run_merge_when_workspace_has_changes() {
+        let queue = TaskQueue::new();
+        let dir = test_temp_dir("merge-dry-run");
+        let svn = write_svn_status_stub(
+            &dir,
+            r#"<status><target path="wc"><entry path="a.txt"><wc-status item="modified" /></entry></target></status>"#,
+        );
+
+        let task = queue
+            .create_merge_task(CreateMergeTaskRequest {
+                working_copy_root: dir.display().to_string(),
+                source_url: "https://example.com/svn/branches/feature".to_string(),
+                start_revision: Some("10".to_string()),
+                end_revision: Some("12".to_string()),
+                dry_run: true,
+                svn_executable: Some(svn.display().to_string()),
+            })
+            .expect("dry-run merge should not require a clean workspace");
+
+        assert!(matches!(task.payload, TaskPayload::Merge(payload) if payload.dry_run));
+
+        fs::remove_dir_all(dir).ok();
     }
 
     #[test]
