@@ -94,6 +94,9 @@ pub enum SvnOperationKind {
     RevertFile,
     LockFile,
     UnlockFile,
+    ResolveWorking,
+    ResolveMineFull,
+    ResolveTheirsFull,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -421,6 +424,13 @@ impl TaskQueue {
                 request.file_path.as_deref().unwrap_or_default(),
                 "UNLOCK_FILE_PATH_INVALID",
                 "Unlock 文件路径无效",
+            )?),
+            SvnOperationKind::ResolveWorking
+            | SvnOperationKind::ResolveMineFull
+            | SvnOperationKind::ResolveTheirsFull => Some(normalize_relative_file_path(
+                request.file_path.as_deref().unwrap_or_default(),
+                "RESOLVE_FILE_PATH_INVALID",
+                "Resolve 文件路径无效",
             )?),
             SvnOperationKind::Update | SvnOperationKind::Cleanup => None,
         };
@@ -1088,6 +1098,36 @@ fn run_svn_operation_task(
             };
             command.arg("unlock").arg(root.join(file_path));
             append_task_log(state, task_id, &format!("执行 svn unlock：{file_path}"));
+        }
+        SvnOperationKind::ResolveWorking
+        | SvnOperationKind::ResolveMineFull
+        | SvnOperationKind::ResolveTheirsFull => {
+            let Some(file_path) = payload.file_path.as_deref() else {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "Resolve 参数缺失",
+                    Some("缺少要 resolve 的文件路径。".to_string()),
+                );
+                return;
+            };
+            let accept = match payload.kind {
+                SvnOperationKind::ResolveWorking => "working",
+                SvnOperationKind::ResolveMineFull => "mine-full",
+                SvnOperationKind::ResolveTheirsFull => "theirs-full",
+                _ => unreachable!("resolve 分支已限定"),
+            };
+            command
+                .arg("resolve")
+                .arg("--accept")
+                .arg(accept)
+                .arg(root.join(file_path));
+            append_task_log(
+                state,
+                task_id,
+                &format!("执行 svn resolve --accept {accept}：{file_path}"),
+            );
         }
     }
     command.current_dir(&root);
@@ -2013,6 +2053,15 @@ fn operation_title(kind: &SvnOperationKind, file_path: Option<&str>) -> String {
         }
         SvnOperationKind::UnlockFile => {
             format!("解锁文件 {}", file_path.unwrap_or(""))
+        }
+        SvnOperationKind::ResolveWorking => {
+            format!("标记已解决 {}", file_path.unwrap_or(""))
+        }
+        SvnOperationKind::ResolveMineFull => {
+            format!("使用 mine 解决 {}", file_path.unwrap_or(""))
+        }
+        SvnOperationKind::ResolveTheirsFull => {
+            format!("使用 theirs 解决 {}", file_path.unwrap_or(""))
         }
     }
 }

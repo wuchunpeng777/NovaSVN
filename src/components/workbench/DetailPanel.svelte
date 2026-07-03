@@ -43,12 +43,16 @@
   export let shadowStatus: ShadowWorkspaceStatus | null = null;
   export let shadowLoading = false;
   export let shadowError: CommandError | null = null;
+  export let workspaceRoot: string | null = null;
   export let onDetectSvn: () => void;
   export let onDetectSvnWithInput: () => void;
   export let onSvnExecutableInput: (value: string) => void;
   export let onRevertFile: (path: string) => void;
   export let onLockFile: (path: string) => void;
   export let onUnlockFile: (path: string) => void;
+  export let onResolveWorking: (path: string) => void;
+  export let onResolveMineFull: (path: string) => void;
+  export let onResolveTheirsFull: (path: string) => void;
   export let onMarkFileReviewed: (path: string) => void;
   export let onMarkFileUnreviewed: (path: string) => void;
   export let onToggleHunkSelection: (filePath: string, hunkId: string) => void;
@@ -59,6 +63,11 @@
 
   let inlineDiff = false;
   let showWhitespace = false;
+
+  $: selectedFileUrl =
+    selectedFile && workspaceRoot
+      ? `file:///${workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "")}/${selectedFile.path.replaceAll("\\", "/")}`
+      : null;
 </script>
 
 <aside class="detail-panel" aria-label="详情">
@@ -157,6 +166,13 @@
         >
           Unlock
         </button>
+        <button
+          type="button"
+          on:click={() => selectedFileUrl && window.open(selectedFileUrl)}
+          disabled={!selectedFileUrl}
+        >
+          打开
+        </button>
       </div>
     </div>
     {#if selectedFile}
@@ -193,7 +209,24 @@
           <dt>锁说明</dt>
           <dd>{selectedFile.lock_comment ?? "-"}</dd>
         </div>
+        <div>
+          <dt>冲突</dt>
+          <dd>{selectedFile.conflict_kind ?? (selectedFile.status === "conflicted" ? "text" : "-")}</dd>
+        </div>
       </dl>
+      {#if selectedFile.status === "conflicted" || selectedFile.conflict_kind}
+        <div class="conflict-actions">
+          <button type="button" on:click={() => onResolveWorking(selectedFile.path)}>
+            标记已解决
+          </button>
+          <button type="button" on:click={() => onResolveMineFull(selectedFile.path)}>
+            使用 Mine
+          </button>
+          <button type="button" on:click={() => onResolveTheirsFull(selectedFile.path)}>
+            使用 Theirs
+          </button>
+        </div>
+      {/if}
     {:else}
       <p>选择一个改动文件后显示详情。</p>
     {/if}

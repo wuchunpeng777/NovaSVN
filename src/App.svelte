@@ -16,7 +16,7 @@
     taskWorkspaceStore,
     workspaceStore,
   } from "./stores/app";
-  import type { ChangedFile, CommandError, HealthPayload } from "./types/api";
+  import type { ChangedFile, CommandError, HealthPayload, SvnOperationKind } from "./types/api";
   import type { SidebarFilterStats } from "./types/app";
 
   let backendMessage = "等待连接后端";
@@ -117,13 +117,20 @@
     workspaceStore.markPartialCommitTask(task.task_id);
   }
 
-  async function runSvnOperation(kind: "update" | "cleanup" | "revert_file", filePath?: string) {
+  async function runSvnOperation(kind: SvnOperationKind, filePath?: string) {
     if (!$workspaceStore.current) {
       return;
     }
 
     if (kind === "revert_file") {
       const confirmed = window.confirm(`确定要撤销文件改动吗？\n${filePath ?? ""}`);
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    if (kind.startsWith("resolve_")) {
+      const confirmed = window.confirm(`确定要标记或选择冲突解决结果吗？\n${filePath ?? ""}`);
       if (!confirmed) {
         return;
       }
@@ -871,12 +878,16 @@
         shadowStatus={$workspaceStore.shadowStatus}
         shadowLoading={$workspaceStore.shadowLoading}
         shadowError={$workspaceStore.shadowError}
+        workspaceRoot={$workspaceStore.current?.working_copy_root ?? null}
         onDetectSvn={svnStore.detect}
         onDetectSvnWithInput={svnStore.detectWithInput}
         onSvnExecutableInput={svnStore.setExecutableInput}
         onRevertFile={(path) => runSvnOperation("revert_file", path)}
         onLockFile={(path) => runSvnOperation("lock_file", path)}
         onUnlockFile={(path) => runSvnOperation("unlock_file", path)}
+        onResolveWorking={(path) => runSvnOperation("resolve_working", path)}
+        onResolveMineFull={(path) => runSvnOperation("resolve_mine_full", path)}
+        onResolveTheirsFull={(path) => runSvnOperation("resolve_theirs_full", path)}
         onMarkFileReviewed={workspaceStore.markFileReviewed}
         onMarkFileUnreviewed={workspaceStore.markFileUnreviewed}
         onToggleHunkSelection={workspaceStore.toggleHunkSelection}

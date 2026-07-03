@@ -66,7 +66,10 @@ export type SvnOperationKind =
   | "cleanup"
   | "revert_file"
   | "lock_file"
-  | "unlock_file";
+  | "unlock_file"
+  | "resolve_working"
+  | "resolve_mine_full"
+  | "resolve_theirs_full";
 
 export interface CreateSvnOperationTaskRequest {
   working_copy_root: string;
@@ -274,6 +277,7 @@ export interface ChangedFile {
   lock_state: string;
   lock_owner: string | null;
   lock_comment: string | null;
+  conflict_kind: string | null;
   content_digest: string;
 }
 

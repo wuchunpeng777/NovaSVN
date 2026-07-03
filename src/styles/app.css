@@ -1572,6 +1572,17 @@ button {
   gap: 6px;
 }
 
+.conflict-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.conflict-actions button {
+  min-width: 0;
+}
+
 .diff-actions button.active {
   border-color: #5ba9a5;
   background: #eef8f7;

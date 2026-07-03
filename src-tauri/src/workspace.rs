@@ -67,6 +67,7 @@ pub struct ChangedFile {
     pub lock_state: String,
     pub lock_owner: Option<String>,
     pub lock_comment: Option<String>,
+    pub conflict_kind: Option<String>,
     pub content_digest: String,
 }
 
@@ -618,6 +619,7 @@ fn parse_svn_status_xml(
             .map(|value| value != "none" && value != "normal")
             .unwrap_or(false);
         let (lock_state, lock_owner, lock_comment) = parse_lock_info(entry, wc_status);
+        let conflict_kind = parse_conflict_kind(entry, wc_status, &item, props.as_deref());
 
         let display_path = display_status_path(raw_path, working_copy_root);
         let target_path = status_target_path(raw_path, working_copy_root);
@@ -631,6 +633,7 @@ fn parse_svn_status_xml(
             lock_state,
             lock_owner,
             lock_comment,
+            conflict_kind,
             content_digest: changed_file_digest(&target_path, &item),
         });
     }
@@ -679,6 +682,31 @@ fn is_abnormal_status(status: &str) -> bool {
         status,
         "missing" | "conflicted" | "obstructed" | "incomplete"
     )
+}
+
+fn parse_conflict_kind<'a, 'input>(
+    entry: roxmltree::Node<'a, 'input>,
+    wc_status: roxmltree::Node<'a, 'input>,
+    item: &str,
+    props: Option<&str>,
+) -> Option<String> {
+    if let Some(tree_conflict) = entry.descendants().find(|node| node.has_tag_name("tree-conflict"))
+    {
+        return tree_conflict
+            .attribute("operation")
+            .map(|operation| format!("tree:{operation}"))
+            .or_else(|| Some("tree".to_string()));
+    }
+
+    if item == "conflicted" {
+        return Some("text".to_string());
+    }
+
+    if props == Some("conflicted") || wc_status.attribute("props") == Some("conflicted") {
+        return Some("property".to_string());
+    }
+
+    None
 }
 
 fn parse_lock_info<'a, 'input>(
