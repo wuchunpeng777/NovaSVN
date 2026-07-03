@@ -416,20 +416,24 @@
     setCurrentView("changes");
   }
 
-  async function removeBranchPoolEntry(entryId: string) {
+  async function removeBranchPoolEntry(entryId: string, deleteLocalCopy = false) {
     const entry = $branchPoolStore.pool.entries.find((item) => item.id === entryId);
     if (!entry) {
       return;
     }
 
-    const confirmed = window.confirm(
-      `确定清理该分支工作副本吗？\n\n将删除本地目录并从分支池移除：\n${entry.local_path}`,
-    );
+    const confirmed = deleteLocalCopy
+      ? window.confirm(
+          `确定清理该分支工作副本吗？\n\n将删除本地目录并从分支池移除：\n${entry.local_path}`,
+        )
+      : window.confirm(
+          `确定只从分支池移除该项吗？\n\n不会删除本地目录：\n${entry.local_path}`,
+        );
     if (!confirmed) {
       return;
     }
 
-    await branchPoolStore.remove(entry);
+    await branchPoolStore.remove(entry, deleteLocalCopy);
   }
 
   async function createTaskWorkspace() {

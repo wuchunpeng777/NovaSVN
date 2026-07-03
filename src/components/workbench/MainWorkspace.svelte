@@ -212,7 +212,7 @@
   export let onCheckoutBranchPoolEntry: () => void;
   export let onReuseBranchPoolEntry: () => void;
   export let onOpenBranchPoolEntry: (localPath: string) => void;
-  export let onRemoveBranchPoolEntry: (entryId: string) => void;
+  export let onRemoveBranchPoolEntry: (entryId: string, deleteLocalCopy?: boolean) => void;
   export let onMergeFormInput: (
     field: keyof typeof mergeForm,
     value: string | boolean,
@@ -1634,8 +1634,11 @@
             <button type="button" on:click={() => onOpenBranchPoolEntry(entry.local_path)}>
               切换
             </button>
-            <button type="button" on:click={() => onRemoveBranchPoolEntry(entry.id)}>
-              移除
+            <button type="button" on:click={() => onRemoveBranchPoolEntry(entry.id, false)}>
+              移除池项
+            </button>
+            <button type="button" on:click={() => onRemoveBranchPoolEntry(entry.id, true)}>
+              清理本地
             </button>
           </article>
         {/each}

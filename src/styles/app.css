@@ -1052,7 +1052,7 @@ button {
 
 .branch-pool-entry {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 80px 90px auto auto;
+  grid-template-columns: minmax(0, 1fr) 80px 90px auto auto auto;
   align-items: center;
   gap: 10px;
   min-height: 64px;
