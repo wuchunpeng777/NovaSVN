@@ -95,20 +95,11 @@ describe("DetailPanel", () => {
 
     render(DetailPanel, {
       props: {
-        selectedFile: {
-          path: "src/main.ts",
+        selectedFile: makeFile({
           status: "conflicted",
-          revision: null,
-          property_status: null,
-          property_changed: false,
           abnormal: true,
-          lock_state: "none",
-          lock_owner: null,
-          lock_comment: null,
           conflict_kind: "text",
-          file_size: 12,
-          content_digest: "digest",
-        },
+        }),
         onOpenWorkspaceFile,
       },
     });
@@ -116,6 +107,32 @@ describe("DetailPanel", () => {
     await fireEvent.click(screen.getByText("打开冲突文件"));
 
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith("src/main.ts");
+  });
+
+  it("shows conflict actions only for conflicted files", async () => {
+    const { rerender } = render(DetailPanel, {
+      props: {
+        selectedFile: makeFile({
+          status: "modified",
+          conflict_kind: null,
+        }),
+      },
+    });
+
+    expect(screen.queryByText("标记已解决")).not.toBeInTheDocument();
+    expect(screen.queryByText("使用 Mine")).not.toBeInTheDocument();
+    expect(screen.queryByText("使用 Theirs")).not.toBeInTheDocument();
+
+    await rerender({
+      selectedFile: makeFile({
+        status: "modified",
+        conflict_kind: "property",
+      }),
+    });
+
+    expect(screen.getByText("标记已解决")).toBeInTheDocument();
+    expect(screen.getByText("使用 Mine")).toBeInTheDocument();
+    expect(screen.getByText("使用 Theirs")).toBeInTheDocument();
   });
 });
 

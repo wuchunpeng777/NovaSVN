@@ -104,6 +104,8 @@
       !!selectedFile.lock_owner ||
       !!selectedFile.lock_comment);
   $: selectedFileCanLock = !!selectedFile && !selectedFileHasLock;
+  $: selectedFileHasConflict =
+    !!selectedFile && (selectedFile.status === "conflicted" || !!selectedFile.conflict_kind);
 
   function formatFileSize(bytes: number | null) {
     if (bytes === null) {
@@ -312,7 +314,7 @@
           外部 Merge
         </button>
       </div>
-      {#if selectedFile.status === "conflicted" || selectedFile.conflict_kind}
+      {#if selectedFileHasConflict}
         <div class="conflict-actions">
           <button type="button" on:click={() => onOpenWorkspaceFile(selectedFile.path)}>
             打开冲突文件
