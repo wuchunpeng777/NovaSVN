@@ -2468,6 +2468,40 @@ mod tests {
 
         assert_eq!(count_diff_files(diff), 2);
     }
+
+    #[test]
+    fn parses_repository_list_xml_with_directory_first_sort() {
+        let xml = r#"
+<lists>
+  <list path="https://example.com/svn">
+    <entry kind="file">
+      <name>zeta.txt</name>
+      <commit revision="8"><author>zoe</author><date>2026-01-02T00:00:00Z</date></commit>
+    </entry>
+    <entry kind="dir">
+      <name>branches</name>
+      <commit revision="7"><author>dev</author><date>2026-01-01T00:00:00Z</date></commit>
+    </entry>
+    <entry kind="dir">
+      <name>trunk</name>
+      <commit revision="9"><author>dev</author><date>2026-01-03T00:00:00Z</date></commit>
+    </entry>
+  </list>
+</lists>
+"#;
+
+        let result = parse_repository_list_xml(xml, "https://example.com/svn").expect("list parses");
+
+        assert_eq!(result.url, "https://example.com/svn");
+        assert_eq!(result.entries.len(), 3);
+        assert_eq!(result.entries[0].name, "branches");
+        assert_eq!(result.entries[1].name, "trunk");
+        assert_eq!(result.entries[2].name, "zeta.txt");
+        assert_eq!(result.entries[0].kind, "dir");
+        assert_eq!(result.entries[0].revision, "7");
+        assert_eq!(result.entries[0].author, "dev");
+        assert_eq!(result.entries[0].date, "2026-01-01T00:00:00Z");
+    }
 }
 
 fn compact_repository_url(url: &str) -> String {
