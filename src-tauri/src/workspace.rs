@@ -1093,6 +1093,15 @@ fn normalize_workspace_path(path: &str) -> Result<PathBuf, NovaError> {
         ));
     }
 
+    if trimmed.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "WORKSPACE_PATH_INVALID",
+            "工作副本路径无效",
+            Some("工作副本路径不能包含控制字符。".to_string()),
+            true,
+        ));
+    }
+
     let path = PathBuf::from(trimmed);
     if !path.exists() {
         return Err(NovaError::command(
@@ -1550,6 +1559,18 @@ mod tests {
         assert!(normalize_svn_executable(Some("C:\\Tools\\svn.exe")).is_ok());
         assert!(normalize_svn_executable(Some("tools\\svn.exe")).is_err());
         assert!(normalize_svn_executable(Some("svn\n")).is_err());
+    }
+
+    #[test]
+    fn rejects_workspace_paths_with_control_characters() {
+        let error = normalize_workspace_path("C:\\wc\nnext")
+            .expect_err("workspace path with control characters must be rejected");
+
+        match error {
+            NovaError::Command { code, .. } => {
+                assert_eq!(code, "WORKSPACE_PATH_INVALID");
+            }
+        }
     }
 
     #[test]
