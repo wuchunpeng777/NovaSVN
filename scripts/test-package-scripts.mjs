@@ -16,6 +16,7 @@ const benchmarkScript = fs.readFileSync(
   "utf8",
 );
 const benchmarkDoc = fs.readFileSync(path.join(root, "doc", "性能基准.md"), "utf8");
+const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, "src-tauri", "tauri.conf.json"), "utf8"));
 const appSvelte = fs.readFileSync(path.join(root, "src", "App.svelte"), "utf8");
 const systemIntegrationRs = fs.readFileSync(
   path.join(root, "src-tauri", "src", "system_integration.rs"),
@@ -24,6 +25,7 @@ const systemIntegrationRs = fs.readFileSync(
 const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 
 const releaseScripts = ["release:windows", "release:macos"];
+const requiredBundleTargets = ["nsis", "dmg"];
 const benchmarkScripts = ["benchmark:svn", "benchmark:svn:reset"];
 const systemIntegrationActions = [
   "open",
@@ -49,6 +51,31 @@ for (const scriptName of releaseScripts) {
     console.error(`${scriptName} 必须先执行 npm run version:check`);
     failed = true;
   }
+}
+
+if (tauriConfig.bundle?.active !== true) {
+  console.error("Tauri bundler 必须启用 bundle.active");
+  failed = true;
+}
+
+const configuredBundleTargets = Array.isArray(tauriConfig.bundle?.targets)
+  ? tauriConfig.bundle.targets
+  : [];
+for (const target of requiredBundleTargets) {
+  if (!configuredBundleTargets.includes(target)) {
+    console.error(`Tauri bundle targets 缺少 ${target}`);
+    failed = true;
+  }
+}
+
+if (!packageJson.scripts?.["release:windows"]?.includes("--bundles nsis")) {
+  console.error("release:windows 必须构建 NSIS 安装包");
+  failed = true;
+}
+
+if (!packageJson.scripts?.["release:macos"]?.includes("--bundles dmg")) {
+  console.error("release:macos 必须构建 DMG 安装包");
+  failed = true;
 }
 
 for (const scriptName of benchmarkScripts) {
