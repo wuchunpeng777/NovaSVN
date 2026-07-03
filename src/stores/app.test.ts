@@ -2,16 +2,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
   detectSvn: vi.fn(),
+  openWorkspace: vi.fn(),
+  scanWorkspaceStatus: vi.fn(),
 }));
 
-import { detectSvn } from "../lib/api";
-import { isSameRepositoryUrl, revisionDiffPatchFileName, svnStore } from "./app";
+import { get } from "svelte/store";
+
+import { detectSvn, openWorkspace, scanWorkspaceStatus } from "../lib/api";
+import type { ChangedFile, WorkingCopyStatus, WorkspaceSummary } from "../types/api";
+import { isSameRepositoryUrl, revisionDiffPatchFileName, svnStore, workspaceStore } from "./app";
 
 const detectSvnMock = vi.mocked(detectSvn);
+const openWorkspaceMock = vi.mocked(openWorkspace);
+const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(() => {
   detectSvnMock.mockReset();
+  openWorkspaceMock.mockReset();
+  scanWorkspaceStatusMock.mockReset();
   svnStore.setExecutableInput("");
+  workspaceStore.clearWorkspaceDraft();
+  workspaceStore.setCommitMessage("");
 });
 
 describe("revisionDiffPatchFileName", () => {
@@ -71,3 +82,100 @@ describe("isSameRepositoryUrl", () => {
     expect(isSameRepositoryUrl("", "https://example.com/svn/trunk")).toBe(false);
   });
 });
+
+describe("workspaceStore safety warnings", () => {
+  it("drops confirmed warnings when staged file content changes", async () => {
+    const workspace = makeWorkspace();
+    const firstStatus = makeStatus([
+      makeFile({
+        path: "build/output.tmp",
+        content_digest: "digest-a",
+      }),
+    ]);
+    const changedStatus = makeStatus([
+      makeFile({
+        path: "build/output.tmp",
+        content_digest: "digest-b",
+      }),
+    ]);
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(firstStatus).mockResolvedValueOnce(changedStatus);
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    workspaceStore.stageFile("build/output.tmp");
+    workspaceStore.confirmSafetyWarnings();
+
+    expect(get(workspaceStore).safetyCheck.confirmedWarningIds).toHaveLength(1);
+
+    await workspaceStore.refreshStatus();
+
+    const state = get(workspaceStore);
+    expect(state.stagedFiles).toEqual([
+      {
+        path: "build/output.tmp",
+        status: "modified",
+        contentDigest: "digest-b",
+      },
+    ]);
+    expect(state.safetyCheck.warnings.map((item) => item.id)).toEqual([
+      "warning:generated:build/output.tmp:digest-b",
+    ]);
+    expect(state.safetyCheck.confirmedWarningIds).toEqual([]);
+  });
+});
+
+function makeWorkspace(): WorkspaceSummary {
+  return {
+    local_path: "C:/repo/wc",
+    working_copy_root: "C:/repo/wc",
+    repository_url: "https://example.com/svn/trunk",
+    repository_root: "https://example.com/svn",
+    revision: "12",
+    unity: {
+      detected: false,
+      has_assets: false,
+      has_project_settings: false,
+      has_packages_manifest: false,
+    },
+  };
+}
+
+function makeStatus(files: ChangedFile[]): WorkingCopyStatus {
+  return {
+    working_copy_root: "C:/repo/wc",
+    total: files.length,
+    returned: files.length,
+    offset: 0,
+    limit: 500,
+    revision_range: "12",
+    mixed_revision: false,
+    modified: files.filter((file) => file.status === "modified").length,
+    added: files.filter((file) => file.status === "added").length,
+    deleted: files.filter((file) => file.status === "deleted").length,
+    missing: files.filter((file) => file.status === "missing").length,
+    unversioned: files.filter((file) => file.status === "unversioned").length,
+    conflicted: files.filter((file) => file.status === "conflicted").length,
+    obstructed: files.filter((file) => file.status === "obstructed").length,
+    property_changed: files.filter((file) => file.property_changed).length,
+    files,
+  };
+}
+
+function makeFile(file: Partial<ChangedFile> & Pick<ChangedFile, "path" | "content_digest">): ChangedFile {
+  return {
+    path: file.path,
+    status: file.status ?? "modified",
+    revision: file.revision ?? "12",
+    property_status: file.property_status ?? null,
+    property_changed: file.property_changed ?? false,
+    abnormal: file.abnormal ?? false,
+    lock_state: file.lock_state ?? "none",
+    lock_owner: file.lock_owner ?? null,
+    lock_comment: file.lock_comment ?? null,
+    conflict_kind: file.conflict_kind ?? null,
+    file_size: file.file_size ?? 128,
+    content_digest: file.content_digest,
+  };
+}
