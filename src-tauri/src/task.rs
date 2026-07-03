@@ -94,6 +94,7 @@ pub enum SvnOperationKind {
     RevertFile,
     LockFile,
     UnlockFile,
+    ForceUnlockFile,
     ResolveWorking,
     ResolveMineFull,
     ResolveTheirsFull,
@@ -441,7 +442,7 @@ impl TaskQueue {
                 "LOCK_FILE_PATH_INVALID",
                 "Lock 文件路径无效",
             )?),
-            SvnOperationKind::UnlockFile => Some(normalize_relative_file_path(
+            SvnOperationKind::UnlockFile | SvnOperationKind::ForceUnlockFile => Some(normalize_relative_file_path(
                 request.file_path.as_deref().unwrap_or_default(),
                 "UNLOCK_FILE_PATH_INVALID",
                 "Unlock 文件路径无效",
@@ -1154,7 +1155,7 @@ fn run_svn_operation_task(
             command.arg("lock").arg(root.join(file_path));
             append_task_log(state, task_id, &format!("执行 svn lock：{file_path}"));
         }
-        SvnOperationKind::UnlockFile => {
+        SvnOperationKind::UnlockFile | SvnOperationKind::ForceUnlockFile => {
             let Some(file_path) = payload.file_path.as_deref() else {
                 update_task(
                     state,
@@ -1165,8 +1166,21 @@ fn run_svn_operation_task(
                 );
                 return;
             };
-            command.arg("unlock").arg(root.join(file_path));
-            append_task_log(state, task_id, &format!("执行 svn unlock：{file_path}"));
+            command.arg("unlock");
+            if matches!(payload.kind, SvnOperationKind::ForceUnlockFile) {
+                command.arg("--force");
+            }
+            command.arg(root.join(file_path));
+            let force_label = if matches!(payload.kind, SvnOperationKind::ForceUnlockFile) {
+                " --force"
+            } else {
+                ""
+            };
+            append_task_log(
+                state,
+                task_id,
+                &format!("执行 svn unlock{force_label}：{file_path}"),
+            );
         }
         SvnOperationKind::ResolveWorking
         | SvnOperationKind::ResolveMineFull
@@ -2196,6 +2210,9 @@ fn operation_title(kind: &SvnOperationKind, file_path: Option<&str>) -> String {
         }
         SvnOperationKind::UnlockFile => {
             format!("解锁文件 {}", file_path.unwrap_or(""))
+        }
+        SvnOperationKind::ForceUnlockFile => {
+            format!("强制解锁文件 {}", file_path.unwrap_or(""))
         }
         SvnOperationKind::ResolveWorking => {
             format!("标记已解决 {}", file_path.unwrap_or(""))

@@ -58,6 +58,7 @@
   export let onRevertFile: (path: string) => void;
   export let onLockFile: (path: string) => void;
   export let onUnlockFile: (path: string) => void;
+  export let onForceUnlockFile: (path: string) => void;
   export let onResolveWorking: (path: string) => void;
   export let onResolveMineFull: (path: string) => void;
   export let onResolveTheirsFull: (path: string) => void;
@@ -177,6 +178,13 @@
           disabled={!selectedFile}
         >
           Unlock
+        </button>
+        <button
+          type="button"
+          on:click={() => selectedFile && onForceUnlockFile(selectedFile.path)}
+          disabled={!selectedFile}
+        >
+          Force Unlock
         </button>
         <button
           type="button"

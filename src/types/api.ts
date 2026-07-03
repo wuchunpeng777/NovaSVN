@@ -78,6 +78,7 @@ export type SvnOperationKind =
   | "revert_file"
   | "lock_file"
   | "unlock_file"
+  | "force_unlock_file"
   | "resolve_working"
   | "resolve_mine_full"
   | "resolve_theirs_full";

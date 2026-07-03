@@ -1006,6 +1006,7 @@
         onRevertFile={(path) => runSvnOperation("revert_file", path)}
         onLockFile={(path) => runSvnOperation("lock_file", path)}
         onUnlockFile={(path) => runSvnOperation("unlock_file", path)}
+        onForceUnlockFile={(path) => runSvnOperation("force_unlock_file", path)}
         onResolveWorking={(path) => runSvnOperation("resolve_working", path)}
         onResolveMineFull={(path) => runSvnOperation("resolve_mine_full", path)}
         onResolveTheirsFull={(path) => runSvnOperation("resolve_theirs_full", path)}
