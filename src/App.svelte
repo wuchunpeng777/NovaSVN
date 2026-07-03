@@ -434,6 +434,35 @@
     workspaceStore.markRevisionDiffTask(task.task_id);
   }
 
+  async function runMerge() {
+    if (!$workspaceStore.current) {
+      workspaceStore.failMergeTask("请先打开 SVN 工作副本");
+      return;
+    }
+
+    const form = $workspaceStore.mergeForm;
+    if (!form.sourceUrl.trim()) {
+      workspaceStore.failMergeTask("请输入 merge 源 URL");
+      return;
+    }
+
+    const task = await taskStore.createMerge({
+      workingCopyRoot: $workspaceStore.current.working_copy_root,
+      sourceUrl: form.sourceUrl,
+      startRevision: form.startRevision,
+      endRevision: form.endRevision,
+      dryRun: form.dryRun,
+      svnExecutable: $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    });
+
+    if (!task) {
+      workspaceStore.failMergeTask($taskStore.error?.message ?? "Merge 任务创建失败");
+      return;
+    }
+
+    workspaceStore.markMergeTask(task.task_id);
+  }
+
   $: if (
     $workspaceStore.pendingCommitTaskId &&
     $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
@@ -620,6 +649,30 @@
     );
   }
 
+  $: if (
+    $workspaceStore.pendingMergeTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingMergeTaskId &&
+    $taskStore.selectedTask.status === "success"
+  ) {
+    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+    workspaceStore.completeMergeTask();
+    if (workingCopyRoot && !$workspaceStore.mergeForm.dryRun) {
+      void workspaceStore.refreshStatus(
+        $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+        workingCopyRoot,
+      );
+    }
+  }
+
+  $: if (
+    $workspaceStore.pendingMergeTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingMergeTaskId &&
+    ($taskStore.selectedTask.status === "failed" ||
+      $taskStore.selectedTask.status === "cancelled")
+  ) {
+    workspaceStore.failMergeTask($taskStore.selectedTask.error ?? "Merge 执行失败");
+  }
+
   async function checkRepositoryLayoutTask(
     kind: "trunk" | "branches" | "tags",
     taskId: string,
@@ -772,6 +825,9 @@
         branchPoolError={$branchPoolStore.error}
         branchCheckoutError={$branchPoolStore.checkoutError}
         branchCheckoutRunning={$branchPoolStore.pendingCheckoutTaskId !== null}
+        mergeForm={$workspaceStore.mergeForm}
+        mergeRunning={$workspaceStore.pendingMergeTaskId !== null}
+        mergeError={$workspaceStore.mergeError}
         taskWorkspaces={$taskWorkspaceStore.list}
         taskWorkspaceForm={$taskWorkspaceStore.form}
         activeTaskWorkspaceId={$taskWorkspaceStore.activeTaskId}
@@ -834,6 +890,9 @@
         onReuseBranchPoolEntry={reuseBranchPoolEntry}
         onOpenBranchPoolEntry={openBranchPoolEntry}
         onRemoveBranchPoolEntry={removeBranchPoolEntry}
+        onMergeFormInput={workspaceStore.setMergeForm}
+        onUseRepositoryUrlForMerge={workspaceStore.useRepositoryUrlForMerge}
+        onRunMerge={runMerge}
         onTaskWorkspaceFormInput={taskWorkspaceStore.setFormField}
         onCreateTaskWorkspace={createTaskWorkspace}
         onSwitchTaskWorkspace={switchTaskWorkspace}

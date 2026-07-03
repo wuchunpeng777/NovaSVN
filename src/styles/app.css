@@ -1076,6 +1076,47 @@ button {
   font-size: 12px;
 }
 
+.merge-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.merge-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 120px 120px auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.merge-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: #44515f;
+  font-size: 12px;
+}
+
+.merge-form input:not([type="checkbox"]) {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  color: #17202a;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.merge-dry-run {
+  display: flex !important;
+  align-items: center;
+  min-height: 30px;
+}
+
 .task-workspace-panel {
   display: grid;
   gap: 10px;

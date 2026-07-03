@@ -191,6 +191,16 @@ pub struct CreateRevisionDiffTaskRequest {
     pub svn_executable: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateMergeTaskRequest {
+    pub working_copy_root: String,
+    pub source_url: String,
+    pub start_revision: Option<String>,
+    pub end_revision: Option<String>,
+    pub dry_run: bool,
+    pub svn_executable: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskResult {
     pub repository_list: Option<RepositoryListResult>,
@@ -233,6 +243,7 @@ enum TaskPayload {
     BranchCheckout(BranchCheckoutTaskPayload),
     SvnSwitch(SvnSwitchTaskPayload),
     RevisionDiff(RevisionDiffTaskPayload),
+    Merge(MergeTaskPayload),
 }
 
 #[derive(Debug, Clone)]
@@ -306,6 +317,16 @@ struct RevisionDiffTaskPayload {
     right_revision: Option<String>,
     left_url: Option<String>,
     right_url: Option<String>,
+    svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct MergeTaskPayload {
+    working_copy_root: String,
+    source_url: String,
+    start_revision: Option<String>,
+    end_revision: Option<String>,
+    dry_run: bool,
     svn_executable: String,
 }
 
@@ -788,6 +809,48 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_merge_task(&self, request: CreateMergeTaskRequest) -> Result<Task, NovaError> {
+        let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
+        let source_url = normalize_repository_url(&request.source_url)?;
+        let (start_revision, end_revision) =
+            normalize_merge_revision_range(request.start_revision, request.end_revision)?;
+        let svn_executable = request
+            .svn_executable
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "svn".to_string());
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: if request.dry_run {
+                format!("Merge dry-run {}", compact_repository_url(&source_url))
+            } else {
+                format!("Merge {}", compact_repository_url(&source_url))
+            },
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "Merge 任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::Merge(MergeTaskPayload {
+                working_copy_root: working_copy_root.display().to_string(),
+                source_url,
+                start_revision,
+                end_revision,
+                dry_run: request.dry_run,
+                svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn list_tasks(&self) -> TaskSnapshot {
         let state = self.state.lock().expect("任务队列锁已损坏");
         TaskSnapshot {
@@ -951,6 +1014,7 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             }
             TaskPayload::SvnSwitch(payload) => run_svn_switch_task(&state, &task_id, payload),
             TaskPayload::RevisionDiff(payload) => run_revision_diff_task(&state, &task_id, payload),
+            TaskPayload::Merge(payload) => run_merge_task(&state, &task_id, payload),
         }
     }
 }
@@ -1710,6 +1774,80 @@ fn run_revision_diff_task(
     }
 }
 
+fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: MergeTaskPayload) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        if payload.dry_run {
+            "Merge dry-run 开始执行"
+        } else {
+            "Merge 开始执行"
+        },
+        None,
+    );
+
+    let root = PathBuf::from(&payload.working_copy_root);
+    let mut command = Command::new(&payload.svn_executable);
+    command.arg("merge");
+    if let Some(range) = merge_revision_arg(&payload.start_revision, &payload.end_revision) {
+        command.arg("-r").arg(range);
+    }
+    if payload.dry_run {
+        command.arg("--dry-run");
+    }
+    command.arg(&payload.source_url).current_dir(&root);
+    append_task_log(
+        state,
+        task_id,
+        &format!(
+            "执行 svn merge{}：{}",
+            if payload.dry_run { " --dry-run" } else { "" },
+            payload.source_url
+        ),
+    );
+
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                if payload.dry_run {
+                    "Merge dry-run 完成"
+                } else {
+                    "Merge 执行成功"
+                },
+                None,
+            );
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                if payload.dry_run {
+                    "Merge dry-run 失败"
+                } else {
+                    "Merge 执行失败"
+                },
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN merge 启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
 fn run_branch_checkout_task(
     state: &Arc<Mutex<TaskQueueState>>,
     task_id: &str,
@@ -2208,6 +2346,47 @@ fn normalize_revision_value(
     }
 
     Ok(value.to_string())
+}
+
+fn normalize_merge_revision_range(
+    start_revision: Option<String>,
+    end_revision: Option<String>,
+) -> Result<(Option<String>, Option<String>), NovaError> {
+    let start_revision = start_revision
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let end_revision = end_revision
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if start_revision.is_some() ^ end_revision.is_some() {
+        return Err(NovaError::command(
+            "MERGE_REVISION_RANGE_INVALID",
+            "Revision 范围需要同时填写起点和终点",
+            None,
+            true,
+        ));
+    }
+
+    for value in start_revision.iter().chain(end_revision.iter()) {
+        if value.chars().any(char::is_control) {
+            return Err(NovaError::command(
+                "MERGE_REVISION_INVALID",
+                "Merge revision 无效",
+                Some("Revision 不能包含控制字符。".to_string()),
+                true,
+            ));
+        }
+    }
+
+    Ok((start_revision, end_revision))
+}
+
+fn merge_revision_arg(start_revision: &Option<String>, end_revision: &Option<String>) -> Option<String> {
+    match (start_revision.as_deref(), end_revision.as_deref()) {
+        (Some(start), Some(end)) => Some(format!("{start}:{end}")),
+        _ => None,
+    }
 }
 
 fn revision_diff_mode_label(mode: &RevisionDiffMode) -> &'static str {

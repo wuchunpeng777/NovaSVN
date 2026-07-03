@@ -92,6 +92,14 @@
   export let branchPoolError: CommandError | null = null;
   export let branchCheckoutError: string | null = null;
   export let branchCheckoutRunning = false;
+  export let mergeForm = {
+    sourceUrl: "",
+    startRevision: "",
+    endRevision: "",
+    dryRun: true,
+  };
+  export let mergeRunning = false;
+  export let mergeError: string | null = null;
   export let taskWorkspaces: TaskWorkspaceList = { entries: [] };
   export let taskWorkspaceForm = {
     name: "",
@@ -168,6 +176,12 @@
   export let onReuseBranchPoolEntry: () => void;
   export let onOpenBranchPoolEntry: (localPath: string) => void;
   export let onRemoveBranchPoolEntry: (entryId: string) => void;
+  export let onMergeFormInput: (
+    field: keyof typeof mergeForm,
+    value: string | boolean,
+  ) => void;
+  export let onUseRepositoryUrlForMerge: (url: string) => void;
+  export let onRunMerge: () => void;
   export let onTaskWorkspaceFormInput: (
     field: keyof typeof taskWorkspaceForm,
     value: string,
@@ -1241,6 +1255,86 @@
         {/each}
       {:else}
         <article class="repository-empty">暂无分支工作副本池项</article>
+      {/if}
+    </section>
+
+    <section class="merge-panel" aria-label="Merge 基础流程">
+      <div class="repository-layout-header">
+        <div>
+          <h3>Merge</h3>
+          <p>从源 URL 合并到当前工作副本，可先 dry-run</p>
+        </div>
+        <button
+          type="button"
+          on:click={onRunMerge}
+          disabled={!workspace || mergeRunning || !mergeForm.sourceUrl.trim()}
+        >
+          {mergeRunning ? "Merge 中" : mergeForm.dryRun ? "Dry-run" : "执行 Merge"}
+        </button>
+      </div>
+
+      <div class="merge-form">
+        <label>
+          <span>源 URL</span>
+          <input
+            type="url"
+            value={mergeForm.sourceUrl}
+            on:input={(event) =>
+              onMergeFormInput(
+                "sourceUrl",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
+          />
+        </label>
+        <label>
+          <span>起始 Revision</span>
+          <input
+            type="text"
+            value={mergeForm.startRevision}
+            placeholder="留空使用默认"
+            on:input={(event) =>
+              onMergeFormInput(
+                "startRevision",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
+          />
+        </label>
+        <label>
+          <span>结束 Revision</span>
+          <input
+            type="text"
+            value={mergeForm.endRevision}
+            placeholder="留空使用默认"
+            on:input={(event) =>
+              onMergeFormInput(
+                "endRevision",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
+          />
+        </label>
+        <label class="merge-dry-run">
+          <input
+            type="checkbox"
+            checked={mergeForm.dryRun}
+            on:change={(event) =>
+              onMergeFormInput("dryRun", (event.currentTarget as HTMLInputElement).checked)}
+          />
+          <span>Dry-run</span>
+        </label>
+      </div>
+
+      {#if branchPool.entries.length > 0}
+        <div class="branch-url-picks">
+          {#each branchPool.entries as entry (entry.id)}
+            <button type="button" on:click={() => onUseRepositoryUrlForMerge(entry.branch_url)}>
+              {entry.branch_url}
+            </button>
+          {/each}
+        </div>
+      {/if}
+
+      {#if mergeError}
+        <p class="inline-error">{mergeError}</p>
       {/if}
     </section>
 

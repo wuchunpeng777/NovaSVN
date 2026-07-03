@@ -139,6 +139,15 @@ export interface CreateRevisionDiffTaskRequest {
   svn_executable?: string;
 }
 
+export interface CreateMergeTaskRequest {
+  working_copy_root: string;
+  source_url: string;
+  start_revision?: string;
+  end_revision?: string;
+  dry_run: boolean;
+  svn_executable?: string;
+}
+
 export interface BranchPoolEntry {
   id: string;
   branch_url: string;

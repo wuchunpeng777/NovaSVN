@@ -4,6 +4,7 @@ import {
   chooseWorkspaceDirectory,
   createBranchCheckoutTask,
   createCommitTask,
+  createMergeTask,
   createMockTask,
   createPartialCommitTask,
   createRepositoryCopyTask,
@@ -412,6 +413,38 @@ function createTaskStore() {
     }
   }
 
+  async function createMerge(request: {
+    workingCopyRoot: string;
+    sourceUrl: string;
+    startRevision?: string | null;
+    endRevision?: string | null;
+    dryRun: boolean;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createMergeTask({
+        working_copy_root: request.workingCopyRoot,
+        source_url: request.sourceUrl,
+        start_revision: request.startRevision || undefined,
+        end_revision: request.endRevision || undefined,
+        dry_run: request.dryRun,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function select(taskId: string) {
     selectedTaskId = taskId;
     await refresh();
@@ -473,6 +506,7 @@ function createTaskStore() {
     createBranchCheckout,
     createSvnSwitch,
     createRevisionDiff,
+    createMerge,
     select,
     cancel,
     getTaskById,
@@ -1026,6 +1060,14 @@ export interface WorkspaceStoreState {
   revisionDiffLoading: boolean;
   revisionDiffError: string | null;
   revisionDiffResult: RevisionDiffResult | null;
+  mergeForm: {
+    sourceUrl: string;
+    startRevision: string;
+    endRevision: string;
+    dryRun: boolean;
+  };
+  pendingMergeTaskId: string | null;
+  mergeError: string | null;
 }
 
 const initialWorkspaceState: WorkspaceStoreState = {
@@ -1129,6 +1171,14 @@ const initialWorkspaceState: WorkspaceStoreState = {
   revisionDiffLoading: false,
   revisionDiffError: null,
   revisionDiffResult: null,
+  mergeForm: {
+    sourceUrl: "",
+    startRevision: "",
+    endRevision: "",
+    dryRun: true,
+  },
+  pendingMergeTaskId: null,
+  mergeError: null,
 };
 
 function createWorkspaceStore() {
@@ -2443,6 +2493,52 @@ function createWorkspaceStore() {
     window.URL.revokeObjectURL(url);
   }
 
+  function setMergeForm(field: keyof WorkspaceStoreState["mergeForm"], value: string | boolean) {
+    update((state) => ({
+      ...state,
+      mergeForm: {
+        ...state.mergeForm,
+        [field]: field === "dryRun" ? Boolean(value) : String(value),
+      },
+      mergeError: null,
+    }));
+  }
+
+  function useRepositoryUrlForMerge(url: string) {
+    update((state) => ({
+      ...state,
+      mergeForm: {
+        ...state.mergeForm,
+        sourceUrl: url,
+      },
+      mergeError: null,
+    }));
+  }
+
+  function markMergeTask(taskId: string | null) {
+    update((state) => ({
+      ...state,
+      pendingMergeTaskId: taskId,
+      mergeError: null,
+    }));
+  }
+
+  function completeMergeTask() {
+    update((state) => ({
+      ...state,
+      pendingMergeTaskId: null,
+      mergeError: null,
+    }));
+  }
+
+  function failMergeTask(message: string | null) {
+    update((state) => ({
+      ...state,
+      pendingMergeTaskId: null,
+      mergeError: message ?? "Merge 执行失败",
+    }));
+  }
+
   return {
     subscribe,
     loadRecent,
@@ -2508,6 +2604,11 @@ function createWorkspaceStore() {
     applyRevisionDiffResult,
     failRevisionDiffTask,
     exportRevisionDiffPatch,
+    setMergeForm,
+    useRepositoryUrlForMerge,
+    markMergeTask,
+    completeMergeTask,
+    failMergeTask,
   };
 }
 

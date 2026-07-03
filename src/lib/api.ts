@@ -4,6 +4,7 @@ import type {
   CommandError,
   CommandResponse,
   BranchPool,
+  CreateMergeTaskRequest,
   CreateCommitTaskRequest,
   CreateBranchCheckoutTaskRequest,
   CreateMockTaskRequest,
@@ -125,6 +126,10 @@ export function createRevisionDiffTask(
   request: CreateRevisionDiffTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_revision_diff_task", { request });
+}
+
+export function createMergeTask(request: CreateMergeTaskRequest): Promise<Task> {
+  return callBackend<Task>("create_merge_task", { request });
 }
 
 export function getBranchPool(): Promise<BranchPool> {

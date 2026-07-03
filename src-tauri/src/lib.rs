@@ -14,7 +14,8 @@ use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
 use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
 use task::{
-    CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest, CreateMockTaskRequest,
+    CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest, CreateMergeTaskRequest,
+    CreateMockTaskRequest,
     CreatePartialCommitTaskRequest, CreateRepositoryCopyTaskRequest,
     CreateRepositoryListTaskRequest, CreateRevisionDiffTaskRequest,
     CreateShadowWorkspaceTaskRequest, CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest,
@@ -153,6 +154,15 @@ fn create_revision_diff_task(
     Ok(CommandResponse::success(
         queue.create_revision_diff_task(request)?,
     ))
+}
+
+#[tauri::command]
+fn create_merge_task(
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateMergeTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_merge_task command received");
+    Ok(CommandResponse::success(queue.create_merge_task(request)?))
 }
 
 #[tauri::command]
@@ -320,6 +330,7 @@ pub fn run() {
             create_branch_checkout_task,
             create_svn_switch_task,
             create_revision_diff_task,
+            create_merge_task,
             get_branch_pool,
             save_branch_pool_entry,
             remove_branch_pool_entry,
