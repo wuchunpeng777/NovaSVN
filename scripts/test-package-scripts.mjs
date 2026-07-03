@@ -12,6 +12,7 @@ const macosFinderScript = fs.readFileSync(
   "utf8",
 );
 const appSvelte = fs.readFileSync(path.join(root, "src", "App.svelte"), "utf8");
+const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 
 const releaseScripts = ["release:windows", "release:macos"];
 const systemIntegrationActions = [
@@ -59,8 +60,13 @@ for (const action of systemIntegrationActions.filter((value) => value !== "open"
   }
 }
 
+if (!changelog.includes(`## ${packageJson.version}`)) {
+  console.error(`CHANGELOG.md 缺少当前版本条目：${packageJson.version}`);
+  failed = true;
+}
+
 if (failed) {
   process.exit(1);
 }
 
-console.log("发布脚本和系统入口脚本检查通过");
+console.log("发布脚本、系统入口脚本和更新日志检查通过");
