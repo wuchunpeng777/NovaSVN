@@ -1,4 +1,4 @@
-use std::{fs, panic, path::PathBuf};
+use std::{fs, panic, path::PathBuf, process::Command};
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
@@ -112,6 +112,10 @@ fn build_diagnostics_content(
     append_file_summary(&mut lines, &app_data_dir.join("crash.log"));
 
     lines.push(String::new());
+    lines.push("== SVN 命令行 ==".to_string());
+    append_svn_cli_summary(&mut lines);
+
+    lines.push(String::new());
     lines.push("== 崩溃日志 ==".to_string());
     append_optional_file(&mut lines, &app_data_dir.join("crash.log"), 32_000);
 
@@ -153,6 +157,34 @@ fn append_file_summary(lines: &mut Vec<String>, path: &PathBuf) {
                 .and_then(|name| name.to_str())
                 .unwrap_or("unknown")
         )),
+    }
+}
+
+fn append_svn_cli_summary(lines: &mut Vec<String>) {
+    match Command::new("svn").args(["--version", "--quiet"]).output() {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if version.is_empty() {
+                lines.push("svn：可执行，但未返回版本号".to_string());
+            } else {
+                lines.push(format!("svn：可用，版本 {version}"));
+            }
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let detail = if !stderr.is_empty() {
+                stderr
+            } else if !stdout.is_empty() {
+                stdout
+            } else {
+                format!("退出码 {:?}", output.status.code())
+            };
+            lines.push(format!("svn：不可用，{detail}"));
+        }
+        Err(error) => {
+            lines.push(format!("svn：不可用，{error}"));
+        }
     }
 }
 
@@ -224,6 +256,8 @@ mod tests {
         assert!(content.contains("PATH 可用："));
         assert!(content.contains("recent-workspace.json：不存在"));
         assert!(content.contains("crash.log：存在"));
+        assert!(content.contains("== SVN 命令行 =="));
+        assert!(content.contains("svn："));
         assert!(content.contains("panic sample"));
         assert!(content.contains("暂无任务。"));
 
