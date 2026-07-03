@@ -161,9 +161,59 @@ describe("workspaceStore safety warnings", () => {
     ]);
     expect(state.safetyCheck.confirmedWarningIds).toEqual([]);
   });
+
+  it("warns about Unity meta pairing issues and preserves confirmations in drafts", async () => {
+    const workspace = makeWorkspace({
+      unity: {
+        detected: true,
+        has_assets: true,
+        has_project_settings: true,
+        has_packages_manifest: true,
+      },
+    });
+    const status = makeStatus([
+      makeFile({
+        path: "Assets/Textures/stone.png",
+        status: "added",
+        content_digest: "asset-digest",
+      }),
+      makeFile({
+        path: "Assets/Textures/orphan.png.meta",
+        status: "added",
+        content_digest: "meta-digest",
+      }),
+    ]);
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(status);
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+
+    expect(get(workspaceStore).safetyCheck.warnings.map((item) => item.title)).toEqual(
+      expect.arrayContaining([
+        "Unity 资源缺少 meta",
+        "Unity meta 缺少资源",
+      ]),
+    );
+
+    workspaceStore.confirmSafetyWarnings();
+    const confirmedWarningIds = get(workspaceStore).safetyCheck.confirmedWarningIds;
+
+    expect(confirmedWarningIds).toEqual(
+      expect.arrayContaining([
+        "warning:unity-meta-missing:Assets/Textures/stone.png:asset-digest",
+        "warning:unity-meta-orphan:Assets/Textures/orphan.png.meta:meta-digest",
+      ]),
+    );
+
+    await workspaceStore.refreshStatus();
+
+    expect(get(workspaceStore).safetyCheck.confirmedWarningIds).toEqual(confirmedWarningIds);
+  });
 });
 
-function makeWorkspace(): WorkspaceSummary {
+function makeWorkspace(workspace: Partial<WorkspaceSummary> = {}): WorkspaceSummary {
   return {
     local_path: "C:/repo/wc",
     working_copy_root: "C:/repo/wc",
@@ -176,6 +226,7 @@ function makeWorkspace(): WorkspaceSummary {
       has_project_settings: false,
       has_packages_manifest: false,
     },
+    ...workspace,
   };
 }
 
