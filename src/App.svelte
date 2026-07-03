@@ -436,11 +436,13 @@
   async function handleStartupIntent() {
     const intent = await getStartupIntent();
     const targetPath = intent.path?.trim();
+    const svnExecutable = $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable;
     if (targetPath) {
       workspaceStore.setPathInput(targetPath);
-      await workspaceStore.openPath(
-        $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
-      );
+      const workspace = await workspaceStore.openPath(svnExecutable);
+      if (workspace) {
+        await workspaceStore.selectStartupTargetFile(targetPath, svnExecutable);
+      }
     }
 
     switch (intent.action) {
@@ -464,9 +466,7 @@
         break;
       case "log":
         setCurrentView("history");
-        await workspaceStore.refreshSvnLog(
-          $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
-        );
+        await workspaceStore.refreshSvnLog(svnExecutable);
         break;
       case "revert":
         setCurrentView("changes");

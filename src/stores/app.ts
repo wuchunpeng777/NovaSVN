@@ -1444,7 +1444,7 @@ function createWorkspaceStore() {
     }
   }
 
-  async function openPath(svnExecutable?: string | null) {
+  async function openPath(svnExecutable?: string | null): Promise<WorkspaceSummary | null> {
     update((state) => ({ ...state, loading: true, error: null }));
 
     let path = "";
@@ -1510,12 +1510,14 @@ function createWorkspaceStore() {
         error: null,
       }));
       await refreshStatus(svnExecutable, current.working_copy_root);
+      return current;
     } catch (error) {
       update((state) => ({
         ...state,
         loading: false,
         error: error as CommandError,
       }));
+      return null;
     }
   }
 
@@ -1819,6 +1821,28 @@ function createWorkspaceStore() {
     });
 
     return valid;
+  }
+
+  async function selectStartupTargetFile(targetPath: string, svnExecutable?: string | null) {
+    let current: WorkspaceSummary | null = null;
+    let files: ChangedFile[] = [];
+    update((state) => {
+      current = state.current;
+      files = state.status?.files ?? [];
+      return state;
+    });
+
+    if (!current) {
+      return false;
+    }
+
+    const relativePath = resolveStartupTargetFilePath(targetPath, current, files);
+    if (!relativePath) {
+      return false;
+    }
+
+    await selectFile(relativePath, svnExecutable);
+    return true;
   }
 
   function validateSelectedHunksForPartialCommit() {
@@ -2914,6 +2938,7 @@ function createWorkspaceStore() {
     setGroupMode,
     clearFilters,
     selectFile,
+    selectStartupTargetFile,
     stageFile,
     unstageFile,
     markFileReviewed,
@@ -3298,6 +3323,30 @@ function resolveSelectedFilePath(
   }
 
   return files[0]?.path ?? null;
+}
+
+function resolveStartupTargetFilePath(
+  targetPath: string,
+  workspace: WorkspaceSummary,
+  files: ChangedFile[],
+) {
+  const normalizedTarget = normalizeSystemPath(targetPath);
+  const normalizedRoot = normalizeSystemPath(workspace.working_copy_root);
+  if (!normalizedTarget || !normalizedRoot || normalizedTarget === normalizedRoot) {
+    return null;
+  }
+
+  const rootPrefix = normalizedRoot.endsWith("/") ? normalizedRoot : `${normalizedRoot}/`;
+  if (!normalizedTarget.startsWith(rootPrefix)) {
+    return null;
+  }
+
+  const relativePath = normalizedTarget.slice(rootPrefix.length);
+  return files.find((file) => normalizeWorkspacePath(file.path) === relativePath)?.path ?? null;
+}
+
+function normalizeSystemPath(path: string) {
+  return path.trim().replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/, "");
 }
 
 function isStageable(file: ChangedFile) {
