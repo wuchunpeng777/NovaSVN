@@ -2404,6 +2404,50 @@ fn count_diff_files(diff_text: &str) -> usize {
         .count()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_relative_commit_files() {
+        let files = normalize_commit_files(&["src/main.rs".to_string()]).expect("valid path");
+
+        assert_eq!(files, vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn rejects_absolute_or_parent_paths() {
+        assert!(normalize_relative_file_path(
+            "../secret.txt",
+            "INVALID",
+            "invalid",
+        )
+        .is_err());
+        assert!(normalize_relative_file_path(
+            "C:\\secret.txt",
+            "INVALID",
+            "invalid",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn validates_merge_revision_range() {
+        let range = normalize_merge_revision_range(Some("10".to_string()), Some("12".to_string()))
+            .expect("range valid");
+
+        assert_eq!(range, (Some("10".to_string()), Some("12".to_string())));
+        assert!(normalize_merge_revision_range(Some("10".to_string()), None).is_err());
+    }
+
+    #[test]
+    fn counts_svn_diff_files() {
+        let diff = "Index: a.txt\n--- a.txt\n+++ a.txt\ndiff --git b/c b/c\n";
+
+        assert_eq!(count_diff_files(diff), 2);
+    }
+}
+
 fn compact_repository_url(url: &str) -> String {
     const MAX_CHARS: usize = 48;
     if url.chars().count() <= MAX_CHARS {

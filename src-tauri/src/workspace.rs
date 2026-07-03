@@ -1315,3 +1315,110 @@ fn svn_info_error_detail(executable: &str, path: &Path, output: &std::process::O
         output.status.code()
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_workspace_info_xml() {
+        let xml = r#"
+<info>
+  <entry path="C:\wc" revision="42">
+    <url>https://example.com/svn/trunk</url>
+    <repository><root>https://example.com/svn</root></repository>
+    <wc-info><wcroot-abspath>C:\wc</wcroot-abspath></wc-info>
+  </entry>
+</info>
+"#;
+
+        let summary = parse_svn_info_xml(xml, Path::new("C:\\wc")).expect("info parses");
+
+        assert_eq!(summary.revision, "42");
+        assert_eq!(summary.repository_url, "https://example.com/svn/trunk");
+        assert_eq!(summary.repository_root, "https://example.com/svn");
+        assert_eq!(summary.working_copy_root, "C:\\wc");
+    }
+
+    #[test]
+    fn parses_status_xml_with_conflict_lock_and_paging() {
+        let xml = r#"
+<status>
+  <target path="C:\wc">
+    <entry path="C:\wc\Assets\Player.prefab">
+      <wc-status item="modified" props="none">
+        <lock><owner>alice</owner><comment>editing</comment></lock>
+      </wc-status>
+    </entry>
+    <entry path="C:\wc\Assets\Level.unity">
+      <wc-status item="conflicted" props="none" />
+      <tree-conflict operation="update" />
+    </entry>
+  </target>
+</status>
+"#;
+
+        let status = parse_svn_status_xml(xml, Path::new("C:\\wc"), 0, 10).expect("status parses");
+
+        assert_eq!(status.total, 2);
+        assert_eq!(status.modified, 1);
+        assert_eq!(status.conflicted, 1);
+        assert_eq!(status.files[0].path, "Assets/Player.prefab");
+        assert_eq!(status.files[0].lock_owner.as_deref(), Some("alice"));
+        assert_eq!(status.files[1].conflict_kind.as_deref(), Some("tree:update"));
+    }
+
+    #[test]
+    fn parses_svn_log_xml_changed_paths() {
+        let xml = r#"
+<log>
+  <logentry revision="7">
+    <author>dev</author>
+    <date>2026-01-01T00:00:00.000000Z</date>
+    <paths><path action="M" kind="file">/trunk/a.txt</path></paths>
+    <msg>change</msg>
+  </logentry>
+</log>
+"#;
+
+        let log = parse_svn_log_xml(xml, "wc").expect("log parses");
+
+        assert_eq!(log.entries.len(), 1);
+        assert_eq!(log.entries[0].revision, "7");
+        assert_eq!(log.entries[0].changed_paths[0].action, "M");
+    }
+
+    #[test]
+    fn parses_property_names() {
+        let xml = r#"
+<properties>
+  <target path=".">
+    <property name="svn:externals"/>
+    <property name="svn:ignore"/>
+  </target>
+</properties>
+"#;
+
+        let names = parse_svn_property_names(xml).expect("properties parse");
+
+        assert_eq!(names, vec!["svn:externals", "svn:ignore"]);
+    }
+
+    #[test]
+    fn detects_unity_project_from_required_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-unity-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("Assets")).unwrap();
+        fs::create_dir_all(root.join("ProjectSettings")).unwrap();
+        fs::create_dir_all(root.join("Packages")).unwrap();
+        fs::write(root.join("Packages").join("manifest.json"), "{}").unwrap();
+
+        let unity = detect_unity_project(&root);
+
+        assert!(unity.detected);
+        let _ = fs::remove_dir_all(&root);
+    }
+}
