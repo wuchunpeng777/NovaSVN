@@ -54,6 +54,8 @@ if ($existing.Count -lt $FileCount) {
   & $SvnExe commit $wcPath -m "初始化性能基准数据" | Out-Null
 }
 
+& $SvnExe revert -R $wcPath | Out-Null
+
 for ($i = 0; $i -lt [Math]::Min($ChangedCount, $FileCount); $i++) {
   $file = Join-Path $dataDir ("file-{0:D5}.txt" -f $i)
   Add-Content -LiteralPath $file -Value "changed $([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"

@@ -136,8 +136,18 @@ if (!benchmarkScript.includes("benchmark-results.md")) {
   failed = true;
 }
 
+if (!benchmarkScript.includes("revert -R")) {
+  console.error("性能基准脚本每次运行前必须还原工作副本，避免累积改动影响对比");
+  failed = true;
+}
+
 if (!benchmarkDoc.includes("benchmark-results.md")) {
   console.error("性能基准文档必须说明 Markdown 摘要输出");
+  failed = true;
+}
+
+if (!benchmarkDoc.includes("svn revert -R")) {
+  console.error("性能基准文档必须说明脚本会在每次运行前还原工作副本");
   failed = true;
 }
 
