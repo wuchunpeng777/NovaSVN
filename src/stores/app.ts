@@ -1897,6 +1897,10 @@ function createWorkspaceStore() {
         commitError = "请先选择 hunk 并生成 selected patch";
       } else if (!message) {
         commitError = "请输入提交信息";
+      } else if (state.status?.mixed_revision) {
+        commitError = `当前工作副本 revision 范围为 ${
+          state.status.revision_range ?? "未知"
+        }，Hunk 级部分提交前请先 update 到一致 revision`;
       } else if (safetyCheck.blockers.length > 0) {
         commitError = "安全检查存在阻塞项，请先处理冲突、缺失或阻塞文件";
       } else if (unconfirmedWarnings(safetyCheck).length > 0) {
