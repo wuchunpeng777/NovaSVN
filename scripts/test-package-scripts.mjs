@@ -73,6 +73,21 @@ for (const action of systemIntegrationActions) {
   }
 }
 
+if (!windowsExplorerScript.includes("--novasvn-path")) {
+  console.error("Windows Explorer 菜单命令必须传递 --novasvn-path");
+  failed = true;
+}
+
+if (!windowsExplorerScript.includes("%1") || !windowsExplorerScript.includes("%V")) {
+  console.error("Windows Explorer 菜单必须同时支持文件/目录和目录背景路径占位符");
+  failed = true;
+}
+
+if (!macosFinderScript.includes("--novasvn-path \"$f\"")) {
+  console.error("macOS Finder Quick Action 必须传递选中的 Finder 路径");
+  failed = true;
+}
+
 for (const action of systemIntegrationActions.filter((value) => value !== "open")) {
   if (!appSvelte.includes(`case "${action}":`)) {
     console.error(`启动意图分发缺少 action：${action}`);
