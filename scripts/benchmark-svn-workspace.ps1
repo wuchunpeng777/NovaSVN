@@ -12,6 +12,7 @@ $rootPath = Resolve-Path -LiteralPath "." | ForEach-Object { Join-Path $_ $Root 
 $repoPath = Join-Path $rootPath "repo"
 $wcPath = Join-Path $rootPath "wc"
 $resultPath = Join-Path $rootPath "benchmark-results.json"
+$summaryPath = Join-Path $rootPath "benchmark-results.md"
 
 if ($Reset -and (Test-Path -LiteralPath $rootPath)) {
   Remove-Item -LiteralPath $rootPath -Recurse -Force
@@ -117,4 +118,20 @@ $payload = [pscustomobject]@{
 }
 
 $payload | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $resultPath -Encoding UTF8
+$summaryLines = @(
+  "# NovaSVN SVN Benchmark Results",
+  "",
+  "- Created at: $($payload.created_at)",
+  "- File count: $FileCount",
+  "- Changed count: $ChangedCount",
+  "- Working copy: `$wcPath`",
+  "",
+  "| Step | Elapsed ms |",
+  "| --- | ---: |"
+)
+foreach ($result in $results) {
+  $summaryLines += "| $($result.name) | $($result.elapsed_ms) |"
+}
+$summaryLines | Set-Content -LiteralPath $summaryPath -Encoding UTF8
 Write-Host "Benchmark results written to $resultPath"
+Write-Host "Benchmark summary written to $summaryPath"

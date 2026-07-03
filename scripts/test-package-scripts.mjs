@@ -11,6 +11,11 @@ const macosFinderScript = fs.readFileSync(
   path.join(root, "scripts", "macos-finder-quick-actions.sh"),
   "utf8",
 );
+const benchmarkScript = fs.readFileSync(
+  path.join(root, "scripts", "benchmark-svn-workspace.ps1"),
+  "utf8",
+);
+const benchmarkDoc = fs.readFileSync(path.join(root, "doc", "性能基准.md"), "utf8");
 const appSvelte = fs.readFileSync(path.join(root, "src", "App.svelte"), "utf8");
 const systemIntegrationRs = fs.readFileSync(
   path.join(root, "src-tauri", "src", "system_integration.rs"),
@@ -62,6 +67,16 @@ for (const scriptName of benchmarkScripts) {
 
 if (!packageJson.scripts?.["benchmark:svn:reset"]?.includes("-Reset")) {
   console.error("benchmark:svn:reset 必须传入 -Reset");
+  failed = true;
+}
+
+if (!benchmarkScript.includes("benchmark-results.md")) {
+  console.error("性能基准脚本必须生成 Markdown 摘要");
+  failed = true;
+}
+
+if (!benchmarkDoc.includes("benchmark-results.md")) {
+  console.error("性能基准文档必须说明 Markdown 摘要输出");
   failed = true;
 }
 
