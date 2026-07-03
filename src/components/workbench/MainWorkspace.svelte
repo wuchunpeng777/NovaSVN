@@ -22,6 +22,7 @@
     WorkspaceGroupMode,
     WorkspaceStageFilter,
   } from "../../types/app";
+  import { unityGroupLabel } from "../../lib/unity";
 
   export let view: WorkbenchView;
   export let workspace: WorkspaceSummary | null = null;
@@ -559,30 +560,7 @@
   }
 
   function getUnityGroupLabel(path: string) {
-    const normalized = path.replaceAll("\\", "/");
-    const rules = appSettings.unityGroupRules;
-    if (
-      rules.addressables &&
-      (normalized.includes("/AddressableAssetsData/") || normalized.includes("/Addressables/"))
-    ) {
-      return "Addressables";
-    }
-    if (rules.projectSettings && normalized.startsWith("ProjectSettings/")) {
-      return "ProjectSettings";
-    }
-    if (rules.packages && normalized.startsWith("Packages/")) {
-      return "Packages";
-    }
-    if (rules.scenes && normalized.endsWith(".unity")) {
-      return "Scene";
-    }
-    if (rules.prefabs && normalized.endsWith(".prefab")) {
-      return "Prefab";
-    }
-    if (rules.assets && normalized.startsWith("Assets/")) {
-      return "Assets";
-    }
-    return "其他";
+    return unityGroupLabel(path, appSettings.unityGroupRules);
   }
 
   function appendFileItems(items: VirtualItem[], files: ChangedFile[], staged: boolean) {
@@ -1208,7 +1186,7 @@
                   {path.action || "-"} {path.path}
                   {#if path.copy_from_path}
                     <small>
-                      <- {path.copy_from_path}{path.copy_from_revision ? `@r${path.copy_from_revision}` : ""}
+                      &lt;- {path.copy_from_path}{path.copy_from_revision ? `@r${path.copy_from_revision}` : ""}
                     </small>
                   {/if}
                 </span>
