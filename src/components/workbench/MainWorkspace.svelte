@@ -147,6 +147,14 @@
     commitTemplate: "",
     largeFileThresholdMb: 20,
     unityRulesEnabled: true,
+    unityGroupRules: {
+      addressables: true,
+      projectSettings: true,
+      packages: true,
+      scenes: true,
+      prefabs: true,
+      assets: true,
+    },
     externalDiffTool: "",
     externalMergeTool: "",
     diagnosticExportPath: "",
@@ -497,22 +505,26 @@
 
   function getUnityGroupLabel(path: string) {
     const normalized = path.replaceAll("\\", "/");
-    if (normalized.includes("/AddressableAssetsData/") || normalized.includes("/Addressables/")) {
+    const rules = appSettings.unityGroupRules;
+    if (
+      rules.addressables &&
+      (normalized.includes("/AddressableAssetsData/") || normalized.includes("/Addressables/"))
+    ) {
       return "Addressables";
     }
-    if (normalized.startsWith("ProjectSettings/")) {
+    if (rules.projectSettings && normalized.startsWith("ProjectSettings/")) {
       return "ProjectSettings";
     }
-    if (normalized.startsWith("Packages/")) {
+    if (rules.packages && normalized.startsWith("Packages/")) {
       return "Packages";
     }
-    if (normalized.endsWith(".unity")) {
+    if (rules.scenes && normalized.endsWith(".unity")) {
       return "Scene";
     }
-    if (normalized.endsWith(".prefab")) {
+    if (rules.prefabs && normalized.endsWith(".prefab")) {
       return "Prefab";
     }
-    if (normalized.startsWith("Assets/")) {
+    if (rules.assets && normalized.startsWith("Assets/")) {
       return "Assets";
     }
     return "其他";
@@ -1251,6 +1263,81 @@
         />
         <span>启用 Unity 规则</span>
       </label>
+      <div class="settings-rule-group">
+        <span>Unity 分组规则</span>
+        <label>
+          <input
+            type="checkbox"
+            checked={appSettings.unityGroupRules.addressables}
+            on:change={(event) =>
+              onAppSettingInput("unityGroupRules", {
+                ...appSettings.unityGroupRules,
+                addressables: (event.currentTarget as HTMLInputElement).checked,
+              })}
+          />
+          <span>Addressables</span>
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={appSettings.unityGroupRules.projectSettings}
+            on:change={(event) =>
+              onAppSettingInput("unityGroupRules", {
+                ...appSettings.unityGroupRules,
+                projectSettings: (event.currentTarget as HTMLInputElement).checked,
+              })}
+          />
+          <span>ProjectSettings</span>
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={appSettings.unityGroupRules.packages}
+            on:change={(event) =>
+              onAppSettingInput("unityGroupRules", {
+                ...appSettings.unityGroupRules,
+                packages: (event.currentTarget as HTMLInputElement).checked,
+              })}
+          />
+          <span>Packages</span>
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={appSettings.unityGroupRules.scenes}
+            on:change={(event) =>
+              onAppSettingInput("unityGroupRules", {
+                ...appSettings.unityGroupRules,
+                scenes: (event.currentTarget as HTMLInputElement).checked,
+              })}
+          />
+          <span>Scene</span>
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={appSettings.unityGroupRules.prefabs}
+            on:change={(event) =>
+              onAppSettingInput("unityGroupRules", {
+                ...appSettings.unityGroupRules,
+                prefabs: (event.currentTarget as HTMLInputElement).checked,
+              })}
+          />
+          <span>Prefab</span>
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={appSettings.unityGroupRules.assets}
+            on:change={(event) =>
+              onAppSettingInput("unityGroupRules", {
+                ...appSettings.unityGroupRules,
+                assets: (event.currentTarget as HTMLInputElement).checked,
+              })}
+          />
+          <span>Assets</span>
+        </label>
+      </div>
       <div class="settings-diagnostics">
         <button type="button" on:click={onExportDiagnosticLog} disabled={appSettings.loading}>
           {appSettings.loading ? "导出中" : "导出诊断日志"}

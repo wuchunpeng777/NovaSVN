@@ -85,6 +85,14 @@ const initialAppSettings: AppSettingsState = {
   commitTemplate: "",
   largeFileThresholdMb: 20,
   unityRulesEnabled: true,
+  unityGroupRules: {
+    addressables: true,
+    projectSettings: true,
+    packages: true,
+    scenes: true,
+    prefabs: true,
+    assets: true,
+  },
   externalDiffTool: "",
   externalMergeTool: "",
   diagnosticExportPath: "",
@@ -2951,6 +2959,7 @@ function loadAppSettings(): AppSettingsState {
           : 20,
       unityRulesEnabled:
         typeof parsed.unityRulesEnabled === "boolean" ? parsed.unityRulesEnabled : true,
+      unityGroupRules: normalizeUnityGroupRules(parsed.unityGroupRules),
       externalDiffTool:
         typeof parsed.externalDiffTool === "string" ? parsed.externalDiffTool : "",
       externalMergeTool:
@@ -2973,6 +2982,27 @@ function emptyAppSettingsValidationErrors() {
     svnExecutable: null,
     externalDiffTool: null,
     externalMergeTool: null,
+  };
+}
+
+function normalizeUnityGroupRules(value: unknown) {
+  const defaults = initialAppSettings.unityGroupRules;
+  if (!value || typeof value !== "object") {
+    return defaults;
+  }
+
+  const parsed = value as Partial<AppSettingsState["unityGroupRules"]>;
+  return {
+    addressables:
+      typeof parsed.addressables === "boolean" ? parsed.addressables : defaults.addressables,
+    projectSettings:
+      typeof parsed.projectSettings === "boolean"
+        ? parsed.projectSettings
+        : defaults.projectSettings,
+    packages: typeof parsed.packages === "boolean" ? parsed.packages : defaults.packages,
+    scenes: typeof parsed.scenes === "boolean" ? parsed.scenes : defaults.scenes,
+    prefabs: typeof parsed.prefabs === "boolean" ? parsed.prefabs : defaults.prefabs,
+    assets: typeof parsed.assets === "boolean" ? parsed.assets : defaults.assets,
   };
 }
 
