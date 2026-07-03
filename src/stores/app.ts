@@ -2920,8 +2920,8 @@ function buildSafetyCheck(
       warnings.push({
         id: `warning:binary:${file.path}:${file.content_digest}`,
         severity: "warning",
-        title: "疑似大型二进制文件",
-        detail: `${file.path} 是常见二进制资源类型，提交前请确认体积和必要性。`,
+        title: looksLikeUnityLargeAsset(file.path) ? "Unity 大资源文件" : "疑似大型二进制文件",
+        detail: `${file.path} 是常见二进制或 Unity 资源类型，提交前请确认体积和必要性。`,
         filePath: file.path,
       });
     }
@@ -3082,7 +3082,18 @@ function looksLikeGeneratedOrTemporary(path: string) {
 
   return (
     segments.some((segment) =>
-      ["dist", "build", "target", "node_modules", ".cache", "coverage"].includes(segment),
+      [
+        "dist",
+        "build",
+        "target",
+        "node_modules",
+        ".cache",
+        "coverage",
+        "library",
+        "temp",
+        "logs",
+        "obj",
+      ].includes(segment),
     ) ||
     fileName.endsWith(".log") ||
     fileName.endsWith(".tmp") ||
@@ -3113,6 +3124,23 @@ function looksLikeLargeBinary(path: string) {
     "rar",
     "webp",
     "zip",
+  ].includes(extension) || looksLikeUnityLargeAsset(path);
+}
+
+function looksLikeUnityLargeAsset(path: string) {
+  const extension = path.replaceAll("\\", "/").split(".").pop()?.toLowerCase() ?? "";
+  return [
+    "anim",
+    "asset",
+    "blend",
+    "controller",
+    "fbx",
+    "mat",
+    "prefab",
+    "scene",
+    "shadergraph",
+    "unity",
+    "wav",
   ].includes(extension);
 }
 

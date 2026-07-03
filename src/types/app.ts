@@ -7,7 +7,7 @@ export type AppView =
 
 export type WorkspaceStageFilter = "all" | "staged" | "unstaged";
 
-export type WorkspaceGroupMode = "status" | "directory" | "extension";
+export type WorkspaceGroupMode = "status" | "directory" | "extension" | "unity";
 
 export type SafetyCheckSeverity = "blocker" | "warning" | "info";
 

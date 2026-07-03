@@ -431,6 +431,10 @@
       return `extension:${extension}`;
     }
 
+    if (mode === "unity") {
+      return `unity:${getUnityGroupLabel(file.path)}`;
+    }
+
     return `status:${file.status}`;
   }
 
@@ -441,6 +445,10 @@
 
     if (mode === "extension") {
       return getFileExtension(file.path);
+    }
+
+    if (mode === "unity") {
+      return getUnityGroupLabel(file.path);
     }
 
     return labelStatus(file.status);
@@ -458,6 +466,29 @@
     return index > 0 && index < fileName.length - 1
       ? fileName.slice(index + 1).toLowerCase()
       : "无扩展名";
+  }
+
+  function getUnityGroupLabel(path: string) {
+    const normalized = path.replaceAll("\\", "/");
+    if (normalized.includes("/AddressableAssetsData/") || normalized.includes("/Addressables/")) {
+      return "Addressables";
+    }
+    if (normalized.startsWith("ProjectSettings/")) {
+      return "ProjectSettings";
+    }
+    if (normalized.startsWith("Packages/")) {
+      return "Packages";
+    }
+    if (normalized.endsWith(".unity")) {
+      return "Scene";
+    }
+    if (normalized.endsWith(".prefab")) {
+      return "Prefab";
+    }
+    if (normalized.startsWith("Assets/")) {
+      return "Assets";
+    }
+    return "其他";
   }
 
   function appendFileItems(items: VirtualItem[], files: ChangedFile[], staged: boolean) {
@@ -1820,6 +1851,13 @@
         on:click={() => onGroupModeChange("extension")}
       >
         类型
+      </button>
+      <button
+        type="button"
+        class:active={groupByStatus && groupMode === "unity"}
+        on:click={() => onGroupModeChange("unity")}
+      >
+        Unity
       </button>
       <button type="button" on:click={onClearFilters}>清空过滤</button>
       <button
