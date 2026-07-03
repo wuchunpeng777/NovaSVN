@@ -274,6 +274,9 @@
       branchPoolStore.failCheckoutTask("请输入分支 URL 和本地路径");
       return;
     }
+    if (!branchPoolStore.validateForm()) {
+      return;
+    }
 
     const task = await taskStore.createBranchCheckout({
       branchUrl: form.branchUrl,
@@ -937,6 +940,7 @@
         onPrepareRepositoryCopyTarget={workspaceStore.prepareRepositoryCopyTarget}
         onCreateRepositoryCopy={createRepositoryCopy}
         onBranchPoolFormInput={branchPoolStore.setFormField}
+        branchPoolFormErrors={$branchPoolStore.formErrors}
         onUseBranchUrlForPool={branchPoolStore.useBranchUrl}
         onCheckoutBranchPoolEntry={checkoutBranchPoolEntry}
         onReuseBranchPoolEntry={reuseBranchPoolEntry}

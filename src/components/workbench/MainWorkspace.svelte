@@ -89,6 +89,9 @@
     localPath: "",
     revision: "",
   };
+  export let branchPoolFormErrors = {
+    localPath: null as string | null,
+  };
   export let branchPoolLoading = false;
   export let branchPoolError: CommandError | null = null;
   export let branchCheckoutError: string | null = null;
@@ -148,6 +151,11 @@
     externalMergeTool: "",
     diagnosticExportPath: "",
     diagnosticExportError: null,
+    validationErrors: {
+      svnExecutable: null,
+      externalDiffTool: null,
+      externalMergeTool: null,
+    },
     loading: false,
   };
   export let onChooseWorkspace: () => void;
@@ -1145,6 +1153,9 @@
               (event.currentTarget as HTMLInputElement).value,
             )}
         />
+        {#if appSettings.validationErrors.svnExecutable}
+          <small class="settings-field-error">{appSettings.validationErrors.svnExecutable}</small>
+        {/if}
       </label>
       <label>
         <span>提交模板</span>
@@ -1197,6 +1208,9 @@
               (event.currentTarget as HTMLInputElement).value,
             )}
         />
+        {#if appSettings.validationErrors.externalDiffTool}
+          <small class="settings-field-error">{appSettings.validationErrors.externalDiffTool}</small>
+        {/if}
       </label>
       <label>
         <span>外部 Merge 工具</span>
@@ -1209,6 +1223,9 @@
               (event.currentTarget as HTMLInputElement).value,
             )}
         />
+        {#if appSettings.validationErrors.externalMergeTool}
+          <small class="settings-field-error">{appSettings.validationErrors.externalMergeTool}</small>
+        {/if}
       </label>
       <label class="settings-toggle">
         <input
@@ -1398,6 +1415,9 @@
                 (event.currentTarget as HTMLInputElement).value,
               )}
           />
+          {#if branchPoolFormErrors.localPath}
+            <small class="settings-field-error">{branchPoolFormErrors.localPath}</small>
+          {/if}
         </label>
         <label>
           <span>Revision</span>

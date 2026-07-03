@@ -1167,6 +1167,12 @@ button {
   resize: vertical;
 }
 
+.settings-field-error {
+  color: #b42318;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .settings-toggle {
   display: flex !important;
   align-items: center;

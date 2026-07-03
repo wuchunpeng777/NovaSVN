@@ -83,5 +83,10 @@ export interface AppSettingsState {
   externalMergeTool: string;
   diagnosticExportPath: string;
   diagnosticExportError: string | null;
+  validationErrors: {
+    svnExecutable: string | null;
+    externalDiffTool: string | null;
+    externalMergeTool: string | null;
+  };
   loading: boolean;
 }

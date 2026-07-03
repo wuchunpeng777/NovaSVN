@@ -89,6 +89,7 @@ const initialAppSettings: AppSettingsState = {
   externalMergeTool: "",
   diagnosticExportPath: "",
   diagnosticExportError: null,
+  validationErrors: emptyAppSettingsValidationErrors(),
   loading: false,
 };
 
@@ -104,7 +105,11 @@ function createAppSettingsStore() {
 
   function setField<K extends keyof AppSettingsState>(field: K, value: AppSettingsState[K]) {
     update((state) => {
-      const next = { ...state, [field]: value };
+      const next = {
+        ...state,
+        [field]: value,
+        validationErrors: validateAppSettingsField(state.validationErrors, field, value),
+      };
       saveAppSettings(next);
       if (field === "svnExecutable") {
         svnStore.setExecutableInput(String(value));
@@ -684,6 +689,9 @@ export interface BranchPoolStoreState {
     localPath: string;
     revision: string;
   };
+  formErrors: {
+    localPath: string | null;
+  };
   pendingCheckoutTaskId: string | null;
   pendingCheckoutEntry: {
     branchUrl: string;
@@ -703,6 +711,9 @@ const initialBranchPoolState: BranchPoolStoreState = {
     branchUrl: "",
     localPath: "",
     revision: "",
+  },
+  formErrors: {
+    localPath: null,
   },
   pendingCheckoutTaskId: null,
   pendingCheckoutEntry: null,
@@ -741,6 +752,13 @@ function createBranchPoolStore() {
         ...state.form,
         [field]: value,
       },
+      formErrors: {
+        ...state.formErrors,
+        localPath:
+          field === "localPath"
+            ? validateAbsoluteOrHomePath(value, "本地路径")
+            : state.formErrors.localPath,
+      },
       checkoutError: null,
     }));
   }
@@ -762,6 +780,19 @@ function createBranchPoolStore() {
     revision?: string | null;
     localChanges?: number;
   }) {
+    const localPathError = validateAbsoluteOrHomePath(entry.localPath, "本地路径");
+    if (localPathError) {
+      update((state) => ({
+        ...state,
+        formErrors: {
+          ...state.formErrors,
+          localPath: localPathError,
+        },
+        checkoutError: localPathError,
+      }));
+      return null;
+    }
+
     update((state) => ({ ...state, loading: true, error: null }));
 
     try {
@@ -810,6 +841,10 @@ function createBranchPoolStore() {
   }
 
   function markCheckoutTask(taskId: string | null) {
+    if (taskId && !validateForm()) {
+      return;
+    }
+
     update((state) => ({
       ...state,
       pendingCheckoutTaskId: taskId,
@@ -822,6 +857,20 @@ function createBranchPoolStore() {
         : null,
       checkoutError: null,
     }));
+  }
+
+  function validateForm() {
+    const state = get({ subscribe });
+    const localPathError = validateAbsoluteOrHomePath(state.form.localPath, "本地路径");
+    update((current) => ({
+      ...current,
+      formErrors: {
+        ...current.formErrors,
+        localPath: localPathError,
+      },
+      checkoutError: localPathError,
+    }));
+    return !localPathError;
   }
 
   async function completeCheckoutTask() {
@@ -844,6 +893,9 @@ function createBranchPoolStore() {
         form: {
           ...state.form,
           localPath: "",
+        },
+        formErrors: {
+          localPath: null,
         },
         pendingCheckoutTaskId: null,
         pendingCheckoutEntry: null,
@@ -875,6 +927,7 @@ function createBranchPoolStore() {
     useBranchUrl,
     saveExisting,
     remove,
+    validateForm,
     markCheckoutTask,
     completeCheckoutTask,
     failCheckoutTask,
@@ -2857,10 +2910,92 @@ function loadAppSettings(): AppSettingsState {
         typeof parsed.externalMergeTool === "string" ? parsed.externalMergeTool : "",
       diagnosticExportPath: "",
       diagnosticExportError: null,
+      validationErrors: {
+        svnExecutable: validateExecutableSetting(parsed.svnExecutable, "SVN 路径"),
+        externalDiffTool: validateExecutableSetting(parsed.externalDiffTool, "外部 Diff 工具"),
+        externalMergeTool: validateExecutableSetting(parsed.externalMergeTool, "外部 Merge 工具"),
+      },
     };
   } catch {
     return initialAppSettings;
   }
+}
+
+function emptyAppSettingsValidationErrors() {
+  return {
+    svnExecutable: null,
+    externalDiffTool: null,
+    externalMergeTool: null,
+  };
+}
+
+function validateAppSettingsField<K extends keyof AppSettingsState>(
+  current: AppSettingsState["validationErrors"],
+  field: K,
+  value: AppSettingsState[K],
+) {
+  if (field !== "svnExecutable" && field !== "externalDiffTool" && field !== "externalMergeTool") {
+    return current;
+  }
+
+  const settingField = field as keyof AppSettingsState["validationErrors"];
+  const labels: Record<keyof AppSettingsState["validationErrors"], string> = {
+    svnExecutable: "SVN 路径",
+    externalDiffTool: "外部 Diff 工具",
+    externalMergeTool: "外部 Merge 工具",
+  };
+
+  return {
+    ...current,
+    [settingField]: validateExecutableSetting(value, labels[settingField]),
+  };
+}
+
+function validateExecutableSetting(value: unknown, label: string) {
+  if (typeof value !== "string" || value.trim() === "") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (hasControlCharacter(trimmed)) {
+    return `${label}不能包含控制字符`;
+  }
+  if (isSimpleCommandName(trimmed) || isAbsoluteOrHomePath(trimmed)) {
+    return null;
+  }
+
+  return `${label}需要是命令名、绝对路径或 ~/ 开头路径`;
+}
+
+function validateAbsoluteOrHomePath(value: string, label: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return `${label}不能为空`;
+  }
+  if (hasControlCharacter(trimmed)) {
+    return `${label}不能包含控制字符`;
+  }
+  if (!isAbsoluteOrHomePath(trimmed)) {
+    return `${label}需要是绝对路径或 ~/ 开头路径`;
+  }
+  return null;
+}
+
+function hasControlCharacter(value: string) {
+  return /[\u0000-\u001f]/.test(value);
+}
+
+function isSimpleCommandName(value: string) {
+  return /^[A-Za-z0-9._-]+(?:\.exe)?$/.test(value);
+}
+
+function isAbsoluteOrHomePath(value: string) {
+  return (
+    /^~[\\/]/.test(value) ||
+    /^[A-Za-z]:[\\/]/.test(value) ||
+    /^\\\\[^\\/]+[\\/][^\\/]+/.test(value) ||
+    value.startsWith("/")
+  );
 }
 
 function saveAppSettings(settings: AppSettingsState) {
