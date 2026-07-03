@@ -2,31 +2,55 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
   detectSvn: vi.fn(),
+  getTaskWorkspaces: vi.fn(),
   openWorkspace: vi.fn(),
+  removeTaskWorkspace: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
+  saveTaskWorkspace: vi.fn(),
 }));
 
 import { get } from "svelte/store";
 
-import { detectSvn, openWorkspace, scanWorkspaceStatus } from "../lib/api";
-import type { ChangedFile, WorkingCopyStatus, WorkspaceSummary } from "../types/api";
+import {
+  detectSvn,
+  getTaskWorkspaces,
+  openWorkspace,
+  removeTaskWorkspace,
+  scanWorkspaceStatus,
+  saveTaskWorkspace,
+} from "../lib/api";
+import type {
+  BranchPoolEntry,
+  ChangedFile,
+  TaskWorkspaceEntry,
+  TaskWorkspaceList,
+  WorkingCopyStatus,
+  WorkspaceSummary,
+} from "../types/api";
 import type { AppSettingsState } from "../types/app";
 import {
   appSettingsStore,
   isSameRepositoryUrl,
   revisionDiffPatchFileName,
   svnStore,
+  taskWorkspaceStore,
   workspaceStore,
 } from "./app";
 
 const detectSvnMock = vi.mocked(detectSvn);
+const getTaskWorkspacesMock = vi.mocked(getTaskWorkspaces);
 const openWorkspaceMock = vi.mocked(openWorkspace);
+const removeTaskWorkspaceMock = vi.mocked(removeTaskWorkspace);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
+const saveTaskWorkspaceMock = vi.mocked(saveTaskWorkspace);
 
 beforeEach(() => {
   detectSvnMock.mockReset();
+  getTaskWorkspacesMock.mockReset();
   openWorkspaceMock.mockReset();
+  removeTaskWorkspaceMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
+  saveTaskWorkspaceMock.mockReset();
   window.localStorage.clear();
   appSettingsStore.load();
   svnStore.setExecutableInput("");
@@ -295,6 +319,126 @@ describe("workspaceStore review state", () => {
   });
 });
 
+describe("taskWorkspaceStore drafts", () => {
+  it("restores staged files, commit message, review state, and warning confirmations per task", async () => {
+    const workspace = makeWorkspace();
+    const status = makeStatus([
+      makeFile({
+        path: "build/output.tmp",
+        content_digest: "tmp-digest",
+      }),
+      makeFile({
+        path: "src/main.ts",
+        content_digest: "main-digest",
+      }),
+    ]);
+    const taskA = makeTaskWorkspace({
+      id: "task-a",
+      name: "任务 A",
+      draft_key: "novasvn:test-task-a",
+    });
+    const taskB = makeTaskWorkspace({
+      id: "task-b",
+      name: "任务 B",
+      draft_key: "novasvn:test-task-b",
+    });
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(status);
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    workspaceStore.stageFile("build/output.tmp");
+    workspaceStore.setCommitMessage("提交任务 A");
+    workspaceStore.markFileReviewed("src/main.ts");
+    workspaceStore.confirmSafetyWarnings();
+    taskWorkspaceStore.saveDraft(taskA, workspaceStore.exportTaskWorkspaceDraft());
+
+    workspaceStore.unstageFile("build/output.tmp");
+    workspaceStore.stageFile("src/main.ts");
+    workspaceStore.setCommitMessage("提交任务 B");
+    workspaceStore.markFileUnreviewed("src/main.ts");
+    taskWorkspaceStore.saveDraft(taskB, workspaceStore.exportTaskWorkspaceDraft());
+
+    workspaceStore.importTaskWorkspaceDraft(taskWorkspaceStore.loadDraft(taskA));
+    expect(get(taskWorkspaceStore).activeTaskId).toBe("task-a");
+    expect(get(workspaceStore)).toMatchObject({
+      commitMessage: "提交任务 A",
+      stagedFiles: [
+        {
+          path: "build/output.tmp",
+          status: "modified",
+          contentDigest: "tmp-digest",
+        },
+      ],
+      reviewedFiles: [
+        {
+          path: "src/main.ts",
+          contentDigest: "main-digest",
+        },
+      ],
+    });
+    expect(get(workspaceStore).safetyCheck.confirmedWarningIds).toEqual([
+      "warning:generated:build/output.tmp:tmp-digest",
+    ]);
+
+    workspaceStore.importTaskWorkspaceDraft(taskWorkspaceStore.loadDraft(taskB));
+    expect(get(taskWorkspaceStore).activeTaskId).toBe("task-b");
+    expect(get(workspaceStore)).toMatchObject({
+      commitMessage: "提交任务 B",
+      stagedFiles: [
+        {
+          path: "src/main.ts",
+          status: "modified",
+          contentDigest: "main-digest",
+        },
+      ],
+      reviewedFiles: [],
+    });
+    expect(get(workspaceStore).safetyCheck.confirmedWarningIds).toEqual([]);
+  });
+
+  it("removes only the deleted task draft and keeps the workspace draft untouched", async () => {
+    const workspace = makeWorkspace();
+    const taskA = makeTaskWorkspace({
+      id: "task-a",
+      draft_key: "novasvn:test-task-a",
+    });
+    const taskB = makeTaskWorkspace({
+      id: "task-b",
+      draft_key: "novasvn:test-task-b",
+    });
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(makeStatus([
+      makeFile({
+        path: "src/main.ts",
+        content_digest: "main-digest",
+      }),
+    ]));
+    removeTaskWorkspaceMock.mockResolvedValue(makeTaskWorkspaceList([taskB]));
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    workspaceStore.stageFile("src/main.ts");
+    workspaceStore.setCommitMessage("工作副本草稿");
+    taskWorkspaceStore.saveDraft(taskA, workspaceStore.exportTaskWorkspaceDraft());
+    taskWorkspaceStore.saveDraft(taskB, workspaceStore.exportTaskWorkspaceDraft());
+
+    expect(window.localStorage.getItem(taskA.draft_key)).not.toBeNull();
+    expect(window.localStorage.getItem(taskB.draft_key)).not.toBeNull();
+    const workspaceDraftKey = `novasvn:workspace-draft:${workspace.working_copy_root}:${workspace.repository_url}`;
+    expect(window.localStorage.getItem(workspaceDraftKey)).not.toBeNull();
+
+    await taskWorkspaceStore.remove(taskA);
+
+    expect(removeTaskWorkspaceMock).toHaveBeenCalledWith({ id: "task-a" });
+    expect(window.localStorage.getItem(taskA.draft_key)).toBeNull();
+    expect(window.localStorage.getItem(taskB.draft_key)).not.toBeNull();
+    expect(window.localStorage.getItem(workspaceDraftKey)).not.toBeNull();
+  });
+});
+
 function makeWorkspace(workspace: Partial<WorkspaceSummary> = {}): WorkspaceSummary {
   return {
     local_path: "C:/repo/wc",
@@ -309,6 +453,40 @@ function makeWorkspace(workspace: Partial<WorkspaceSummary> = {}): WorkspaceSumm
       has_packages_manifest: false,
     },
     ...workspace,
+  };
+}
+
+function makeBranchPoolEntry(entry: Partial<BranchPoolEntry> = {}): BranchPoolEntry {
+  return {
+    id: "branch-1",
+    branch_url: "https://example.com/svn/branches/feature",
+    local_path: "C:/repo/wc",
+    revision: "12",
+    local_changes: 0,
+    created_at: 1,
+    updated_at: 1,
+    ...entry,
+  };
+}
+
+function makeTaskWorkspace(entry: Partial<TaskWorkspaceEntry> = {}): TaskWorkspaceEntry {
+  const branch = makeBranchPoolEntry();
+  return {
+    id: "task-1",
+    name: "任务",
+    branch_pool_entry_id: branch.id,
+    branch_url: branch.branch_url,
+    local_path: branch.local_path,
+    draft_key: "novasvn:test-task",
+    created_at: 1,
+    updated_at: 1,
+    ...entry,
+  };
+}
+
+function makeTaskWorkspaceList(entries: TaskWorkspaceEntry[]): TaskWorkspaceList {
+  return {
+    entries,
   };
 }
 
