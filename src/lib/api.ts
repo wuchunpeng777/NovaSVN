@@ -24,6 +24,8 @@ import type {
   GetFileDiffRequest,
   GetSvnLogRequest,
   GetSvnPropertiesRequest,
+  ExternalToolLaunch,
+  LaunchExternalToolRequest,
   OpenWorkspaceRequest,
   ParsedDiff,
   RecentWorkspace,
@@ -85,6 +87,12 @@ export function createMockTask(request: CreateMockTaskRequest): Promise<Task> {
 
 export function getStartupIntent(): Promise<StartupIntent> {
   return callBackend<StartupIntent>("get_startup_intent");
+}
+
+export function launchExternalTool(
+  request: LaunchExternalToolRequest,
+): Promise<ExternalToolLaunch> {
+  return callBackend<ExternalToolLaunch>("launch_external_tool", { request });
 }
 
 export function exportDiagnostics(): Promise<DiagnosticExport> {

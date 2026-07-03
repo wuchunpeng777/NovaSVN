@@ -4,6 +4,7 @@
   import type {
     ChangedFile,
     CommandError,
+    ExternalToolKind,
     FileContentDiff,
     FileDiff,
     ParsedFileDiff,
@@ -45,6 +46,8 @@
   export let shadowLoading = false;
   export let shadowError: CommandError | null = null;
   export let workspaceRoot: string | null = null;
+  export let externalDiffTool = "";
+  export let externalMergeTool = "";
   export let svnProperties: SvnProperties | null = null;
   export let svnPropertiesLoading = false;
   export let svnPropertiesError: CommandError | null = null;
@@ -62,6 +65,7 @@
   export let onResolveWorking: (path: string) => void;
   export let onResolveMineFull: (path: string) => void;
   export let onResolveTheirsFull: (path: string) => void;
+  export let onLaunchExternalTool: (kind: ExternalToolKind, path: string) => void;
   export let onMarkFileReviewed: (path: string) => void;
   export let onMarkFileUnreviewed: (path: string) => void;
   export let onToggleHunkSelection: (filePath: string, hunkId: string) => void;
@@ -234,6 +238,22 @@
           <dd>{selectedFile.conflict_kind ?? (selectedFile.status === "conflicted" ? "text" : "-")}</dd>
         </div>
       </dl>
+      <div class="external-tool-actions">
+        <button
+          type="button"
+          on:click={() => onLaunchExternalTool("diff", selectedFile.path)}
+          disabled={!externalDiffTool.trim()}
+        >
+          外部 Diff
+        </button>
+        <button
+          type="button"
+          on:click={() => onLaunchExternalTool("merge", selectedFile.path)}
+          disabled={!externalMergeTool.trim()}
+        >
+          外部 Merge
+        </button>
+      </div>
       {#if selectedFile.status === "conflicted" || selectedFile.conflict_kind}
         <div class="conflict-actions">
           <button type="button" on:click={() => onResolveWorking(selectedFile.path)}>

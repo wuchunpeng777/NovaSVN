@@ -90,6 +90,21 @@ export interface CreateSvnOperationTaskRequest {
   svn_executable?: string;
 }
 
+export type ExternalToolKind = "diff" | "merge";
+
+export interface LaunchExternalToolRequest {
+  kind: ExternalToolKind;
+  tool_path: string;
+  working_copy_root: string;
+  file_path: string;
+}
+
+export interface ExternalToolLaunch {
+  kind: ExternalToolKind | string;
+  tool_path: string;
+  target_path: string;
+}
+
 export type ShadowWorkspaceOperationKind = "create_or_update" | "rebuild";
 
 export interface CreateShadowWorkspaceTaskRequest {

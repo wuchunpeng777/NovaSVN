@@ -2,6 +2,7 @@ mod branch_pool;
 mod diagnostics;
 mod diff;
 mod error;
+mod external_tool;
 mod shadow;
 mod staging;
 mod svn;
@@ -14,6 +15,7 @@ use branch_pool::{BranchPool, RemoveBranchPoolEntryRequest, SaveBranchPoolEntryR
 use diagnostics::DiagnosticExport;
 use diff::{GenerateSelectedPatchRequest, ParsedDiff, SelectedPatch};
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
+use external_tool::{ExternalToolLaunch, LaunchExternalToolRequest};
 use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
 use system_integration::StartupIntent;
@@ -56,6 +58,14 @@ fn fail_for_preview() -> CommandResult<()> {
 fn get_startup_intent() -> CommandResult<StartupIntent> {
     Ok(CommandResponse::success(
         system_integration::startup_intent(),
+    ))
+}
+
+#[tauri::command]
+fn launch_external_tool(request: LaunchExternalToolRequest) -> CommandResult<ExternalToolLaunch> {
+    println!("[NovaSVN] launch_external_tool command received");
+    Ok(CommandResponse::success(
+        external_tool::launch_external_tool(request)?,
     ))
 }
 
@@ -363,6 +373,7 @@ pub fn run() {
             ping,
             fail_for_preview,
             get_startup_intent,
+            launch_external_tool,
             create_mock_task,
             create_commit_task,
             create_svn_operation_task,

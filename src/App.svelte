@@ -5,7 +5,7 @@
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
   import Toolbar from "./components/workbench/Toolbar.svelte";
   import { onDestroy, onMount } from "svelte";
-  import { callBackend, getStartupIntent } from "./lib/api";
+  import { callBackend, getStartupIntent, launchExternalTool } from "./lib/api";
   import { detailSections, navigationItems, workbenchViews } from "./lib/workbench";
   import {
     branchPoolStore,
@@ -17,7 +17,13 @@
     taskWorkspaceStore,
     workspaceStore,
   } from "./stores/app";
-  import type { ChangedFile, CommandError, HealthPayload, SvnOperationKind } from "./types/api";
+  import type {
+    ChangedFile,
+    CommandError,
+    ExternalToolKind,
+    HealthPayload,
+    SvnOperationKind,
+  } from "./types/api";
   import type { SidebarFilterStats } from "./types/app";
 
   let backendMessage = "等待连接后端";
@@ -64,6 +70,34 @@
     commandError = null;
     try {
       await callBackend<void>("fail_for_preview");
+    } catch (error) {
+      commandError = error as CommandError;
+    }
+  }
+
+  async function openExternalTool(kind: ExternalToolKind, filePath: string) {
+    commandError = null;
+    const toolPath =
+      kind === "diff" ? $appSettingsStore.externalDiffTool : $appSettingsStore.externalMergeTool;
+    const root = $workspaceStore.current?.working_copy_root;
+    if (!root) {
+      commandError = {
+        code: "WORKSPACE_REQUIRED",
+        message: "请先打开 SVN 工作副本",
+        detail: null,
+        recoverable: true,
+      };
+      return;
+    }
+
+    try {
+      const result = await launchExternalTool({
+        kind,
+        tool_path: toolPath,
+        working_copy_root: root,
+        file_path: filePath,
+      });
+      backendMessage = `已启动外部 ${kind === "diff" ? "Diff" : "Merge"} 工具：${result.target_path}`;
     } catch (error) {
       commandError = error as CommandError;
     }
@@ -996,6 +1030,8 @@
         shadowLoading={$workspaceStore.shadowLoading}
         shadowError={$workspaceStore.shadowError}
         workspaceRoot={$workspaceStore.current?.working_copy_root ?? null}
+        externalDiffTool={$appSettingsStore.externalDiffTool}
+        externalMergeTool={$appSettingsStore.externalMergeTool}
         svnProperties={$workspaceStore.svnProperties}
         svnPropertiesLoading={$workspaceStore.svnPropertiesLoading}
         svnPropertiesError={$workspaceStore.svnPropertiesError}
@@ -1010,6 +1046,7 @@
         onResolveWorking={(path) => runSvnOperation("resolve_working", path)}
         onResolveMineFull={(path) => runSvnOperation("resolve_mine_full", path)}
         onResolveTheirsFull={(path) => runSvnOperation("resolve_theirs_full", path)}
+        onLaunchExternalTool={openExternalTool}
         onMarkFileReviewed={workspaceStore.markFileReviewed}
         onMarkFileUnreviewed={workspaceStore.markFileUnreviewed}
         onToggleHunkSelection={workspaceStore.toggleHunkSelection}
