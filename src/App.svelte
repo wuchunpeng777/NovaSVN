@@ -103,6 +103,23 @@
     }
   }
 
+  async function saveSvnPropertyWithConfirm() {
+    const propertyName = $workspaceStore.propertyEditForm.name.trim();
+    if (!propertyName) {
+      return;
+    }
+
+    const target = $workspaceStore.selectedFilePath || "工作副本根目录";
+    const confirmed = window.confirm(`确定保存 SVN 属性吗？\n${target}\n${propertyName}`);
+    if (!confirmed) {
+      return;
+    }
+
+    await workspaceStore.saveSvnProperty(
+      $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    );
+  }
+
   async function submitStagedFiles() {
     if (!workspaceStore.validateStagedFilesForCommit() || !$workspaceStore.current) {
       return;
@@ -1065,10 +1082,7 @@
           )}
         onPropertyEditInput={workspaceStore.setPropertyEditForm}
         onUsePropertyForEdit={workspaceStore.usePropertyForEdit}
-        onSaveSvnProperty={() =>
-          workspaceStore.saveSvnProperty(
-            $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
-          )}
+        onSaveSvnProperty={saveSvnPropertyWithConfirm}
       />
     </div>
 
