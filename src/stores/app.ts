@@ -3321,14 +3321,19 @@ function suggestBranchPoolLocalPath(branchUrl: string, basePath: string) {
     return "";
   }
 
-  const branchName =
-    branchUrl
-      .trim()
-      .replace(/[?#].*$/, "")
-      .replace(/\/+$/, "")
-      .split("/")
-      .pop() ?? "branch";
-  const safeName = branchName.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const pathSegments = branchUrl
+    .trim()
+    .replace(/[?#].*$/, "")
+    .replace(/\/+$/, "")
+    .split("/")
+    .filter(Boolean);
+  const branchName = pathSegments.at(-1) ?? "branch";
+  const parentName = pathSegments.at(-2);
+  const rawDirectoryName =
+    parentName && !["branches", "tags", "trunk"].includes(parentName.toLowerCase())
+      ? `${parentName}-${branchName}`
+      : branchName;
+  const safeName = rawDirectoryName.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   const directoryName = safeName || "branch";
   const separator = base.includes("\\") && !base.includes("/") ? "\\" : "/";
   return `${base.replace(/[\\/]+$/, "")}${separator}${directoryName}`;
