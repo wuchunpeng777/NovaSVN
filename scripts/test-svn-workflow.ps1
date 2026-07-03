@@ -59,6 +59,7 @@ try {
   Set-Content -LiteralPath (Join-Path $srcDir "added.txt") -Value "added" -Encoding UTF8
   Invoke-Svn @("add", (Join-Path $srcDir "added.txt")) | Out-Null
   Invoke-Svn @("delete", (Join-Path $srcDir "delete-me.txt")) | Out-Null
+  Invoke-Svn @("propset", "svn:ignore", "*.ignored", $srcDir) | Out-Null
   Set-Content -LiteralPath (Join-Path $srcDir "unversioned.tmp") -Value "temp" -Encoding UTF8
 
   $statusXml = (Invoke-Svn @("status", "--xml", $wcPath)) -join "`n"
@@ -66,6 +67,7 @@ try {
   Assert-Contains $statusXml 'item="added"' "added 状态未出现"
   Assert-Contains $statusXml 'item="deleted"' "deleted 状态未出现"
   Assert-Contains $statusXml 'item="unversioned"' "unversioned 状态未出现"
+  Assert-Contains $statusXml 'props="modified"' "属性变更状态未出现"
 
   $missingPath = Join-Path $srcDir "main.txt"
   Remove-Item -LiteralPath $missingPath -Force
@@ -87,7 +89,7 @@ try {
   $diff = (Invoke-Svn @("diff", $missingPath)) -join "`n"
   Assert-Contains $diff "+line 3" "diff 未包含新增行"
 
-  $log = (Invoke-Svn @("log", "--xml", "--limit", "2", $wcPath)) -join "`n"
+  $log = (Invoke-Svn @("log", "--xml", "--limit", "2", $srcDir)) -join "`n"
   Assert-Contains $log "<logentry" "log XML 未包含 revision"
 
   Invoke-Svn @("revert", $missingPath) | Out-Null
@@ -97,7 +99,7 @@ try {
   Set-Content -LiteralPath $primaryConflictFile -Value @("line 1", "remote conflict") -Encoding UTF8
   Invoke-Svn @("commit", $primaryConflictFile, "-m", "制造远端冲突变更") | Out-Null
   Set-Content -LiteralPath $secondaryConflictFile -Value @("line 1", "local conflict") -Encoding UTF8
-  & $SvnExe update $conflictWcPath | Out-Null
+  & $SvnExe update --non-interactive --accept postpone $conflictWcPath | Out-Null
   $conflictStatusXml = (Invoke-Svn @("status", "--xml", $conflictWcPath)) -join "`n"
   Assert-Contains $conflictStatusXml 'item="conflicted"' "conflict 状态未出现"
   Invoke-Svn @("revert", "-R", $conflictWcPath) | Out-Null
