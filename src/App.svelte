@@ -598,7 +598,7 @@
     $taskStore.selectedTask.status === "success"
   ) {
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
-    workspaceStore.markPartialCommitTask(null);
+    workspaceStore.completePartialCommit();
     if (workingCopyRoot) {
       void workspaceStore.refreshStatus(
         $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,

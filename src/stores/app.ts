@@ -1903,6 +1903,29 @@ function createWorkspaceStore() {
     }));
   }
 
+  function completePartialCommit() {
+    update((state) => {
+      const commitHistory = recordCommitHistory(
+        state.commitMessage,
+        state.commitHistory,
+        state.commitTemplate,
+      );
+      const nextState = {
+        ...state,
+        selectedHunks: [],
+        selectedPatch: null,
+        selectedPatchError: null,
+        selectedPatchLoading: false,
+        commitHistory,
+        commitMessage: state.commitTemplate,
+        commitError: null,
+        pendingPartialCommitTaskId: null,
+      };
+      saveWorkspaceDraftFromState(nextState);
+      return nextState;
+    });
+  }
+
   function markSvnOperationTask(taskId: string | null, kind: SvnOperationKind | null) {
     update((state) => ({
       ...state,
@@ -2897,6 +2920,7 @@ function createWorkspaceStore() {
     confirmSafetyWarnings,
     markCommitTask,
     markPartialCommitTask,
+    completePartialCommit,
     markSvnOperationTask,
     setRepositoryUrlInput,
     useWorkspaceRepositoryRoot,
