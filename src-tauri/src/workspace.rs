@@ -342,20 +342,12 @@ pub fn set_svn_property(request: SetSvnPropertyRequest) -> Result<SvnProperties,
         .transpose()?
         .map(|file| root.join(file))
         .unwrap_or_else(|| root.clone());
-    let name = request.name.trim();
-    if name.is_empty() || name.chars().any(char::is_control) {
-        return Err(NovaError::command(
-            "SVN_PROPERTY_NAME_INVALID",
-            "属性名无效",
-            None,
-            true,
-        ));
-    }
+    let name = normalize_svn_property_name(&request.name)?;
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
     let output = Command::new(&executable)
         .arg("propset")
-        .arg(name)
+        .arg(&name)
         .arg(&request.value)
         .arg(&target)
         .current_dir(&root)
@@ -1291,6 +1283,29 @@ fn get_svn_property_value(
         .to_string())
 }
 
+fn normalize_svn_property_name(name: &str) -> Result<String, NovaError> {
+    let value = name.trim();
+    if value.is_empty() {
+        return Err(NovaError::command(
+            "SVN_PROPERTY_NAME_INVALID",
+            "属性名无效",
+            Some("属性名不能为空。".to_string()),
+            true,
+        ));
+    }
+
+    if value.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "SVN_PROPERTY_NAME_INVALID",
+            "属性名无效",
+            Some("属性名不能包含控制字符。".to_string()),
+            true,
+        ));
+    }
+
+    Ok(value.to_string())
+}
+
 fn text_child(node: roxmltree::Node<'_, '_>, tag_name: &str) -> Result<String, NovaError> {
     node.descendants()
         .find(|child| child.has_tag_name(tag_name))
@@ -1597,6 +1612,16 @@ mod tests {
         let names = parse_svn_property_names(xml).expect("properties parse");
 
         assert_eq!(names, vec!["svn:externals", "svn:ignore"]);
+    }
+
+    #[test]
+    fn validates_svn_property_names() {
+        assert_eq!(
+            normalize_svn_property_name(" svn:externals ").unwrap(),
+            "svn:externals"
+        );
+        assert!(normalize_svn_property_name(" ").is_err());
+        assert!(normalize_svn_property_name("svn:ignore\nnext").is_err());
     }
 
     #[test]
