@@ -8,6 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test:components": "vitest run src/**/*.test.ts",
+    "test:svn": "powershell -ExecutionPolicy Bypass -File scripts/test-svn-workflow.ps1",
+    "test:svn:partial": "powershell -ExecutionPolicy Bypass -File scripts/test-svn-partial-commit.ps1",
     "test:e2e": "playwright test",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
