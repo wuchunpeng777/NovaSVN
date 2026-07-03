@@ -2815,6 +2815,13 @@ function createWorkspaceStore() {
     }));
   }
 
+  function increaseSvnLogLimit(step = 50) {
+    update((state) => ({
+      ...state,
+      svnLogLimit: Math.min(state.svnLogLimit + step, 200),
+    }));
+  }
+
   function setRevisionDiffForm(
     field: keyof WorkspaceStoreState["revisionDiffForm"],
     value: string,
@@ -3006,6 +3013,7 @@ function createWorkspaceStore() {
     setSvnLogFilter,
     setSvnLogFileOnly,
     setSvnLogLimit,
+    increaseSvnLogLimit,
     setRevisionDiffForm,
     prepareRevisionDiffFromLog,
     markRevisionDiffTask,

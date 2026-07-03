@@ -238,6 +238,7 @@
   ) => void;
   export let onSvnLogFileOnlyInput: (value: boolean) => void;
   export let onSvnLogLimitInput: (value: number) => void;
+  export let onLoadMoreSvnLog: () => void;
   export let onRevisionDiffFormInput: (
     field: keyof typeof revisionDiffForm,
     value: string,
@@ -965,6 +966,13 @@
         </div>
         <button type="button" on:click={onRefreshSvnLog} disabled={!workspace || svnLogLoading}>
           {svnLogLoading ? "加载中" : "读取日志"}
+        </button>
+        <button
+          type="button"
+          on:click={onLoadMoreSvnLog}
+          disabled={!workspace || svnLogLoading || svnLogLimit >= 200}
+        >
+          加载更多
         </button>
       </div>
 
