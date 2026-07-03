@@ -15,6 +15,7 @@ const appSvelte = fs.readFileSync(path.join(root, "src", "App.svelte"), "utf8");
 const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 
 const releaseScripts = ["release:windows", "release:macos"];
+const benchmarkScripts = ["benchmark:svn", "benchmark:svn:reset"];
 const systemIntegrationActions = [
   "open",
   "commit",
@@ -39,6 +40,25 @@ for (const scriptName of releaseScripts) {
     console.error(`${scriptName} 必须先执行 npm run version:check`);
     failed = true;
   }
+}
+
+for (const scriptName of benchmarkScripts) {
+  const command = packageJson.scripts?.[scriptName];
+  if (typeof command !== "string") {
+    console.error(`${scriptName} 脚本不存在`);
+    failed = true;
+    continue;
+  }
+
+  if (!command.includes("scripts/benchmark-svn-workspace.ps1")) {
+    console.error(`${scriptName} 必须调用性能基准脚本`);
+    failed = true;
+  }
+}
+
+if (!packageJson.scripts?.["benchmark:svn:reset"]?.includes("-Reset")) {
+  console.error("benchmark:svn:reset 必须传入 -Reset");
+  failed = true;
 }
 
 for (const action of systemIntegrationActions) {
@@ -69,4 +89,4 @@ if (failed) {
   process.exit(1);
 }
 
-console.log("发布脚本、系统入口脚本和更新日志检查通过");
+console.log("发布脚本、性能基准入口、系统入口脚本和更新日志检查通过");
