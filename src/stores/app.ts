@@ -115,20 +115,25 @@ function createAppSettingsStore() {
 
   function setField<K extends keyof AppSettingsState>(field: K, value: AppSettingsState[K]) {
     update((state) => {
+      const normalizedValue = normalizeAppSettingValue(field, value);
       const next = {
         ...state,
-        [field]: value,
-        validationErrors: validateAppSettingsField(state.validationErrors, field, value),
+        [field]: normalizedValue,
+        validationErrors: validateAppSettingsField(
+          state.validationErrors,
+          field,
+          normalizedValue,
+        ),
       };
       saveAppSettings(next);
       if (field === "svnExecutable") {
-        svnStore.setExecutableInput(String(value));
+        svnStore.setExecutableInput(String(normalizedValue));
       }
       if (field === "commitTemplate") {
-        workspaceStore.setCommitTemplate(String(value));
+        workspaceStore.setCommitTemplate(String(normalizedValue));
       }
       if (field === "branchPoolBasePath") {
-        branchPoolStore.applyBasePath(String(value));
+        branchPoolStore.applyBasePath(String(normalizedValue));
       }
       return next;
     });
@@ -3160,7 +3165,7 @@ function loadAppSettings(): AppSettingsState {
         typeof parsed.branchPoolBasePath === "string" ? parsed.branchPoolBasePath : "",
       largeFileThresholdMb:
         typeof parsed.largeFileThresholdMb === "number"
-          ? Math.min(Math.max(parsed.largeFileThresholdMb, 1), 2048)
+          ? normalizeLargeFileThreshold(parsed.largeFileThresholdMb)
           : 20,
       unityRulesEnabled:
         typeof parsed.unityRulesEnabled === "boolean" ? parsed.unityRulesEnabled : true,
@@ -3193,6 +3198,25 @@ function emptyAppSettingsValidationErrors() {
     externalDiffTool: null,
     externalMergeTool: null,
   };
+}
+
+function normalizeAppSettingValue<K extends keyof AppSettingsState>(
+  field: K,
+  value: AppSettingsState[K],
+): AppSettingsState[K] {
+  if (field === "largeFileThresholdMb") {
+    return normalizeLargeFileThreshold(value) as AppSettingsState[K];
+  }
+
+  return value;
+}
+
+function normalizeLargeFileThreshold(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return initialAppSettings.largeFileThresholdMb;
+  }
+
+  return Math.min(Math.max(Math.round(value), 1), 2048);
 }
 
 function normalizeUnityGroupRules(value: unknown) {

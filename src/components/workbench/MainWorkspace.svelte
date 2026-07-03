@@ -1286,7 +1286,7 @@
           on:input={(event) =>
             onAppSettingInput(
               "largeFileThresholdMb",
-              Number((event.currentTarget as HTMLInputElement).value),
+              (event.currentTarget as HTMLInputElement).valueAsNumber,
             )}
         />
       </label>
