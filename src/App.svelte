@@ -66,6 +66,18 @@
     backendMessage = `${health.message} (${health.backend})`;
   }
 
+  async function detectSvnWithInputAndSave() {
+    const detection = await svnStore.detectWithInput();
+    if (!detection) {
+      return;
+    }
+
+    appSettingsStore.setField(
+      "svnExecutable",
+      $svnStore.executableInput || detection.resolved_path || detection.executable,
+    );
+  }
+
   async function previewError() {
     commandError = null;
     try {
@@ -1121,7 +1133,7 @@
         svnPropertiesError={$workspaceStore.svnPropertiesError}
         propertyEditForm={$workspaceStore.propertyEditForm}
         onDetectSvn={svnStore.detect}
-        onDetectSvnWithInput={svnStore.detectWithInput}
+        onDetectSvnWithInput={detectSvnWithInputAndSave}
         onSvnExecutableInput={svnStore.setExecutableInput}
         onRevertFile={(path) => runSvnOperation("revert_file", path)}
         onLockFile={(path) => runSvnOperation("lock_file", path)}

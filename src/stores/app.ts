@@ -668,6 +668,7 @@ function createSvnStore() {
         loading: false,
         error: null,
       }));
+      return detection;
     } catch (error) {
       update((state) => ({
         ...state,
@@ -675,6 +676,7 @@ function createSvnStore() {
         loading: false,
         error: error as CommandError,
       }));
+      return null;
     }
   }
 
