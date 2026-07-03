@@ -437,11 +437,15 @@
     const intent = await getStartupIntent();
     const targetPath = intent.path?.trim();
     const svnExecutable = $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable;
+    let startupFileSelected = false;
     if (targetPath) {
       workspaceStore.setPathInput(targetPath);
       const workspace = await workspaceStore.openPath(svnExecutable);
       if (workspace) {
-        await workspaceStore.selectStartupTargetFile(targetPath, svnExecutable);
+        startupFileSelected = await workspaceStore.selectStartupTargetFile(
+          targetPath,
+          svnExecutable,
+        );
       }
     }
 
@@ -466,6 +470,9 @@
         break;
       case "log":
         setCurrentView("history");
+        if (startupFileSelected) {
+          workspaceStore.setSvnLogFileOnly(true);
+        }
         await workspaceStore.refreshSvnLog(svnExecutable);
         break;
       case "revert":
