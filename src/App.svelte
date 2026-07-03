@@ -159,7 +159,10 @@
     }
 
     const target = $workspaceStore.selectedFilePath || "工作副本根目录";
-    const confirmed = window.confirm(`确定保存 SVN 属性吗？\n${target}\n${propertyName}`);
+    const deletingProperty = !$workspaceStore.propertyEditForm.value.trim();
+    const confirmed = window.confirm(
+      `确定${deletingProperty ? "删除" : "保存"} SVN 属性吗？\n${target}\n${propertyName}`,
+    );
     if (!confirmed) {
       return;
     }

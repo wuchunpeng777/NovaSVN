@@ -343,29 +343,35 @@ pub fn set_svn_property(request: SetSvnPropertyRequest) -> Result<SvnProperties,
         .map(|file| root.join(file))
         .unwrap_or_else(|| root.clone());
     let name = normalize_svn_property_name(&request.name)?;
+    let operation = svn_property_write_operation(&request.value);
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
-    let output = Command::new(&executable)
-        .arg("propset")
-        .arg(&name)
-        .arg(&request.value)
+    let mut command = Command::new(&executable);
+    command.arg(operation.command()).arg(&name);
+    if let SvnPropertyWriteOperation::Set = operation {
+        command.arg(&request.value);
+    }
+    let output = command
         .arg(&target)
         .current_dir(&root)
         .output()
         .map_err(|error| {
             NovaError::command(
-                "SVN_PROPSET_FAILED",
-                "无法设置 SVN 属性",
-                Some(format!("执行 `{executable} propset` 失败：{error}")),
+                operation.error_code(),
+                operation.error_message(),
+                Some(format!(
+                    "执行 `{executable} {}` 失败：{error}",
+                    operation.command()
+                )),
                 true,
             )
         })?;
 
     if !output.status.success() {
         return Err(NovaError::command(
-            "SVN_PROPSET_FAILED",
-            "SVN 属性设置失败",
-            Some(command_error_detail(&executable, "propset", &output)),
+            operation.error_code(),
+            operation.failed_message(),
+            Some(command_error_detail(&executable, operation.command(), &output)),
             true,
         ));
     }
@@ -1324,6 +1330,50 @@ fn normalize_svn_property_name(name: &str) -> Result<String, NovaError> {
     Ok(value.to_string())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SvnPropertyWriteOperation {
+    Set,
+    Delete,
+}
+
+impl SvnPropertyWriteOperation {
+    fn command(self) -> &'static str {
+        match self {
+            SvnPropertyWriteOperation::Set => "propset",
+            SvnPropertyWriteOperation::Delete => "propdel",
+        }
+    }
+
+    fn error_code(self) -> &'static str {
+        match self {
+            SvnPropertyWriteOperation::Set => "SVN_PROPSET_FAILED",
+            SvnPropertyWriteOperation::Delete => "SVN_PROPDEL_FAILED",
+        }
+    }
+
+    fn error_message(self) -> &'static str {
+        match self {
+            SvnPropertyWriteOperation::Set => "无法设置 SVN 属性",
+            SvnPropertyWriteOperation::Delete => "无法删除 SVN 属性",
+        }
+    }
+
+    fn failed_message(self) -> &'static str {
+        match self {
+            SvnPropertyWriteOperation::Set => "SVN 属性设置失败",
+            SvnPropertyWriteOperation::Delete => "SVN 属性删除失败",
+        }
+    }
+}
+
+fn svn_property_write_operation(value: &str) -> SvnPropertyWriteOperation {
+    if value.trim().is_empty() {
+        SvnPropertyWriteOperation::Delete
+    } else {
+        SvnPropertyWriteOperation::Set
+    }
+}
+
 fn text_child(node: roxmltree::Node<'_, '_>, tag_name: &str) -> Result<String, NovaError> {
     node.descendants()
         .find(|child| child.has_tag_name(tag_name))
@@ -1664,6 +1714,18 @@ mod tests {
         );
         assert!(normalize_svn_property_name(" ").is_err());
         assert!(normalize_svn_property_name("svn:ignore\nnext").is_err());
+    }
+
+    #[test]
+    fn chooses_property_delete_for_blank_values() {
+        assert_eq!(
+            svn_property_write_operation("ignored"),
+            SvnPropertyWriteOperation::Set
+        );
+        assert_eq!(
+            svn_property_write_operation(" \r\n\t "),
+            SvnPropertyWriteOperation::Delete
+        );
     }
 
     #[test]
