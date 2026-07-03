@@ -2888,6 +2888,19 @@ function createWorkspaceStore() {
     if (append && (!state.svnLog?.has_more || !nextStartRevision)) {
       return;
     }
+    if (state.svnLogFileOnly && !state.selectedFilePath) {
+      update((current) => ({
+        ...current,
+        svnLogLoading: false,
+        svnLogError: {
+          code: "SVN_LOG_FILE_REQUIRED",
+          message: "请先选择要查看历史的文件",
+          detail: null,
+          recoverable: true,
+        },
+      }));
+      return;
+    }
 
     update((current) => ({
       ...current,

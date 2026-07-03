@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
   detectSvn: vi.fn(),
+  getSvnLog: vi.fn(),
   getTaskWorkspaces: vi.fn(),
   openWorkspace: vi.fn(),
   removeTaskWorkspace: vi.fn(),
@@ -13,6 +14,7 @@ import { get } from "svelte/store";
 
 import {
   detectSvn,
+  getSvnLog,
   getTaskWorkspaces,
   openWorkspace,
   removeTaskWorkspace,
@@ -38,6 +40,7 @@ import {
 } from "./app";
 
 const detectSvnMock = vi.mocked(detectSvn);
+const getSvnLogMock = vi.mocked(getSvnLog);
 const getTaskWorkspacesMock = vi.mocked(getTaskWorkspaces);
 const openWorkspaceMock = vi.mocked(openWorkspace);
 const removeTaskWorkspaceMock = vi.mocked(removeTaskWorkspace);
@@ -46,6 +49,7 @@ const saveTaskWorkspaceMock = vi.mocked(saveTaskWorkspace);
 
 beforeEach(() => {
   detectSvnMock.mockReset();
+  getSvnLogMock.mockReset();
   getTaskWorkspacesMock.mockReset();
   openWorkspaceMock.mockReset();
   removeTaskWorkspaceMock.mockReset();
@@ -491,6 +495,28 @@ describe("workspaceStore review state", () => {
     await workspaceStore.refreshStatus();
 
     expect(get(workspaceStore).reviewedFiles).toEqual([]);
+  });
+});
+
+describe("workspaceStore svn log", () => {
+  it("requires a selected file before loading file-only history", async () => {
+    const workspace = makeWorkspace();
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(makeStatus([]));
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    workspaceStore.setSvnLogFileOnly(true);
+
+    await workspaceStore.refreshSvnLog();
+
+    expect(getSvnLogMock).not.toHaveBeenCalled();
+    expect(get(workspaceStore).svnLogError).toMatchObject({
+      code: "SVN_LOG_FILE_REQUIRED",
+      message: "请先选择要查看历史的文件",
+      recoverable: true,
+    });
   });
 });
 
