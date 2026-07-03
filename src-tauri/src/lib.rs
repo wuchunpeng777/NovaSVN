@@ -412,6 +412,10 @@ pub fn run() {
         .manage(TaskQueue::new())
         .setup(|app| {
             diagnostics::install_panic_hook(app.path().app_data_dir()?);
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
