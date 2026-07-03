@@ -13,7 +13,7 @@
     SvnDetection,
     SvnProperties,
   } from "../../types/api";
-  import type { DetailSection, SafetyCheckSummary } from "../../types/app";
+  import type { AppSettingsState, DetailSection, SafetyCheckSummary } from "../../types/app";
 
   export let sections: DetailSection[] = [];
   export let commandError: CommandError | null = null;
@@ -48,6 +48,8 @@
   export let workspaceRoot: string | null = null;
   export let externalDiffTool = "";
   export let externalMergeTool = "";
+  export let defaultDiffMode: AppSettingsState["diffMode"] = "side_by_side";
+  export let defaultShowWhitespace = false;
   export let svnProperties: SvnProperties | null = null;
   export let svnPropertiesLoading = false;
   export let svnPropertiesError: CommandError | null = null;
@@ -80,6 +82,13 @@
 
   let inlineDiff = false;
   let showWhitespace = false;
+  let initializedDiffPreferences = false;
+
+  $: if (!initializedDiffPreferences) {
+    inlineDiff = defaultDiffMode === "inline";
+    showWhitespace = defaultShowWhitespace;
+    initializedDiffPreferences = true;
+  }
 
   $: selectedFileUrl =
     selectedFile && workspaceRoot

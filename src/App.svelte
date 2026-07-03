@@ -1032,6 +1032,8 @@
         workspaceRoot={$workspaceStore.current?.working_copy_root ?? null}
         externalDiffTool={$appSettingsStore.externalDiffTool}
         externalMergeTool={$appSettingsStore.externalMergeTool}
+        defaultDiffMode={$appSettingsStore.diffMode}
+        defaultShowWhitespace={$appSettingsStore.showWhitespace}
         svnProperties={$workspaceStore.svnProperties}
         svnPropertiesLoading={$workspaceStore.svnPropertiesLoading}
         svnPropertiesError={$workspaceStore.svnPropertiesError}
