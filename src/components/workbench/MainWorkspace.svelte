@@ -34,6 +34,7 @@
   export let stageFilter: WorkspaceStageFilter = "all";
   export let abnormalOnly = false;
   export let unreviewedOnly = false;
+  export let generatedOnly = false;
   export let statusFilters: string[] = [];
   export let groupMode: WorkspaceGroupMode = "status";
   export let selectedFilePath: string | null = null;
@@ -179,6 +180,7 @@
   export let onSearchTextInput: (value: string) => void;
   export let onToggleGroupByStatus: () => void;
   export let onToggleUnreviewedOnly: () => void;
+  export let onToggleGeneratedOnly: () => void;
   export let onGroupModeChange: (value: WorkspaceGroupMode) => void;
   export let onClearFilters: () => void;
   export let onSelectFile: (path: string) => void;
@@ -338,6 +340,7 @@
     currentStageFilter: WorkspaceStageFilter,
     currentAbnormalOnly: boolean,
     currentUnreviewedOnly: boolean,
+    currentGeneratedOnly: boolean,
     currentStatusFilters: string[],
     stagedPaths: Set<string>,
     reviewedPaths: Set<string>,
@@ -364,12 +367,45 @@
         return false;
       }
 
+      if (currentGeneratedOnly && !looksLikeGeneratedOrTemporaryPath(file.path)) {
+        return false;
+      }
+
       if (selectedStatuses.size > 0 && !selectedStatuses.has(file.status)) {
         return false;
       }
 
       return true;
     });
+  }
+
+  function looksLikeGeneratedOrTemporaryPath(path: string) {
+    const normalized = path.replaceAll("\\", "/").toLowerCase();
+    const segments = normalized.split("/");
+    const fileName = segments.at(-1) ?? normalized;
+
+    return (
+      segments.some((segment) =>
+        [
+          "dist",
+          "build",
+          "target",
+          "node_modules",
+          ".cache",
+          "coverage",
+          "library",
+          "temp",
+          "logs",
+          "obj",
+        ].includes(segment),
+      ) ||
+      fileName.endsWith(".log") ||
+      fileName.endsWith(".tmp") ||
+      fileName.endsWith(".temp") ||
+      fileName.endsWith(".bak") ||
+      fileName.endsWith(".swp") ||
+      fileName === ".ds_store"
+    );
   }
 
   function handleRowKeydown(event: KeyboardEvent, path: string) {
@@ -752,6 +788,7 @@
     stageFilter,
     abnormalOnly,
     unreviewedOnly,
+    generatedOnly,
     statusFilters,
     stagedFilePaths,
     reviewedFilePaths,
@@ -783,6 +820,9 @@
     (workingCopyStatus?.obstructed ?? 0);
   $: externalFiles = changedFiles.filter((file) => file.status === "external");
   $: externalAbnormalCount = externalFiles.filter((file) => file.abnormal).length;
+  $: generatedFileCount = changedFiles.filter((file) =>
+    looksLikeGeneratedOrTemporaryPath(file.path),
+  ).length;
   $: reviewedCount = changedFiles.filter((file) => isReviewed(file.path)).length;
   $: unreviewedCount = Math.max(changedFiles.length - reviewedCount, 0);
   $: repositoryEntries = repositoryList?.entries ?? [];
@@ -2164,7 +2204,15 @@
       >
         未审
       </button>
+      <button
+        type="button"
+        class:active={generatedOnly}
+        on:click={onToggleGeneratedOnly}
+      >
+        生成
+      </button>
       <span>异常 {abnormalCount}</span>
+      <span>生成 {generatedFileCount}</span>
       <span>Externals {externalFiles.length}</span>
       <span>未审 {unreviewedCount}</span>
       <span>显示 {filteredFiles.length}/{changedFiles.length}</span>

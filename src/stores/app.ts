@@ -1137,6 +1137,7 @@ export interface WorkspaceStoreState {
   stageFilter: WorkspaceStageFilter;
   abnormalOnly: boolean;
   unreviewedOnly: boolean;
+  generatedOnly: boolean;
   statusFilters: string[];
   groupMode: WorkspaceGroupMode;
   selectedFilePath: string | null;
@@ -1264,6 +1265,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   stageFilter: "all",
   abnormalOnly: false,
   unreviewedOnly: false,
+  generatedOnly: false,
   statusFilters: [],
   groupMode: "status",
   selectedFilePath: null,
@@ -1644,6 +1646,13 @@ function createWorkspaceStore() {
     }));
   }
 
+  function toggleGeneratedOnly() {
+    update((state) => ({
+      ...state,
+      generatedOnly: !state.generatedOnly,
+    }));
+  }
+
   function toggleStatusFilter(status: string) {
     update((state) => {
       const selected = new Set(state.statusFilters);
@@ -1675,6 +1684,7 @@ function createWorkspaceStore() {
       stageFilter: "all",
       abnormalOnly: false,
       unreviewedOnly: false,
+      generatedOnly: false,
       statusFilters: [],
     }));
   }
@@ -2943,6 +2953,7 @@ function createWorkspaceStore() {
     setStageFilter,
     toggleAbnormalOnly,
     toggleUnreviewedOnly,
+    toggleGeneratedOnly,
     toggleStatusFilter,
     setGroupMode,
     clearFilters,

@@ -916,6 +916,7 @@
         stageFilter={$workspaceStore.stageFilter}
         abnormalOnly={$workspaceStore.abnormalOnly}
         unreviewedOnly={$workspaceStore.unreviewedOnly}
+        generatedOnly={$workspaceStore.generatedOnly}
         statusFilters={$workspaceStore.statusFilters}
         groupMode={$workspaceStore.groupMode}
         selectedFilePath={$workspaceStore.selectedFilePath}
@@ -984,6 +985,7 @@
         onSearchTextInput={workspaceStore.setSearchText}
         onToggleGroupByStatus={workspaceStore.toggleGroupByStatus}
         onToggleUnreviewedOnly={workspaceStore.toggleUnreviewedOnly}
+        onToggleGeneratedOnly={workspaceStore.toggleGeneratedOnly}
         onGroupModeChange={workspaceStore.setGroupMode}
         onClearFilters={workspaceStore.clearFilters}
         onSelectFile={(path) =>
