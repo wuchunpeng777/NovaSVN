@@ -132,3 +132,10 @@ for entry in "${ACTIONS[@]}"; do
 done
 
 echo "NovaSVN macOS Finder Quick Actions ${MODE} complete."
+
+if [[ "$MODE" == "install" ]]; then
+  echo ""
+  echo "Enable the actions in System Settings > Keyboard > Keyboard Shortcuts > Services or Quick Actions."
+  echo "If Finder does not show the NovaSVN actions, check Privacy & Security permissions for NovaSVN and Automator, then relaunch Finder."
+  echo "You can relaunch Finder with: killall Finder"
+fi
