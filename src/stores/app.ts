@@ -1411,10 +1411,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   svnProperties: null,
   svnPropertiesLoading: false,
   svnPropertiesError: null,
-  propertyEditForm: {
-    name: "",
-    value: "",
-  },
+  propertyEditForm: emptyPropertyEditForm(),
 };
 
 function createWorkspaceStore() {
@@ -1473,6 +1470,7 @@ function createWorkspaceStore() {
         repositoryError: null,
         shadowStatus: null,
         shadowError: null,
+        ...clearSvnPropertiesState(),
         pathInput: state.pathInput || root || "",
         loading: false,
         error: null,
@@ -1553,6 +1551,7 @@ function createWorkspaceStore() {
         repositoryError: null,
         shadowStatus: null,
         shadowError: null,
+        ...clearSvnPropertiesState(),
         pathInput: current.working_copy_root,
         loading: false,
         error: null,
@@ -1752,6 +1751,7 @@ function createWorkspaceStore() {
       selectedFileParsedDiff: null,
       selectedPatch: null,
       selectedFilePath: path,
+      ...clearSvnPropertiesState(),
     }));
     update((state) => {
       root = state.current?.working_copy_root ?? "";
@@ -1775,6 +1775,7 @@ function createWorkspaceStore() {
       selectedFileParsedDiff: null,
       selectedPatch: null,
       selectedFilePath: path,
+      ...clearSvnPropertiesState(),
     }));
   }
 
@@ -2464,6 +2465,7 @@ function createWorkspaceStore() {
         state.safetyCheck.confirmedWarningIds,
         status,
       );
+      const selectedFileChanged = selectedFilePath !== state.selectedFilePath;
       const nextState = {
         ...state,
         status,
@@ -2479,6 +2481,7 @@ function createWorkspaceStore() {
         reviewedFiles,
         statusLoading: false,
         statusError: null,
+        ...(selectedFileChanged ? clearSvnPropertiesState() : {}),
       };
       saveWorkspaceDraftFromState(nextState);
       return nextState;
@@ -3529,6 +3532,22 @@ function emptyRepositoryCopyForm() {
     targetUrl: "",
     revision: "",
     message: "",
+  };
+}
+
+function emptyPropertyEditForm() {
+  return {
+    name: "",
+    value: "",
+  };
+}
+
+function clearSvnPropertiesState() {
+  return {
+    svnProperties: null,
+    svnPropertiesLoading: false,
+    svnPropertiesError: null,
+    propertyEditForm: emptyPropertyEditForm(),
   };
 }
 

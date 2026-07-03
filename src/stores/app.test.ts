@@ -7,6 +7,7 @@ vi.mock("../lib/api", () => ({
   getFileContentDiff: vi.fn(),
   getFileDiff: vi.fn(),
   getSvnLog: vi.fn(),
+  getSvnProperties: vi.fn(),
   getTaskWorkspaces: vi.fn(),
   openGeneratedFileLocation: vi.fn(),
   openWorkspace: vi.fn(),
@@ -26,6 +27,7 @@ import {
   getFileContentDiff,
   getFileDiff,
   getSvnLog,
+  getSvnProperties,
   getTaskWorkspaces,
   openGeneratedFileLocation,
   openWorkspace,
@@ -39,6 +41,7 @@ import type {
   BranchPoolEntry,
   ChangedFile,
   RevisionDiffResult,
+  SvnProperties,
   SvnLog,
   SvnLogEntry,
   Task,
@@ -64,6 +67,7 @@ const detectSvnMock = vi.mocked(detectSvn);
 const getFileContentDiffMock = vi.mocked(getFileContentDiff);
 const getFileDiffMock = vi.mocked(getFileDiff);
 const getSvnLogMock = vi.mocked(getSvnLog);
+const getSvnPropertiesMock = vi.mocked(getSvnProperties);
 const getTaskWorkspacesMock = vi.mocked(getTaskWorkspaces);
 const openGeneratedFileLocationMock = vi.mocked(openGeneratedFileLocation);
 const openWorkspaceMock = vi.mocked(openWorkspace);
@@ -80,6 +84,7 @@ beforeEach(() => {
   getFileContentDiffMock.mockReset();
   getFileDiffMock.mockReset();
   getSvnLogMock.mockReset();
+  getSvnPropertiesMock.mockReset();
   getTaskWorkspacesMock.mockReset();
   openGeneratedFileLocationMock.mockReset();
   openWorkspaceMock.mockReset();
@@ -300,6 +305,36 @@ describe("workspaceStore svn properties", () => {
       message: "请先打开 SVN 工作副本",
       recoverable: true,
     });
+  });
+
+  it("clears loaded properties when the selected file changes", async () => {
+    const workspace = makeWorkspace();
+    const status = makeStatus([
+      makeFile({ path: "src/main.ts", content_digest: "main-digest" }),
+      makeFile({ path: "src/other.ts", content_digest: "other-digest" }),
+    ]);
+    openWorkspaceMock.mockResolvedValueOnce(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(status);
+    getSvnPropertiesMock.mockResolvedValueOnce(
+      makeSvnProperties({
+        target: "src/main.ts",
+        properties: [{ name: "svn:ignore", value: "dist" }],
+      }),
+    );
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    await workspaceStore.refreshSvnProperties();
+    workspaceStore.setPropertyEditForm("name", "svn:ignore");
+    workspaceStore.setPropertyEditForm("value", "build");
+
+    expect(get(workspaceStore).svnProperties?.target).toBe("src/main.ts");
+
+    await workspaceStore.selectFile("src/other.ts");
+
+    expect(get(workspaceStore).selectedFilePath).toBe("src/other.ts");
+    expect(get(workspaceStore).svnProperties).toBeNull();
+    expect(get(workspaceStore).propertyEditForm).toEqual({ name: "", value: "" });
   });
 });
 
@@ -935,6 +970,15 @@ function makeRevisionDiffResult(result: Partial<RevisionDiffResult> = {}): Revis
     patch_file_dir: null,
     patch_file_name: null,
     ...result,
+  };
+}
+
+function makeSvnProperties(properties: Partial<SvnProperties> = {}): SvnProperties {
+  return {
+    target: ".",
+    properties: [],
+    externals: null,
+    ...properties,
   };
 }
 
