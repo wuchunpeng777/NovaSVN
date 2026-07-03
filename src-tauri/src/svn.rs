@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{env, path::PathBuf, process::Command};
 
 use serde::{Deserialize, Serialize};
 
@@ -27,15 +27,61 @@ impl SvnClient {
             "SVN_EXECUTABLE_INVALID",
             "SVN 可执行文件路径无效",
         )?;
-        let version = detect_version(&executable)?;
-        let resolved_path = resolve_executable_path(&executable);
+        let requested_executable = request
+            .executable
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let detection = detect_version_with_fallbacks(&executable, requested_executable.is_some())?;
+        let resolved_path = detection
+            .resolved_path
+            .or_else(|| resolve_executable_path(&detection.executable));
 
         Ok(SvnDetection {
             available: true,
-            version,
-            executable,
+            version: detection.version,
+            executable: detection.executable,
             resolved_path,
         })
+    }
+}
+
+struct VersionDetection {
+    executable: String,
+    version: String,
+    resolved_path: Option<String>,
+}
+
+fn detect_version_with_fallbacks(
+    executable: &str,
+    user_configured: bool,
+) -> Result<VersionDetection, NovaError> {
+    match detect_version(executable) {
+        Ok(version) => {
+            return Ok(VersionDetection {
+                executable: executable.to_string(),
+                version,
+                resolved_path: resolve_executable_path(executable),
+            });
+        }
+        Err(error) if user_configured => return Err(error),
+        Err(first_error) => {
+            for candidate in fallback_svn_candidates() {
+                if candidate == executable {
+                    continue;
+                }
+
+                if let Ok(version) = detect_version(&candidate) {
+                    return Ok(VersionDetection {
+                        executable: candidate.clone(),
+                        version,
+                        resolved_path: Some(candidate),
+                    });
+                }
+            }
+
+            Err(first_error)
+        }
     }
 }
 
@@ -78,6 +124,40 @@ fn detect_version(executable: &str) -> Result<String, NovaError> {
     Ok(version)
 }
 
+fn fallback_svn_candidates() -> Vec<String> {
+    let mut candidates = Vec::new();
+    push_candidate(&mut candidates, "/opt/homebrew/bin/svn");
+    push_candidate(&mut candidates, "/usr/local/bin/svn");
+    push_candidate(&mut candidates, "/opt/local/bin/svn");
+    push_candidate(&mut candidates, "/usr/bin/svn");
+
+    if let Some(home) = home_dir() {
+        for relative in [".homebrew/bin/svn", "homebrew/bin/svn", "bin/svn"] {
+            push_candidate(&mut candidates, home.join(relative).display().to_string());
+        }
+    }
+
+    candidates
+}
+
+fn push_candidate(candidates: &mut Vec<String>, candidate: impl Into<String>) {
+    let candidate = candidate.into();
+    if !candidate.trim().is_empty() && !candidates.iter().any(|value| value == &candidate) {
+        candidates.push(candidate);
+    }
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("USERPROFILE")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
+}
+
 fn resolve_executable_path(executable: &str) -> Option<String> {
     if executable.contains('\\') || executable.contains('/') {
         return Some(executable.to_string());
@@ -99,6 +179,24 @@ fn resolve_executable_path(executable: &str) -> Option<String> {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map(ToString::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn includes_common_macos_svn_locations() {
+        let candidates = fallback_svn_candidates();
+
+        assert!(candidates
+            .iter()
+            .any(|path| path == "/opt/homebrew/bin/svn"));
+        assert!(candidates.iter().any(|path| path == "/usr/local/bin/svn"));
+        assert!(candidates
+            .iter()
+            .any(|path| path.ends_with("/.homebrew/bin/svn")));
+    }
 }
 
 fn command_output_detail(executable: &str, output: &std::process::Output) -> String {
