@@ -451,7 +451,10 @@ Index: src/lib.rs
         assert!(parsed.files[0].partial_commit_supported);
         assert_eq!(parsed.files[0].hunks[0].old_start, 1);
         assert_eq!(parsed.files[0].hunks[0].new_start, 1);
-        assert_eq!(parsed.files[0].hunks[0].lines[1].kind, DiffLineKind::Removed);
+        assert_eq!(
+            parsed.files[0].hunks[0].lines[1].kind,
+            DiffLineKind::Removed
+        );
         assert_eq!(parsed.files[0].hunks[0].lines[2].kind, DiffLineKind::Added);
         assert_eq!(parsed.files[1].path, "src/lib.rs");
         assert_eq!(parsed.files[1].hunks.len(), 1);

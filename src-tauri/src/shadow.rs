@@ -89,12 +89,10 @@ pub fn shadow_workspace_path(
         )
     })?;
 
-    Ok(dir
-        .join("shadow-workspaces")
-        .join(shadow_cache_key(
-            &request.working_copy_root,
-            &request.repository_url,
-        )))
+    Ok(dir.join("shadow-workspaces").join(shadow_cache_key(
+        &request.working_copy_root,
+        &request.repository_url,
+    )))
 }
 
 pub fn svn_executable(request: &ShadowWorkspaceRequest) -> Result<String, NovaError> {
@@ -154,7 +152,10 @@ mod tests {
 
     #[test]
     fn validates_shadow_svn_executable_values() {
-        assert_eq!(svn_executable(&request_with_executable(None)).unwrap(), "svn");
+        assert_eq!(
+            svn_executable(&request_with_executable(None)).unwrap(),
+            "svn"
+        );
         assert_eq!(
             svn_executable(&request_with_executable(Some(" svn.exe "))).unwrap(),
             "svn.exe"

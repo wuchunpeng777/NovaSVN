@@ -6,7 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::NovaError;
+use crate::{error::NovaError, path_utils};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -238,8 +238,7 @@ fn normalize_tool_path(value: &str) -> Result<PathBuf, NovaError> {
     }
 
     let expanded = expand_home_path(trimmed);
-    let home_relative = trimmed.starts_with("~/") || trimmed.starts_with("~\\");
-    if expanded.is_absolute() || home_relative {
+    if path_utils::is_absolute_or_home_path(&expanded, trimmed) {
         return Ok(expanded);
     }
 
@@ -295,7 +294,9 @@ fn normalize_file_path(root: &Path, file_path: &str) -> Result<PathBuf, NovaErro
     }
 
     let relative = PathBuf::from(trimmed);
-    if relative.is_absolute() || trimmed.contains("..") {
+    if path_utils::is_absolute_or_windows_path(&relative, trimmed)
+        || path_utils::has_parent_segment(trimmed)
+    {
         return Err(NovaError::command(
             "EXTERNAL_TOOL_FILE_INVALID",
             "外部工具目标文件无效",
@@ -328,7 +329,7 @@ fn normalize_generated_file_path(generated_root: &Path, path: &str) -> Result<Pa
     }
 
     let path = PathBuf::from(trimmed);
-    if !path.is_absolute() {
+    if !path_utils::is_absolute_or_windows_path(&path, trimmed) {
         return Err(NovaError::command(
             "GENERATED_FILE_PATH_INVALID",
             "生成文件路径无效",

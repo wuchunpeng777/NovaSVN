@@ -18,6 +18,7 @@ use tauri::{AppHandle, Manager};
 use crate::{
     error::NovaError,
     executable::normalize_executable_setting,
+    path_utils,
     shadow::{self, ShadowWorkspaceRequest},
 };
 
@@ -2424,7 +2425,10 @@ fn normalize_relative_file_path(
 ) -> Result<String, NovaError> {
     let trimmed = file.trim();
     let path = Path::new(trimmed);
-    if trimmed.is_empty() || path.is_absolute() || trimmed.contains("..") {
+    if trimmed.is_empty()
+        || path_utils::is_absolute_or_windows_path(path, trimmed)
+        || path_utils::has_parent_segment(trimmed)
+    {
         return Err(NovaError::command(
             code,
             message,
@@ -2442,7 +2446,7 @@ fn normalize_relative_file_path(
         ));
     }
 
-    Ok(trimmed.replace('\\', "/"))
+    Ok(path_utils::normalize_relative_separators(trimmed))
 }
 
 fn operation_title(kind: &SvnOperationKind, file_path: Option<&str>) -> String {
@@ -2517,8 +2521,7 @@ fn normalize_checkout_path(path: &str) -> Result<String, NovaError> {
     }
 
     let path = Path::new(trimmed);
-    let home_relative = trimmed.starts_with("~/") || trimmed.starts_with("~\\");
-    if !path.is_absolute() && !home_relative {
+    if !path_utils::is_absolute_or_home_path(path, trimmed) {
         return Err(NovaError::command(
             "CHECKOUT_PATH_INVALID",
             "本地工作副本路径无效",

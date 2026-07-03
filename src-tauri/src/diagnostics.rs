@@ -87,11 +87,7 @@ fn build_diagnostics(
     ))
 }
 
-fn build_diagnostics_content(
-    app_version: &str,
-    app_data_dir: &PathBuf,
-    tasks: &[Task],
-) -> String {
+fn build_diagnostics_content(app_version: &str, app_data_dir: &PathBuf, tasks: &[Task]) -> String {
     let mut lines = vec![
         "NovaSVN 诊断日志".to_string(),
         format!("生成时间：{}", timestamp_millis()),
@@ -239,10 +235,8 @@ mod tests {
 
     #[test]
     fn diagnostic_content_includes_runtime_and_file_summaries() {
-        let app_data_dir = std::env::temp_dir().join(format!(
-            "novasvn-diagnostics-test-{}",
-            std::process::id()
-        ));
+        let app_data_dir =
+            std::env::temp_dir().join(format!("novasvn-diagnostics-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&app_data_dir);
         fs::create_dir_all(&app_data_dir).unwrap();
         fs::write(app_data_dir.join("crash.log"), "panic sample").unwrap();

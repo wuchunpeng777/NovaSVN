@@ -7,6 +7,11 @@ export default defineConfig({
   clearScreen: false,
   test: {
     environment: "jsdom",
+    environmentOptions: {
+      jsdom: {
+        url: "http://localhost:1420",
+      },
+    },
     setupFiles: ["./src/test/setup.ts"],
   },
   build: {

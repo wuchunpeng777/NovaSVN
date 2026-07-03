@@ -4,6 +4,7 @@ mod diff;
 mod error;
 mod executable;
 mod external_tool;
+mod path_utils;
 mod shadow;
 mod staging;
 mod svn;

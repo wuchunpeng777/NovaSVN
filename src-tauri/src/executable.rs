@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::error::NovaError;
+use crate::{error::NovaError, path_utils};
 
 pub fn normalize_executable_setting(
     executable: Option<&str>,
@@ -11,11 +11,11 @@ pub fn normalize_executable_setting(
     code: &'static str,
     message: &'static str,
 ) -> Result<String, NovaError> {
-    let Some(value) = executable.map(str::trim).filter(|value| !value.is_empty()) else {
+    let Some(raw_value) = executable.filter(|value| !value.trim().is_empty()) else {
         return Ok(default_name.to_string());
     };
 
-    if value.chars().any(char::is_control) {
+    if raw_value.chars().any(char::is_control) {
         return Err(NovaError::command(
             code,
             message,
@@ -24,13 +24,13 @@ pub fn normalize_executable_setting(
         ));
     }
 
+    let value = raw_value.trim();
     if is_simple_command_name(value) {
         return Ok(value.to_string());
     }
 
-    let home_relative = value.starts_with("~/") || value.starts_with("~\\");
     let expanded = expand_home_path(value);
-    if expanded.is_absolute() || home_relative {
+    if path_utils::is_absolute_or_home_path(&expanded, value) {
         return Ok(expanded.display().to_string());
     }
 
@@ -44,9 +44,9 @@ pub fn normalize_executable_setting(
 
 fn is_simple_command_name(value: &str) -> bool {
     !value.is_empty()
-        && value
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-'))
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
+        })
 }
 
 fn expand_home_path(value: &str) -> PathBuf {
@@ -98,20 +98,17 @@ mod tests {
             "invalid",
         )
         .is_ok());
-        assert!(normalize_executable_setting(Some("~/bin/svn"), "svn", "INVALID", "invalid")
-            .is_ok());
+        assert!(
+            normalize_executable_setting(Some("~/bin/svn"), "svn", "INVALID", "invalid").is_ok()
+        );
     }
 
     #[test]
     fn rejects_unsafe_executable_paths() {
-        assert!(normalize_executable_setting(
-            Some("tools\\svn.exe"),
-            "svn",
-            "INVALID",
-            "invalid",
-        )
-        .is_err());
-        assert!(normalize_executable_setting(Some("svn\n"), "svn", "INVALID", "invalid")
-            .is_err());
+        assert!(
+            normalize_executable_setting(Some("tools\\svn.exe"), "svn", "INVALID", "invalid",)
+                .is_err()
+        );
+        assert!(normalize_executable_setting(Some("svn\n"), "svn", "INVALID", "invalid").is_err());
     }
 }

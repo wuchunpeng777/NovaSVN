@@ -60,12 +60,8 @@ mod tests {
 
     #[test]
     fn parses_explicit_action_and_path_flags() {
-        let intent = startup_intent_from_args([
-            "--novasvn-action",
-            "commit",
-            "--novasvn-path",
-            "C:\\wc",
-        ]);
+        let intent =
+            startup_intent_from_args(["--novasvn-action", "commit", "--novasvn-path", "C:\\wc"]);
 
         assert_eq!(intent.action.as_deref(), Some("commit"));
         assert_eq!(intent.path.as_deref(), Some("C:\\wc"));
@@ -81,12 +77,8 @@ mod tests {
 
     #[test]
     fn ignores_unknown_startup_actions() {
-        let intent = startup_intent_from_args([
-            "--novasvn-action",
-            "unknown",
-            "--novasvn-path",
-            "C:\\wc",
-        ]);
+        let intent =
+            startup_intent_from_args(["--novasvn-action", "unknown", "--novasvn-path", "C:\\wc"]);
 
         assert_eq!(intent.action, None);
         assert_eq!(intent.path.as_deref(), Some("C:\\wc"));

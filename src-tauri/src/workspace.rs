@@ -9,7 +9,7 @@ use roxmltree::Document;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::{error::NovaError, executable::normalize_executable_setting};
+use crate::{error::NovaError, executable::normalize_executable_setting, path_utils};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct OpenWorkspaceRequest {
@@ -249,18 +249,17 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
     }
     command.arg(&target).current_dir(&root);
 
-    let output = command.output()
-        .map_err(|error| {
-            NovaError::command(
-                "SVN_LOG_FAILED",
-                "无法读取 SVN 日志",
-                Some(format!(
-                    "执行 `{executable} log --xml --verbose --limit {}` 失败：{error}",
-                    limit + 1
-                )),
-                true,
-            )
-        })?;
+    let output = command.output().map_err(|error| {
+        NovaError::command(
+            "SVN_LOG_FAILED",
+            "无法读取 SVN 日志",
+            Some(format!(
+                "执行 `{executable} log --xml --verbose --limit {}` 失败：{error}",
+                limit + 1
+            )),
+            true,
+        )
+    })?;
 
     if !output.status.success() {
         return Err(NovaError::command(
@@ -371,7 +370,11 @@ pub fn set_svn_property(request: SetSvnPropertyRequest) -> Result<SvnProperties,
         return Err(NovaError::command(
             operation.error_code(),
             operation.failed_message(),
-            Some(command_error_detail(&executable, operation.command(), &output)),
+            Some(command_error_detail(
+                &executable,
+                operation.command(),
+                &output,
+            )),
             true,
         ));
     }
@@ -555,7 +558,9 @@ fn normalize_relative_file_path(path: &str) -> Result<String, NovaError> {
     }
 
     let path = PathBuf::from(trimmed);
-    if path.is_absolute() || trimmed.contains("..") {
+    if path_utils::is_absolute_or_windows_path(&path, trimmed)
+        || path_utils::has_parent_segment(trimmed)
+    {
         return Err(NovaError::command(
             "DIFF_PATH_INVALID",
             "Diff 文件路径无效",
@@ -564,7 +569,7 @@ fn normalize_relative_file_path(path: &str) -> Result<String, NovaError> {
         ));
     }
 
-    Ok(trimmed.to_string())
+    Ok(path_utils::normalize_relative_separators(trimmed))
 }
 
 fn normalize_log_revision_value(revision: &str) -> Result<String, NovaError> {
@@ -919,7 +924,9 @@ fn parse_conflict_kind<'a, 'input>(
     item: &str,
     props: Option<&str>,
 ) -> Option<String> {
-    if let Some(tree_conflict) = entry.descendants().find(|node| node.has_tag_name("tree-conflict"))
+    if let Some(tree_conflict) = entry
+        .descendants()
+        .find(|node| node.has_tag_name("tree-conflict"))
     {
         return tree_conflict
             .attribute("operation")
@@ -1020,7 +1027,10 @@ fn svnversion_executable(svn_executable: &str) -> String {
     };
 
     if file_name == "svn" || file_name == "svn.exe" {
-        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             return parent.join(svnversion_name).display().to_string();
         }
     }
@@ -1029,18 +1039,13 @@ fn svnversion_executable(svn_executable: &str) -> String {
 }
 
 fn display_status_path(raw_path: &str, working_copy_root: &Path) -> String {
-    let path = PathBuf::from(raw_path);
-    path.strip_prefix(working_copy_root)
-        .ok()
-        .and_then(|relative| relative.to_str())
-        .filter(|value| !value.is_empty())
-        .map(|value| value.replace('\\', "/"))
-        .unwrap_or_else(|| raw_path.to_string())
+    path_utils::strip_working_copy_prefix(raw_path, working_copy_root)
+        .unwrap_or_else(|| path_utils::normalize_relative_separators(raw_path))
 }
 
 fn status_target_path(raw_path: &str, working_copy_root: &Path) -> PathBuf {
     let path = PathBuf::from(raw_path);
-    if path.is_absolute() {
+    if path_utils::is_absolute_or_windows_path(&path, raw_path) {
         path
     } else {
         working_copy_root.join(path)
@@ -1615,7 +1620,10 @@ mod tests {
         assert_eq!(status.obstructed, 1);
         assert_eq!(status.files[0].path, "Assets/Player.prefab");
         assert_eq!(status.files[0].lock_owner.as_deref(), Some("alice"));
-        assert_eq!(status.files[1].conflict_kind.as_deref(), Some("tree:update"));
+        assert_eq!(
+            status.files[1].conflict_kind.as_deref(),
+            Some("tree:update")
+        );
         assert!(status.files[2].abnormal);
         assert_eq!(status.files[3].status, "normal");
         assert_eq!(status.files[3].lock_state, "locked");
@@ -1683,7 +1691,10 @@ mod tests {
     #[test]
     fn validates_workspace_svn_executable_values() {
         assert_eq!(normalize_svn_executable(None).unwrap(), "svn");
-        assert_eq!(normalize_svn_executable(Some(" svn.exe ")).unwrap(), "svn.exe");
+        assert_eq!(
+            normalize_svn_executable(Some(" svn.exe ")).unwrap(),
+            "svn.exe"
+        );
         assert!(normalize_svn_executable(Some("C:\\Tools\\svn.exe")).is_ok());
         assert!(normalize_svn_executable(Some("tools\\svn.exe")).is_err());
         assert!(normalize_svn_executable(Some("svn\n")).is_err());
@@ -1816,10 +1827,7 @@ mod tests {
 
     #[test]
     fn detects_unity_project_from_required_paths() {
-        let root = std::env::temp_dir().join(format!(
-            "novasvn-unity-test-{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("novasvn-unity-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("Assets")).unwrap();
         fs::create_dir_all(root.join("ProjectSettings")).unwrap();

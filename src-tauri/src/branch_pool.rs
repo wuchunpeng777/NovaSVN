@@ -6,7 +6,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::error::NovaError;
+use crate::{error::NovaError, path_utils};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BranchPoolEntry {
@@ -240,8 +240,7 @@ fn normalize_local_path(path: &str) -> Result<String, NovaError> {
     }
 
     let path = Path::new(trimmed);
-    let home_relative = trimmed.starts_with("~/") || trimmed.starts_with("~\\");
-    if !path.is_absolute() && !home_relative {
+    if !path_utils::is_absolute_or_home_path(path, trimmed) {
         return Err(NovaError::command(
             "BRANCH_POOL_LOCAL_PATH_INVALID",
             "本地工作副本路径无效",
