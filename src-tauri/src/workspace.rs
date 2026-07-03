@@ -9,7 +9,7 @@ use roxmltree::Document;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::error::NovaError;
+use crate::{error::NovaError, executable::normalize_executable_setting};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct OpenWorkspaceRequest {
@@ -188,11 +188,7 @@ pub fn open_workspace(
     request: OpenWorkspaceRequest,
 ) -> Result<WorkspaceSummary, NovaError> {
     let path = normalize_workspace_path(&request.path)?;
-    let executable = request
-        .svn_executable
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "svn".to_string());
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
     let output = Command::new(&executable)
         .args(["info", "--xml"])
@@ -237,11 +233,7 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
         .as_ref()
         .map(|path| root.join(path))
         .unwrap_or_else(|| root.clone());
-    let executable = request
-        .svn_executable
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "svn".to_string());
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
     let limit = request.limit.unwrap_or(50).clamp(1, 200);
     let start_revision = request
         .start_revision
@@ -297,11 +289,7 @@ pub fn get_svn_properties(request: GetSvnPropertiesRequest) -> Result<SvnPropert
         .transpose()?
         .map(|file| root.join(file))
         .unwrap_or_else(|| root.clone());
-    let executable = request
-        .svn_executable
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "svn".to_string());
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
     let output = Command::new(&executable)
         .args(["proplist", "--xml"])
@@ -363,12 +351,7 @@ pub fn set_svn_property(request: SetSvnPropertyRequest) -> Result<SvnProperties,
             true,
         ));
     }
-    let executable = request
-        .svn_executable
-        .clone()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "svn".to_string());
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
     let output = Command::new(&executable)
         .arg("propset")
@@ -406,11 +389,7 @@ pub fn get_file_diff(request: GetFileDiffRequest) -> Result<FileDiff, NovaError>
     let root = normalize_workspace_path(&request.working_copy_root)?;
     let file_path = normalize_relative_file_path(&request.file_path)?;
     let target = root.join(&file_path);
-    let executable = request
-        .svn_executable
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "svn".to_string());
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
     let output = Command::new(&executable)
         .arg("diff")
@@ -462,11 +441,7 @@ pub fn get_file_content_diff(
     let file_path = normalize_relative_file_path(&request.file_path)?;
     let target = root.join(&file_path);
     let max_bytes = request.max_bytes.unwrap_or(512 * 1024);
-    let executable = request
-        .svn_executable
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "svn".to_string());
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
     let working = read_limited_text_file(&target, max_bytes)?;
     let original = read_svn_base_text(&executable, &root, &target, max_bytes)?;
@@ -496,11 +471,7 @@ pub fn scan_workspace_status(
     request: ScanWorkspaceStatusRequest,
 ) -> Result<WorkingCopyStatus, NovaError> {
     let path = normalize_workspace_path(&request.working_copy_root)?;
-    let executable = request
-        .svn_executable
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "svn".to_string());
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
     let output = run_status_with_updates(&executable, &path)?;
 
@@ -601,6 +572,15 @@ fn normalize_log_revision_value(revision: &str) -> Result<String, NovaError> {
     }
 
     Ok(value.to_string())
+}
+
+fn normalize_svn_executable(executable: Option<&str>) -> Result<String, NovaError> {
+    normalize_executable_setting(
+        executable,
+        "svn",
+        "SVN_EXECUTABLE_INVALID",
+        "SVN 可执行文件路径无效",
+    )
 }
 
 fn trim_svn_log_page(log: &mut SvnLog, limit: usize) {
@@ -1546,6 +1526,15 @@ mod tests {
         assert_eq!(status.files[3].status, "normal");
         assert_eq!(status.files[3].lock_state, "locked");
         assert_eq!(status.files[3].lock_owner.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn validates_workspace_svn_executable_values() {
+        assert_eq!(normalize_svn_executable(None).unwrap(), "svn");
+        assert_eq!(normalize_svn_executable(Some(" svn.exe ")).unwrap(), "svn.exe");
+        assert!(normalize_svn_executable(Some("C:\\Tools\\svn.exe")).is_ok());
+        assert!(normalize_svn_executable(Some("tools\\svn.exe")).is_err());
+        assert!(normalize_svn_executable(Some("svn\n")).is_err());
     }
 
     #[test]
