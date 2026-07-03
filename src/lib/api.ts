@@ -28,6 +28,8 @@ import type {
   LaunchExternalToolRequest,
   OpenFileLocation,
   OpenFileLocationRequest,
+  OpenGeneratedFileLocation,
+  OpenGeneratedFileLocationRequest,
   OpenWorkspaceFile,
   OpenWorkspaceFileRequest,
   OpenWorkspaceRequest,
@@ -109,6 +111,12 @@ export function openWorkspaceFile(
   request: OpenWorkspaceFileRequest,
 ): Promise<OpenWorkspaceFile> {
   return callBackend<OpenWorkspaceFile>("open_workspace_file", { request });
+}
+
+export function openGeneratedFileLocation(
+  request: OpenGeneratedFileLocationRequest,
+): Promise<OpenGeneratedFileLocation> {
+  return callBackend<OpenGeneratedFileLocation>("open_generated_file_location", { request });
 }
 
 export function exportDiagnostics(): Promise<DiagnosticExport> {

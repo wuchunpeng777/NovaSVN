@@ -109,6 +109,10 @@ export interface OpenWorkspaceFileRequest {
   file_path: string;
 }
 
+export interface OpenGeneratedFileLocationRequest {
+  path: string;
+}
+
 export interface ExternalToolLaunch {
   kind: ExternalToolKind | string;
   tool_path: string;
@@ -120,6 +124,10 @@ export interface OpenFileLocation {
 }
 
 export interface OpenWorkspaceFile {
+  target_path: string;
+}
+
+export interface OpenGeneratedFileLocation {
   target_path: string;
 }
 
@@ -275,6 +283,9 @@ export interface RevisionDiffResult {
   line_count: number;
   truncated: boolean;
   max_bytes: number;
+  patch_file_path?: string | null;
+  patch_file_dir?: string | null;
+  patch_file_name?: string | null;
 }
 
 export interface MergeResult {

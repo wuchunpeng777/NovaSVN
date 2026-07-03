@@ -7,6 +7,7 @@ vi.mock("../lib/api", () => ({
   getFileDiff: vi.fn(),
   getSvnLog: vi.fn(),
   getTaskWorkspaces: vi.fn(),
+  openGeneratedFileLocation: vi.fn(),
   openWorkspace: vi.fn(),
   parseUnifiedDiff: vi.fn(),
   removeTaskWorkspace: vi.fn(),
@@ -24,6 +25,7 @@ import {
   getFileDiff,
   getSvnLog,
   getTaskWorkspaces,
+  openGeneratedFileLocation,
   openWorkspace,
   parseUnifiedDiff,
   removeTaskWorkspace,
@@ -58,6 +60,7 @@ const getFileContentDiffMock = vi.mocked(getFileContentDiff);
 const getFileDiffMock = vi.mocked(getFileDiff);
 const getSvnLogMock = vi.mocked(getSvnLog);
 const getTaskWorkspacesMock = vi.mocked(getTaskWorkspaces);
+const openGeneratedFileLocationMock = vi.mocked(openGeneratedFileLocation);
 const openWorkspaceMock = vi.mocked(openWorkspace);
 const parseUnifiedDiffMock = vi.mocked(parseUnifiedDiff);
 const removeTaskWorkspaceMock = vi.mocked(removeTaskWorkspace);
@@ -72,6 +75,7 @@ beforeEach(() => {
   getFileDiffMock.mockReset();
   getSvnLogMock.mockReset();
   getTaskWorkspacesMock.mockReset();
+  openGeneratedFileLocationMock.mockReset();
   openWorkspaceMock.mockReset();
   parseUnifiedDiffMock.mockReset();
   removeTaskWorkspaceMock.mockReset();
@@ -100,6 +104,7 @@ beforeEach(() => {
     max_bytes: 1024,
   });
   parseUnifiedDiffMock.mockResolvedValue({ files: [] });
+  openGeneratedFileLocationMock.mockResolvedValue({ target_path: "C:/app/patches/diff.patch" });
 });
 
 describe("revisionDiffPatchFileName", () => {
@@ -115,7 +120,7 @@ describe("revisionDiffPatchFileName", () => {
     expect(name).not.toMatch(/[\\/:*?"<>|]/);
   });
 
-  it("exports non-truncated revision diff patches and ignores unsafe results", () => {
+  it("exports non-truncated revision diff patches and opens generated files for truncated results", async () => {
     const createObjectURL = vi
       .spyOn(window.URL, "createObjectURL")
       .mockReturnValue("blob:novasvn-diff");
@@ -140,7 +145,7 @@ describe("revisionDiffPatchFileName", () => {
       }),
     );
 
-    workspaceStore.exportRevisionDiffPatch();
+    await workspaceStore.exportRevisionDiffPatch();
 
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(click).toHaveBeenCalledTimes(1);
@@ -149,7 +154,7 @@ describe("revisionDiffPatchFileName", () => {
     createObjectURL.mockClear();
     click.mockClear();
     workspaceStore.applyRevisionDiffResult(makeRevisionDiffResult({ diff_text: "" }));
-    workspaceStore.exportRevisionDiffPatch();
+    await workspaceStore.exportRevisionDiffPatch();
 
     expect(createObjectURL).not.toHaveBeenCalled();
     expect(click).not.toHaveBeenCalled();
@@ -158,12 +163,16 @@ describe("revisionDiffPatchFileName", () => {
       makeRevisionDiffResult({
         diff_text: "Index: src/large.ts\n",
         truncated: true,
+        patch_file_path: "C:/app/patches/large.patch",
       }),
     );
-    workspaceStore.exportRevisionDiffPatch();
+    await workspaceStore.exportRevisionDiffPatch();
 
     expect(createObjectURL).not.toHaveBeenCalled();
     expect(click).not.toHaveBeenCalled();
+    expect(openGeneratedFileLocationMock).toHaveBeenCalledWith({
+      path: "C:/app/patches/large.patch",
+    });
 
     createElement.mockRestore();
     createObjectURL.mockRestore();
@@ -891,6 +900,9 @@ function makeRevisionDiffResult(result: Partial<RevisionDiffResult> = {}): Revis
     line_count: 1,
     truncated: false,
     max_bytes: 1024,
+    patch_file_path: null,
+    patch_file_dir: null,
+    patch_file_name: null,
     ...result,
   };
 }

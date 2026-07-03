@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    fs,
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -12,7 +13,7 @@ use std::{
 
 use roxmltree::Document;
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::{
     error::NovaError,
@@ -237,6 +238,9 @@ pub struct RevisionDiffResult {
     pub line_count: usize,
     pub truncated: bool,
     pub max_bytes: usize,
+    pub patch_file_path: Option<String>,
+    pub patch_file_dir: Option<String>,
+    pub patch_file_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -336,6 +340,7 @@ struct RevisionDiffTaskPayload {
     left_url: Option<String>,
     right_url: Option<String>,
     svn_executable: String,
+    patch_output_dir: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -455,11 +460,13 @@ impl TaskQueue {
                 "LOCK_FILE_PATH_INVALID",
                 "Lock 文件路径无效",
             )?),
-            SvnOperationKind::UnlockFile | SvnOperationKind::ForceUnlockFile => Some(normalize_relative_file_path(
-                request.file_path.as_deref().unwrap_or_default(),
-                "UNLOCK_FILE_PATH_INVALID",
-                "Unlock 文件路径无效",
-            )?),
+            SvnOperationKind::UnlockFile | SvnOperationKind::ForceUnlockFile => {
+                Some(normalize_relative_file_path(
+                    request.file_path.as_deref().unwrap_or_default(),
+                    "UNLOCK_FILE_PATH_INVALID",
+                    "Unlock 文件路径无效",
+                )?)
+            }
             SvnOperationKind::ResolveWorking
             | SvnOperationKind::ResolveMineFull
             | SvnOperationKind::ResolveTheirsFull => Some(normalize_relative_file_path(
@@ -791,11 +798,24 @@ impl TaskQueue {
 
     pub fn create_revision_diff_task(
         &self,
+        app: &AppHandle,
         request: CreateRevisionDiffTaskRequest,
     ) -> Result<Task, NovaError> {
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
-        let payload = normalize_revision_diff_payload(request, svn_executable)?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let patch_output_dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|error| {
+                NovaError::command(
+                    "APP_DATA_DIR_FAILED",
+                    "无法获取应用数据目录",
+                    Some(error.to_string()),
+                    true,
+                )
+            })?
+            .join("revision-diff-patches");
+        let payload = normalize_revision_diff_payload(request, svn_executable, patch_output_dir)?;
         let now = timestamp_millis();
         let title = match payload.mode {
             RevisionDiffMode::Revisions => "比较两个 revision",
@@ -1792,6 +1812,11 @@ fn run_revision_diff_task(
             let line_count = diff_text.lines().count();
             let truncated = diff_text.len() > REVISION_DIFF_PREVIEW_MAX_BYTES;
             let preview_text = truncate_utf8(&diff_text, REVISION_DIFF_PREVIEW_MAX_BYTES);
+            let patch_file = write_revision_diff_patch(&payload, task_id, &target, &diff_text);
+            if let Err(error) = &patch_file {
+                append_task_log(state, task_id, &format!("完整 patch 文件写入失败：{error}"));
+            }
+            let patch_file = patch_file.ok().flatten();
             let result = RevisionDiffResult {
                 mode: revision_diff_mode_label(&payload.mode).to_string(),
                 target,
@@ -1800,6 +1825,13 @@ fn run_revision_diff_task(
                 line_count,
                 truncated,
                 max_bytes: REVISION_DIFF_PREVIEW_MAX_BYTES,
+                patch_file_path: patch_file
+                    .as_ref()
+                    .map(|file| file.path.display().to_string()),
+                patch_file_dir: patch_file
+                    .as_ref()
+                    .map(|file| file.dir.display().to_string()),
+                patch_file_name: patch_file.map(|file| file.name),
             };
             if truncated {
                 append_task_log(
@@ -1810,6 +1842,11 @@ fn run_revision_diff_task(
                         REVISION_DIFF_PREVIEW_MAX_BYTES
                     ),
                 );
+            }
+            if !diff_text.is_empty() {
+                if let Some(path) = result.patch_file_path.as_deref() {
+                    append_task_log(state, task_id, &format!("完整 patch 已保存：{path}"));
+                }
             }
             set_task_result(
                 state,
@@ -1826,7 +1863,11 @@ fn run_revision_diff_task(
                 TaskStatus::Success,
                 &format!(
                     "Revision diff 完成，{file_count} 个文件，{line_count} 行{}",
-                    if truncated { "，结果已截断预览" } else { "" }
+                    if truncated {
+                        "，结果已截断预览"
+                    } else {
+                        ""
+                    }
                 ),
                 None,
             );
@@ -1893,7 +1934,10 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
             let result = MergeResult {
                 dry_run: payload.dry_run,
                 source_url: payload.source_url.clone(),
-                revision_range: merge_revision_label(&payload.start_revision, &payload.end_revision),
+                revision_range: merge_revision_label(
+                    &payload.start_revision,
+                    &payload.end_revision,
+                ),
                 file_count: count_merge_output_files(&output_text),
                 line_count: output_text.lines().count(),
                 output_text,
@@ -2489,6 +2533,7 @@ fn normalize_checkout_path(path: &str) -> Result<String, NovaError> {
 fn normalize_revision_diff_payload(
     request: CreateRevisionDiffTaskRequest,
     svn_executable: String,
+    patch_output_dir: PathBuf,
 ) -> Result<RevisionDiffTaskPayload, NovaError> {
     match request.mode {
         RevisionDiffMode::Revisions => {
@@ -2524,6 +2569,7 @@ fn normalize_revision_diff_payload(
                 left_url: None,
                 right_url: None,
                 svn_executable,
+                patch_output_dir,
             })
         }
         RevisionDiffMode::WorkingCopyToRevision => {
@@ -2546,6 +2592,7 @@ fn normalize_revision_diff_payload(
                 left_url: None,
                 right_url: None,
                 svn_executable,
+                patch_output_dir,
             })
         }
         RevisionDiffMode::Urls => {
@@ -2568,6 +2615,7 @@ fn normalize_revision_diff_payload(
                 left_url: Some(left_url),
                 right_url: Some(right_url),
                 svn_executable,
+                patch_output_dir,
             })
         }
     }
@@ -2664,7 +2712,10 @@ fn normalize_merge_revision_range(
     Ok((start_revision, end_revision))
 }
 
-fn merge_revision_arg(start_revision: &Option<String>, end_revision: &Option<String>) -> Option<String> {
+fn merge_revision_arg(
+    start_revision: &Option<String>,
+    end_revision: &Option<String>,
+) -> Option<String> {
     match (start_revision.as_deref(), end_revision.as_deref()) {
         (Some(start), Some(end)) => Some(format!("{start}:{end}")),
         _ => None,
@@ -2704,6 +2755,87 @@ fn revision_diff_mode_label(mode: &RevisionDiffMode) -> &'static str {
         RevisionDiffMode::Revisions => "revisions",
         RevisionDiffMode::WorkingCopyToRevision => "working_copy_to_revision",
         RevisionDiffMode::Urls => "urls",
+    }
+}
+
+#[derive(Debug)]
+struct RevisionDiffPatchFile {
+    path: PathBuf,
+    dir: PathBuf,
+    name: String,
+}
+
+fn write_revision_diff_patch(
+    payload: &RevisionDiffTaskPayload,
+    task_id: &str,
+    target: &str,
+    diff_text: &str,
+) -> Result<Option<RevisionDiffPatchFile>, NovaError> {
+    if diff_text.is_empty() {
+        return Ok(None);
+    }
+
+    fs::create_dir_all(&payload.patch_output_dir).map_err(|error| {
+        NovaError::command(
+            "REVISION_DIFF_PATCH_DIR_FAILED",
+            "创建 Revision Diff patch 目录失败",
+            Some(format!(
+                "路径：{}。错误：{error}",
+                payload.patch_output_dir.display()
+            )),
+            true,
+        )
+    })?;
+
+    let name =
+        revision_diff_patch_file_name(revision_diff_mode_label(&payload.mode), target, task_id);
+    let path = payload.patch_output_dir.join(&name);
+    fs::write(&path, diff_text).map_err(|error| {
+        NovaError::command(
+            "REVISION_DIFF_PATCH_WRITE_FAILED",
+            "写入 Revision Diff patch 失败",
+            Some(format!("路径：{}。错误：{error}", path.display())),
+            true,
+        )
+    })?;
+
+    Ok(Some(RevisionDiffPatchFile {
+        path,
+        dir: payload.patch_output_dir.clone(),
+        name,
+    }))
+}
+
+fn revision_diff_patch_file_name(mode: &str, target: &str, task_id: &str) -> String {
+    let mode = sanitize_patch_file_part(mode);
+    let target = sanitize_patch_file_part(target);
+    let task_id = sanitize_patch_file_part(task_id);
+    format!("novasvn-{mode}-{target}-{task_id}.patch")
+}
+
+fn sanitize_patch_file_part(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut previous_dash = false;
+
+    for character in value.chars() {
+        if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+            output.push(character);
+            previous_dash = false;
+        } else if !previous_dash {
+            output.push('-');
+            previous_dash = true;
+        }
+
+        if output.len() >= 80 {
+            break;
+        }
+    }
+
+    let trimmed = output.trim_matches('-');
+    if trimmed.is_empty() {
+        "diff".to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -2802,28 +2934,14 @@ mod tests {
 
     #[test]
     fn rejects_absolute_or_parent_paths() {
-        assert!(normalize_relative_file_path(
-            "../secret.txt",
-            "INVALID",
-            "invalid",
-        )
-        .is_err());
-        assert!(normalize_relative_file_path(
-            "C:\\secret.txt",
-            "INVALID",
-            "invalid",
-        )
-        .is_err());
+        assert!(normalize_relative_file_path("../secret.txt", "INVALID", "invalid",).is_err());
+        assert!(normalize_relative_file_path("C:\\secret.txt", "INVALID", "invalid",).is_err());
     }
 
     #[test]
     fn rejects_control_characters_in_task_file_paths() {
-        let error = normalize_relative_file_path(
-            "src/main.rs\nnext",
-            "INVALID",
-            "invalid",
-        )
-        .expect_err("task file path with control characters must be rejected");
+        let error = normalize_relative_file_path("src/main.rs\nnext", "INVALID", "invalid")
+            .expect_err("task file path with control characters must be rejected");
 
         match error {
             NovaError::Command { code, .. } => {
@@ -2856,7 +2974,10 @@ mod tests {
     #[test]
     fn validates_svn_executable_values() {
         assert_eq!(normalize_svn_executable(None).unwrap(), "svn");
-        assert_eq!(normalize_svn_executable(Some(" svn.exe ")).unwrap(), "svn.exe");
+        assert_eq!(
+            normalize_svn_executable(Some(" svn.exe ")).unwrap(),
+            "svn.exe"
+        );
         assert!(normalize_svn_executable(Some("C:\\Tools\\svn.exe")).is_ok());
         assert!(normalize_svn_executable(Some("tools\\svn.exe")).is_err());
         assert!(normalize_svn_executable(Some("svn\n")).is_err());
@@ -2889,7 +3010,10 @@ mod tests {
         match lock_task.payload {
             TaskPayload::SvnOperation(payload) => {
                 assert!(matches!(payload.kind, SvnOperationKind::LockFile));
-                assert_eq!(payload.file_path.as_deref(), Some("Assets/Scenes/Main.unity"));
+                assert_eq!(
+                    payload.file_path.as_deref(),
+                    Some("Assets/Scenes/Main.unity")
+                );
             }
             _ => panic!("expected svn operation payload"),
         }
@@ -2922,10 +3046,22 @@ mod tests {
         for (kind, expected_code) in [
             (SvnOperationKind::LockFile, "LOCK_FILE_PATH_INVALID"),
             (SvnOperationKind::UnlockFile, "UNLOCK_FILE_PATH_INVALID"),
-            (SvnOperationKind::ForceUnlockFile, "UNLOCK_FILE_PATH_INVALID"),
-            (SvnOperationKind::ResolveWorking, "RESOLVE_FILE_PATH_INVALID"),
-            (SvnOperationKind::ResolveMineFull, "RESOLVE_FILE_PATH_INVALID"),
-            (SvnOperationKind::ResolveTheirsFull, "RESOLVE_FILE_PATH_INVALID"),
+            (
+                SvnOperationKind::ForceUnlockFile,
+                "UNLOCK_FILE_PATH_INVALID",
+            ),
+            (
+                SvnOperationKind::ResolveWorking,
+                "RESOLVE_FILE_PATH_INVALID",
+            ),
+            (
+                SvnOperationKind::ResolveMineFull,
+                "RESOLVE_FILE_PATH_INVALID",
+            ),
+            (
+                SvnOperationKind::ResolveTheirsFull,
+                "RESOLVE_FILE_PATH_INVALID",
+            ),
         ] {
             let error = queue
                 .create_svn_operation_task(CreateSvnOperationTaskRequest {
@@ -2967,9 +3103,8 @@ mod tests {
 
     #[test]
     fn rejects_revision_diff_with_same_urls() {
-        let queue = TaskQueue::new();
-        let error = queue
-            .create_revision_diff_task(CreateRevisionDiffTaskRequest {
+        let error = normalize_revision_diff_payload(
+            CreateRevisionDiffTaskRequest {
                 mode: RevisionDiffMode::Urls,
                 working_copy_root: None,
                 left_revision: None,
@@ -2977,8 +3112,11 @@ mod tests {
                 left_url: Some("https://example.com/svn/branches/feature/".to_string()),
                 right_url: Some(" https://example.com/svn/branches/feature ".to_string()),
                 svn_executable: None,
-            })
-            .expect_err("same revision diff URLs must be rejected");
+            },
+            "svn".to_string(),
+            test_temp_dir("revision-diff-url-output"),
+        )
+        .expect_err("same revision diff URLs must be rejected");
 
         match error {
             NovaError::Command { code, .. } => {
@@ -2989,10 +3127,9 @@ mod tests {
 
     #[test]
     fn rejects_revision_diff_with_same_revisions() {
-        let queue = TaskQueue::new();
         let dir = test_temp_dir("revision-diff-same-revision");
-        let error = queue
-            .create_revision_diff_task(CreateRevisionDiffTaskRequest {
+        let error = normalize_revision_diff_payload(
+            CreateRevisionDiffTaskRequest {
                 mode: RevisionDiffMode::Revisions,
                 working_copy_root: Some(dir.display().to_string()),
                 left_revision: Some(" 42 ".to_string()),
@@ -3000,8 +3137,11 @@ mod tests {
                 left_url: None,
                 right_url: None,
                 svn_executable: None,
-            })
-            .expect_err("same revisions must be rejected");
+            },
+            "svn".to_string(),
+            test_temp_dir("revision-diff-revision-output"),
+        )
+        .expect_err("same revisions must be rejected");
 
         match error {
             NovaError::Command { code, .. } => {
@@ -3010,6 +3150,19 @@ mod tests {
         }
 
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn builds_safe_revision_diff_patch_file_names() {
+        let name = revision_diff_patch_file_name(
+            "urls",
+            "https://example.com/svn/branches/feature?bad:name",
+            "task-42",
+        );
+
+        assert!(name.starts_with("novasvn-urls-"));
+        assert!(name.ends_with("-task-42.patch"));
+        assert!(!name.contains(['\\', '/', ':', '?', '"', '<', '>', '|']));
     }
 
     #[test]
@@ -3119,7 +3272,8 @@ mod tests {
 </lists>
 "#;
 
-        let result = parse_repository_list_xml(xml, "https://example.com/svn").expect("list parses");
+        let result =
+            parse_repository_list_xml(xml, "https://example.com/svn").expect("list parses");
 
         assert_eq!(result.url, "https://example.com/svn");
         assert_eq!(result.entries.len(), 3);

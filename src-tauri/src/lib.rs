@@ -18,7 +18,8 @@ use diff::{GenerateSelectedPatchRequest, ParsedDiff, SelectedPatch};
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
 use external_tool::{
     ExternalToolLaunch, LaunchExternalToolRequest, OpenFileLocation, OpenFileLocationRequest,
-    OpenWorkspaceFile, OpenWorkspaceFileRequest,
+    OpenGeneratedFileLocation, OpenGeneratedFileLocationRequest, OpenWorkspaceFile,
+    OpenWorkspaceFileRequest,
 };
 use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
@@ -76,9 +77,9 @@ fn launch_external_tool(request: LaunchExternalToolRequest) -> CommandResult<Ext
 #[tauri::command]
 fn open_file_location(request: OpenFileLocationRequest) -> CommandResult<OpenFileLocation> {
     println!("[NovaSVN] open_file_location command received");
-    Ok(CommandResponse::success(
-        external_tool::open_file_location(request)?,
-    ))
+    Ok(CommandResponse::success(external_tool::open_file_location(
+        request,
+    )?))
 }
 
 #[tauri::command]
@@ -86,6 +87,29 @@ fn open_workspace_file(request: OpenWorkspaceFileRequest) -> CommandResult<OpenW
     println!("[NovaSVN] open_workspace_file command received");
     Ok(CommandResponse::success(
         external_tool::open_workspace_file(request)?,
+    ))
+}
+
+#[tauri::command]
+fn open_generated_file_location(
+    app: tauri::AppHandle,
+    request: OpenGeneratedFileLocationRequest,
+) -> CommandResult<OpenGeneratedFileLocation> {
+    println!("[NovaSVN] open_generated_file_location command received");
+    let generated_root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| {
+            NovaError::command(
+                "APP_DATA_DIR_FAILED",
+                "无法获取应用数据目录",
+                Some(error.to_string()),
+                true,
+            )
+        })?
+        .join("revision-diff-patches");
+    Ok(CommandResponse::success(
+        external_tool::open_generated_file_location(&generated_root, request)?,
     ))
 }
 
@@ -188,12 +212,13 @@ fn create_svn_switch_task(
 
 #[tauri::command]
 fn create_revision_diff_task(
+    app: tauri::AppHandle,
     queue: tauri::State<'_, TaskQueue>,
     request: CreateRevisionDiffTaskRequest,
 ) -> CommandResult<Task> {
     println!("[NovaSVN] create_revision_diff_task command received");
     Ok(CommandResponse::success(
-        queue.create_revision_diff_task(request)?,
+        queue.create_revision_diff_task(&app, request)?,
     ))
 }
 
@@ -396,6 +421,7 @@ pub fn run() {
             launch_external_tool,
             open_file_location,
             open_workspace_file,
+            open_generated_file_location,
             create_mock_task,
             create_commit_task,
             create_svn_operation_task,

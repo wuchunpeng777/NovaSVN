@@ -1053,9 +1053,13 @@
           <button
             type="button"
             on:click={onExportRevisionDiffPatch}
-            disabled={!revisionDiffResult?.diff_text || revisionDiffResult?.truncated}
+            disabled={
+              !revisionDiffResult ||
+              (!revisionDiffResult.diff_text && !revisionDiffResult.patch_file_path) ||
+              (revisionDiffResult.truncated && !revisionDiffResult.patch_file_path)
+            }
           >
-            导出 patch
+            {revisionDiffResult?.truncated ? "打开完整 patch" : "导出 patch"}
           </button>
         </div>
       </div>
@@ -1159,8 +1163,7 @@
 
       {#if revisionDiffResult?.truncated}
         <p class="inline-warning">
-          Diff 结果超过预览上限，当前只显示前 {formatBytes(revisionDiffResult.max_bytes)}，导出 patch
-          已禁用。
+          Diff 结果超过预览上限，当前只显示前 {formatBytes(revisionDiffResult.max_bytes)}，可打开后台生成的完整 patch 文件。
         </p>
       {/if}
 

@@ -26,6 +26,7 @@ import {
   getRecentWorkspace,
   getTask,
   listTasks,
+  openGeneratedFileLocation,
   openWorkspace,
   parseUnifiedDiff,
   removeBranchPoolEntry,
@@ -3043,9 +3044,28 @@ function createWorkspaceStore() {
     }));
   }
 
-  function exportRevisionDiffPatch() {
+  async function exportRevisionDiffPatch() {
     const result = get({ subscribe }).revisionDiffResult;
-    if (!result || result.truncated || !result.diff_text || typeof window === "undefined") {
+    if (!result) {
+      return;
+    }
+
+    if (result.truncated) {
+      if (result.patch_file_path) {
+        try {
+          await openGeneratedFileLocation({ path: result.patch_file_path });
+        } catch (error) {
+          update((state) => ({
+            ...state,
+            revisionDiffError:
+              error instanceof Error ? error.message : "无法打开完整 patch 文件位置",
+          }));
+        }
+      }
+      return;
+    }
+
+    if (!result.diff_text || typeof window === "undefined") {
       return;
     }
 
