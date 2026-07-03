@@ -657,6 +657,15 @@ impl TaskQueue {
     ) -> Result<Task, NovaError> {
         let source_url = normalize_repository_url(&request.source_url)?;
         let target_url = normalize_repository_url(&request.target_url)?;
+        if source_url == target_url {
+            return Err(NovaError::command(
+                "REPOSITORY_COPY_TARGET_SAME_AS_SOURCE",
+                "目标 URL 不能和源 URL 相同",
+                Some("创建分支或标签需要选择不同的目标 URL。".to_string()),
+                true,
+            ));
+        }
+
         let message = request.message.trim().to_string();
         if message.is_empty() {
             return Err(NovaError::command(
@@ -2621,6 +2630,27 @@ mod tests {
             None
         );
         assert!(normalize_optional_revision_value(Some("42\n43"), "INVALID", "invalid").is_err());
+    }
+
+    #[test]
+    fn rejects_repository_copy_to_same_url() {
+        let queue = TaskQueue::new();
+        let error = queue
+            .create_repository_copy_task(CreateRepositoryCopyTaskRequest {
+                kind: RepositoryCopyKind::Branch,
+                source_url: "https://example.com/svn/trunk/".to_string(),
+                target_url: " https://example.com/svn/trunk ".to_string(),
+                revision: None,
+                message: "create branch".to_string(),
+                svn_executable: None,
+            })
+            .expect_err("same source and target must be rejected");
+
+        match error {
+            NovaError::Command { code, .. } => {
+                assert_eq!(code, "REPOSITORY_COPY_TARGET_SAME_AS_SOURCE");
+            }
+        }
     }
 
     #[test]
