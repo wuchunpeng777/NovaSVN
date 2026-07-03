@@ -687,6 +687,35 @@ function createSvnStore() {
     }
   }
 
+  async function detectWithInputFallback() {
+    const requestedExecutable = get({ subscribe }).executableInput.trim();
+    const detection = await detectWithInput();
+    if (detection || !requestedExecutable) {
+      return detection;
+    }
+
+    update((state) => ({ ...state, loading: true, error: null }));
+    try {
+      const fallbackDetection = await detectSvn();
+      update((state) => ({
+        ...state,
+        detection: fallbackDetection,
+        executableInput: fallbackDetection.resolved_path || fallbackDetection.executable,
+        loading: false,
+        error: null,
+      }));
+      return fallbackDetection;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        detection: null,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   function setExecutableInput(value: string) {
     update((state) => ({
       ...state,
@@ -698,6 +727,7 @@ function createSvnStore() {
     subscribe,
     detect,
     detectWithInput,
+    detectWithInputFallback,
     setExecutableInput,
   };
 }

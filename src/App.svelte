@@ -907,7 +907,7 @@
   onMount(() => {
     taskStore.startPolling();
     appSettingsStore.load();
-    void svnStore.detectWithInput();
+    void svnStore.detectWithInputFallback();
     void workspaceStore.loadRecent().then(() => handleStartupIntent());
     void branchPoolStore.load();
     void taskWorkspaceStore.load();
