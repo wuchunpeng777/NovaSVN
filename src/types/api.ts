@@ -384,6 +384,7 @@ export interface GetSvnLogRequest {
   file_path?: string;
   svn_executable?: string;
   limit?: number;
+  start_revision?: string;
 }
 
 export interface GetSvnPropertiesRequest {
@@ -420,6 +421,8 @@ export interface FileContentDiff {
 export interface SvnLog {
   target: string;
   entries: SvnLogEntry[];
+  has_more: boolean;
+  next_start_revision: string | null;
 }
 
 export interface SvnLogEntry {

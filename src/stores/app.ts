@@ -2809,6 +2809,14 @@ function createWorkspaceStore() {
   }
 
   async function refreshSvnLog(svnExecutable?: string | null) {
+    await fetchSvnLogPage(svnExecutable, false);
+  }
+
+  async function loadMoreSvnLog(svnExecutable?: string | null) {
+    await fetchSvnLogPage(svnExecutable, true);
+  }
+
+  async function fetchSvnLogPage(svnExecutable: string | null | undefined, append: boolean) {
     const state = get({ subscribe });
     if (!state.current) {
       update((current) => ({
@@ -2820,6 +2828,10 @@ function createWorkspaceStore() {
           recoverable: true,
         },
       }));
+      return;
+    }
+    const nextStartRevision = append ? state.svnLog?.next_start_revision : undefined;
+    if (append && (!state.svnLog?.has_more || !nextStartRevision)) {
       return;
     }
 
@@ -2835,17 +2847,18 @@ function createWorkspaceStore() {
         file_path: state.svnLogFileOnly ? state.selectedFilePath || undefined : undefined,
         svn_executable: svnExecutable || undefined,
         limit: state.svnLogLimit,
+        start_revision: nextStartRevision || undefined,
       });
       update((current) => ({
         ...current,
-        svnLog,
+        svnLog: append && current.svnLog ? mergeSvnLogPage(current.svnLog, svnLog) : svnLog,
         svnLogLoading: false,
         svnLogError: null,
       }));
     } catch (error) {
       update((current) => ({
         ...current,
-        svnLog: null,
+        svnLog: append ? current.svnLog : null,
         svnLogLoading: false,
         svnLogError: error as CommandError,
       }));
@@ -2877,13 +2890,6 @@ function createWorkspaceStore() {
     update((state) => ({
       ...state,
       svnLogLimit: Math.min(Math.max(value, 1), 200),
-    }));
-  }
-
-  function increaseSvnLogLimit(step = 50) {
-    update((state) => ({
-      ...state,
-      svnLogLimit: Math.min(state.svnLogLimit + step, 200),
     }));
   }
 
@@ -3077,10 +3083,10 @@ function createWorkspaceStore() {
     usePropertyForEdit,
     saveSvnProperty,
     refreshSvnLog,
+    loadMoreSvnLog,
     setSvnLogFilter,
     setSvnLogFileOnly,
     setSvnLogLimit,
-    increaseSvnLogLimit,
     setRevisionDiffForm,
     prepareRevisionDiffFromLog,
     markRevisionDiffTask,
@@ -3762,6 +3768,23 @@ function reconcileSafetyWarningConfirmations(
 function unconfirmedWarnings(safetyCheck: SafetyCheckSummary) {
   const confirmed = new Set(safetyCheck.confirmedWarningIds);
   return safetyCheck.warnings.filter((item) => !confirmed.has(item.id));
+}
+
+function mergeSvnLogPage(current: SvnLog, next: SvnLog): SvnLog {
+  const revisions = new Set(current.entries.map((entry) => entry.revision));
+  const appendedEntries = next.entries.filter((entry) => {
+    if (revisions.has(entry.revision)) {
+      return false;
+    }
+    revisions.add(entry.revision);
+    return true;
+  });
+
+  return {
+    ...next,
+    target: current.target,
+    entries: [...current.entries, ...appendedEntries],
+  };
 }
 
 function labelSafetyStatus(status: string) {

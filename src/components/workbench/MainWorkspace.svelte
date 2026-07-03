@@ -959,7 +959,7 @@
         <strong>{svnLogFileOnly ? "文件" : "工作副本"}</strong>
       </div>
       <div class="metric">
-        <span>Limit</span>
+        <span>每页</span>
         <strong>{svnLogLimit}</strong>
       </div>
       <div class="metric">
@@ -980,7 +980,7 @@
         <button
           type="button"
           on:click={onLoadMoreSvnLog}
-          disabled={!workspace || svnLogLoading || svnLogLimit >= 200}
+          disabled={!workspace || svnLogLoading || !svnLog?.has_more}
         >
           加载更多
         </button>

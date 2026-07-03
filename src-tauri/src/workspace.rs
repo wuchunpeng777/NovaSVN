@@ -106,6 +106,7 @@ pub struct GetSvnLogRequest {
     pub file_path: Option<String>,
     pub svn_executable: Option<String>,
     pub limit: Option<usize>,
+    pub start_revision: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -147,6 +148,8 @@ pub struct FileContentDiff {
 pub struct SvnLog {
     pub target: String,
     pub entries: Vec<SvnLogEntry>,
+    pub has_more: bool,
+    pub next_start_revision: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -239,20 +242,29 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "svn".to_string());
-    let limit = request.limit.unwrap_or(50).clamp(1, 200).to_string();
-
-    let output = Command::new(&executable)
+    let limit = request.limit.unwrap_or(50).clamp(1, 200);
+    let start_revision = request
+        .start_revision
+        .as_deref()
+        .map(normalize_log_revision_value)
+        .transpose()?;
+    let mut command = Command::new(&executable);
+    command
         .args(["log", "--xml", "--verbose", "--limit"])
-        .arg(&limit)
-        .arg(&target)
-        .current_dir(&root)
-        .output()
+        .arg((limit + 1).to_string());
+    if let Some(revision) = start_revision.as_deref() {
+        command.arg("-r").arg(format!("{revision}:0"));
+    }
+    command.arg(&target).current_dir(&root);
+
+    let output = command.output()
         .map_err(|error| {
             NovaError::command(
                 "SVN_LOG_FAILED",
                 "无法读取 SVN 日志",
                 Some(format!(
-                    "执行 `{executable} log --xml --verbose --limit {limit}` 失败：{error}"
+                    "执行 `{executable} log --xml --verbose --limit {}` 失败：{error}",
+                    limit + 1
                 )),
                 true,
             )
@@ -268,10 +280,12 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
     }
 
     let xml = String::from_utf8_lossy(&output.stdout);
-    parse_svn_log_xml(
+    let mut log = parse_svn_log_xml(
         &xml,
         &display_status_path(&target.display().to_string(), &root),
-    )
+    )?;
+    trim_svn_log_page(&mut log, limit);
+    Ok(log)
 }
 
 pub fn get_svn_properties(request: GetSvnPropertiesRequest) -> Result<SvnProperties, NovaError> {
@@ -573,6 +587,36 @@ fn normalize_relative_file_path(path: &str) -> Result<String, NovaError> {
     }
 
     Ok(trimmed.to_string())
+}
+
+fn normalize_log_revision_value(revision: &str) -> Result<String, NovaError> {
+    let value = revision.trim();
+    if value.is_empty() || value.chars().any(|character| !character.is_ascii_digit()) {
+        return Err(NovaError::command(
+            "SVN_LOG_REVISION_INVALID",
+            "日志 revision 无效",
+            Some("日志分页 revision 必须是数字。".to_string()),
+            true,
+        ));
+    }
+
+    Ok(value.to_string())
+}
+
+fn trim_svn_log_page(log: &mut SvnLog, limit: usize) {
+    let fetched_more_than_limit = log.entries.len() > limit;
+    if fetched_more_than_limit {
+        log.entries.truncate(limit);
+    }
+
+    log.next_start_revision = log
+        .entries
+        .last()
+        .and_then(|entry| entry.revision.parse::<u64>().ok())
+        .and_then(|revision| revision.checked_sub(1))
+        .filter(|revision| *revision > 0)
+        .map(|revision| revision.to_string());
+    log.has_more = fetched_more_than_limit && log.next_start_revision.is_some();
 }
 
 fn is_binary_diff(text: &str) -> bool {
@@ -1209,6 +1253,8 @@ fn parse_svn_log_xml(xml: &str, target: &str) -> Result<SvnLog, NovaError> {
     Ok(SvnLog {
         target: target.to_string(),
         entries,
+        has_more: false,
+        next_start_revision: None,
     })
 }
 
@@ -1520,6 +1566,32 @@ mod tests {
         assert_eq!(log.entries.len(), 1);
         assert_eq!(log.entries[0].revision, "7");
         assert_eq!(log.entries[0].changed_paths[0].action, "M");
+    }
+
+    #[test]
+    fn trims_svn_log_page_and_sets_next_revision() {
+        let xml = r#"
+<log>
+  <logentry revision="9"><msg>newest</msg></logentry>
+  <logentry revision="8"><msg>middle</msg></logentry>
+  <logentry revision="7"><msg>older</msg></logentry>
+</log>
+"#;
+
+        let mut log = parse_svn_log_xml(xml, "wc").expect("log parses");
+        trim_svn_log_page(&mut log, 2);
+
+        assert_eq!(log.entries.len(), 2);
+        assert!(log.has_more);
+        assert_eq!(log.next_start_revision.as_deref(), Some("7"));
+    }
+
+    #[test]
+    fn rejects_invalid_log_revision_cursor() {
+        assert!(normalize_log_revision_value("42").is_ok());
+        assert!(normalize_log_revision_value(" 42 ").is_ok());
+        assert!(normalize_log_revision_value("").is_err());
+        assert!(normalize_log_revision_value("42:0").is_err());
     }
 
     #[test]

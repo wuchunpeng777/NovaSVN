@@ -1059,12 +1059,10 @@
         onSvnLogFilterInput={workspaceStore.setSvnLogFilter}
         onSvnLogFileOnlyInput={workspaceStore.setSvnLogFileOnly}
         onSvnLogLimitInput={workspaceStore.setSvnLogLimit}
-        onLoadMoreSvnLog={() => {
-          workspaceStore.increaseSvnLogLimit();
-          void workspaceStore.refreshSvnLog(
+        onLoadMoreSvnLog={() =>
+          workspaceStore.loadMoreSvnLog(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
-          );
-        }}
+          )}
         onRevisionDiffFormInput={workspaceStore.setRevisionDiffForm}
         onRunRevisionDiff={runRevisionDiff}
         onPrepareRevisionDiffFromLog={workspaceStore.prepareRevisionDiffFromLog}
