@@ -81,5 +81,7 @@ export interface AppSettingsState {
   unityRulesEnabled: boolean;
   externalDiffTool: string;
   externalMergeTool: string;
+  diagnosticExportPath: string;
+  diagnosticExportError: string | null;
   loading: boolean;
 }

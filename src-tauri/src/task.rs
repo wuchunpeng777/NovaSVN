@@ -859,6 +859,11 @@ impl TaskQueue {
         }
     }
 
+    pub fn all_tasks(&self) -> Vec<Task> {
+        let state = self.state.lock().expect("任务队列锁已损坏");
+        state.tasks.clone()
+    }
+
     pub fn get_task(&self, task_id: &str) -> Result<Task, NovaError> {
         let state = self.state.lock().expect("任务队列锁已损坏");
         state

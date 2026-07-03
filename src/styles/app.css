@@ -1173,6 +1173,23 @@ button {
   min-height: 32px;
 }
 
+.settings-diagnostics {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-diagnostics button {
+  width: fit-content;
+}
+
+.settings-diagnostics p {
+  margin: 0;
+  min-width: 0;
+  color: #44515f;
+  overflow-wrap: anywhere;
+}
+
 .task-workspace-panel {
   display: grid;
   gap: 10px;

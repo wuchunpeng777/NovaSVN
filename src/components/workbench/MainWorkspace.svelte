@@ -146,6 +146,8 @@
     unityRulesEnabled: true,
     externalDiffTool: "",
     externalMergeTool: "",
+    diagnosticExportPath: "",
+    diagnosticExportError: null,
     loading: false,
   };
   export let onChooseWorkspace: () => void;
@@ -225,6 +227,7 @@
     field: K,
     value: AppSettingsState[K],
   ) => void;
+  export let onExportDiagnosticLog: () => void;
 
   const fileRowHeight = 76;
   const sectionHeaderHeight = 32;
@@ -1231,6 +1234,16 @@
         />
         <span>启用 Unity 规则</span>
       </label>
+      <div class="settings-diagnostics">
+        <button type="button" on:click={onExportDiagnosticLog} disabled={appSettings.loading}>
+          {appSettings.loading ? "导出中" : "导出诊断日志"}
+        </button>
+        {#if appSettings.diagnosticExportPath}
+          <p>{appSettings.diagnosticExportPath}</p>
+        {:else if appSettings.diagnosticExportError}
+          <p class="inline-error">{appSettings.diagnosticExportError}</p>
+        {/if}
+      </div>
     </section>
   {:else if view.id === "staging"}
     <div class="metric-row">

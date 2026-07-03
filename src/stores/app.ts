@@ -14,6 +14,7 @@ import {
   createSvnOperationTask,
   createSvnSwitchTask,
   detectSvn,
+  exportDiagnostics,
   getFileContentDiff,
   getFileDiff,
   getBranchPool,
@@ -86,6 +87,8 @@ const initialAppSettings: AppSettingsState = {
   unityRulesEnabled: true,
   externalDiffTool: "",
   externalMergeTool: "",
+  diagnosticExportPath: "",
+  diagnosticExportError: null,
   loading: false,
 };
 
@@ -113,10 +116,36 @@ function createAppSettingsStore() {
     });
   }
 
+  async function exportDiagnosticLog() {
+    update((state) => ({
+      ...state,
+      loading: true,
+      diagnosticExportError: null,
+      diagnosticExportPath: "",
+    }));
+
+    try {
+      const result = await exportDiagnostics();
+      update((state) => ({
+        ...state,
+        loading: false,
+        diagnosticExportPath: result.path,
+      }));
+    } catch (error) {
+      const commandError = error as CommandError;
+      update((state) => ({
+        ...state,
+        loading: false,
+        diagnosticExportError: commandError.message,
+      }));
+    }
+  }
+
   return {
     subscribe,
     load,
     setField,
+    exportDiagnosticLog,
   };
 }
 
@@ -2826,6 +2855,8 @@ function loadAppSettings(): AppSettingsState {
         typeof parsed.externalDiffTool === "string" ? parsed.externalDiffTool : "",
       externalMergeTool:
         typeof parsed.externalMergeTool === "string" ? parsed.externalMergeTool : "",
+      diagnosticExportPath: "",
+      diagnosticExportError: null,
     };
   } catch {
     return initialAppSettings;

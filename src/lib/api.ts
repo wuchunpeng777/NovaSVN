@@ -16,6 +16,7 @@ import type {
   CreateSvnOperationTaskRequest,
   CreateSvnSwitchTaskRequest,
   DetectSvnRequest,
+  DiagnosticExport,
   FileDiff,
   FileContentDiff,
   GenerateSelectedPatchRequest,
@@ -84,6 +85,10 @@ export function createMockTask(request: CreateMockTaskRequest): Promise<Task> {
 
 export function getStartupIntent(): Promise<StartupIntent> {
   return callBackend<StartupIntent>("get_startup_intent");
+}
+
+export function exportDiagnostics(): Promise<DiagnosticExport> {
+  return callBackend<DiagnosticExport>("export_diagnostics");
 }
 
 export function createCommitTask(request: CreateCommitTaskRequest): Promise<Task> {

@@ -21,6 +21,12 @@ export interface StartupIntent {
   path: string | null;
 }
 
+export interface DiagnosticExport {
+  path: string;
+  file_name: string;
+  bytes: number;
+}
+
 export type TaskStatus =
   | "pending"
   | "running"

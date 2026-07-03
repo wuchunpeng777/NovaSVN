@@ -1,4 +1,5 @@
 mod branch_pool;
+mod diagnostics;
 mod diff;
 mod error;
 mod shadow;
@@ -10,6 +11,7 @@ mod task_workspace;
 mod workspace;
 
 use branch_pool::{BranchPool, RemoveBranchPoolEntryRequest, SaveBranchPoolEntryRequest};
+use diagnostics::DiagnosticExport;
 use diff::{GenerateSelectedPatchRequest, ParsedDiff, SelectedPatch};
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
 use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
@@ -17,18 +19,17 @@ use svn::{DetectSvnRequest, SvnClient, SvnDetection};
 use system_integration::StartupIntent;
 use task::{
     CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest, CreateMergeTaskRequest,
-    CreateMockTaskRequest,
-    CreatePartialCommitTaskRequest, CreateRepositoryCopyTaskRequest,
+    CreateMockTaskRequest, CreatePartialCommitTaskRequest, CreateRepositoryCopyTaskRequest,
     CreateRepositoryListTaskRequest, CreateRevisionDiffTaskRequest,
     CreateShadowWorkspaceTaskRequest, CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest,
     Task, TaskQueue, TaskSnapshot,
 };
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
+use tauri::Manager;
 use workspace::{
-    FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest,
-    GetSvnLogRequest, GetSvnPropertiesRequest, OpenWorkspaceRequest, RecentWorkspace,
-    ScanWorkspaceStatusRequest, SetSvnPropertyRequest, SvnLog, SvnProperties,
-    WorkingCopyStatus, WorkspaceSummary,
+    FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, GetSvnLogRequest,
+    GetSvnPropertiesRequest, OpenWorkspaceRequest, RecentWorkspace, ScanWorkspaceStatusRequest,
+    SetSvnPropertyRequest, SvnLog, SvnProperties, WorkingCopyStatus, WorkspaceSummary,
 };
 
 #[tauri::command]
@@ -339,9 +340,24 @@ fn get_shadow_workspace_status(
     )?))
 }
 
+#[tauri::command]
+fn export_diagnostics(
+    app: tauri::AppHandle,
+    queue: tauri::State<'_, TaskQueue>,
+) -> CommandResult<DiagnosticExport> {
+    println!("[NovaSVN] export_diagnostics command received");
+    Ok(CommandResponse::success(diagnostics::export_diagnostics(
+        &app, &queue,
+    )?))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(TaskQueue::new())
+        .setup(|app| {
+            diagnostics::install_panic_hook(app.path().app_data_dir()?);
+            Ok(())
+        })
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             ping,
@@ -379,6 +395,7 @@ pub fn run() {
             parse_unified_diff,
             generate_selected_patch,
             get_shadow_workspace_status,
+            export_diagnostics,
         ])
         .run(tauri::generate_context!())
         .expect("启动 NovaSVN 失败");

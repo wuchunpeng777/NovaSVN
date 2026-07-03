@@ -963,6 +963,7 @@
         onPrepareRevisionDiffFromLog={workspaceStore.prepareRevisionDiffFromLog}
         onExportRevisionDiffPatch={workspaceStore.exportRevisionDiffPatch}
         onAppSettingInput={appSettingsStore.setField}
+        onExportDiagnosticLog={appSettingsStore.exportDiagnosticLog}
       />
       <DetailPanel
         sections={detailSections}
