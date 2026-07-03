@@ -2332,7 +2332,7 @@ function createWorkspaceStore() {
   async function refreshStatus(
     svnExecutable?: string | null,
     workingCopyRoot?: string,
-  ) {
+  ): Promise<WorkingCopyStatus | null> {
     let root = workingCopyRoot ?? "";
     update((state) => {
       root = root || state.current?.working_copy_root || "";
@@ -2354,9 +2354,10 @@ function createWorkspaceStore() {
           recoverable: true,
         },
       }));
-      return;
+      return null;
     }
 
+    let refreshedStatus: WorkingCopyStatus | null = null;
     try {
       let previousSelectedFilePath: string | null = null;
       update((state) => {
@@ -2369,6 +2370,7 @@ function createWorkspaceStore() {
         offset: 0,
         limit: 500,
       });
+      refreshedStatus = status;
       const selectedFilePath = applyStatusResult(status, previousSelectedFilePath);
       if (selectedFilePath) {
         await Promise.all([
@@ -2377,12 +2379,14 @@ function createWorkspaceStore() {
         ]);
         await refreshParsedDiff(selectedFilePath);
       }
+      return status;
     } catch (error) {
       update((state) => ({
         ...state,
         statusLoading: false,
         statusError: error as CommandError,
       }));
+      return refreshedStatus;
     }
   }
 

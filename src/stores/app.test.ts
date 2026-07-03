@@ -174,6 +174,39 @@ describe("appSettingsStore", () => {
 });
 
 describe("workspaceStore safety warnings", () => {
+  it("returns the refreshed status for callers that need the latest counts", async () => {
+    const workspace = makeWorkspace();
+    const initialStatus = makeStatus([
+      makeFile({
+        path: "src/main.ts",
+        content_digest: "main-digest",
+      }),
+    ]);
+    const conflictedStatus = makeStatus([
+      makeFile({
+        path: "src/main.ts",
+        status: "conflicted",
+        abnormal: true,
+        conflict_kind: "text",
+        content_digest: "conflict-digest",
+      }),
+    ]);
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce(initialStatus)
+      .mockResolvedValueOnce(conflictedStatus);
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+
+    const refreshedStatus = await workspaceStore.refreshStatus();
+
+    expect(refreshedStatus).toBe(conflictedStatus);
+    expect(refreshedStatus?.conflicted).toBe(1);
+    expect(get(workspaceStore).status).toBe(conflictedStatus);
+  });
+
   it("drops confirmed warnings when staged file content changes", async () => {
     const workspace = makeWorkspace();
     const firstStatus = makeStatus([

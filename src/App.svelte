@@ -30,6 +30,7 @@
     ExternalToolKind,
     HealthPayload,
     SvnOperationKind,
+    WorkingCopyStatus,
   } from "./types/api";
   import type { SidebarFilterStats } from "./types/app";
 
@@ -89,14 +90,17 @@
     return $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable;
   }
 
-  async function refreshStatusAndSyncBranchPool(workingCopyRoot?: string | null) {
+  async function refreshStatusAndSyncBranchPool(
+    workingCopyRoot?: string | null,
+  ): Promise<WorkingCopyStatus | null> {
     const root = workingCopyRoot ?? $workspaceStore.current?.working_copy_root;
     if (!root) {
-      return;
+      return null;
     }
 
-    await workspaceStore.refreshStatus(currentSvnExecutable(), root);
+    const status = await workspaceStore.refreshStatus(currentSvnExecutable(), root);
     await syncCurrentBranchPoolEntry();
+    return status;
   }
 
   async function syncCurrentBranchPoolEntry() {
@@ -916,8 +920,8 @@
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
     workspaceStore.completeMergeTask($taskStore.selectedTask.result?.merge_result ?? null);
     if (workingCopyRoot && !$workspaceStore.mergeForm.dryRun) {
-      void refreshStatusAndSyncBranchPool(workingCopyRoot).then(() => {
-        if (($workspaceStore.status?.conflicted ?? 0) > 0) {
+      void refreshStatusAndSyncBranchPool(workingCopyRoot).then((status) => {
+        if ((status?.conflicted ?? 0) > 0) {
           setCurrentView("changes");
           workspaceStore.focusConflictFilter();
         }
