@@ -21,7 +21,9 @@ where
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--novasvn-action" => action = args.next(),
+            "--novasvn-action" => {
+                action = args.next().and_then(normalize_action);
+            }
             "--novasvn-path" => path = args.next(),
             _ if path.is_none() => path = Some(arg),
             _ => {}
@@ -29,6 +31,18 @@ where
     }
 
     StartupIntent { action, path }
+}
+
+fn normalize_action(action: String) -> Option<String> {
+    let value = action.trim();
+    if matches!(
+        value,
+        "open" | "commit" | "update" | "diff" | "log" | "revert" | "cleanup" | "branch-workspace"
+    ) {
+        Some(value.to_string())
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -51,6 +65,19 @@ mod tests {
     #[test]
     fn treats_first_plain_arg_as_path() {
         let intent = startup_intent_from_args(["C:\\wc", "--ignored"]);
+
+        assert_eq!(intent.action, None);
+        assert_eq!(intent.path.as_deref(), Some("C:\\wc"));
+    }
+
+    #[test]
+    fn ignores_unknown_startup_actions() {
+        let intent = startup_intent_from_args([
+            "--novasvn-action",
+            "unknown",
+            "--novasvn-path",
+            "C:\\wc",
+        ]);
 
         assert_eq!(intent.action, None);
         assert_eq!(intent.path.as_deref(), Some("C:\\wc"));
