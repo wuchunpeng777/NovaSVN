@@ -17,7 +17,6 @@ use tauri::AppHandle;
 use crate::{
     error::NovaError,
     shadow::{self, ShadowWorkspaceRequest},
-    staging,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -583,6 +582,7 @@ impl TaskQueue {
                 true,
             ));
         }
+        validate_selected_patch_files(&request.selected_patch, &files)?;
 
         let shadow_request = ShadowWorkspaceRequest {
             working_copy_root: working_copy_root.display().to_string(),
@@ -2201,14 +2201,6 @@ fn normalize_commit_files(files: &[String]) -> Result<Vec<String>, NovaError> {
 
     let mut normalized = Vec::with_capacity(files.len());
     for file in files {
-        if !staging::is_stageable_status(file.trim()) {
-            return Err(NovaError::command(
-                "COMMIT_FILE_NOT_STAGEABLE",
-                "提交文件不可暂存",
-                Some(format!("状态 `{}` 不允许进入提交任务。", file.trim())),
-                true,
-            ));
-        }
         normalized.push(normalize_relative_file_path(
             file,
             "COMMIT_FILE_PATH_INVALID",
@@ -2217,6 +2209,28 @@ fn normalize_commit_files(files: &[String]) -> Result<Vec<String>, NovaError> {
     }
 
     Ok(normalized)
+}
+
+fn validate_selected_patch_files(selected_patch: &str, files: &[String]) -> Result<(), NovaError> {
+    for file in files {
+        let old_header = format!("--- {file}");
+        let new_header = format!("+++ {file}");
+        let index_header = format!("Index: {file}");
+        if selected_patch.lines().any(|line| {
+            line == index_header || line.starts_with(&old_header) || line.starts_with(&new_header)
+        }) {
+            continue;
+        }
+
+        return Err(NovaError::command(
+            "SELECTED_PATCH_FILE_MISMATCH",
+            "Selected patch 与提交文件不一致",
+            Some(format!("selected patch 未包含提交文件：{file}")),
+            true,
+        ));
+    }
+
+    Ok(())
 }
 
 fn normalize_relative_file_path(
@@ -2506,10 +2520,27 @@ mod tests {
     }
 
     #[test]
-    fn rejects_blocked_staging_statuses_as_commit_files() {
-        assert!(normalize_commit_files(&["missing".to_string()]).is_err());
-        assert!(normalize_commit_files(&["conflicted".to_string()]).is_err());
-        assert!(normalize_commit_files(&["obstructed".to_string()]).is_err());
+    fn accepts_paths_that_look_like_status_names() {
+        let files = normalize_commit_files(&[
+            "missing".to_string(),
+            "src/conflicted".to_string(),
+            "assets/obstructed.txt".to_string(),
+        ])
+        .expect("status-like paths are valid paths");
+
+        assert_eq!(
+            files,
+            vec!["missing", "src/conflicted", "assets/obstructed.txt"]
+        );
+    }
+
+    #[test]
+    fn validates_selected_patch_contains_commit_files() {
+        let patch =
+            "Index: src/main.rs\n--- src/main.rs\t(revision 1)\n+++ src/main.rs\t(working copy)\n";
+
+        assert!(validate_selected_patch_files(patch, &["src/main.rs".to_string()]).is_ok());
+        assert!(validate_selected_patch_files(patch, &["src/lib.rs".to_string()]).is_err());
     }
 
     #[test]

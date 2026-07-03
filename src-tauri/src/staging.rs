@@ -1,5 +1,7 @@
+#[allow(dead_code)]
 pub const BLOCKED_STATUSES: &[&str] = &["missing", "conflicted", "obstructed"];
 
+#[allow(dead_code)]
 pub fn is_stageable_status(status: &str) -> bool {
     !BLOCKED_STATUSES.contains(&status)
 }
