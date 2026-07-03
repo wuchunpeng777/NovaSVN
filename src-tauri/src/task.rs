@@ -171,6 +171,7 @@ pub struct CreateBranchCheckoutTaskRequest {
 pub struct CreateSvnSwitchTaskRequest {
     pub working_copy_root: String,
     pub target_url: String,
+    pub allow_local_changes: Option<bool>,
     pub svn_executable: Option<String>,
 }
 
@@ -748,6 +749,17 @@ impl TaskQueue {
         let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
         let target_url = normalize_repository_url(&request.target_url)?;
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        if !request.allow_local_changes.unwrap_or(false)
+            && workspace_has_local_changes(&svn_executable, &working_copy_root)?
+        {
+            return Err(NovaError::command(
+                "SVN_SWITCH_LOCAL_CHANGES",
+                "当前工作副本有本地改动",
+                Some("执行 svn switch 前需要确认本地改动风险。".to_string()),
+                true,
+            ));
+        }
+
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
         let task = Task {
@@ -2177,6 +2189,51 @@ fn normalize_svn_executable(executable: Option<&str>) -> Result<String, NovaErro
     )
 }
 
+fn workspace_has_local_changes(executable: &str, root: &Path) -> Result<bool, NovaError> {
+    let output = Command::new(executable)
+        .args(["status", "--xml"])
+        .arg(root)
+        .current_dir(root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_SWITCH_STATUS_FAILED",
+                "无法检查工作副本本地改动",
+                Some(format!(
+                    "执行 `{executable} status --xml {}` 失败：{error}",
+                    root.display()
+                )),
+                true,
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "SVN_SWITCH_STATUS_FAILED",
+            "无法检查工作副本本地改动",
+            Some(command_error_detail(executable, &output)),
+            true,
+        ));
+    }
+
+    status_xml_has_entries(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn status_xml_has_entries(xml: &str) -> Result<bool, NovaError> {
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "SVN_SWITCH_STATUS_XML_PARSE_FAILED",
+            "解析工作副本本地改动状态失败",
+            Some(format!("svn status --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+
+    Ok(document
+        .descendants()
+        .any(|node| node.has_tag_name("entry")))
+}
+
 fn normalize_workspace_root(path: &str) -> Result<PathBuf, NovaError> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -2640,6 +2697,16 @@ mod tests {
         assert!(normalize_svn_executable(Some("C:\\Tools\\svn.exe")).is_ok());
         assert!(normalize_svn_executable(Some("tools\\svn.exe")).is_err());
         assert!(normalize_svn_executable(Some("svn\n")).is_err());
+    }
+
+    #[test]
+    fn detects_status_xml_entries_for_switch_guard() {
+        let changed = r#"<status><target path="C:\wc"><entry path="a.txt"><wc-status item="modified" /></entry></target></status>"#;
+        let clean = r#"<status><target path="C:\wc"></target></status>"#;
+
+        assert!(status_xml_has_entries(changed).unwrap());
+        assert!(!status_xml_has_entries(clean).unwrap());
+        assert!(status_xml_has_entries("<not xml").is_err());
     }
 
     #[test]

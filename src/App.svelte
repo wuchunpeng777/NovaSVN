@@ -551,6 +551,7 @@
     }
 
     const localChanges = $workspaceStore.status?.files.length ?? 0;
+    let allowLocalChanges = false;
     if (localChanges > 0) {
       const confirmed = window.confirm(
         `当前工作副本有 ${localChanges} 个本地改动。继续 svn switch 可能产生冲突，确定执行吗？`,
@@ -558,11 +559,13 @@
       if (!confirmed) {
         return;
       }
+      allowLocalChanges = true;
     }
 
     const task = await taskStore.createSvnSwitch({
       workingCopyRoot: $workspaceStore.current.working_copy_root,
       targetUrl,
+      allowLocalChanges,
       svnExecutable: $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
     });
 

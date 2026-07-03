@@ -160,6 +160,7 @@ export interface CreateBranchCheckoutTaskRequest {
 export interface CreateSvnSwitchTaskRequest {
   working_copy_root: string;
   target_url: string;
+  allow_local_changes?: boolean;
   svn_executable?: string;
 }
 

@@ -455,6 +455,7 @@ function createTaskStore() {
   async function createSvnSwitch(request: {
     workingCopyRoot: string;
     targetUrl: string;
+    allowLocalChanges?: boolean;
     svnExecutable?: string | null;
   }) {
     update((state) => ({ ...state, loading: true, error: null }));
@@ -463,6 +464,7 @@ function createTaskStore() {
       const task = await createSvnSwitchTask({
         working_copy_root: request.workingCopyRoot,
         target_url: request.targetUrl,
+        allow_local_changes: request.allowLocalChanges,
         svn_executable: request.svnExecutable || undefined,
       });
       selectedTaskId = task.task_id;
