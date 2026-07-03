@@ -81,6 +81,7 @@ pub struct ChangedFile {
     pub lock_owner: Option<String>,
     pub lock_comment: Option<String>,
     pub conflict_kind: Option<String>,
+    pub file_size: Option<u64>,
     pub content_digest: String,
 }
 
@@ -795,6 +796,7 @@ fn parse_svn_status_xml(
             lock_owner,
             lock_comment,
             conflict_kind,
+            file_size: changed_file_size(&target_path),
             content_digest: changed_file_digest(&target_path, &item),
         });
     }
@@ -1022,6 +1024,13 @@ fn changed_file_digest(path: &Path, status: &str) -> String {
     }
 
     format!("fnv64:{status}:{}:{hash:016x}", metadata.len())
+}
+
+fn changed_file_size(path: &Path) -> Option<u64> {
+    fs::metadata(path)
+        .ok()
+        .filter(|metadata| metadata.is_file())
+        .map(|metadata| metadata.len())
 }
 
 fn normalize_workspace_path(path: &str) -> Result<PathBuf, NovaError> {

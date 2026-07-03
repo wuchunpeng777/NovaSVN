@@ -85,6 +85,26 @@
     selectedFile && workspaceRoot
       ? `file:///${workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "")}/${selectedFile.path.replaceAll("\\", "/")}`
       : null;
+
+  function formatFileSize(bytes: number | null) {
+    if (bytes === null) {
+      return "-";
+    }
+
+    if (bytes >= 1024 * 1024 * 1024) {
+      return `${(bytes / 1024 / 1024 / 1024).toFixed(1)}GB`;
+    }
+
+    if (bytes >= 1024 * 1024) {
+      return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+    }
+
+    if (bytes >= 1024) {
+      return `${(bytes / 1024).toFixed(1)}KB`;
+    }
+
+    return `${bytes}B`;
+  }
 </script>
 
 <aside class="detail-panel" aria-label="详情">
@@ -212,6 +232,10 @@
         <div>
           <dt>属性</dt>
           <dd>{selectedFile.property_changed ? selectedFile.property_status : "无变更"}</dd>
+        </div>
+        <div>
+          <dt>大小</dt>
+          <dd>{formatFileSize(selectedFile.file_size)}</dd>
         </div>
         <div>
           <dt>异常</dt>

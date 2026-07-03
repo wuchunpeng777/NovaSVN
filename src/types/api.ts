@@ -323,6 +323,7 @@ export interface ChangedFile {
   lock_owner: string | null;
   lock_comment: string | null;
   conflict_kind: string | null;
+  file_size: number | null;
   content_digest: string;
 }
 

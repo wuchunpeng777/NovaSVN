@@ -3157,6 +3157,8 @@ function buildSafetyCheck(
   status: WorkingCopyStatus | null = null,
 ): SafetyCheckSummary {
   const stagedPaths = new Set(stagedFiles.map((file) => file.path));
+  const settings = loadAppSettings();
+  const largeFileThresholdBytes = settings.largeFileThresholdMb * 1024 * 1024;
   const blockers: SafetyCheckItem[] = [];
   const warnings: SafetyCheckItem[] = [];
   const infos: SafetyCheckItem[] = [];
@@ -3188,6 +3190,18 @@ function buildSafetyCheck(
         severity: "warning",
         title: "疑似临时或生成文件",
         detail: `${file.path} 命中日志、临时文件或生成目录规则，请确认是否应提交。`,
+        filePath: file.path,
+      });
+    }
+
+    if (file.file_size !== null && file.file_size >= largeFileThresholdBytes) {
+      warnings.push({
+        id: `warning:large-file:${file.path}:${file.content_digest}`,
+        severity: "warning",
+        title: "大文件变更",
+        detail: `${file.path} 大小为 ${formatFileSize(file.file_size)}，超过当前 ${
+          settings.largeFileThresholdMb
+        }MB 阈值。`,
         filePath: file.path,
       });
     }
@@ -3434,6 +3448,22 @@ function looksLikeUnityLargeAsset(path: string) {
     "unity",
     "wav",
   ].includes(extension);
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${(bytes / 1024 / 1024 / 1024).toFixed(1)}GB`;
+  }
+
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  }
+
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(1)}KB`;
+  }
+
+  return `${bytes}B`;
 }
 
 function upsertReviewedFile(
