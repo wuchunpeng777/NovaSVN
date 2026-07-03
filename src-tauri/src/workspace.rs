@@ -1623,6 +1623,64 @@ mod tests {
     }
 
     #[test]
+    fn parses_status_xml_counts_core_svn_states() {
+        let xml = r#"
+<status>
+  <target path="C:\wc">
+    <entry path="C:\wc\src\main.rs">
+      <wc-status item="modified" props="none" />
+    </entry>
+    <entry path="C:\wc\src\added.rs">
+      <wc-status item="added" props="none" />
+    </entry>
+    <entry path="C:\wc\src\deleted.rs">
+      <wc-status item="deleted" props="none" />
+    </entry>
+    <entry path="C:\wc\src\missing.rs">
+      <wc-status item="missing" props="none" />
+    </entry>
+    <entry path="C:\wc\src\scratch.tmp">
+      <wc-status item="unversioned" props="none" />
+    </entry>
+    <entry path="C:\wc\src\props.rs">
+      <wc-status item="normal" props="modified" />
+    </entry>
+  </target>
+</status>
+"#;
+
+        let status = parse_svn_status_xml(
+            xml,
+            Path::new("C:\\wc"),
+            0,
+            100,
+            parse_svnversion_output("42"),
+        )
+        .expect("status parses");
+
+        assert_eq!(status.total, 6);
+        assert_eq!(status.modified, 1);
+        assert_eq!(status.added, 1);
+        assert_eq!(status.deleted, 1);
+        assert_eq!(status.missing, 1);
+        assert_eq!(status.unversioned, 1);
+        assert_eq!(status.property_changed, 1);
+        assert_eq!(status.revision_range.as_deref(), Some("42"));
+        assert!(!status.mixed_revision);
+        assert!(status.files.iter().any(|file| {
+            file.path == "src/props.rs"
+                && file.status == "normal"
+                && file.property_status.as_deref() == Some("modified")
+                && file.property_changed
+        }));
+        assert!(status
+            .files
+            .iter()
+            .find(|file| file.path == "src/missing.rs")
+            .is_some_and(|file| file.abnormal));
+    }
+
+    #[test]
     fn validates_workspace_svn_executable_values() {
         assert_eq!(normalize_svn_executable(None).unwrap(), "svn");
         assert_eq!(normalize_svn_executable(Some(" svn.exe ")).unwrap(), "svn.exe");
