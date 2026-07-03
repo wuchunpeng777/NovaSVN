@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 
 import DetailPanel from "./DetailPanel.svelte";
-import type { FileContentDiff } from "../../types/api";
+import type { ChangedFile, FileContentDiff } from "../../types/api";
 
 vi.mock("./MonacoDiffViewer.svelte", () => ({
   default: vi.fn().mockImplementation((internals) => ({
@@ -60,6 +60,36 @@ describe("DetailPanel", () => {
     expect(screen.getByText("空白")).toHaveClass("active");
   });
 
+  it("guards lock actions based on the selected file lock state", async () => {
+    const { rerender } = render(DetailPanel, {
+      props: {
+        selectedFile: makeFile({
+          lock_state: "none",
+          lock_owner: null,
+          lock_comment: null,
+        }),
+      },
+    });
+
+    expect(screen.getByText("Lock")).not.toBeDisabled();
+    expect(screen.getByText("Unlock")).toBeDisabled();
+    expect(screen.getByText("Force Unlock")).toBeDisabled();
+    expect(screen.getByText("未锁定")).toBeInTheDocument();
+
+    await rerender({
+      selectedFile: makeFile({
+        lock_state: "locked",
+        lock_owner: "alice",
+        lock_comment: "editing",
+      }),
+    });
+
+    expect(screen.getByText("Lock")).toBeDisabled();
+    expect(screen.getByText("Unlock")).not.toBeDisabled();
+    expect(screen.getByText("Force Unlock")).not.toBeDisabled();
+    expect(screen.getByText("alice")).toBeInTheDocument();
+  });
+
   it("opens conflicted files from conflict actions", async () => {
     const onOpenWorkspaceFile = vi.fn();
 
@@ -88,3 +118,21 @@ describe("DetailPanel", () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith("src/main.ts");
   });
 });
+
+function makeFile(file: Partial<ChangedFile> = {}): ChangedFile {
+  return {
+    path: "src/main.ts",
+    status: "modified",
+    revision: null,
+    property_status: null,
+    property_changed: false,
+    abnormal: false,
+    lock_state: "none",
+    lock_owner: null,
+    lock_comment: null,
+    conflict_kind: null,
+    file_size: 12,
+    content_digest: "digest",
+    ...file,
+  };
+}

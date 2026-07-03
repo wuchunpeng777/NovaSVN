@@ -98,6 +98,13 @@
     previousDefaultShowWhitespace = defaultShowWhitespace;
   }
 
+  $: selectedFileHasLock =
+    !!selectedFile &&
+    (selectedFile.lock_state !== "none" ||
+      !!selectedFile.lock_owner ||
+      !!selectedFile.lock_comment);
+  $: selectedFileCanLock = !!selectedFile && !selectedFileHasLock;
+
   function formatFileSize(bytes: number | null) {
     if (bytes === null) {
       return "-";
@@ -204,21 +211,21 @@
         <button
           type="button"
           on:click={() => selectedFile && onLockFile(selectedFile.path)}
-          disabled={!selectedFile}
+          disabled={!selectedFileCanLock}
         >
           Lock
         </button>
         <button
           type="button"
           on:click={() => selectedFile && onUnlockFile(selectedFile.path)}
-          disabled={!selectedFile}
+          disabled={!selectedFileHasLock}
         >
           Unlock
         </button>
         <button
           type="button"
           on:click={() => selectedFile && onForceUnlockFile(selectedFile.path)}
-          disabled={!selectedFile}
+          disabled={!selectedFileHasLock}
         >
           Force Unlock
         </button>
@@ -266,7 +273,13 @@
         </div>
         <div>
           <dt>锁状态</dt>
-          <dd>{selectedFile.lock_state === "none" ? "未锁定" : selectedFile.lock_state}</dd>
+          <dd>
+            {selectedFileHasLock
+              ? selectedFile.lock_state === "none"
+                ? "已锁定"
+                : selectedFile.lock_state
+              : "未锁定"}
+          </dd>
         </div>
         <div>
           <dt>持锁人</dt>
