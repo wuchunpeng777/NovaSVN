@@ -57,7 +57,7 @@ pub fn launch_external_tool(
     let root = normalize_root(&request.working_copy_root)?;
     let target = normalize_file_path(&root, &request.file_path)?;
 
-    let executable = expand_home_path(tool);
+    let executable = normalize_tool_path(tool)?;
 
     Command::new(&executable).arg(&target).spawn().map_err(|error| {
         NovaError::command(
@@ -137,6 +137,42 @@ fn expand_home_path(value: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+fn normalize_tool_path(value: &str) -> Result<PathBuf, NovaError> {
+    if value.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "EXTERNAL_TOOL_PATH_INVALID",
+            "外部工具路径无效",
+            Some("外部工具路径不能包含控制字符。".to_string()),
+            true,
+        ));
+    }
+
+    let trimmed = value.trim();
+    if is_simple_command_name(trimmed) {
+        return Ok(PathBuf::from(trimmed));
+    }
+
+    let expanded = expand_home_path(trimmed);
+    let home_relative = trimmed.starts_with("~/") || trimmed.starts_with("~\\");
+    if expanded.is_absolute() || home_relative {
+        return Ok(expanded);
+    }
+
+    Err(NovaError::command(
+        "EXTERNAL_TOOL_PATH_INVALID",
+        "外部工具路径无效",
+        Some("外部工具路径必须是命令名、绝对路径或 ~/ 开头路径。".to_string()),
+        true,
+    ))
+}
+
+fn is_simple_command_name(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-'))
+}
+
 fn home_dir() -> Option<PathBuf> {
     env::var_os("HOME")
         .filter(|value| !value.is_empty())
@@ -193,6 +229,15 @@ mod tests {
     #[test]
     fn keeps_plain_command_names() {
         assert_eq!(expand_home_path("code"), PathBuf::from("code"));
+    }
+
+    #[test]
+    fn validates_external_tool_paths() {
+        assert_eq!(normalize_tool_path("code").unwrap(), PathBuf::from("code"));
+        assert!(normalize_tool_path("C:\\Tools\\diff.exe").is_ok());
+        assert!(normalize_tool_path("~/bin/diff").is_ok());
+        assert!(normalize_tool_path("tools\\diff.exe").is_err());
+        assert!(normalize_tool_path("code\n").is_err());
     }
 
     #[test]
