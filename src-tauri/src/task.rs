@@ -167,9 +167,29 @@ pub struct CreateSvnSwitchTaskRequest {
     pub svn_executable: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevisionDiffMode {
+    Revisions,
+    WorkingCopyToRevision,
+    Urls,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateRevisionDiffTaskRequest {
+    pub mode: RevisionDiffMode,
+    pub working_copy_root: Option<String>,
+    pub left_revision: Option<String>,
+    pub right_revision: Option<String>,
+    pub left_url: Option<String>,
+    pub right_url: Option<String>,
+    pub svn_executable: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskResult {
     pub repository_list: Option<RepositoryListResult>,
+    pub revision_diff: Option<RevisionDiffResult>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -187,6 +207,15 @@ pub struct RepositoryListEntry {
     pub date: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RevisionDiffResult {
+    pub mode: String,
+    pub target: String,
+    pub diff_text: String,
+    pub file_count: usize,
+    pub line_count: usize,
+}
+
 #[derive(Debug, Clone)]
 enum TaskPayload {
     Mock(MockTaskOutcome),
@@ -198,6 +227,7 @@ enum TaskPayload {
     RepositoryCopy(RepositoryCopyTaskPayload),
     BranchCheckout(BranchCheckoutTaskPayload),
     SvnSwitch(SvnSwitchTaskPayload),
+    RevisionDiff(RevisionDiffTaskPayload),
 }
 
 #[derive(Debug, Clone)]
@@ -260,6 +290,17 @@ struct BranchCheckoutTaskPayload {
 struct SvnSwitchTaskPayload {
     working_copy_root: String,
     target_url: String,
+    svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct RevisionDiffTaskPayload {
+    mode: RevisionDiffMode,
+    working_copy_root: Option<String>,
+    left_revision: Option<String>,
+    right_revision: Option<String>,
+    left_url: Option<String>,
+    right_url: Option<String>,
     svn_executable: String,
 }
 
@@ -688,6 +729,43 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_revision_diff_task(
+        &self,
+        request: CreateRevisionDiffTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let svn_executable = request
+            .svn_executable
+            .clone()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "svn".to_string());
+        let payload = normalize_revision_diff_payload(request, svn_executable)?;
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let title = match payload.mode {
+            RevisionDiffMode::Revisions => "比较两个 revision",
+            RevisionDiffMode::WorkingCopyToRevision => "比较工作副本和 revision",
+            RevisionDiffMode::Urls => "比较两个分支 URL",
+        };
+        let task = Task {
+            task_id: task_id.clone(),
+            title: title.to_string(),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "Revision diff 任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::RevisionDiff(payload),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn list_tasks(&self) -> TaskSnapshot {
         let state = self.state.lock().expect("任务队列锁已损坏");
         TaskSnapshot {
@@ -850,6 +928,7 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
                 run_branch_checkout_task(&state, &task_id, payload)
             }
             TaskPayload::SvnSwitch(payload) => run_svn_switch_task(&state, &task_id, payload),
+            TaskPayload::RevisionDiff(payload) => run_revision_diff_task(&state, &task_id, payload),
         }
     }
 }
@@ -1330,6 +1409,7 @@ fn run_repository_list_task(
                         task_id,
                         TaskResult {
                             repository_list: Some(result),
+                            revision_diff: None,
                         },
                     );
                     update_task(
@@ -1436,6 +1516,114 @@ fn run_repository_copy_task(
                 task_id,
                 TaskStatus::Failed,
                 "SVN 命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn run_revision_diff_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: RevisionDiffTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "Revision diff 开始执行",
+        None,
+    );
+
+    let mut command = Command::new(&payload.svn_executable);
+    command.arg("diff");
+    let target = match payload.mode {
+        RevisionDiffMode::Revisions => {
+            let root = payload
+                .working_copy_root
+                .as_deref()
+                .expect("revision diff 工作副本已校验");
+            let left = payload
+                .left_revision
+                .as_deref()
+                .expect("左 revision 已校验");
+            let right = payload
+                .right_revision
+                .as_deref()
+                .expect("右 revision 已校验");
+            command.arg("-r").arg(format!("{left}:{right}")).arg(root);
+            format!("{root} r{left}:r{right}")
+        }
+        RevisionDiffMode::WorkingCopyToRevision => {
+            let root = payload
+                .working_copy_root
+                .as_deref()
+                .expect("工作副本 diff 工作副本已校验");
+            let revision = payload
+                .right_revision
+                .as_deref()
+                .expect("目标 revision 已校验");
+            command.arg("-r").arg(revision).arg(root);
+            format!("{root} ↔ r{revision}")
+        }
+        RevisionDiffMode::Urls => {
+            let left_url = payload.left_url.as_deref().expect("左 URL 已校验");
+            let right_url = payload.right_url.as_deref().expect("右 URL 已校验");
+            command.arg(left_url).arg(right_url);
+            format!(
+                "{} ↔ {}",
+                compact_repository_url(left_url),
+                compact_repository_url(right_url)
+            )
+        }
+    };
+    append_task_log(state, task_id, &format!("执行 svn diff：{target}"));
+
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            let diff_text = String::from_utf8_lossy(&output.stdout).to_string();
+            let result = RevisionDiffResult {
+                mode: revision_diff_mode_label(&payload.mode).to_string(),
+                target,
+                file_count: count_diff_files(&diff_text),
+                line_count: diff_text.lines().count(),
+                diff_text,
+            };
+            let file_count = result.file_count;
+            let line_count = result.line_count;
+            set_task_result(
+                state,
+                task_id,
+                TaskResult {
+                    repository_list: None,
+                    revision_diff: Some(result),
+                },
+            );
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                &format!("Revision diff 完成，{file_count} 个文件，{line_count} 行"),
+                None,
+            );
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "Revision diff 失败",
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN diff 启动失败",
                 Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
             );
         }
@@ -1818,6 +2006,128 @@ fn normalize_checkout_path(path: &str) -> Result<String, NovaError> {
     }
 
     Ok(trimmed.to_string())
+}
+
+fn normalize_revision_diff_payload(
+    request: CreateRevisionDiffTaskRequest,
+    svn_executable: String,
+) -> Result<RevisionDiffTaskPayload, NovaError> {
+    match request.mode {
+        RevisionDiffMode::Revisions => {
+            let working_copy_root = normalize_optional_workspace_root(
+                request.working_copy_root.as_deref(),
+                "REVISION_DIFF_WORKSPACE_REQUIRED",
+                "比较 revision 需要先打开工作副本",
+            )?;
+            let left_revision = normalize_revision_value(
+                request.left_revision.as_deref(),
+                "REVISION_DIFF_LEFT_REQUIRED",
+                "请输入左侧 revision",
+            )?;
+            let right_revision = normalize_revision_value(
+                request.right_revision.as_deref(),
+                "REVISION_DIFF_RIGHT_REQUIRED",
+                "请输入右侧 revision",
+            )?;
+
+            Ok(RevisionDiffTaskPayload {
+                mode: RevisionDiffMode::Revisions,
+                working_copy_root: Some(working_copy_root.display().to_string()),
+                left_revision: Some(left_revision),
+                right_revision: Some(right_revision),
+                left_url: None,
+                right_url: None,
+                svn_executable,
+            })
+        }
+        RevisionDiffMode::WorkingCopyToRevision => {
+            let working_copy_root = normalize_optional_workspace_root(
+                request.working_copy_root.as_deref(),
+                "REVISION_DIFF_WORKSPACE_REQUIRED",
+                "比较工作副本需要先打开工作副本",
+            )?;
+            let right_revision = normalize_revision_value(
+                request.right_revision.as_deref(),
+                "REVISION_DIFF_TARGET_REQUIRED",
+                "请输入要比较的 revision",
+            )?;
+
+            Ok(RevisionDiffTaskPayload {
+                mode: RevisionDiffMode::WorkingCopyToRevision,
+                working_copy_root: Some(working_copy_root.display().to_string()),
+                left_revision: None,
+                right_revision: Some(right_revision),
+                left_url: None,
+                right_url: None,
+                svn_executable,
+            })
+        }
+        RevisionDiffMode::Urls => {
+            let left_url = normalize_repository_url(request.left_url.as_deref().unwrap_or(""))?;
+            let right_url = normalize_repository_url(request.right_url.as_deref().unwrap_or(""))?;
+
+            Ok(RevisionDiffTaskPayload {
+                mode: RevisionDiffMode::Urls,
+                working_copy_root: None,
+                left_revision: None,
+                right_revision: None,
+                left_url: Some(left_url),
+                right_url: Some(right_url),
+                svn_executable,
+            })
+        }
+    }
+}
+
+fn normalize_optional_workspace_root(
+    path: Option<&str>,
+    code: &'static str,
+    message: &'static str,
+) -> Result<PathBuf, NovaError> {
+    let Some(path) = path else {
+        return Err(NovaError::command(code, message, None, true));
+    };
+
+    normalize_workspace_root(path).map_err(|error| match error {
+        NovaError::Command { detail, .. } => NovaError::command(code, message, detail, true),
+    })
+}
+
+fn normalize_revision_value(
+    revision: Option<&str>,
+    code: &'static str,
+    message: &'static str,
+) -> Result<String, NovaError> {
+    let value = revision.unwrap_or("").trim();
+    if value.is_empty() {
+        return Err(NovaError::command(code, message, None, true));
+    }
+
+    if value.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "REVISION_DIFF_REVISION_INVALID",
+            "Revision 无效",
+            Some("Revision 不能包含控制字符。".to_string()),
+            true,
+        ));
+    }
+
+    Ok(value.to_string())
+}
+
+fn revision_diff_mode_label(mode: &RevisionDiffMode) -> &'static str {
+    match mode {
+        RevisionDiffMode::Revisions => "revisions",
+        RevisionDiffMode::WorkingCopyToRevision => "working_copy_to_revision",
+        RevisionDiffMode::Urls => "urls",
+    }
+}
+
+fn count_diff_files(diff_text: &str) -> usize {
+    diff_text
+        .lines()
+        .filter(|line| line.starts_with("Index: ") || line.starts_with("diff --git "))
+        .count()
 }
 
 fn compact_repository_url(url: &str) -> String {

@@ -10,6 +10,7 @@ import type {
   CreatePartialCommitTaskRequest,
   CreateRepositoryCopyTaskRequest,
   CreateRepositoryListTaskRequest,
+  CreateRevisionDiffTaskRequest,
   CreateShadowWorkspaceTaskRequest,
   CreateSvnOperationTaskRequest,
   CreateSvnSwitchTaskRequest,
@@ -118,6 +119,12 @@ export function createBranchCheckoutTask(
 
 export function createSvnSwitchTask(request: CreateSvnSwitchTaskRequest): Promise<Task> {
   return callBackend<Task>("create_svn_switch_task", { request });
+}
+
+export function createRevisionDiffTask(
+  request: CreateRevisionDiffTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_revision_diff_task", { request });
 }
 
 export function getBranchPool(): Promise<BranchPool> {

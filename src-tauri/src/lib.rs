@@ -16,13 +16,14 @@ use svn::{DetectSvnRequest, SvnClient, SvnDetection};
 use task::{
     CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest, CreateMockTaskRequest,
     CreatePartialCommitTaskRequest, CreateRepositoryCopyTaskRequest,
-    CreateRepositoryListTaskRequest, CreateShadowWorkspaceTaskRequest,
-    CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest, Task, TaskQueue, TaskSnapshot,
+    CreateRepositoryListTaskRequest, CreateRevisionDiffTaskRequest,
+    CreateShadowWorkspaceTaskRequest, CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest,
+    Task, TaskQueue, TaskSnapshot,
 };
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use workspace::{
-    FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, OpenWorkspaceRequest,
-    RecentWorkspace, ScanWorkspaceStatusRequest, SvnLog, GetSvnLogRequest, WorkingCopyStatus,
+    FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, GetSvnLogRequest,
+    OpenWorkspaceRequest, RecentWorkspace, ScanWorkspaceStatusRequest, SvnLog, WorkingCopyStatus,
     WorkspaceSummary,
 };
 
@@ -140,6 +141,17 @@ fn create_svn_switch_task(
     println!("[NovaSVN] create_svn_switch_task command received");
     Ok(CommandResponse::success(
         queue.create_svn_switch_task(request)?,
+    ))
+}
+
+#[tauri::command]
+fn create_revision_diff_task(
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateRevisionDiffTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_revision_diff_task command received");
+    Ok(CommandResponse::success(
+        queue.create_revision_diff_task(request)?,
     ))
 }
 
@@ -307,6 +319,7 @@ pub fn run() {
             create_repository_copy_task,
             create_branch_checkout_task,
             create_svn_switch_task,
+            create_revision_diff_task,
             get_branch_pool,
             save_branch_pool_entry,
             remove_branch_pool_entry,

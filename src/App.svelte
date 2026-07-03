@@ -405,6 +405,28 @@
     workspaceStore.markSvnSwitchTask(task.task_id);
   }
 
+  async function runRevisionDiff() {
+    const form = $workspaceStore.revisionDiffForm;
+    const task = await taskStore.createRevisionDiff({
+      mode: form.mode,
+      workingCopyRoot: $workspaceStore.current?.working_copy_root,
+      leftRevision: form.leftRevision,
+      rightRevision: form.rightRevision,
+      leftUrl: form.leftUrl,
+      rightUrl: form.rightUrl,
+      svnExecutable: $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+    });
+
+    if (!task) {
+      workspaceStore.failRevisionDiffTask(
+        $taskStore.error?.message ?? "Revision diff 任务创建失败",
+      );
+      return;
+    }
+
+    workspaceStore.markRevisionDiffTask(task.task_id);
+  }
+
   $: if (
     $workspaceStore.pendingCommitTaskId &&
     $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
@@ -565,6 +587,30 @@
       $taskStore.selectedTask.status === "cancelled")
   ) {
     workspaceStore.failSvnSwitchTask($taskStore.selectedTask.error ?? "svn switch 失败");
+  }
+
+  $: if (
+    $workspaceStore.pendingRevisionDiffTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingRevisionDiffTaskId &&
+    $taskStore.selectedTask.status === "success"
+  ) {
+    const result = $taskStore.selectedTask.result?.revision_diff;
+    if (result) {
+      workspaceStore.applyRevisionDiffResult(result);
+    } else {
+      workspaceStore.failRevisionDiffTask("Revision diff 任务没有返回结果");
+    }
+  }
+
+  $: if (
+    $workspaceStore.pendingRevisionDiffTaskId &&
+    $taskStore.selectedTask?.task_id === $workspaceStore.pendingRevisionDiffTaskId &&
+    ($taskStore.selectedTask.status === "failed" ||
+      $taskStore.selectedTask.status === "cancelled")
+  ) {
+    workspaceStore.failRevisionDiffTask(
+      $taskStore.selectedTask.error ?? "Revision diff 失败",
+    );
   }
 
   async function checkRepositoryLayoutTask(
@@ -736,6 +782,10 @@
         svnLogDateToFilter={$workspaceStore.svnLogDateToFilter}
         svnLogFileOnly={$workspaceStore.svnLogFileOnly}
         svnLogLimit={$workspaceStore.svnLogLimit}
+        revisionDiffForm={$workspaceStore.revisionDiffForm}
+        revisionDiffLoading={$workspaceStore.revisionDiffLoading}
+        revisionDiffError={$workspaceStore.revisionDiffError}
+        revisionDiffResult={$workspaceStore.revisionDiffResult}
         onChooseWorkspace={() =>
           workspaceStore.chooseAndOpen(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
@@ -790,6 +840,10 @@
         onSvnLogFilterInput={workspaceStore.setSvnLogFilter}
         onSvnLogFileOnlyInput={workspaceStore.setSvnLogFileOnly}
         onSvnLogLimitInput={workspaceStore.setSvnLogLimit}
+        onRevisionDiffFormInput={workspaceStore.setRevisionDiffForm}
+        onRunRevisionDiff={runRevisionDiff}
+        onPrepareRevisionDiffFromLog={workspaceStore.prepareRevisionDiffFromLog}
+        onExportRevisionDiffPatch={workspaceStore.exportRevisionDiffPatch}
       />
       <DetailPanel
         sections={detailSections}

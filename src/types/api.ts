@@ -119,6 +119,18 @@ export interface CreateSvnSwitchTaskRequest {
   svn_executable?: string;
 }
 
+export type RevisionDiffMode = "revisions" | "working_copy_to_revision" | "urls";
+
+export interface CreateRevisionDiffTaskRequest {
+  mode: RevisionDiffMode;
+  working_copy_root?: string;
+  left_revision?: string;
+  right_revision?: string;
+  left_url?: string;
+  right_url?: string;
+  svn_executable?: string;
+}
+
 export interface BranchPoolEntry {
   id: string;
   branch_url: string;
@@ -174,6 +186,7 @@ export interface RemoveTaskWorkspaceRequest {
 
 export interface TaskResult {
   repository_list: RepositoryListResult | null;
+  revision_diff: RevisionDiffResult | null;
 }
 
 export interface RepositoryListResult {
@@ -187,6 +200,14 @@ export interface RepositoryListEntry {
   revision: string;
   author: string;
   date: string;
+}
+
+export interface RevisionDiffResult {
+  mode: RevisionDiffMode | string;
+  target: string;
+  diff_text: string;
+  file_count: number;
+  line_count: number;
 }
 
 export interface ShadowWorkspaceRequest {

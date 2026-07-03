@@ -1270,6 +1270,103 @@ button {
   cursor: default;
 }
 
+.revision-diff-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.revision-diff-mode {
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  max-width: 420px;
+}
+
+.revision-diff-mode button,
+.revision-diff-panel button {
+  height: 30px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #44515f;
+  cursor: pointer;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.revision-diff-mode button.active,
+.revision-diff-panel button:not(:disabled):hover {
+  border-color: #5ba9a5;
+  background: #eef8f7;
+  color: #227873;
+}
+
+.revision-diff-panel button:disabled {
+  border-color: #cfd7df;
+  background: #f7f9fb;
+  color: #7a8794;
+  cursor: default;
+}
+
+.revision-diff-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.revision-diff-grid label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: #44515f;
+  font-size: 12px;
+}
+
+.revision-diff-grid input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  color: #17202a;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.revision-diff-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.revision-diff-summary span {
+  border-radius: 999px;
+  background: #eef2f5;
+  color: #44515f;
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
+.revision-diff-preview {
+  overflow: auto;
+  max-height: 260px;
+  margin: 0;
+  border: 1px solid #e0e6ec;
+  border-radius: 8px;
+  background: #fbfcfd;
+  color: #17202a;
+  padding: 10px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
 .svn-log-filters {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) 128px 128px 84px auto;
@@ -1316,9 +1413,21 @@ button {
 
 .svn-log-entry header {
   display: grid;
-  grid-template-columns: 90px 140px minmax(160px, 1fr);
+  grid-template-columns: 90px 140px minmax(160px, 1fr) auto;
   gap: 10px;
   align-items: center;
+}
+
+.svn-log-entry header button {
+  height: 28px;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #44515f;
+  cursor: pointer;
+  padding: 0 9px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .svn-log-entry strong,

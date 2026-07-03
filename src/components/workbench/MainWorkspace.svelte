@@ -7,6 +7,8 @@
     CommandError,
     RepositoryCopyKind,
     RepositoryListResult,
+    RevisionDiffMode,
+    RevisionDiffResult,
     SvnLog,
     TaskWorkspaceList,
     WorkingCopyStatus,
@@ -110,6 +112,22 @@
   export let svnLogDateToFilter = "";
   export let svnLogFileOnly = false;
   export let svnLogLimit = 50;
+  export let revisionDiffForm: {
+    mode: RevisionDiffMode;
+    leftRevision: string;
+    rightRevision: string;
+    leftUrl: string;
+    rightUrl: string;
+  } = {
+    mode: "revisions",
+    leftRevision: "",
+    rightRevision: "",
+    leftUrl: "",
+    rightUrl: "",
+  };
+  export let revisionDiffLoading = false;
+  export let revisionDiffError: string | null = null;
+  export let revisionDiffResult: RevisionDiffResult | null = null;
   export let onChooseWorkspace: () => void;
   export let onOpenWorkspace: () => void;
   export let onRefreshStatus: () => void;
@@ -170,6 +188,13 @@
   ) => void;
   export let onSvnLogFileOnlyInput: (value: boolean) => void;
   export let onSvnLogLimitInput: (value: number) => void;
+  export let onRevisionDiffFormInput: (
+    field: keyof typeof revisionDiffForm,
+    value: string,
+  ) => void;
+  export let onRunRevisionDiff: () => void;
+  export let onPrepareRevisionDiffFromLog: (revision: string) => void;
+  export let onExportRevisionDiffPatch: () => void;
 
   const fileRowHeight = 76;
   const sectionHeaderHeight = 32;
@@ -861,6 +886,127 @@
       <ErrorNotice error={svnLogError} />
     </section>
 
+    <section class="revision-diff-panel" aria-label="Revision Diff 和分支比较">
+      <div class="repository-layout-header">
+        <div>
+          <h3>Revision Diff</h3>
+          <p>{revisionDiffResult?.target ?? "比较 revision、工作副本或两个分支 URL"}</p>
+        </div>
+        <div class="repository-copy-presets">
+          <button
+            type="button"
+            on:click={onRunRevisionDiff}
+            disabled={revisionDiffLoading}
+          >
+            {revisionDiffLoading ? "比较中" : "开始比较"}
+          </button>
+          <button
+            type="button"
+            on:click={onExportRevisionDiffPatch}
+            disabled={!revisionDiffResult?.diff_text}
+          >
+            导出 patch
+          </button>
+        </div>
+      </div>
+
+      <div class="revision-diff-mode" role="group" aria-label="Diff 类型">
+        <button
+          type="button"
+          class:active={revisionDiffForm.mode === "revisions"}
+          on:click={() => onRevisionDiffFormInput("mode", "revisions")}
+        >
+          Revision
+        </button>
+        <button
+          type="button"
+          class:active={revisionDiffForm.mode === "working_copy_to_revision"}
+          on:click={() => onRevisionDiffFormInput("mode", "working_copy_to_revision")}
+        >
+          工作副本
+        </button>
+        <button
+          type="button"
+          class:active={revisionDiffForm.mode === "urls"}
+          on:click={() => onRevisionDiffFormInput("mode", "urls")}
+        >
+          分支 URL
+        </button>
+      </div>
+
+      {#if revisionDiffForm.mode === "urls"}
+        <div class="revision-diff-grid">
+          <label>
+            <span>左侧 URL</span>
+            <input
+              type="url"
+              value={revisionDiffForm.leftUrl}
+              on:input={(event) =>
+                onRevisionDiffFormInput(
+                  "leftUrl",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+          </label>
+          <label>
+            <span>右侧 URL</span>
+            <input
+              type="url"
+              value={revisionDiffForm.rightUrl}
+              on:input={(event) =>
+                onRevisionDiffFormInput(
+                  "rightUrl",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+          </label>
+        </div>
+      {:else}
+        <div class="revision-diff-grid">
+          {#if revisionDiffForm.mode === "revisions"}
+            <label>
+              <span>左侧 Revision</span>
+              <input
+                type="text"
+                value={revisionDiffForm.leftRevision}
+                placeholder="例如 120"
+                on:input={(event) =>
+                  onRevisionDiffFormInput(
+                    "leftRevision",
+                    (event.currentTarget as HTMLInputElement).value,
+                  )}
+              />
+            </label>
+          {/if}
+          <label>
+            <span>{revisionDiffForm.mode === "revisions" ? "右侧 Revision" : "目标 Revision"}</span>
+            <input
+              type="text"
+              value={revisionDiffForm.rightRevision}
+              placeholder={workspace?.revision ?? "例如 HEAD"}
+              on:input={(event) =>
+                onRevisionDiffFormInput(
+                  "rightRevision",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+          </label>
+        </div>
+      {/if}
+
+      {#if revisionDiffError}
+        <p class="inline-error">{revisionDiffError}</p>
+      {/if}
+
+      <div class="revision-diff-summary">
+        <span>文件 {revisionDiffResult?.file_count ?? 0}</span>
+        <span>行 {revisionDiffResult?.line_count ?? 0}</span>
+        <span>{revisionDiffResult?.mode ?? revisionDiffForm.mode}</span>
+      </div>
+
+      <pre class="revision-diff-preview">{revisionDiffResult?.diff_text || "暂无 diff 结果"}</pre>
+    </section>
+
     <section class="svn-log-list" aria-label="SVN 日志列表">
       {#if filteredLogEntries.length > 0}
         {#each filteredLogEntries as entry (entry.revision)}
@@ -869,6 +1015,9 @@
               <strong>r{entry.revision}</strong>
               <span>{entry.author || "-"}</span>
               <span>{formatRepositoryDate(entry.date)}</span>
+              <button type="button" on:click={() => onPrepareRevisionDiffFromLog(entry.revision)}>
+                比较
+              </button>
             </header>
             <p>{entry.message || "无提交信息"}</p>
             <div class="svn-log-paths">

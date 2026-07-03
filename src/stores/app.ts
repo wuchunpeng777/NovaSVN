@@ -8,6 +8,7 @@ import {
   createPartialCommitTask,
   createRepositoryCopyTask,
   createRepositoryListTask,
+  createRevisionDiffTask,
   createShadowWorkspaceTask,
   createSvnOperationTask,
   createSvnSwitchTask,
@@ -49,6 +50,8 @@ import type {
   ParsedFileDiff,
   RepositoryListResult,
   RepositoryCopyKind,
+  RevisionDiffMode,
+  RevisionDiffResult,
   SelectedPatch,
   ShadowWorkspaceOperationKind,
   ShadowWorkspaceStatus,
@@ -375,6 +378,40 @@ function createTaskStore() {
     }
   }
 
+  async function createRevisionDiff(request: {
+    mode: RevisionDiffMode;
+    workingCopyRoot?: string | null;
+    leftRevision?: string | null;
+    rightRevision?: string | null;
+    leftUrl?: string | null;
+    rightUrl?: string | null;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createRevisionDiffTask({
+        mode: request.mode,
+        working_copy_root: request.workingCopyRoot || undefined,
+        left_revision: request.leftRevision || undefined,
+        right_revision: request.rightRevision || undefined,
+        left_url: request.leftUrl || undefined,
+        right_url: request.rightUrl || undefined,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function select(taskId: string) {
     selectedTaskId = taskId;
     await refresh();
@@ -435,6 +472,7 @@ function createTaskStore() {
     createRepositoryCopy,
     createBranchCheckout,
     createSvnSwitch,
+    createRevisionDiff,
     select,
     cancel,
     getTaskById,
@@ -977,6 +1015,17 @@ export interface WorkspaceStoreState {
   svnLogDateToFilter: string;
   svnLogFileOnly: boolean;
   svnLogLimit: number;
+  revisionDiffForm: {
+    mode: RevisionDiffMode;
+    leftRevision: string;
+    rightRevision: string;
+    leftUrl: string;
+    rightUrl: string;
+  };
+  pendingRevisionDiffTaskId: string | null;
+  revisionDiffLoading: boolean;
+  revisionDiffError: string | null;
+  revisionDiffResult: RevisionDiffResult | null;
 }
 
 const initialWorkspaceState: WorkspaceStoreState = {
@@ -1069,6 +1118,17 @@ const initialWorkspaceState: WorkspaceStoreState = {
   svnLogDateToFilter: "",
   svnLogFileOnly: false,
   svnLogLimit: 50,
+  revisionDiffForm: {
+    mode: "revisions",
+    leftRevision: "",
+    rightRevision: "",
+    leftUrl: "",
+    rightUrl: "",
+  },
+  pendingRevisionDiffTaskId: null,
+  revisionDiffLoading: false,
+  revisionDiffError: null,
+  revisionDiffResult: null,
 };
 
 function createWorkspaceStore() {
@@ -2307,6 +2367,82 @@ function createWorkspaceStore() {
     }));
   }
 
+  function setRevisionDiffForm(
+    field: keyof WorkspaceStoreState["revisionDiffForm"],
+    value: string,
+  ) {
+    update((state) => ({
+      ...state,
+      revisionDiffForm: {
+        ...state.revisionDiffForm,
+        [field]: field === "mode" ? normalizeRevisionDiffMode(value) : value,
+      },
+      revisionDiffError: null,
+    }));
+  }
+
+  function prepareRevisionDiffFromLog(revision: string) {
+    const numericRevision = Number(revision);
+    update((state) => ({
+      ...state,
+      revisionDiffForm: {
+        ...state.revisionDiffForm,
+        mode: "revisions",
+        leftRevision:
+          Number.isFinite(numericRevision) && numericRevision > 1
+            ? String(numericRevision - 1)
+            : state.revisionDiffForm.leftRevision,
+        rightRevision: revision,
+      },
+      revisionDiffError: null,
+    }));
+  }
+
+  function markRevisionDiffTask(taskId: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRevisionDiffTaskId: taskId,
+      revisionDiffLoading: taskId !== null,
+      revisionDiffError: null,
+    }));
+  }
+
+  function applyRevisionDiffResult(result: RevisionDiffResult) {
+    update((state) => ({
+      ...state,
+      pendingRevisionDiffTaskId: null,
+      revisionDiffLoading: false,
+      revisionDiffError: null,
+      revisionDiffResult: result,
+    }));
+  }
+
+  function failRevisionDiffTask(message: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRevisionDiffTaskId: null,
+      revisionDiffLoading: false,
+      revisionDiffError: message ?? "Revision diff 失败",
+    }));
+  }
+
+  function exportRevisionDiffPatch() {
+    const result = get({ subscribe }).revisionDiffResult;
+    if (!result || typeof window === "undefined") {
+      return;
+    }
+
+    const blob = new Blob([result.diff_text], {
+      type: "text/x-diff;charset=utf-8",
+    });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = window.document.createElement("a");
+    anchor.href = url;
+    anchor.download = `novasvn-${Date.now()}.patch`;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+  }
+
   return {
     subscribe,
     loadRecent,
@@ -2366,6 +2502,12 @@ function createWorkspaceStore() {
     setSvnLogFilter,
     setSvnLogFileOnly,
     setSvnLogLimit,
+    setRevisionDiffForm,
+    prepareRevisionDiffFromLog,
+    markRevisionDiffTask,
+    applyRevisionDiffResult,
+    failRevisionDiffTask,
+    exportRevisionDiffPatch,
   };
 }
 
@@ -2403,6 +2545,14 @@ function emptyRepositoryCopyForm() {
     revision: "",
     message: "",
   };
+}
+
+function normalizeRevisionDiffMode(value: string): RevisionDiffMode {
+  if (value === "working_copy_to_revision" || value === "urls") {
+    return value;
+  }
+
+  return "revisions";
 }
 
 function taskWorkspaceDraftKey(branchPoolEntryId: string, name: string) {
