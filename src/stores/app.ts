@@ -1773,6 +1773,47 @@ function createWorkspaceStore() {
     return valid;
   }
 
+  function validateSelectedHunksForPartialCommit() {
+    let valid = false;
+    update((state) => {
+      const selectedFiles = selectedHunkFilesForSafety(state.selectedHunks, state.status?.files ?? []);
+      const safetyCheck = buildSafetyCheck(
+        state.status?.files ?? [],
+        selectedFiles,
+        state.safetyCheck.confirmedWarningIds,
+        state.status,
+      );
+      const message = state.commitMessage.trim();
+      let commitError: string | null = null;
+
+      if (!state.current) {
+        commitError = "请先打开 SVN 工作副本";
+      } else if (!state.selectedPatch || selectedFiles.length === 0) {
+        commitError = "请先选择 hunk 并生成 selected patch";
+      } else if (!message) {
+        commitError = "请输入提交信息";
+      } else if (safetyCheck.blockers.length > 0) {
+        commitError = "安全检查存在阻塞项，请先处理冲突、缺失或阻塞文件";
+      } else if (unconfirmedWarnings(safetyCheck).length > 0) {
+        commitError = "安全检查存在警告项，请确认警告后再提交";
+      }
+
+      valid = commitError === null;
+      saveWorkspaceDraftFromState({
+        ...state,
+        safetyCheck,
+      });
+
+      return {
+        ...state,
+        safetyCheck,
+        commitError,
+      };
+    });
+
+    return valid;
+  }
+
   function confirmSafetyWarnings() {
     update((state) => {
       const reconciled = reconcileStagedFiles(state.stagedFiles, state.status?.files ?? []);
@@ -2807,6 +2848,7 @@ function createWorkspaceStore() {
     markFileReviewed,
     markFileUnreviewed,
     validateStagedFilesForCommit,
+    validateSelectedHunksForPartialCommit,
     confirmSafetyWarnings,
     markCommitTask,
     markPartialCommitTask,
@@ -3136,6 +3178,34 @@ function reconcileStagedFiles(
         path: current.path,
         status: current.status,
         contentDigest: current.content_digest,
+      },
+    ];
+  });
+}
+
+function selectedHunkFilesForSafety(
+  selectedHunks: Array<{ filePath: string; fileDigest: string; hunkId: string }>,
+  currentFiles: ChangedFile[],
+) {
+  const paths = new Set(selectedHunks.map((item) => item.filePath));
+  return currentFiles.flatMap((file) => {
+    if (!paths.has(file.path)) {
+      return [];
+    }
+
+    const hasCurrentHunk = selectedHunks.some(
+      (item) => item.filePath === file.path && item.fileDigest === file.content_digest,
+    );
+
+    if (!hasCurrentHunk || !isStageable(file)) {
+      return [];
+    }
+
+    return [
+      {
+        path: file.path,
+        status: file.status,
+        contentDigest: file.content_digest,
       },
     ];
   });

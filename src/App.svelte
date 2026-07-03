@@ -127,7 +127,7 @@
     if (
       !$workspaceStore.current ||
       !$workspaceStore.selectedPatch ||
-      !workspaceStore.validateStagedFilesForCommit()
+      !workspaceStore.validateSelectedHunksForPartialCommit()
     ) {
       return;
     }
