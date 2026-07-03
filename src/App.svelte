@@ -79,6 +79,19 @@
     commandError = null;
     const toolPath =
       kind === "diff" ? $appSettingsStore.externalDiffTool : $appSettingsStore.externalMergeTool;
+    const toolError =
+      kind === "diff"
+        ? $appSettingsStore.validationErrors.externalDiffTool
+        : $appSettingsStore.validationErrors.externalMergeTool;
+    if (toolError) {
+      commandError = {
+        code: "EXTERNAL_TOOL_SETTING_INVALID",
+        message: "外部工具配置无效",
+        detail: toolError,
+        recoverable: true,
+      };
+      return;
+    }
     const root = $workspaceStore.current?.working_copy_root;
     if (!root) {
       commandError = {
@@ -1099,6 +1112,8 @@
         workspaceRoot={$workspaceStore.current?.working_copy_root ?? null}
         externalDiffTool={$appSettingsStore.externalDiffTool}
         externalMergeTool={$appSettingsStore.externalMergeTool}
+        externalDiffToolError={$appSettingsStore.validationErrors.externalDiffTool}
+        externalMergeToolError={$appSettingsStore.validationErrors.externalMergeTool}
         defaultDiffMode={$appSettingsStore.diffMode}
         defaultShowWhitespace={$appSettingsStore.showWhitespace}
         svnProperties={$workspaceStore.svnProperties}

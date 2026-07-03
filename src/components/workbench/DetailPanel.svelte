@@ -48,6 +48,8 @@
   export let workspaceRoot: string | null = null;
   export let externalDiffTool = "";
   export let externalMergeTool = "";
+  export let externalDiffToolError: string | null = null;
+  export let externalMergeToolError: string | null = null;
   export let defaultDiffMode: AppSettingsState["diffMode"] = "side_by_side";
   export let defaultShowWhitespace = false;
   export let svnProperties: SvnProperties | null = null;
@@ -271,14 +273,16 @@
         <button
           type="button"
           on:click={() => onLaunchExternalTool("diff", selectedFile.path)}
-          disabled={!externalDiffTool.trim()}
+          disabled={!externalDiffTool.trim() || !!externalDiffToolError}
+          title={externalDiffToolError ?? ""}
         >
           外部 Diff
         </button>
         <button
           type="button"
           on:click={() => onLaunchExternalTool("merge", selectedFile.path)}
-          disabled={!externalMergeTool.trim()}
+          disabled={!externalMergeTool.trim() || !!externalMergeToolError}
+          title={externalMergeToolError ?? ""}
         >
           外部 Merge
         </button>
