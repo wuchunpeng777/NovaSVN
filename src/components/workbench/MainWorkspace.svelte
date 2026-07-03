@@ -261,6 +261,7 @@
     unversioned: "未版本控制",
     conflicted: "冲突",
     obstructed: "阻塞",
+    external: "外部定义",
   };
 
   type FileGroup = {

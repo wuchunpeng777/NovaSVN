@@ -3399,6 +3399,16 @@ function buildSafetyCheck(
         filePath: file.path,
       });
     }
+
+    if (file.status === "external") {
+      infos.push({
+        id: `info:external:${file.path}:${file.content_digest}`,
+        severity: "info",
+        title: "SVN externals",
+        detail: `${file.path} 来自 svn:externals，提交、更新和清理时请确认它的独立工作副本状态。`,
+        filePath: file.path,
+      });
+    }
   }
 
   appendUnityMetaWarnings(files, warnings);
@@ -3560,6 +3570,7 @@ function labelSafetyStatus(status: string) {
     conflicted: "冲突文件",
     missing: "缺失文件",
     obstructed: "阻塞文件",
+    external: "SVN externals",
   };
 
   return labels[status] ?? status;
