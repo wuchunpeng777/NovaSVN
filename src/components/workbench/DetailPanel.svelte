@@ -85,12 +85,17 @@
 
   let inlineDiff = false;
   let showWhitespace = false;
-  let initializedDiffPreferences = false;
+  let previousDefaultDiffMode: AppSettingsState["diffMode"] | null = null;
+  let previousDefaultShowWhitespace: boolean | null = null;
 
-  $: if (!initializedDiffPreferences) {
+  $: if (previousDefaultDiffMode !== defaultDiffMode) {
     inlineDiff = defaultDiffMode === "inline";
+    previousDefaultDiffMode = defaultDiffMode;
+  }
+
+  $: if (previousDefaultShowWhitespace !== defaultShowWhitespace) {
     showWhitespace = defaultShowWhitespace;
-    initializedDiffPreferences = true;
+    previousDefaultShowWhitespace = defaultShowWhitespace;
   }
 
   function formatFileSize(bytes: number | null) {
