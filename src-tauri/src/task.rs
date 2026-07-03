@@ -17,6 +17,7 @@ use tauri::AppHandle;
 use crate::{
     error::NovaError,
     shadow::{self, ShadowWorkspaceRequest},
+    staging,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2200,6 +2201,14 @@ fn normalize_commit_files(files: &[String]) -> Result<Vec<String>, NovaError> {
 
     let mut normalized = Vec::with_capacity(files.len());
     for file in files {
+        if !staging::is_stageable_status(file.trim()) {
+            return Err(NovaError::command(
+                "COMMIT_FILE_NOT_STAGEABLE",
+                "提交文件不可暂存",
+                Some(format!("状态 `{}` 不允许进入提交任务。", file.trim())),
+                true,
+            ));
+        }
         normalized.push(normalize_relative_file_path(
             file,
             "COMMIT_FILE_PATH_INVALID",
@@ -2494,6 +2503,13 @@ mod tests {
         let files = normalize_commit_files(&["src/main.rs".to_string()]).expect("valid path");
 
         assert_eq!(files, vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn rejects_blocked_staging_statuses_as_commit_files() {
+        assert!(normalize_commit_files(&["missing".to_string()]).is_err());
+        assert!(normalize_commit_files(&["conflicted".to_string()]).is_err());
+        assert!(normalize_commit_files(&["obstructed".to_string()]).is_err());
     }
 
     #[test]
