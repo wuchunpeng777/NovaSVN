@@ -3,7 +3,8 @@ param(
   [int]$FileCount = 50000,
   [int]$ChangedCount = 5000,
   [string]$SvnExe = "svn",
-  [string]$SvnAdminExe = "svnadmin"
+  [string]$SvnAdminExe = "svnadmin",
+  [switch]$Reset
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,10 @@ $rootPath = Resolve-Path -LiteralPath "." | ForEach-Object { Join-Path $_ $Root 
 $repoPath = Join-Path $rootPath "repo"
 $wcPath = Join-Path $rootPath "wc"
 $resultPath = Join-Path $rootPath "benchmark-results.json"
+
+if ($Reset -and (Test-Path -LiteralPath $rootPath)) {
+  Remove-Item -LiteralPath $rootPath -Recurse -Force
+}
 
 function Measure-Step {
   param(
