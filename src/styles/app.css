@@ -1773,6 +1773,8 @@ button {
 .detail-actions {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
 }
 
@@ -1977,6 +1979,7 @@ button {
 
 .detail-heading button,
 .svn-path-row button {
+  max-width: 100%;
   height: 28px;
   border: 1px solid #bcc8d4;
   border-radius: 6px;
@@ -2136,12 +2139,23 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .error-notice strong,
 .error-notice p,
 .error-notice small {
   margin: 0;
+}
+
+.error-notice strong,
+.error-notice p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.error-notice small {
+  flex: 0 0 auto;
 }
 
 .error-notice span,
@@ -2468,4 +2482,626 @@ button {
 .cancel-task {
   height: 28px;
   font-size: 12px;
+}
+
+/* 视觉刷新：统一工作台质感、层次和控件状态。 */
+:root {
+  color: #17212f;
+  background: #e9edf2;
+  --color-bg: #e9edf2;
+  --color-bg-soft: #f4f6f8;
+  --color-surface: rgba(255, 255, 255, 0.92);
+  --color-surface-solid: #ffffff;
+  --color-surface-muted: #f8fafc;
+  --color-border: #d7dee7;
+  --color-border-strong: #c2ccd8;
+  --color-text: #17212f;
+  --color-muted: #657385;
+  --color-subtle: #8793a3;
+  --color-accent: #0f766e;
+  --color-accent-strong: #0b5f59;
+  --color-accent-soft: #e7f4f2;
+  --color-blue: #2f6ea4;
+  --color-warning: #a16207;
+  --color-danger: #b42318;
+  --shadow-panel: 0 18px 48px rgba(22, 34, 51, 0.08);
+  --shadow-card: 0 8px 24px rgba(22, 34, 51, 0.06);
+  --radius-panel: 8px;
+  --radius-control: 7px;
+}
+
+body {
+  color: var(--color-text);
+  background:
+    linear-gradient(180deg, #f5f7fa 0%, var(--color-bg) 420px),
+    var(--color-bg);
+}
+
+button,
+input,
+select,
+textarea {
+  letter-spacing: 0;
+}
+
+button {
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+input,
+select,
+textarea {
+  outline: none;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--color-accent) !important;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.16);
+}
+
+.app-shell {
+  grid-template-columns: 264px minmax(0, 1fr);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(47, 110, 164, 0.12), transparent 320px),
+    linear-gradient(180deg, #f6f8fb 0%, #e9edf2 100%);
+}
+
+.sidebar {
+  gap: 20px;
+  padding: 18px 14px;
+  background: #17212f;
+  color: #eef4f8;
+  box-shadow: inset -1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.brand {
+  min-height: 56px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 2px 4px 16px;
+}
+
+.brand-mark {
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: linear-gradient(145deg, #0f766e, #2f6ea4);
+  box-shadow: 0 10px 26px rgba(6, 95, 70, 0.28);
+  font-size: 17px;
+}
+
+.brand h1 {
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 750;
+}
+
+.brand p {
+  color: #9fb0c0;
+}
+
+.nav-list,
+.sidebar-filter {
+  gap: 5px;
+}
+
+.nav-list button,
+.sidebar-filter button {
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: #cfdae5;
+  padding: 8px 10px;
+}
+
+.nav-list button:hover,
+.nav-list button.active,
+.sidebar-filter button:hover,
+.sidebar-filter button.active {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+.nav-list button.active {
+  box-shadow: inset 3px 0 0 #38b2a8;
+}
+
+.nav-list button small,
+.sidebar-filter h2,
+.sidebar-filter button small,
+.sidebar-filter-divider {
+  color: #8fa0b0;
+}
+
+.sidebar-filter-heading button {
+  color: #aebccd;
+}
+
+.main-panel {
+  background: transparent;
+}
+
+.toolbar {
+  min-height: 72px;
+  border-bottom: 1px solid rgba(194, 204, 216, 0.82);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(12px);
+  padding: 14px 20px;
+}
+
+.toolbar h2 {
+  color: var(--color-text);
+  font-size: 19px;
+  font-weight: 760;
+}
+
+.toolbar p {
+  color: var(--color-muted);
+}
+
+.toolbar-actions button,
+.workspace-open-actions button,
+.changes-toolbar button,
+.repository-toolbar button,
+.repository-breadcrumbs button,
+.repository-layout-header button,
+.repository-copy-presets button,
+.repository-copy-kind button,
+.repository-copy-actions button,
+.branch-pool-actions button,
+.branch-url-picks button,
+.branch-pool-entry button,
+.task-workspace-form button,
+.task-workspace-entry button,
+.svn-log-panel button,
+.revision-diff-mode button,
+.revision-diff-panel button,
+.detail-heading button,
+.svn-path-row button,
+.clear-draft-action,
+.task-actions button,
+.cancel-task,
+.task-list button {
+  border-color: var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-solid);
+  color: #253244;
+}
+
+.toolbar-actions button:hover,
+.workspace-open-actions button:hover:not(:disabled),
+.changes-toolbar button:hover,
+.repository-toolbar button:hover:not(:disabled),
+.repository-breadcrumbs button:hover:not(:disabled),
+.repository-layout-header button:hover:not(:disabled),
+.repository-copy-presets button:hover,
+.repository-copy-kind button:hover,
+.repository-copy-actions button:hover:not(:disabled),
+.branch-pool-actions button:hover:not(:disabled),
+.branch-url-picks button:hover,
+.branch-pool-entry button:hover,
+.task-workspace-form button:hover:not(:disabled),
+.task-workspace-entry button:hover,
+.svn-log-panel button:hover:not(:disabled),
+.revision-diff-mode button:hover,
+.revision-diff-panel button:hover:not(:disabled),
+.detail-heading button:hover:not(:disabled),
+.svn-path-row button:hover:not(:disabled),
+.clear-draft-action:hover,
+.task-actions button:hover:not(:disabled),
+.cancel-task:hover:not(:disabled),
+.task-list button:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+}
+
+.workspace-grid {
+  grid-template-columns: minmax(520px, 1fr) 340px;
+  gap: 14px;
+  padding: 16px;
+}
+
+.main-workspace {
+  gap: 14px;
+}
+
+.workspace-open-panel,
+.changes-toolbar,
+.repository-toolbar,
+.repository-breadcrumbs,
+.repository-layout-panel,
+.repository-copy-panel,
+.branch-pool-panel,
+.merge-panel,
+.settings-panel,
+.task-workspace-panel,
+.svn-switch-panel,
+.svn-log-panel,
+.revision-diff-panel,
+.metric,
+.work-row,
+.detail-block,
+.repository-list,
+.svn-log-entry,
+.bottom-panel,
+.branch-pool-entry,
+.task-workspace-entry {
+  border-color: var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.workspace-open-panel,
+.settings-panel,
+.bottom-panel {
+  box-shadow: var(--shadow-panel);
+}
+
+.workspace-open-header h3,
+.repository-layout-header h3,
+.detail-block h3 {
+  color: var(--color-text);
+  font-weight: 720;
+}
+
+.workspace-open-header p,
+.work-row p,
+.detail-block p,
+.repository-layout-header p,
+.branch-pool-entry p,
+.task-workspace-entry p,
+.toolbar p,
+.info-list dt,
+.workspace-summary dt {
+  color: var(--color-muted);
+}
+
+.workspace-path-row input,
+.changes-toolbar input,
+.repository-toolbar input,
+.repository-layout-inputs input,
+.repository-copy-grid input,
+.repository-copy-message textarea,
+.branch-pool-form input,
+.merge-form input:not([type="checkbox"]),
+.settings-panel input:not([type="checkbox"]),
+.settings-panel select,
+.settings-panel textarea,
+.task-workspace-form input,
+.task-workspace-form select,
+.svn-switch-panel input,
+.revision-diff-grid input,
+.svn-log-filters input:not([type="checkbox"]),
+.property-edit-form input,
+.property-edit-form textarea,
+.svn-path-row input,
+.commit-template-input,
+.commit-history-select,
+.commit-placeholder textarea {
+  border-color: var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--color-text);
+}
+
+.metric-row {
+  gap: 12px;
+}
+
+.metric {
+  position: relative;
+  overflow: hidden;
+  min-height: 82px;
+  padding: 14px;
+}
+
+.metric::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--color-accent);
+  content: "";
+}
+
+.metric span {
+  color: var(--color-muted);
+  font-weight: 650;
+}
+
+.metric strong {
+  color: var(--color-text);
+  font-size: 24px;
+  font-weight: 760;
+}
+
+.work-list,
+.detail-panel {
+  gap: 12px;
+}
+
+.work-row {
+  border-left: 3px solid transparent;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.work-row:hover,
+.work-row.active,
+.work-row[role="button"]:hover,
+.work-row[role="option"]:hover {
+  border-color: var(--color-accent);
+  background: #f4fbfa;
+  box-shadow: 0 10px 28px rgba(15, 118, 110, 0.09);
+}
+
+.work-row h3 {
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.work-row > span,
+.staged-summary small,
+.unity-summary span,
+.revision-diff-summary span,
+.svn-log-paths span {
+  border: 1px solid rgba(15, 118, 110, 0.12);
+  border-radius: 999px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+  font-weight: 680;
+}
+
+.work-row.abnormal,
+.inline-error,
+.error-notice,
+.safety-item.blocker {
+  border-color: #efc6bf;
+  background: #fff7f5;
+}
+
+.work-row.abnormal > span,
+.safety-blocker {
+  background: #feece8;
+  color: var(--color-danger);
+}
+
+.stage-action,
+.repository-copy-actions button,
+.branch-pool-actions button:first-child,
+.task-workspace-form button,
+.svn-log-panel button,
+.commit-action,
+.hunk-selection-heading button {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #ffffff;
+}
+
+.stage-action:hover,
+.commit-action:hover:not(:disabled),
+.repository-copy-actions button:hover:not(:disabled),
+.branch-pool-actions button:first-child:hover:not(:disabled),
+.task-workspace-form button:hover:not(:disabled),
+.svn-log-panel button:hover:not(:disabled),
+.hunk-selection-heading button:hover:not(:disabled) {
+  background: var(--color-accent-strong);
+  color: #ffffff;
+}
+
+.stage-action:disabled,
+.commit-action:disabled,
+.repository-copy-actions button:disabled,
+.task-workspace-form button:disabled,
+.svn-log-panel button:disabled,
+.revision-diff-panel button:disabled,
+.workspace-open-actions button:disabled {
+  border-color: var(--color-border);
+  background: #eef2f6;
+  color: var(--color-subtle);
+}
+
+.commit-action.secondary {
+  border-color: var(--color-accent);
+  background: #ffffff;
+  color: var(--color-accent-strong);
+}
+
+.changes-toolbar button.active,
+.repository-copy-kind button.active,
+.revision-diff-mode button.active,
+.diff-actions button.active,
+.task-workspace-entry.active,
+.branch-pool-entry:hover,
+.task-list button.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+}
+
+.repository-list {
+  overflow: hidden auto;
+}
+
+.repository-row {
+  border-bottom-color: #edf1f5;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.repository-header {
+  background: #f3f6f9;
+  color: var(--color-muted);
+}
+
+.repository-entry:hover:not(:disabled),
+.svn-log-entry:hover,
+.property-list button:hover,
+.hunk-option:hover {
+  background: #f4fbfa;
+}
+
+.repository-empty,
+.empty-stage,
+.task-log-list,
+.staged-summary,
+.externals-preview pre,
+.diff-block pre,
+.selected-patch-preview,
+.revision-diff-preview,
+.merge-result pre {
+  border-color: #dce4ec;
+  background: var(--color-surface-muted);
+  color: #2b3848;
+}
+
+.settings-panel {
+  gap: 14px;
+  padding: 16px;
+}
+
+.settings-panel label,
+.task-workspace-form label,
+.branch-pool-form label,
+.merge-form label,
+.revision-diff-grid label,
+.repository-layout-inputs span,
+.repository-copy-grid span,
+.repository-copy-message span {
+  color: #48576a;
+  font-weight: 650;
+}
+
+.settings-rule-group {
+  border: 1px solid #e1e7ee;
+  border-radius: var(--radius-panel);
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.settings-diagnostics {
+  border: 1px solid #e1e7ee;
+  border-radius: var(--radius-panel);
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.detail-panel {
+  padding-right: 2px;
+}
+
+.detail-block {
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.detail-heading {
+  border-bottom: 1px solid #edf1f5;
+  padding-bottom: 8px;
+}
+
+.info-list div {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
+.safety-item {
+  border: 1px solid #e0e6ec;
+  border-left-width: 3px;
+}
+
+.safety-item.warning,
+.inline-warning {
+  border-color: #ead6a7;
+  background: #fff9eb;
+}
+
+.externals-status {
+  border-color: #b9d7d3;
+  background: #f2faf9;
+}
+
+.bottom-panel {
+  height: 236px;
+  border-top-color: rgba(194, 204, 216, 0.9);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.bottom-panel strong {
+  color: var(--color-text);
+}
+
+.task-log-list,
+.staged-summary {
+  border-radius: var(--radius-panel);
+}
+
+.task-status {
+  color: var(--color-muted);
+}
+
+.status-running,
+.running {
+  color: var(--color-blue);
+}
+
+.status-success {
+  color: var(--color-accent);
+}
+
+.status-failed,
+.task-log-error,
+.task-error,
+.commit-error,
+.settings-field-error {
+  color: var(--color-danger);
+}
+
+.svn-switch-panel button {
+  border-color: #d6a451;
+  background: #fff8ec;
+  color: var(--color-warning);
+}
+
+.svn-switch-panel button:hover:not(:disabled) {
+  border-color: #b7791f;
+  background: #fff3d9;
+  color: #854d0e;
+}
+
+.error-notice {
+  border-radius: var(--radius-panel);
+  box-shadow: 0 8px 22px rgba(180, 35, 24, 0.06);
+}
+
+.detail-panel .error-notice {
+  padding: 9px 10px;
+}
+
+.detail-panel .error-notice div {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.detail-panel .error-notice small {
+  flex: initial;
+}
+
+.toolbar-actions button:first-child {
+  border-color: var(--color-accent);
+  color: var(--color-accent-strong);
+}
+
+.toolbar-actions button:last-child {
+  color: var(--color-muted);
 }
