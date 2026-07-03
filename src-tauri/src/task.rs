@@ -2314,6 +2314,26 @@ fn normalize_checkout_path(path: &str) -> Result<String, NovaError> {
         ));
     }
 
+    if trimmed.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "CHECKOUT_PATH_INVALID",
+            "本地工作副本路径无效",
+            Some("本地路径不能包含控制字符。".to_string()),
+            true,
+        ));
+    }
+
+    let path = Path::new(trimmed);
+    let home_relative = trimmed.starts_with("~/") || trimmed.starts_with("~\\");
+    if !path.is_absolute() && !home_relative {
+        return Err(NovaError::command(
+            "CHECKOUT_PATH_INVALID",
+            "本地工作副本路径无效",
+            Some("本地路径必须是绝对路径或 ~/ 开头路径。".to_string()),
+            true,
+        ));
+    }
+
     Ok(trimmed.to_string())
 }
 
@@ -2557,6 +2577,14 @@ mod tests {
             "invalid",
         )
         .is_err());
+    }
+
+    #[test]
+    fn validates_checkout_paths() {
+        assert!(normalize_checkout_path("C:\\wc\\feature").is_ok());
+        assert!(normalize_checkout_path("~/NovaSVN/feature").is_ok());
+        assert!(normalize_checkout_path("relative\\feature").is_err());
+        assert!(normalize_checkout_path("C:\\wc\nfeature").is_err());
     }
 
     #[test]
