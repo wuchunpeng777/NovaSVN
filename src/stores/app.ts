@@ -3617,6 +3617,16 @@ function buildSafetyCheck(
     });
   }
 
+  if (status && status.files.length < status.total) {
+    infos.push({
+      id: `info:status-partial:${status.files.length}:${status.total}`,
+      severity: "info",
+      title: "状态列表尚未全部加载",
+      detail: `当前已检查 ${status.files.length}/${status.total} 个改动文件，提交前建议加载更多改动以覆盖完整安全检查。`,
+      filePath: null,
+    });
+  }
+
   const warningIds = new Set(warnings.map((item) => item.id));
   const stagedDigestIds = new Set(
     stagedFiles.map((file) => `${file.path}:${file.contentDigest}`),
