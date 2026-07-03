@@ -211,6 +211,52 @@ describe("workspaceStore safety warnings", () => {
 
     expect(get(workspaceStore).safetyCheck.confirmedWarningIds).toEqual(confirmedWarningIds);
   });
+
+  it("warns when Unity resource and meta statuses are not synchronized", async () => {
+    const workspace = makeWorkspace({
+      unity: {
+        detected: true,
+        has_assets: true,
+        has_project_settings: true,
+        has_packages_manifest: true,
+      },
+    });
+    const status = makeStatus([
+      makeFile({
+        path: "Assets/Textures/new.png",
+        status: "added",
+        content_digest: "new-asset",
+      }),
+      makeFile({
+        path: "Assets/Textures/new.png.meta",
+        status: "modified",
+        content_digest: "new-meta",
+      }),
+      makeFile({
+        path: "Assets/Textures/old.png",
+        status: "deleted",
+        content_digest: "old-asset",
+      }),
+      makeFile({
+        path: "Assets/Textures/old.png.meta",
+        status: "modified",
+        content_digest: "old-meta",
+      }),
+    ]);
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(status);
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+
+    expect(get(workspaceStore).safetyCheck.warnings.map((item) => item.title)).toEqual(
+      expect.arrayContaining([
+        "Unity 新增资源 meta 未同步新增",
+        "Unity 删除资源 meta 未同步删除",
+      ]),
+    );
+  });
 });
 
 function makeWorkspace(workspace: Partial<WorkspaceSummary> = {}): WorkspaceSummary {
