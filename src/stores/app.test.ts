@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../lib/api", () => ({
   createRevisionDiffTask: vi.fn(),
   detectSvn: vi.fn(),
+  getFileContentDiff: vi.fn(),
+  getFileDiff: vi.fn(),
   getSvnLog: vi.fn(),
   getTaskWorkspaces: vi.fn(),
   openWorkspace: vi.fn(),
+  parseUnifiedDiff: vi.fn(),
   removeTaskWorkspace: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
   saveTaskWorkspace: vi.fn(),
@@ -17,9 +20,12 @@ import { get } from "svelte/store";
 import {
   createRevisionDiffTask,
   detectSvn,
+  getFileContentDiff,
+  getFileDiff,
   getSvnLog,
   getTaskWorkspaces,
   openWorkspace,
+  parseUnifiedDiff,
   removeTaskWorkspace,
   scanWorkspaceStatus,
   saveTaskWorkspace,
@@ -48,9 +54,12 @@ import {
 
 const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
 const detectSvnMock = vi.mocked(detectSvn);
+const getFileContentDiffMock = vi.mocked(getFileContentDiff);
+const getFileDiffMock = vi.mocked(getFileDiff);
 const getSvnLogMock = vi.mocked(getSvnLog);
 const getTaskWorkspacesMock = vi.mocked(getTaskWorkspaces);
 const openWorkspaceMock = vi.mocked(openWorkspace);
+const parseUnifiedDiffMock = vi.mocked(parseUnifiedDiff);
 const removeTaskWorkspaceMock = vi.mocked(removeTaskWorkspace);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 const saveTaskWorkspaceMock = vi.mocked(saveTaskWorkspace);
@@ -59,9 +68,12 @@ const setSvnPropertyMock = vi.mocked(setSvnProperty);
 beforeEach(() => {
   createRevisionDiffTaskMock.mockReset();
   detectSvnMock.mockReset();
+  getFileContentDiffMock.mockReset();
+  getFileDiffMock.mockReset();
   getSvnLogMock.mockReset();
   getTaskWorkspacesMock.mockReset();
   openWorkspaceMock.mockReset();
+  parseUnifiedDiffMock.mockReset();
   removeTaskWorkspaceMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
   saveTaskWorkspaceMock.mockReset();
@@ -72,6 +84,22 @@ beforeEach(() => {
   workspaceStore.clearWorkspaceDraft();
   workspaceStore.setCommitMessage("");
   workspaceStore.setSvnLogFileOnly(false);
+  getFileDiffMock.mockResolvedValue({
+    path: "src/main.ts",
+    text: "",
+    binary: false,
+    empty: true,
+  });
+  getFileContentDiffMock.mockResolvedValue({
+    path: "src/main.ts",
+    original_text: "",
+    modified_text: "",
+    language: "text",
+    binary: false,
+    too_large: false,
+    max_bytes: 1024,
+  });
+  parseUnifiedDiffMock.mockResolvedValue({ files: [] });
 });
 
 describe("revisionDiffPatchFileName", () => {
@@ -582,6 +610,24 @@ describe("workspaceStore review state", () => {
 });
 
 describe("workspaceStore svn log", () => {
+  it("selects startup target files inside the workspace even when status has no change entry", async () => {
+    const workspace = makeWorkspace();
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(makeStatus([]));
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+
+    const selected = await workspaceStore.selectStartupTargetFile("C:/repo/wc/src/main.ts");
+
+    expect(selected).toBe(true);
+    expect(get(workspaceStore).selectedFilePath).toBe("src/main.ts");
+    expect(getFileDiffMock).not.toHaveBeenCalled();
+    expect(getFileContentDiffMock).not.toHaveBeenCalled();
+    expect(parseUnifiedDiffMock).not.toHaveBeenCalled();
+  });
+
   it("requires a selected file before loading file-only history", async () => {
     const workspace = makeWorkspace();
 

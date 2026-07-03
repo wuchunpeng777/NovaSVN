@@ -1766,6 +1766,17 @@ function createWorkspaceStore() {
     }
   }
 
+  function selectPathOnly(path: string) {
+    update((state) => ({
+      ...state,
+      selectedFileDiff: null,
+      selectedFileContentDiff: null,
+      selectedFileParsedDiff: null,
+      selectedPatch: null,
+      selectedFilePath: path,
+    }));
+  }
+
   function stageFile(path: string) {
     update((state) => {
       const file = state.status?.files.find((item) => item.path === path);
@@ -1911,7 +1922,11 @@ function createWorkspaceStore() {
       return false;
     }
 
-    await selectFile(relativePath, svnExecutable);
+    if (files.some((file) => file.path === relativePath)) {
+      await selectFile(relativePath, svnExecutable);
+    } else {
+      selectPathOnly(relativePath);
+    }
     return true;
   }
 
@@ -3590,7 +3605,7 @@ function resolveStartupTargetFilePath(
   }
 
   const relativePath = normalizedTarget.slice(rootPrefix.length);
-  return files.find((file) => normalizeWorkspacePath(file.path) === relativePath)?.path ?? null;
+  return files.find((file) => normalizeWorkspacePath(file.path) === relativePath)?.path ?? relativePath;
 }
 
 function normalizeSystemPath(path: string) {
