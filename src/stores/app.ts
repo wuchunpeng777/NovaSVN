@@ -18,6 +18,7 @@ import {
   getFileDiff,
   getBranchPool,
   getSvnLog,
+  getSvnProperties,
   getTaskWorkspaces,
   generateSelectedPatch,
   getShadowWorkspaceStatus,
@@ -30,6 +31,7 @@ import {
   removeTaskWorkspace,
   scanWorkspaceStatus,
   saveBranchPoolEntry,
+  setSvnProperty,
   saveTaskWorkspace,
 } from "../lib/api";
 import type {
@@ -59,6 +61,7 @@ import type {
   SvnOperationKind,
   SvnDetection,
   SvnLog,
+  SvnProperties,
   Task,
   TaskSnapshot,
   TaskWorkspaceEntry,
@@ -1068,6 +1071,13 @@ export interface WorkspaceStoreState {
   };
   pendingMergeTaskId: string | null;
   mergeError: string | null;
+  svnProperties: SvnProperties | null;
+  svnPropertiesLoading: boolean;
+  svnPropertiesError: CommandError | null;
+  propertyEditForm: {
+    name: string;
+    value: string;
+  };
 }
 
 const initialWorkspaceState: WorkspaceStoreState = {
@@ -1179,6 +1189,13 @@ const initialWorkspaceState: WorkspaceStoreState = {
   },
   pendingMergeTaskId: null,
   mergeError: null,
+  svnProperties: null,
+  svnPropertiesLoading: false,
+  svnPropertiesError: null,
+  propertyEditForm: {
+    name: "",
+    value: "",
+  },
 };
 
 function createWorkspaceStore() {
@@ -2345,6 +2362,103 @@ function createWorkspaceStore() {
     }
   }
 
+  async function refreshSvnProperties(svnExecutable?: string | null) {
+    const state = get({ subscribe });
+    if (!state.current) {
+      update((current) => ({
+        ...current,
+        svnPropertiesError: {
+          code: "WORKSPACE_REQUIRED",
+          message: "请先打开 SVN 工作副本",
+          detail: null,
+          recoverable: true,
+        },
+      }));
+      return;
+    }
+
+    update((current) => ({
+      ...current,
+      svnPropertiesLoading: true,
+      svnPropertiesError: null,
+    }));
+
+    try {
+      const svnProperties = await getSvnProperties({
+        working_copy_root: state.current.working_copy_root,
+        file_path: state.selectedFilePath || undefined,
+        svn_executable: svnExecutable || undefined,
+      });
+      update((current) => ({
+        ...current,
+        svnProperties,
+        svnPropertiesLoading: false,
+        svnPropertiesError: null,
+      }));
+    } catch (error) {
+      update((current) => ({
+        ...current,
+        svnProperties: null,
+        svnPropertiesLoading: false,
+        svnPropertiesError: error as CommandError,
+      }));
+    }
+  }
+
+  function setPropertyEditForm(field: keyof WorkspaceStoreState["propertyEditForm"], value: string) {
+    update((state) => ({
+      ...state,
+      propertyEditForm: {
+        ...state.propertyEditForm,
+        [field]: value,
+      },
+      svnPropertiesError: null,
+    }));
+  }
+
+  function usePropertyForEdit(name: string, value: string) {
+    update((state) => ({
+      ...state,
+      propertyEditForm: { name, value },
+      svnPropertiesError: null,
+    }));
+  }
+
+  async function saveSvnProperty(svnExecutable?: string | null) {
+    const state = get({ subscribe });
+    if (!state.current) {
+      return;
+    }
+
+    update((current) => ({
+      ...current,
+      svnPropertiesLoading: true,
+      svnPropertiesError: null,
+    }));
+
+    try {
+      const svnProperties = await setSvnProperty({
+        working_copy_root: state.current.working_copy_root,
+        file_path: state.selectedFilePath || undefined,
+        name: state.propertyEditForm.name,
+        value: state.propertyEditForm.value,
+        svn_executable: svnExecutable || undefined,
+      });
+      update((current) => ({
+        ...current,
+        svnProperties,
+        svnPropertiesLoading: false,
+        svnPropertiesError: null,
+      }));
+    } catch (error) {
+      update((current) => ({
+        ...current,
+        svnPropertiesLoading: false,
+        svnPropertiesError: error as CommandError,
+      }));
+    }
+  }
+
   async function refreshSvnLog(svnExecutable?: string | null) {
     const state = get({ subscribe });
     if (!state.current) {
@@ -2594,6 +2708,10 @@ function createWorkspaceStore() {
     toggleHunkSelection,
     previewSelectedPatch,
     refreshShadowStatus,
+    refreshSvnProperties,
+    setPropertyEditForm,
+    usePropertyForEdit,
+    saveSvnProperty,
     refreshSvnLog,
     setSvnLogFilter,
     setSvnLogFileOnly,

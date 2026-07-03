@@ -327,6 +327,20 @@ export interface GetSvnLogRequest {
   limit?: number;
 }
 
+export interface GetSvnPropertiesRequest {
+  working_copy_root: string;
+  file_path?: string;
+  svn_executable?: string;
+}
+
+export interface SetSvnPropertyRequest {
+  working_copy_root: string;
+  file_path?: string;
+  name: string;
+  value: string;
+  svn_executable?: string;
+}
+
 export interface FileDiff {
   path: string;
   text: string;
@@ -363,6 +377,17 @@ export interface SvnChangedPath {
   kind: string;
   copy_from_path: string | null;
   copy_from_revision: string | null;
+}
+
+export interface SvnProperties {
+  target: string;
+  properties: SvnProperty[];
+  externals: string | null;
+}
+
+export interface SvnProperty {
+  name: string;
+  value: string;
 }
 
 export type DiffLineKind = "context" | "added" | "removed" | "no_newline";

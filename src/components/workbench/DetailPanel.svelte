@@ -10,6 +10,7 @@
     SelectedPatch,
     ShadowWorkspaceStatus,
     SvnDetection,
+    SvnProperties,
   } from "../../types/api";
   import type { DetailSection, SafetyCheckSummary } from "../../types/app";
 
@@ -44,6 +45,13 @@
   export let shadowLoading = false;
   export let shadowError: CommandError | null = null;
   export let workspaceRoot: string | null = null;
+  export let svnProperties: SvnProperties | null = null;
+  export let svnPropertiesLoading = false;
+  export let svnPropertiesError: CommandError | null = null;
+  export let propertyEditForm = {
+    name: "",
+    value: "",
+  };
   export let onDetectSvn: () => void;
   export let onDetectSvnWithInput: () => void;
   export let onSvnExecutableInput: (value: string) => void;
@@ -60,6 +68,10 @@
   export let onRefreshShadowStatus: () => void;
   export let onPrepareShadowWorkspace: () => void;
   export let onRebuildShadowWorkspace: () => void;
+  export let onRefreshSvnProperties: () => void;
+  export let onPropertyEditInput: (field: keyof typeof propertyEditForm, value: string) => void;
+  export let onUsePropertyForEdit: (name: string, value: string) => void;
+  export let onSaveSvnProperty: () => void;
 
   let inlineDiff = false;
   let showWhitespace = false;
@@ -230,6 +242,67 @@
     {:else}
       <p>选择一个改动文件后显示详情。</p>
     {/if}
+  </section>
+
+  <section class="detail-block">
+    <div class="detail-heading">
+      <h3>SVN 属性</h3>
+      <div class="detail-actions">
+        <button type="button" on:click={onRefreshSvnProperties} disabled={svnPropertiesLoading}>
+          {svnPropertiesLoading ? "读取中" : "读取"}
+        </button>
+        <button
+          type="button"
+          on:click={onSaveSvnProperty}
+          disabled={svnPropertiesLoading || !propertyEditForm.name.trim()}
+        >
+          保存
+        </button>
+      </div>
+    </div>
+    <ErrorNotice error={svnPropertiesError} />
+    {#if svnProperties}
+      <p>{svnProperties.target}</p>
+      {#if svnProperties.externals}
+        <div class="externals-preview">
+          <strong>svn:externals</strong>
+          <pre>{svnProperties.externals}</pre>
+        </div>
+      {/if}
+      <div class="property-list">
+        {#if svnProperties.properties.length > 0}
+          {#each svnProperties.properties as property (property.name)}
+            <button
+              type="button"
+              on:click={() => onUsePropertyForEdit(property.name, property.value)}
+            >
+              <span>{property.name}</span>
+              <small>{property.value || "-"}</small>
+            </button>
+          {/each}
+        {:else}
+          <p>当前目标没有 SVN 属性。</p>
+        {/if}
+      </div>
+    {:else}
+      <p>读取后显示选中文件或工作副本根目录属性。</p>
+    {/if}
+    <div class="property-edit-form">
+      <input
+        type="text"
+        value={propertyEditForm.name}
+        placeholder="属性名，例如 svn:externals"
+        on:input={(event) =>
+          onPropertyEditInput("name", (event.currentTarget as HTMLInputElement).value)}
+      />
+      <textarea
+        rows="3"
+        value={propertyEditForm.value}
+        placeholder="属性值"
+        on:input={(event) =>
+          onPropertyEditInput("value", (event.currentTarget as HTMLTextAreaElement).value)}
+      ></textarea>
+    </div>
   </section>
 
   <section class="detail-block diff-block">

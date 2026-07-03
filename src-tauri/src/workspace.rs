@@ -94,6 +94,22 @@ pub struct GetSvnLogRequest {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetSvnPropertiesRequest {
+    pub working_copy_root: String,
+    pub file_path: Option<String>,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SetSvnPropertyRequest {
+    pub working_copy_root: String,
+    pub file_path: Option<String>,
+    pub name: String,
+    pub value: String,
+    pub svn_executable: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FileDiff {
     pub path: String,
@@ -135,6 +151,19 @@ pub struct SvnChangedPath {
     pub kind: String,
     pub copy_from_path: Option<String>,
     pub copy_from_revision: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SvnProperties {
+    pub target: String,
+    pub properties: Vec<SvnProperty>,
+    pub externals: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SvnProperty {
+    pub name: String,
+    pub value: String,
 }
 
 pub fn open_workspace(
@@ -228,6 +257,120 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
         &xml,
         &display_status_path(&target.display().to_string(), &root),
     )
+}
+
+pub fn get_svn_properties(request: GetSvnPropertiesRequest) -> Result<SvnProperties, NovaError> {
+    let root = normalize_workspace_path(&request.working_copy_root)?;
+    let target = request
+        .file_path
+        .as_deref()
+        .map(normalize_relative_file_path)
+        .transpose()?
+        .map(|file| root.join(file))
+        .unwrap_or_else(|| root.clone());
+    let executable = request
+        .svn_executable
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "svn".to_string());
+
+    let output = Command::new(&executable)
+        .args(["proplist", "--xml"])
+        .arg(&target)
+        .current_dir(&root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_PROPLIST_FAILED",
+                "无法读取 SVN 属性列表",
+                Some(format!("执行 `{executable} proplist --xml` 失败：{error}")),
+                true,
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "SVN_PROPLIST_FAILED",
+            "SVN 属性列表读取失败",
+            Some(command_error_detail(&executable, "proplist", &output)),
+            true,
+        ));
+    }
+
+    let xml = String::from_utf8_lossy(&output.stdout);
+    let names = parse_svn_property_names(&xml)?;
+    let mut properties = Vec::with_capacity(names.len());
+    for name in names {
+        let value = get_svn_property_value(&executable, &root, &target, &name)?;
+        properties.push(SvnProperty { name, value });
+    }
+    let externals = properties
+        .iter()
+        .find(|property| property.name == "svn:externals")
+        .map(|property| property.value.clone());
+
+    Ok(SvnProperties {
+        target: display_status_path(&target.display().to_string(), &root),
+        properties,
+        externals,
+    })
+}
+
+pub fn set_svn_property(request: SetSvnPropertyRequest) -> Result<SvnProperties, NovaError> {
+    let root = normalize_workspace_path(&request.working_copy_root)?;
+    let target = request
+        .file_path
+        .as_deref()
+        .map(normalize_relative_file_path)
+        .transpose()?
+        .map(|file| root.join(file))
+        .unwrap_or_else(|| root.clone());
+    let name = request.name.trim();
+    if name.is_empty() || name.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "SVN_PROPERTY_NAME_INVALID",
+            "属性名无效",
+            None,
+            true,
+        ));
+    }
+    let executable = request
+        .svn_executable
+        .clone()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "svn".to_string());
+
+    let output = Command::new(&executable)
+        .arg("propset")
+        .arg(name)
+        .arg(&request.value)
+        .arg(&target)
+        .current_dir(&root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_PROPSET_FAILED",
+                "无法设置 SVN 属性",
+                Some(format!("执行 `{executable} propset` 失败：{error}")),
+                true,
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "SVN_PROPSET_FAILED",
+            "SVN 属性设置失败",
+            Some(command_error_detail(&executable, "propset", &output)),
+            true,
+        ));
+    }
+
+    get_svn_properties(GetSvnPropertiesRequest {
+        working_copy_root: request.working_copy_root,
+        file_path: request.file_path,
+        svn_executable: Some(executable),
+    })
 }
 
 pub fn get_file_diff(request: GetFileDiffRequest) -> Result<FileDiff, NovaError> {
@@ -920,6 +1063,59 @@ fn parse_svn_log_xml(xml: &str, target: &str) -> Result<SvnLog, NovaError> {
         target: target.to_string(),
         entries,
     })
+}
+
+fn parse_svn_property_names(xml: &str) -> Result<Vec<String>, NovaError> {
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "SVN_PROPLIST_XML_PARSE_FAILED",
+            "解析 SVN 属性列表失败",
+            Some(format!("svn proplist --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+
+    Ok(document
+        .descendants()
+        .filter(|node| node.has_tag_name("property"))
+        .filter_map(|node| node.attribute("name"))
+        .map(ToString::to_string)
+        .collect())
+}
+
+fn get_svn_property_value(
+    executable: &str,
+    root: &Path,
+    target: &Path,
+    name: &str,
+) -> Result<String, NovaError> {
+    let output = Command::new(executable)
+        .arg("propget")
+        .arg(name)
+        .arg(target)
+        .current_dir(root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_PROPGET_FAILED",
+                "无法读取 SVN 属性",
+                Some(format!("执行 `{executable} propget {name}` 失败：{error}")),
+                true,
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "SVN_PROPGET_FAILED",
+            "SVN 属性读取失败",
+            Some(command_error_detail(executable, "propget", &output)),
+            true,
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .trim_end_matches(['\r', '\n'])
+        .to_string())
 }
 
 fn text_child(node: roxmltree::Node<'_, '_>, tag_name: &str) -> Result<String, NovaError> {

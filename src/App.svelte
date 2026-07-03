@@ -938,6 +938,10 @@
         shadowLoading={$workspaceStore.shadowLoading}
         shadowError={$workspaceStore.shadowError}
         workspaceRoot={$workspaceStore.current?.working_copy_root ?? null}
+        svnProperties={$workspaceStore.svnProperties}
+        svnPropertiesLoading={$workspaceStore.svnPropertiesLoading}
+        svnPropertiesError={$workspaceStore.svnPropertiesError}
+        propertyEditForm={$workspaceStore.propertyEditForm}
         onDetectSvn={svnStore.detect}
         onDetectSvnWithInput={svnStore.detectWithInput}
         onSvnExecutableInput={svnStore.setExecutableInput}
@@ -957,6 +961,16 @@
           )}
         onPrepareShadowWorkspace={() => runShadowWorkspace("create_or_update")}
         onRebuildShadowWorkspace={() => runShadowWorkspace("rebuild")}
+        onRefreshSvnProperties={() =>
+          workspaceStore.refreshSvnProperties(
+            $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+          )}
+        onPropertyEditInput={workspaceStore.setPropertyEditForm}
+        onUsePropertyForEdit={workspaceStore.usePropertyForEdit}
+        onSaveSvnProperty={() =>
+          workspaceStore.saveSvnProperty(
+            $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+          )}
       />
     </div>
 
