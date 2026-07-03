@@ -1669,6 +1669,20 @@ function createWorkspaceStore() {
     });
   }
 
+  function focusConflictFilter() {
+    update((state) => ({
+      ...state,
+      searchText: "",
+      stageFilter: "all",
+      abnormalOnly: false,
+      unreviewedOnly: false,
+      generatedOnly: false,
+      statusFilters: ["conflicted"],
+      groupMode: "status",
+      groupByStatus: true,
+    }));
+  }
+
   function setGroupMode(value: WorkspaceGroupMode) {
     update((state) => ({
       ...state,
@@ -3013,6 +3027,7 @@ function createWorkspaceStore() {
     toggleUnreviewedOnly,
     toggleGeneratedOnly,
     toggleStatusFilter,
+    focusConflictFilter,
     setGroupMode,
     clearFilters,
     selectFile,

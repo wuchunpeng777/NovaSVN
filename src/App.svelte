@@ -797,7 +797,12 @@
       void workspaceStore.refreshStatus(
         $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
         workingCopyRoot,
-      );
+      ).then(() => {
+        if (($workspaceStore.status?.conflicted ?? 0) > 0) {
+          setCurrentView("changes");
+          workspaceStore.focusConflictFilter();
+        }
+      });
     }
   }
 
