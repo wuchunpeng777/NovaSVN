@@ -24,6 +24,16 @@ pub struct WorkspaceSummary {
     pub repository_url: String,
     pub repository_root: String,
     pub revision: String,
+    #[serde(default)]
+    pub unity: UnityProjectInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnityProjectInfo {
+    pub detected: bool,
+    pub has_assets: bool,
+    pub has_project_settings: bool,
+    pub has_packages_manifest: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -203,7 +213,8 @@ pub fn open_workspace(
     }
 
     let xml = String::from_utf8_lossy(&output.stdout);
-    let summary = parse_svn_info_xml(&xml, &path)?;
+    let mut summary = parse_svn_info_xml(&xml, &path)?;
+    summary.unity = detect_unity_project(Path::new(&summary.working_copy_root));
     save_recent_workspace(app, &summary)?;
     Ok(summary)
 }
@@ -1016,7 +1027,32 @@ fn parse_svn_info_xml(xml: &str, requested_path: &Path) -> Result<WorkspaceSumma
         repository_url,
         repository_root,
         revision,
+        unity: UnityProjectInfo::default(),
     })
+}
+
+impl Default for UnityProjectInfo {
+    fn default() -> Self {
+        Self {
+            detected: false,
+            has_assets: false,
+            has_project_settings: false,
+            has_packages_manifest: false,
+        }
+    }
+}
+
+fn detect_unity_project(root: &Path) -> UnityProjectInfo {
+    let has_assets = root.join("Assets").is_dir();
+    let has_project_settings = root.join("ProjectSettings").is_dir();
+    let has_packages_manifest = root.join("Packages").join("manifest.json").is_file();
+
+    UnityProjectInfo {
+        detected: has_assets && has_project_settings && has_packages_manifest,
+        has_assets,
+        has_project_settings,
+        has_packages_manifest,
+    }
 }
 
 fn parse_svn_log_xml(xml: &str, target: &str) -> Result<SvnLog, NovaError> {

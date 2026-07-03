@@ -327,6 +327,22 @@ button {
   white-space: nowrap;
 }
 
+.unity-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.unity-summary span {
+  border-radius: 999px;
+  background: #eef8f7;
+  color: #227873;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .metric-row {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

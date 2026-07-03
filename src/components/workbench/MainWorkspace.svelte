@@ -798,10 +798,21 @@
           <dd>{workspace.revision}</dd>
         </div>
         <div>
+          <dt>Unity</dt>
+          <dd>{workspace.unity.detected ? "已识别" : "未识别"}</dd>
+        </div>
+        <div>
           <dt>Local Path</dt>
           <dd>{workspace.local_path}</dd>
         </div>
       </dl>
+      {#if workspace.unity.detected}
+        <div class="unity-summary">
+          <span>Assets</span>
+          <span>ProjectSettings</span>
+          <span>Packages/manifest.json</span>
+        </div>
+      {/if}
     {/if}
   </section>
 
