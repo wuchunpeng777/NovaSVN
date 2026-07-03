@@ -23,6 +23,17 @@ const e2eSmokeSpec = fs.readFileSync(
   "utf8",
 );
 const appSvelte = fs.readFileSync(path.join(root, "src", "App.svelte"), "utf8");
+const frontendApi = fs.readFileSync(path.join(root, "src", "lib", "api.ts"), "utf8");
+const mainWorkspace = fs.readFileSync(
+  path.join(root, "src", "components", "workbench", "MainWorkspace.svelte"),
+  "utf8",
+);
+const appStore = fs.readFileSync(path.join(root, "src", "stores", "app.ts"), "utf8");
+const tauriLib = fs.readFileSync(path.join(root, "src-tauri", "src", "lib.rs"), "utf8");
+const diagnosticsRs = fs.readFileSync(
+  path.join(root, "src-tauri", "src", "diagnostics.rs"),
+  "utf8",
+);
 const systemIntegrationRs = fs.readFileSync(
   path.join(root, "src-tauri", "src", "system_integration.rs"),
   "utf8",
@@ -221,11 +232,41 @@ if (!changelog.includes(`## ${packageJson.version}`)) {
   failed = true;
 }
 
+if (!tauriLib.includes("export_diagnostics")) {
+  console.error("后端必须注册 export_diagnostics 诊断日志导出命令");
+  failed = true;
+}
+
+if (!diagnosticsRs.includes("install_panic_hook") || !diagnosticsRs.includes("crash.log")) {
+  console.error("诊断模块必须安装 panic hook 并收集 crash.log");
+  failed = true;
+}
+
+if (!diagnosticsRs.includes("NovaSVN 诊断日志") || !diagnosticsRs.includes("== 任务日志 ==")) {
+  console.error("诊断日志内容必须包含基础运行信息和任务日志");
+  failed = true;
+}
+
+if (!frontendApi.includes('callBackend<DiagnosticExport>("export_diagnostics")')) {
+  console.error("前端 API 必须封装 export_diagnostics");
+  failed = true;
+}
+
+if (!appStore.includes("exportDiagnosticLog") || !appStore.includes("diagnosticExportPath")) {
+  console.error("设置状态必须支持导出诊断日志并保存导出路径");
+  failed = true;
+}
+
+if (!mainWorkspace.includes("导出诊断日志") || !mainWorkspace.includes("onExportDiagnosticLog")) {
+  console.error("设置页必须提供导出诊断日志入口");
+  failed = true;
+}
+
 if (failed) {
   process.exit(1);
 }
 
-console.log("发布脚本、性能基准入口、系统入口脚本和更新日志检查通过");
+console.log("发布脚本、性能基准入口、系统入口脚本、诊断导出和更新日志检查通过");
 
 function extractSwitchCase(content, action) {
   const start = content.indexOf(`case "${action}":`);
