@@ -24,7 +24,14 @@ pub fn install_panic_hook(app_data_dir: PathBuf) {
             let _ = fs::create_dir_all(parent);
         }
 
-        let _ = fs::write(path, message);
+        let _ = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .and_then(|mut file| {
+                use std::io::Write;
+                file.write_all(message.as_bytes())
+            });
     }));
 }
 
