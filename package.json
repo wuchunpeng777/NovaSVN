@@ -10,6 +10,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "version:sync": "node scripts/sync-version.mjs",
+    "version:print": "node scripts/sync-version.mjs --print",
     "release:windows": "tauri build --bundles nsis",
     "release:macos": "tauri build --bundles dmg"
   },
