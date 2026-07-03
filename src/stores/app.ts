@@ -3265,6 +3265,9 @@ function normalizeAppSettingValue<K extends keyof AppSettingsState>(
   if (field === "largeFileThresholdMb") {
     return normalizeLargeFileThreshold(value) as AppSettingsState[K];
   }
+  if (field === "unityGroupRules") {
+    return normalizeUnityGroupRules(value) as AppSettingsState[K];
+  }
 
   return value;
 }

@@ -10,7 +10,14 @@ import { get } from "svelte/store";
 
 import { detectSvn, openWorkspace, scanWorkspaceStatus } from "../lib/api";
 import type { ChangedFile, WorkingCopyStatus, WorkspaceSummary } from "../types/api";
-import { isSameRepositoryUrl, revisionDiffPatchFileName, svnStore, workspaceStore } from "./app";
+import type { AppSettingsState } from "../types/app";
+import {
+  appSettingsStore,
+  isSameRepositoryUrl,
+  revisionDiffPatchFileName,
+  svnStore,
+  workspaceStore,
+} from "./app";
 
 const detectSvnMock = vi.mocked(detectSvn);
 const openWorkspaceMock = vi.mocked(openWorkspace);
@@ -20,6 +27,8 @@ beforeEach(() => {
   detectSvnMock.mockReset();
   openWorkspaceMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
+  window.localStorage.clear();
+  appSettingsStore.load();
   svnStore.setExecutableInput("");
   workspaceStore.clearWorkspaceDraft();
   workspaceStore.setCommitMessage("");
@@ -80,6 +89,34 @@ describe("isSameRepositoryUrl", () => {
       ),
     ).toBe(false);
     expect(isSameRepositoryUrl("", "https://example.com/svn/trunk")).toBe(false);
+  });
+});
+
+describe("appSettingsStore", () => {
+  it("normalizes partial Unity group rules before saving and loading", () => {
+    appSettingsStore.setField("unityGroupRules", {
+      addressables: false,
+    } as AppSettingsState["unityGroupRules"]);
+
+    expect(get(appSettingsStore).unityGroupRules).toEqual({
+      addressables: false,
+      projectSettings: true,
+      packages: true,
+      scenes: true,
+      prefabs: true,
+      assets: true,
+    });
+
+    appSettingsStore.load();
+
+    expect(get(appSettingsStore).unityGroupRules).toEqual({
+      addressables: false,
+      projectSettings: true,
+      packages: true,
+      scenes: true,
+      prefabs: true,
+      assets: true,
+    });
   });
 });
 
