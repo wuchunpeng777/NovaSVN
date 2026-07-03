@@ -17,6 +17,11 @@ const benchmarkScript = fs.readFileSync(
 );
 const benchmarkDoc = fs.readFileSync(path.join(root, "doc", "性能基准.md"), "utf8");
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, "src-tauri", "tauri.conf.json"), "utf8"));
+const playwrightConfig = fs.readFileSync(path.join(root, "playwright.config.ts"), "utf8");
+const e2eSmokeSpec = fs.readFileSync(
+  path.join(root, "tests", "e2e", "workbench-smoke.spec.ts"),
+  "utf8",
+);
 const appSvelte = fs.readFileSync(path.join(root, "src", "App.svelte"), "utf8");
 const systemIntegrationRs = fs.readFileSync(
   path.join(root, "src-tauri", "src", "system_integration.rs"),
@@ -27,6 +32,14 @@ const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 const releaseScripts = ["release:windows", "release:macos"];
 const requiredBundleTargets = ["nsis", "dmg"];
 const benchmarkScripts = ["benchmark:svn", "benchmark:svn:reset"];
+const e2eSmokeAssertions = [
+  "NovaSVN",
+  "连接后端",
+  "提交区",
+  "任务队列",
+  "提交选中 Hunk",
+  "影子工作副本",
+];
 const systemIntegrationActions = [
   "open",
   "commit",
@@ -114,6 +127,28 @@ if (!benchmarkScript.includes("benchmark-results.md")) {
 if (!benchmarkDoc.includes("benchmark-results.md")) {
   console.error("性能基准文档必须说明 Markdown 摘要输出");
   failed = true;
+}
+
+if (packageJson.scripts?.["test:e2e"] !== "playwright test") {
+  console.error("test:e2e 必须执行 Playwright 测试");
+  failed = true;
+}
+
+if (!playwrightConfig.includes('testDir: "./tests/e2e"')) {
+  console.error("Playwright 配置必须指向 tests/e2e");
+  failed = true;
+}
+
+if (!playwrightConfig.includes("webServer")) {
+  console.error("Playwright 配置必须包含 webServer 冒烟测试入口");
+  failed = true;
+}
+
+for (const assertion of e2eSmokeAssertions) {
+  if (!e2eSmokeSpec.includes(assertion)) {
+    console.error(`E2E 冒烟测试缺少关键断言：${assertion}`);
+    failed = true;
+  }
 }
 
 for (const action of systemIntegrationActions) {
