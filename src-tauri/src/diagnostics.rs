@@ -80,12 +80,28 @@ fn build_diagnostics(
     tasks: &[Task],
 ) -> Result<String, NovaError> {
     let package = app.package_info();
+    Ok(build_diagnostics_content(
+        &package.version.to_string(),
+        app_data_dir,
+        tasks,
+    ))
+}
+
+fn build_diagnostics_content(
+    app_version: &str,
+    app_data_dir: &PathBuf,
+    tasks: &[Task],
+) -> String {
     let mut lines = vec![
         "NovaSVN 诊断日志".to_string(),
         format!("生成时间：{}", timestamp_millis()),
-        format!("应用版本：{}", package.version),
+        format!("应用版本：{app_version}"),
         format!("平台：{} {}", std::env::consts::OS, std::env::consts::ARCH),
+        format!("当前目录：{}", current_dir_label()),
         format!("应用数据目录：{}", app_data_dir.display()),
+        format!("PATH 可用：{}", env_presence_label("PATH")),
+        format!("HOME 可用：{}", env_presence_label("HOME")),
+        format!("USERPROFILE 可用：{}", env_presence_label("USERPROFILE")),
         String::new(),
         "== 配置文件 ==".to_string(),
     ];
@@ -93,6 +109,7 @@ fn build_diagnostics(
     append_file_summary(&mut lines, &app_data_dir.join("recent-workspace.json"));
     append_file_summary(&mut lines, &app_data_dir.join("branch-pool.json"));
     append_file_summary(&mut lines, &app_data_dir.join("task-workspaces.json"));
+    append_file_summary(&mut lines, &app_data_dir.join("crash.log"));
 
     lines.push(String::new());
     lines.push("== 崩溃日志 ==".to_string());
@@ -118,7 +135,7 @@ fn build_diagnostics(
     }
 
     lines.push(String::new());
-    Ok(lines.join("\n"))
+    lines.join("\n")
 }
 
 fn append_file_summary(lines: &mut Vec<String>, path: &PathBuf) {
@@ -153,6 +170,19 @@ fn append_optional_file(lines: &mut Vec<String>, path: &PathBuf, max_bytes: usiz
     }
 }
 
+fn current_dir_label() -> String {
+    std::env::current_dir()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| "未知".to_string())
+}
+
+fn env_presence_label(name: &str) -> &'static str {
+    match std::env::var_os(name) {
+        Some(value) if !value.is_empty() => "是",
+        _ => "否",
+    }
+}
+
 fn app_data_dir(app: &AppHandle) -> Result<PathBuf, NovaError> {
     app.path().app_data_dir().map_err(|error| {
         NovaError::command(
@@ -169,4 +199,34 @@ fn timestamp_millis() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_content_includes_runtime_and_file_summaries() {
+        let app_data_dir = std::env::temp_dir().join(format!(
+            "novasvn-diagnostics-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&app_data_dir);
+        fs::create_dir_all(&app_data_dir).unwrap();
+        fs::write(app_data_dir.join("crash.log"), "panic sample").unwrap();
+
+        let content = build_diagnostics_content("9.8.7", &app_data_dir, &[]);
+
+        assert!(content.contains("NovaSVN 诊断日志"));
+        assert!(content.contains("应用版本：9.8.7"));
+        assert!(content.contains("平台："));
+        assert!(content.contains("当前目录："));
+        assert!(content.contains("PATH 可用："));
+        assert!(content.contains("recent-workspace.json：不存在"));
+        assert!(content.contains("crash.log：存在"));
+        assert!(content.contains("panic sample"));
+        assert!(content.contains("暂无任务。"));
+
+        let _ = fs::remove_dir_all(&app_data_dir);
+    }
 }
