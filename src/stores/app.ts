@@ -1436,6 +1436,9 @@ function createWorkspaceStore() {
         error: null,
       }));
       if (root) {
+        if (recent.workspace) {
+          enableUnityRulesForWorkspace(recent.workspace);
+        }
         await refreshStatus(null, root);
       }
     } catch (error) {
@@ -1512,6 +1515,7 @@ function createWorkspaceStore() {
         loading: false,
         error: null,
       }));
+      enableUnityRulesForWorkspace(current);
       await refreshStatus(svnExecutable, current.working_copy_root);
       return current;
     } catch (error) {
@@ -3226,6 +3230,24 @@ function saveAppSettings(settings: AppSettingsState) {
   } catch {
     // 设置保存失败不应阻断当前操作。
   }
+}
+
+function enableUnityRulesForWorkspace(workspace: WorkspaceSummary) {
+  if (!workspace.unity.detected) {
+    return;
+  }
+
+  const settings = loadAppSettings();
+  if (settings.unityRulesEnabled) {
+    return;
+  }
+
+  const next = {
+    ...settings,
+    unityRulesEnabled: true,
+  };
+  saveAppSettings(next);
+  appSettingsStore.setField("unityRulesEnabled", true);
 }
 
 function emptyRepositoryLayoutResults() {
