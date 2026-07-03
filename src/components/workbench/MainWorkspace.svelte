@@ -15,6 +15,7 @@
     WorkspaceSummary,
   } from "../../types/api";
   import type {
+    AppSettingsState,
     WorkbenchView,
     ReviewedFileState,
     WorkspaceGroupMode,
@@ -136,6 +137,17 @@
   export let revisionDiffLoading = false;
   export let revisionDiffError: string | null = null;
   export let revisionDiffResult: RevisionDiffResult | null = null;
+  export let appSettings: AppSettingsState = {
+    svnExecutable: "",
+    diffMode: "side_by_side",
+    showWhitespace: false,
+    commitTemplate: "",
+    largeFileThresholdMb: 20,
+    unityRulesEnabled: true,
+    externalDiffTool: "",
+    externalMergeTool: "",
+    loading: false,
+  };
   export let onChooseWorkspace: () => void;
   export let onOpenWorkspace: () => void;
   export let onRefreshStatus: () => void;
@@ -209,6 +221,10 @@
   export let onRunRevisionDiff: () => void;
   export let onPrepareRevisionDiffFromLog: (revision: string) => void;
   export let onExportRevisionDiffPatch: () => void;
+  export let onAppSettingInput: <K extends keyof AppSettingsState>(
+    field: K,
+    value: AppSettingsState[K],
+  ) => void;
 
   const fileRowHeight = 76;
   const sectionHeaderHeight = 32;
@@ -1088,6 +1104,133 @@
       {:else}
         <article class="repository-empty">点击读取日志开始查看历史</article>
       {/if}
+    </section>
+  {:else if view.id === "settings"}
+    <div class="metric-row">
+      <div class="metric">
+        <span>SVN</span>
+        <strong>{appSettings.svnExecutable ? "自定义" : "默认"}</strong>
+      </div>
+      <div class="metric">
+        <span>Diff</span>
+        <strong>{appSettings.diffMode === "inline" ? "行内" : "双栏"}</strong>
+      </div>
+      <div class="metric">
+        <span>Unity</span>
+        <strong>{appSettings.unityRulesEnabled ? "启用" : "关闭"}</strong>
+      </div>
+      <div class="metric">
+        <span>阈值</span>
+        <strong>{appSettings.largeFileThresholdMb}MB</strong>
+      </div>
+      <div class="metric">
+        <span>工具</span>
+        <strong>{appSettings.externalDiffTool || appSettings.externalMergeTool ? "已设" : "默认"}</strong>
+      </div>
+    </div>
+
+    <section class="settings-panel" aria-label="设置和用户偏好">
+      <label>
+        <span>SVN 路径</span>
+        <input
+          type="text"
+          value={appSettings.svnExecutable}
+          placeholder="svn 或 svn.exe"
+          on:input={(event) =>
+            onAppSettingInput(
+              "svnExecutable",
+              (event.currentTarget as HTMLInputElement).value,
+            )}
+        />
+      </label>
+      <label>
+        <span>提交模板</span>
+        <textarea
+          rows="3"
+          value={appSettings.commitTemplate}
+          on:input={(event) =>
+            onAppSettingInput(
+              "commitTemplate",
+              (event.currentTarget as HTMLTextAreaElement).value,
+            )}
+        ></textarea>
+      </label>
+      <label>
+        <span>默认 Diff 模式</span>
+        <select
+          value={appSettings.diffMode}
+          on:change={(event) =>
+            onAppSettingInput(
+              "diffMode",
+              (event.currentTarget as HTMLSelectElement).value as AppSettingsState["diffMode"],
+            )}
+        >
+          <option value="side_by_side">双栏</option>
+          <option value="inline">行内</option>
+        </select>
+      </label>
+      <label>
+        <span>大文件阈值 MB</span>
+        <input
+          type="number"
+          min="1"
+          max="2048"
+          value={appSettings.largeFileThresholdMb}
+          on:input={(event) =>
+            onAppSettingInput(
+              "largeFileThresholdMb",
+              Number((event.currentTarget as HTMLInputElement).value),
+            )}
+        />
+      </label>
+      <label>
+        <span>外部 Diff 工具</span>
+        <input
+          type="text"
+          value={appSettings.externalDiffTool}
+          on:input={(event) =>
+            onAppSettingInput(
+              "externalDiffTool",
+              (event.currentTarget as HTMLInputElement).value,
+            )}
+        />
+      </label>
+      <label>
+        <span>外部 Merge 工具</span>
+        <input
+          type="text"
+          value={appSettings.externalMergeTool}
+          on:input={(event) =>
+            onAppSettingInput(
+              "externalMergeTool",
+              (event.currentTarget as HTMLInputElement).value,
+            )}
+        />
+      </label>
+      <label class="settings-toggle">
+        <input
+          type="checkbox"
+          checked={appSettings.showWhitespace}
+          on:change={(event) =>
+            onAppSettingInput(
+              "showWhitespace",
+              (event.currentTarget as HTMLInputElement).checked,
+            )}
+        />
+        <span>默认显示空白字符</span>
+      </label>
+      <label class="settings-toggle">
+        <input
+          type="checkbox"
+          checked={appSettings.unityRulesEnabled}
+          on:change={(event) =>
+            onAppSettingInput(
+              "unityRulesEnabled",
+              (event.currentTarget as HTMLInputElement).checked,
+            )}
+        />
+        <span>启用 Unity 规则</span>
+      </label>
     </section>
   {:else if view.id === "staging"}
     <div class="metric-row">

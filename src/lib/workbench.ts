@@ -6,6 +6,7 @@ export const navigationItems: NavigationItem[] = [
   { id: "history", label: "日志", description: "历史和审查" },
   { id: "branches", label: "分支池", description: "多工作副本" },
   { id: "repository", label: "仓库", description: "远端浏览" },
+  { id: "settings", label: "设置", description: "偏好和工具" },
 ];
 
 export const workbenchViews: Record<string, WorkbenchView> = {
@@ -82,6 +83,21 @@ export const workbenchViews: Record<string, WorkbenchView> = {
       { title: "/trunk", meta: "标准 SVN 布局", status: "占位" },
       { title: "/branches", meta: "分支目录", status: "占位" },
       { title: "/tags", meta: "标签目录", status: "占位" },
+    ],
+  },
+  settings: {
+    id: "settings",
+    title: "设置",
+    subtitle: "持久化 SVN、Diff、提交和 Unity 偏好。",
+    metrics: [
+      { label: "SVN", value: "-" },
+      { label: "Diff", value: "-" },
+      { label: "Unity", value: "-" },
+    ],
+    primaryItems: [
+      { title: "SVN 路径", meta: "持久化命令行路径", status: "设置" },
+      { title: "Diff 偏好", meta: "默认展示和外部工具", status: "设置" },
+      { title: "Unity 规则", meta: "大文件阈值和规则开关", status: "设置" },
     ],
   },
 };

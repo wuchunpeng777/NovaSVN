@@ -9,6 +9,7 @@
   import { detailSections, navigationItems, workbenchViews } from "./lib/workbench";
   import {
     branchPoolStore,
+    appSettingsStore,
     currentView,
     setCurrentView,
     svnStore,
@@ -764,7 +765,8 @@
 
   onMount(() => {
     taskStore.startPolling();
-    void svnStore.detect();
+    appSettingsStore.load();
+    void svnStore.detectWithInput();
     void workspaceStore.loadRecent().then(() => handleStartupIntent());
     void branchPoolStore.load();
     void taskWorkspaceStore.load();
@@ -898,6 +900,7 @@
         revisionDiffLoading={$workspaceStore.revisionDiffLoading}
         revisionDiffError={$workspaceStore.revisionDiffError}
         revisionDiffResult={$workspaceStore.revisionDiffResult}
+        appSettings={$appSettingsStore}
         onChooseWorkspace={() =>
           workspaceStore.chooseAndOpen(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
@@ -959,6 +962,7 @@
         onRunRevisionDiff={runRevisionDiff}
         onPrepareRevisionDiffFromLog={workspaceStore.prepareRevisionDiffFromLog}
         onExportRevisionDiffPatch={workspaceStore.exportRevisionDiffPatch}
+        onAppSettingInput={appSettingsStore.setField}
       />
       <DetailPanel
         sections={detailSections}

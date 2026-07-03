@@ -36,6 +36,7 @@ import {
 } from "../lib/api";
 import type {
   AppView,
+  AppSettingsState,
   ReviewedFileState,
   SafetyCheckItem,
   SafetyCheckSummary,
@@ -74,6 +75,49 @@ export const currentView = writable<AppView>("changes");
 
 export function setCurrentView(view: AppView) {
   currentView.set(view);
+}
+
+const initialAppSettings: AppSettingsState = {
+  svnExecutable: "",
+  diffMode: "side_by_side",
+  showWhitespace: false,
+  commitTemplate: "",
+  largeFileThresholdMb: 20,
+  unityRulesEnabled: true,
+  externalDiffTool: "",
+  externalMergeTool: "",
+  loading: false,
+};
+
+function createAppSettingsStore() {
+  const { subscribe, update } = writable<AppSettingsState>(initialAppSettings);
+
+  function load() {
+    const settings = loadAppSettings();
+    update((state) => ({ ...state, ...settings, loading: false }));
+    svnStore.setExecutableInput(settings.svnExecutable);
+    workspaceStore.setCommitTemplate(settings.commitTemplate);
+  }
+
+  function setField<K extends keyof AppSettingsState>(field: K, value: AppSettingsState[K]) {
+    update((state) => {
+      const next = { ...state, [field]: value };
+      saveAppSettings(next);
+      if (field === "svnExecutable") {
+        svnStore.setExecutableInput(String(value));
+      }
+      if (field === "commitTemplate") {
+        workspaceStore.setCommitTemplate(String(value));
+      }
+      return next;
+    });
+  }
+
+  return {
+    subscribe,
+    load,
+    setField,
+  };
 }
 
 export interface TaskStoreState {
@@ -2731,6 +2775,7 @@ function createWorkspaceStore() {
 }
 
 export const workspaceStore = createWorkspaceStore();
+export const appSettingsStore = createAppSettingsStore();
 
 function emptyRepositoryLayoutTasks() {
   return {
@@ -2738,6 +2783,65 @@ function emptyRepositoryLayoutTasks() {
     branches: null,
     tags: null,
   };
+}
+
+function appSettingsKey() {
+  return "novasvn:app-settings";
+}
+
+function loadAppSettings(): AppSettingsState {
+  if (typeof window === "undefined") {
+    return initialAppSettings;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(appSettingsKey());
+    if (!raw) {
+      const commitSettings = loadCommitMessageSettings();
+      return {
+        ...initialAppSettings,
+        commitTemplate: commitSettings.template,
+      };
+    }
+
+    const parsed = JSON.parse(raw) as Partial<AppSettingsState>;
+    return {
+      ...initialAppSettings,
+      svnExecutable: typeof parsed.svnExecutable === "string" ? parsed.svnExecutable : "",
+      diffMode:
+        parsed.diffMode === "inline" || parsed.diffMode === "side_by_side"
+          ? parsed.diffMode
+          : "side_by_side",
+      showWhitespace:
+        typeof parsed.showWhitespace === "boolean" ? parsed.showWhitespace : false,
+      commitTemplate:
+        typeof parsed.commitTemplate === "string" ? parsed.commitTemplate : "",
+      largeFileThresholdMb:
+        typeof parsed.largeFileThresholdMb === "number"
+          ? Math.min(Math.max(parsed.largeFileThresholdMb, 1), 2048)
+          : 20,
+      unityRulesEnabled:
+        typeof parsed.unityRulesEnabled === "boolean" ? parsed.unityRulesEnabled : true,
+      externalDiffTool:
+        typeof parsed.externalDiffTool === "string" ? parsed.externalDiffTool : "",
+      externalMergeTool:
+        typeof parsed.externalMergeTool === "string" ? parsed.externalMergeTool : "",
+    };
+  } catch {
+    return initialAppSettings;
+  }
+}
+
+function saveAppSettings(settings: AppSettingsState) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(appSettingsKey(), JSON.stringify(settings));
+  } catch {
+    // 设置保存失败不应阻断当前操作。
+  }
 }
 
 function emptyRepositoryLayoutResults() {
@@ -2967,6 +3071,10 @@ function buildSafetyCheck(
 }
 
 function appendUnityMetaWarnings(files: ChangedFile[], warnings: SafetyCheckItem[]) {
+  if (!loadAppSettings().unityRulesEnabled) {
+    return;
+  }
+
   const unityFiles = files.filter((file) => isUnityProjectPath(file.path));
   if (unityFiles.length === 0) {
     return;

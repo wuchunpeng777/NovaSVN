@@ -1133,6 +1133,46 @@ button {
   min-height: 30px;
 }
 
+.settings-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  border: 1px solid #d7dde3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.settings-panel label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: #44515f;
+  font-size: 12px;
+}
+
+.settings-panel input:not([type="checkbox"]),
+.settings-panel select,
+.settings-panel textarea {
+  min-width: 0;
+  border: 1px solid #bcc8d4;
+  border-radius: 6px;
+  color: #17202a;
+  padding: 7px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.settings-panel textarea {
+  resize: vertical;
+}
+
+.settings-toggle {
+  display: flex !important;
+  align-items: center;
+  min-height: 32px;
+}
+
 .task-workspace-panel {
   display: grid;
   gap: 10px;

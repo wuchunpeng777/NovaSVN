@@ -3,7 +3,8 @@ export type AppView =
   | "staging"
   | "history"
   | "branches"
-  | "repository";
+  | "repository"
+  | "settings";
 
 export type WorkspaceStageFilter = "all" | "staged" | "unstaged";
 
@@ -69,4 +70,16 @@ export interface ReviewedFileState {
   path: string;
   contentDigest: string;
   reviewedAt: number;
+}
+
+export interface AppSettingsState {
+  svnExecutable: string;
+  diffMode: "side_by_side" | "inline";
+  showWhitespace: boolean;
+  commitTemplate: string;
+  largeFileThresholdMb: number;
+  unityRulesEnabled: boolean;
+  externalDiffTool: string;
+  externalMergeTool: string;
+  loading: boolean;
 }
