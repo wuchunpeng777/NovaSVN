@@ -31,4 +31,13 @@ describe("unityGroupLabel", () => {
       }),
     ).toBe("Assets");
   });
+
+  it("groups common Unity project paths", () => {
+    expect(unityGroupLabel("ProjectSettings/ProjectVersion.txt", defaultRules)).toBe(
+      "ProjectSettings",
+    );
+    expect(unityGroupLabel("Packages/manifest.json", defaultRules)).toBe("Packages");
+    expect(unityGroupLabel("Assets/Scenes/Main.unity", defaultRules)).toBe("Scene");
+    expect(unityGroupLabel("Assets/Prefabs/Hero.prefab", defaultRules)).toBe("Prefab");
+  });
 });

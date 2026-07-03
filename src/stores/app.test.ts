@@ -281,6 +281,66 @@ describe("workspaceStore safety warnings", () => {
       ]),
     );
   });
+
+  it("warns about Unity large assets and generated project directories", async () => {
+    const workspace = makeWorkspace({
+      unity: {
+        detected: true,
+        has_assets: true,
+        has_project_settings: true,
+        has_packages_manifest: true,
+      },
+    });
+    const status = makeStatus([
+      makeFile({
+        path: "Assets/Scenes/Battle.unity",
+        file_size: 30 * 1024 * 1024,
+        content_digest: "scene-digest",
+      }),
+      makeFile({
+        path: "Library/ArtifactDB",
+        content_digest: "library-digest",
+      }),
+      makeFile({
+        path: "Temp/build.tmp",
+        content_digest: "temp-digest",
+      }),
+      makeFile({
+        path: "Logs/Editor.log",
+        content_digest: "log-digest",
+      }),
+      makeFile({
+        path: "obj/Debug/generated.cs",
+        content_digest: "obj-digest",
+      }),
+    ]);
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(status);
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+
+    const warnings = get(workspaceStore).safetyCheck.warnings;
+    expect(warnings.map((item) => item.title)).toEqual(
+      expect.arrayContaining([
+        "大文件变更",
+        "Unity 大资源文件",
+        "疑似临时或生成文件",
+      ]),
+    );
+    const generatedWarningPaths = warnings
+      .filter((item) => item.title === "疑似临时或生成文件")
+      .map((item) => item.filePath);
+    expect(generatedWarningPaths).toEqual(
+      expect.arrayContaining([
+        "Library/ArtifactDB",
+        "Temp/build.tmp",
+        "Logs/Editor.log",
+        "obj/Debug/generated.cs",
+      ]),
+    );
+  });
 });
 
 describe("workspaceStore review state", () => {
