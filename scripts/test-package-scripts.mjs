@@ -12,6 +12,10 @@ const macosFinderScript = fs.readFileSync(
   "utf8",
 );
 const appSvelte = fs.readFileSync(path.join(root, "src", "App.svelte"), "utf8");
+const systemIntegrationRs = fs.readFileSync(
+  path.join(root, "src-tauri", "src", "system_integration.rs"),
+  "utf8",
+);
 const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 
 const releaseScripts = ["release:windows", "release:macos"];
@@ -91,6 +95,13 @@ if (!macosFinderScript.includes("--novasvn-path \"$f\"")) {
 for (const action of systemIntegrationActions.filter((value) => value !== "open")) {
   if (!appSvelte.includes(`case "${action}":`)) {
     console.error(`启动意图分发缺少 action：${action}`);
+    failed = true;
+  }
+}
+
+for (const action of systemIntegrationActions) {
+  if (!systemIntegrationRs.includes(`"${action}"`)) {
+    console.error(`后端启动意图白名单缺少 action：${action}`);
     failed = true;
   }
 }
