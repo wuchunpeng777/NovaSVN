@@ -2060,6 +2060,39 @@ button {
   border-left-color: #7f8b98;
 }
 
+.externals-status {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #c8d8df;
+  border-left: 3px solid #5ba9a5;
+  border-radius: 6px;
+  background: #f7fbfc;
+  padding: 8px 10px;
+}
+
+.externals-status div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.externals-status strong {
+  color: #17202a;
+  font-size: 12px;
+}
+
+.externals-status span,
+.externals-status p {
+  margin: 0;
+  color: #526272;
+  font-size: 12px;
+}
+
+.externals-status span {
+  white-space: nowrap;
+}
+
 .svn-path-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

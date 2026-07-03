@@ -781,6 +781,8 @@
     (workingCopyStatus?.missing ?? 0) +
     (workingCopyStatus?.conflicted ?? 0) +
     (workingCopyStatus?.obstructed ?? 0);
+  $: externalFiles = changedFiles.filter((file) => file.status === "external");
+  $: externalAbnormalCount = externalFiles.filter((file) => file.abnormal).length;
   $: reviewedCount = changedFiles.filter((file) => isReviewed(file.path)).length;
   $: unreviewedCount = Math.max(changedFiles.length - reviewedCount, 0);
   $: repositoryEntries = repositoryList?.entries ?? [];
@@ -2163,9 +2165,24 @@
         未审
       </button>
       <span>异常 {abnormalCount}</span>
+      <span>Externals {externalFiles.length}</span>
       <span>未审 {unreviewedCount}</span>
       <span>显示 {filteredFiles.length}/{changedFiles.length}</span>
     </section>
+
+    {#if externalFiles.length > 0}
+      <section class="externals-status" aria-label="svn:externals 状态提醒">
+        <div>
+          <strong>svn:externals</strong>
+          <span>{externalFiles.length} 项外部工作副本</span>
+        </div>
+        <p>
+          {externalAbnormalCount > 0
+            ? `${externalAbnormalCount} 项存在异常状态，请先确认外部定义是否需要更新或清理。`
+            : "外部定义已出现在当前状态扫描结果中，提交前请确认这些路径不属于主工作副本改动。"}
+        </p>
+      </section>
+    {/if}
 
     <div
       role="listbox"
