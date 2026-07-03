@@ -56,6 +56,8 @@ pub struct WorkingCopyStatus {
     pub returned: usize,
     pub offset: usize,
     pub limit: usize,
+    pub revision_range: Option<String>,
+    pub mixed_revision: bool,
     pub modified: usize,
     pub added: usize,
     pub deleted: usize,
@@ -71,6 +73,7 @@ pub struct WorkingCopyStatus {
 pub struct ChangedFile {
     pub path: String,
     pub status: String,
+    pub revision: Option<String>,
     pub property_status: Option<String>,
     pub property_changed: bool,
     pub abnormal: bool,
@@ -509,12 +512,14 @@ pub fn scan_workspace_status(
         ));
     }
 
+    let revision_summary = read_workspace_revision_summary(&executable, &path);
     let xml = String::from_utf8_lossy(&output.stdout);
     parse_svn_status_xml(
         &xml,
         &path,
         request.offset.unwrap_or(0),
         request.limit.unwrap_or(500),
+        revision_summary,
     )
 }
 
@@ -738,6 +743,7 @@ fn parse_svn_status_xml(
     working_copy_root: &Path,
     offset: usize,
     limit: usize,
+    revision_summary: RevisionSummary,
 ) -> Result<WorkingCopyStatus, NovaError> {
     let document = Document::parse(xml).map_err(|error| {
         NovaError::command(
@@ -781,6 +787,7 @@ fn parse_svn_status_xml(
         files.push(ChangedFile {
             path: display_path,
             status: normalize_status(&item),
+            revision: wc_status.attribute("revision").map(ToString::to_string),
             property_status: props,
             property_changed,
             abnormal: is_abnormal_status(&item),
@@ -808,6 +815,8 @@ fn parse_svn_status_xml(
         returned: paged_files.len(),
         offset: safe_offset,
         limit: safe_limit,
+        revision_range: revision_summary.range,
+        mixed_revision: revision_summary.mixed,
         modified: count_status(&files, "modified"),
         added: count_status(&files, "added"),
         deleted: count_status(&files, "deleted"),
@@ -891,6 +900,66 @@ fn parse_lock_info<'a, 'input>(
 
 fn count_status(files: &[ChangedFile], status: &str) -> usize {
     files.iter().filter(|file| file.status == status).count()
+}
+
+#[derive(Debug, Clone, Default)]
+struct RevisionSummary {
+    range: Option<String>,
+    mixed: bool,
+}
+
+fn read_workspace_revision_summary(executable: &str, working_copy_root: &Path) -> RevisionSummary {
+    let svnversion = svnversion_executable(executable);
+    let Ok(output) = Command::new(svnversion).arg(working_copy_root).output() else {
+        return RevisionSummary::default();
+    };
+
+    if !output.status.success() {
+        return RevisionSummary::default();
+    }
+
+    parse_svnversion_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_svnversion_output(output: &str) -> RevisionSummary {
+    let trimmed = output.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("exported") {
+        return RevisionSummary::default();
+    }
+
+    let range = trimmed
+        .trim_end_matches(|value| matches!(value, 'M' | 'S' | 'P' | 'U'))
+        .to_string();
+
+    let mixed = range.contains(':');
+
+    RevisionSummary {
+        range: Some(trimmed.to_string()),
+        mixed,
+    }
+}
+
+fn svnversion_executable(svn_executable: &str) -> String {
+    let path = Path::new(svn_executable);
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(svn_executable)
+        .to_ascii_lowercase();
+
+    let svnversion_name = if file_name.ends_with(".exe") {
+        "svnversion.exe"
+    } else {
+        "svnversion"
+    };
+
+    if file_name == "svn" || file_name == "svn.exe" {
+        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            return parent.join(svnversion_name).display().to_string();
+        }
+    }
+
+    svnversion_name.to_string()
 }
 
 fn display_status_path(raw_path: &str, working_copy_root: &Path) -> String {
@@ -1358,9 +1427,18 @@ mod tests {
 </status>
 "#;
 
-        let status = parse_svn_status_xml(xml, Path::new("C:\\wc"), 0, 10).expect("status parses");
+        let status = parse_svn_status_xml(
+            xml,
+            Path::new("C:\\wc"),
+            0,
+            10,
+            parse_svnversion_output("41:42M"),
+        )
+        .expect("status parses");
 
         assert_eq!(status.total, 2);
+        assert_eq!(status.revision_range.as_deref(), Some("41:42M"));
+        assert!(status.mixed_revision);
         assert_eq!(status.modified, 1);
         assert_eq!(status.conflicted, 1);
         assert_eq!(status.files[0].path, "Assets/Player.prefab");

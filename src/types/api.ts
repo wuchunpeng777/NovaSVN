@@ -300,6 +300,7 @@ export interface ScanWorkspaceStatusRequest {
 export interface ChangedFile {
   path: string;
   status: string;
+  revision: string | null;
   property_status: string | null;
   property_changed: boolean;
   abnormal: boolean;
@@ -316,6 +317,8 @@ export interface WorkingCopyStatus {
   returned: number;
   offset: number;
   limit: number;
+  revision_range: string | null;
+  mixed_revision: boolean;
   modified: number;
   added: number;
   deleted: number;

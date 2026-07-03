@@ -1660,6 +1660,7 @@ function createWorkspaceStore() {
         state.status?.files ?? [],
         stagedFiles,
         state.safetyCheck.confirmedWarningIds,
+        state.status,
       );
       saveWorkspaceDraftFromState({ ...state, stagedFiles, safetyCheck });
 
@@ -1679,6 +1680,7 @@ function createWorkspaceStore() {
         state.status?.files ?? [],
         stagedFiles,
         reconcileSafetyWarningConfirmations(state.safetyCheck, stagedFiles).confirmedWarningIds,
+        state.status,
       );
       saveWorkspaceDraftFromState({ ...state, stagedFiles, safetyCheck });
 
@@ -1736,6 +1738,7 @@ function createWorkspaceStore() {
         state.status?.files ?? [],
         reconciled,
         state.safetyCheck.confirmedWarningIds,
+        state.status,
       );
       const message = state.commitMessage.trim();
       let commitError: string | null = null;
@@ -1777,6 +1780,7 @@ function createWorkspaceStore() {
         state.status?.files ?? [],
         reconciled,
         state.safetyCheck.confirmedWarningIds,
+        state.status,
       );
       const nextSafetyCheck = {
         ...safetyCheck,
@@ -2089,7 +2093,7 @@ function createWorkspaceStore() {
       const nextState = {
         ...state,
         stagedFiles,
-        safetyCheck: buildSafetyCheck(state.status?.files ?? [], stagedFiles),
+        safetyCheck: buildSafetyCheck(state.status?.files ?? [], stagedFiles, [], state.status),
         commitHistory,
         commitMessage: state.commitTemplate,
       };
@@ -2157,6 +2161,7 @@ function createWorkspaceStore() {
           status.files,
           stagedFiles,
           state.safetyCheck.confirmedWarningIds,
+          status,
         );
         const nextState = {
           ...state,
@@ -3149,6 +3154,7 @@ function buildSafetyCheck(
   files: ChangedFile[],
   stagedFiles: Array<{ path: string; status: string; contentDigest: string }>,
   confirmedWarningIds: string[] = [],
+  status: WorkingCopyStatus | null = null,
 ): SafetyCheckSummary {
   const stagedPaths = new Set(stagedFiles.map((file) => file.path));
   const blockers: SafetyCheckItem[] = [];
@@ -3209,13 +3215,25 @@ function buildSafetyCheck(
     });
   }
 
-  infos.push({
-    id: "info:mixed-revision:not-implemented",
-    severity: "info",
-    title: "Mixed revision 待扩展检测",
-    detail: "当前状态扫描尚未返回 revision 维度，后续会在工作副本状态模型扩展后接入真实检测。",
-    filePath: null,
-  });
+  if (status?.mixed_revision) {
+    warnings.push({
+      id: `warning:mixed-revision:${status.revision_range ?? "unknown"}`,
+      severity: "warning",
+      title: "Mixed revision 工作副本",
+      detail: `当前工作副本 revision 范围为 ${
+        status.revision_range ?? "未知"
+      }，部分提交或合并前请确认是否需要先 update。`,
+      filePath: null,
+    });
+  } else if (status?.revision_range) {
+    infos.push({
+      id: `info:single-revision:${status.revision_range}`,
+      severity: "info",
+      title: "工作副本 revision 一致",
+      detail: `当前工作副本 revision 为 ${status.revision_range}。`,
+      filePath: null,
+    });
+  }
 
   const warningIds = new Set(warnings.map((item) => item.id));
   const stagedDigestIds = new Set(
