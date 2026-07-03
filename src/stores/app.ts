@@ -2223,25 +2223,32 @@ function createWorkspaceStore() {
 
   function importTaskWorkspaceDraft(draft: Partial<WorkspaceDraft>) {
     update((state) => {
+      const draftState = normalizeWorkspaceDraftInput(draft, state.commitTemplate);
+      const currentFiles = state.status?.files ?? [];
+      const stagedFiles =
+        currentFiles.length > 0
+          ? reconcileStagedFiles(draftState.stagedFiles, currentFiles)
+          : draftState.stagedFiles;
+      const selectedHunks =
+        currentFiles.length > 0
+          ? reconcileSelectedHunks(draftState.selectedHunks, currentFiles)
+          : draftState.selectedHunks;
+      const reviewedFiles =
+        currentFiles.length > 0
+          ? reconcileReviewedFiles(draftState.reviewedFiles, currentFiles)
+          : draftState.reviewedFiles;
       const nextState = {
         ...state,
-        stagedFiles: Array.isArray(draft.stagedFiles)
-          ? draft.stagedFiles.filter(isStagedFileDraft)
-          : [],
-        selectedHunks: Array.isArray(draft.selectedHunks)
-          ? draft.selectedHunks.filter(isSelectedHunkDraft)
-          : [],
-        reviewedFiles: Array.isArray(draft.reviewedFiles)
-          ? draft.reviewedFiles.filter(isReviewedFileState)
-          : [],
-        safetyCheck: {
-          ...emptySafetyCheck(),
-          confirmedWarningIds: Array.isArray(draft.confirmedWarningIds)
-            ? draft.confirmedWarningIds.filter((item): item is string => typeof item === "string")
-            : [],
-        },
-        commitMessage:
-          typeof draft.commitMessage === "string" ? draft.commitMessage : state.commitTemplate,
+        stagedFiles,
+        selectedHunks,
+        reviewedFiles,
+        safetyCheck: buildSafetyCheck(
+          currentFiles,
+          stagedFiles,
+          draftState.confirmedWarningIds,
+          state.status,
+        ),
+        commitMessage: draftState.commitMessage,
         selectedPatch: null,
         commitError: null,
       };
@@ -3942,6 +3949,30 @@ function emptyWorkspaceDraft(): WorkspaceDraft {
     confirmedWarningIds: [],
     commitMessage: "",
     updatedAt: 0,
+  };
+}
+
+function normalizeWorkspaceDraftInput(
+  draft: Partial<WorkspaceDraft>,
+  fallbackCommitMessage: string,
+): WorkspaceDraft {
+  return {
+    version: 1,
+    stagedFiles: Array.isArray(draft.stagedFiles)
+      ? draft.stagedFiles.filter(isStagedFileDraft)
+      : [],
+    selectedHunks: Array.isArray(draft.selectedHunks)
+      ? draft.selectedHunks.filter(isSelectedHunkDraft)
+      : [],
+    reviewedFiles: Array.isArray(draft.reviewedFiles)
+      ? draft.reviewedFiles.filter(isReviewedFileState)
+      : [],
+    confirmedWarningIds: Array.isArray(draft.confirmedWarningIds)
+      ? draft.confirmedWarningIds.filter((item): item is string => typeof item === "string")
+      : [],
+    commitMessage:
+      typeof draft.commitMessage === "string" ? draft.commitMessage : fallbackCommitMessage,
+    updatedAt: typeof draft.updatedAt === "number" ? draft.updatedAt : 0,
   };
 }
 
