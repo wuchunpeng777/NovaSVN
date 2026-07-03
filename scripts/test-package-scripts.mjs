@@ -37,6 +37,15 @@ const systemIntegrationActions = [
   "cleanup",
   "branch-workspace",
 ];
+const startupActionViewChecks = [
+  { action: "commit", view: "staging" },
+  { action: "update", view: "changes", operation: "update" },
+  { action: "cleanup", view: "changes", operation: "cleanup" },
+  { action: "diff", view: "changes" },
+  { action: "log", view: "history", extra: "setSvnLogFileOnly(true)" },
+  { action: "revert", view: "changes" },
+  { action: "branch-workspace", view: "branches" },
+];
 let failed = false;
 
 for (const scriptName of releaseScripts) {
@@ -141,6 +150,30 @@ for (const action of systemIntegrationActions.filter((value) => value !== "open"
   }
 }
 
+for (const check of startupActionViewChecks) {
+  const caseBlock = extractSwitchCase(appSvelte, check.action);
+  if (!caseBlock) {
+    console.error(`启动意图分发缺少 action：${check.action}`);
+    failed = true;
+    continue;
+  }
+
+  if (!caseBlock.includes(`setCurrentView("${check.view}")`)) {
+    console.error(`启动意图 action ${check.action} 必须进入 ${check.view} 视图`);
+    failed = true;
+  }
+
+  if (check.operation && !caseBlock.includes(`runSvnOperation("${check.operation}")`)) {
+    console.error(`启动意图 action ${check.action} 必须触发 ${check.operation} 操作`);
+    failed = true;
+  }
+
+  if (check.extra && !caseBlock.includes(check.extra)) {
+    console.error(`启动意图 action ${check.action} 缺少必要逻辑：${check.extra}`);
+    failed = true;
+  }
+}
+
 for (const action of systemIntegrationActions) {
   if (!systemIntegrationRs.includes(`"${action}"`)) {
     console.error(`后端启动意图白名单缺少 action：${action}`);
@@ -158,3 +191,16 @@ if (failed) {
 }
 
 console.log("发布脚本、性能基准入口、系统入口脚本和更新日志检查通过");
+
+function extractSwitchCase(content, action) {
+  const start = content.indexOf(`case "${action}":`);
+  if (start < 0) {
+    return "";
+  }
+
+  const rest = content.slice(start);
+  const nextCase = rest.slice(`case "${action}":`.length).search(/\n\s*(case\s+"|default:)/);
+  return nextCase >= 0
+    ? rest.slice(0, `case "${action}":`.length + nextCase)
+    : rest;
+}
