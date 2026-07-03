@@ -2,7 +2,7 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::NovaError;
+use crate::{error::NovaError, executable::normalize_executable_setting};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SvnDetection {
@@ -21,7 +21,12 @@ pub struct SvnClient;
 
 impl SvnClient {
     pub fn detect(request: DetectSvnRequest) -> Result<SvnDetection, NovaError> {
-        let executable = normalize_executable(request.executable);
+        let executable = normalize_executable_setting(
+            request.executable.as_deref(),
+            "svn",
+            "SVN_EXECUTABLE_INVALID",
+            "SVN 可执行文件路径无效",
+        )?;
         let version = detect_version(&executable)?;
         let resolved_path = resolve_executable_path(&executable);
 
@@ -32,13 +37,6 @@ impl SvnClient {
             resolved_path,
         })
     }
-}
-
-fn normalize_executable(executable: Option<String>) -> String {
-    executable
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "svn".to_string())
 }
 
 fn detect_version(executable: &str) -> Result<String, NovaError> {

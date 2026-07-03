@@ -2,6 +2,7 @@ mod branch_pool;
 mod diagnostics;
 mod diff;
 mod error;
+mod executable;
 mod external_tool;
 mod shadow;
 mod staging;
