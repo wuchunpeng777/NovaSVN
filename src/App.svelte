@@ -979,6 +979,10 @@
           workspaceStore.refreshStatus(
             $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
           )}
+        onLoadMoreStatus={() =>
+          workspaceStore.loadMoreStatus(
+            $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+          )}
         onUpdateWorkspace={() => runSvnOperation("update")}
         onCleanupWorkspace={() => runSvnOperation("cleanup")}
         onWorkspacePathInput={workspaceStore.setPathInput}

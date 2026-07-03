@@ -176,6 +176,7 @@
   export let onRefreshStatus: () => void;
   export let onUpdateWorkspace: () => void;
   export let onCleanupWorkspace: () => void;
+  export let onLoadMoreStatus: () => void;
   export let onWorkspacePathInput: (value: string) => void;
   export let onSearchTextInput: (value: string) => void;
   export let onToggleGroupByStatus: () => void;
@@ -879,6 +880,15 @@
         >
           {statusLoading ? "刷新中" : "刷新状态"}
         </button>
+        {#if workingCopyStatus && workingCopyStatus.files.length < workingCopyStatus.total}
+          <button
+            type="button"
+            on:click={onLoadMoreStatus}
+            disabled={!workspace || statusLoading}
+          >
+            更多改动
+          </button>
+        {/if}
         <button type="button" on:click={onUpdateWorkspace} disabled={!workspace}>
           更新
         </button>

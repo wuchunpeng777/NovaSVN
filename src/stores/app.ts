@@ -2305,36 +2305,7 @@ function createWorkspaceStore() {
         offset: 0,
         limit: 500,
       });
-      const selectedFilePath = resolveSelectedFilePath(status.files, previousSelectedFilePath);
-      update((state) => {
-        const stagedFiles = reconcileStagedFiles(state.stagedFiles, status.files);
-        const reviewedFiles = reconcileReviewedFiles(state.reviewedFiles, status.files);
-        const selectedHunks = reconcileSelectedHunks(state.selectedHunks, status.files);
-        const safetyCheck = buildSafetyCheck(
-          status.files,
-          stagedFiles,
-          state.safetyCheck.confirmedWarningIds,
-          status,
-        );
-        const nextState = {
-          ...state,
-          status,
-          selectedFilePath,
-          selectedFileDiff:
-            selectedFilePath === state.selectedFilePath ? state.selectedFileDiff : null,
-          selectedFileContentDiff:
-            selectedFilePath === state.selectedFilePath ? state.selectedFileContentDiff : null,
-          stagedFiles,
-          safetyCheck,
-          selectedHunks,
-          selectedPatch: null,
-          reviewedFiles,
-          statusLoading: false,
-          statusError: null,
-        };
-        saveWorkspaceDraftFromState(nextState);
-        return nextState;
-      });
+      const selectedFilePath = applyStatusResult(status, previousSelectedFilePath);
       if (selectedFilePath) {
         await Promise.all([
           refreshFileDiff(svnExecutable, root, selectedFilePath),
@@ -2349,6 +2320,86 @@ function createWorkspaceStore() {
         statusError: error as CommandError,
       }));
     }
+  }
+
+  async function loadMoreStatus(svnExecutable?: string | null) {
+    const state = get({ subscribe });
+    const root = state.current?.working_copy_root;
+    const currentStatus = state.status;
+    if (!root || !currentStatus || currentStatus.files.length >= currentStatus.total) {
+      return;
+    }
+
+    update((current) => ({
+      ...current,
+      statusLoading: true,
+      statusError: null,
+    }));
+
+    try {
+      const nextPage = await scanWorkspaceStatus({
+        working_copy_root: root,
+        svn_executable: svnExecutable || undefined,
+        offset: currentStatus.files.length,
+        limit: 500,
+      });
+      const existingPaths = new Set(currentStatus.files.map((file) => file.path));
+      const mergedStatus = {
+        ...nextPage,
+        offset: 0,
+        returned:
+          currentStatus.files.length +
+          nextPage.files.filter((file) => !existingPaths.has(file.path)).length,
+        files: [
+          ...currentStatus.files,
+          ...nextPage.files.filter((file) => !existingPaths.has(file.path)),
+        ],
+      };
+      applyStatusResult(mergedStatus, state.selectedFilePath);
+    } catch (error) {
+      update((current) => ({
+        ...current,
+        statusLoading: false,
+        statusError: error as CommandError,
+      }));
+    }
+  }
+
+  function applyStatusResult(
+    status: WorkingCopyStatus,
+    previousSelectedFilePath: string | null,
+  ) {
+    const selectedFilePath = resolveSelectedFilePath(status.files, previousSelectedFilePath);
+    update((state) => {
+      const stagedFiles = reconcileStagedFiles(state.stagedFiles, status.files);
+      const reviewedFiles = reconcileReviewedFiles(state.reviewedFiles, status.files);
+      const selectedHunks = reconcileSelectedHunks(state.selectedHunks, status.files);
+      const safetyCheck = buildSafetyCheck(
+        status.files,
+        stagedFiles,
+        state.safetyCheck.confirmedWarningIds,
+        status,
+      );
+      const nextState = {
+        ...state,
+        status,
+        selectedFilePath,
+        selectedFileDiff:
+          selectedFilePath === state.selectedFilePath ? state.selectedFileDiff : null,
+        selectedFileContentDiff:
+          selectedFilePath === state.selectedFilePath ? state.selectedFileContentDiff : null,
+        stagedFiles,
+        safetyCheck,
+        selectedHunks,
+        selectedPatch: null,
+        reviewedFiles,
+        statusLoading: false,
+        statusError: null,
+      };
+      saveWorkspaceDraftFromState(nextState);
+      return nextState;
+    });
+    return selectedFilePath;
   }
 
   function clearWorkspaceDraft() {
@@ -2999,6 +3050,7 @@ function createWorkspaceStore() {
     clearCommittedFiles,
     clearWorkspaceDraft,
     refreshStatus,
+    loadMoreStatus,
     refreshFileDiff,
     refreshFileContentDiff,
     refreshParsedDiff,
