@@ -488,21 +488,7 @@ pub fn scan_workspace_status(
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "svn".to_string());
 
-    let output = Command::new(&executable)
-        .args(["status", "--xml"])
-        .arg(&path)
-        .output()
-        .map_err(|error| {
-            NovaError::command(
-                "SVN_STATUS_FAILED",
-                "无法扫描工作副本状态",
-                Some(format!(
-                    "执行 `{executable} status --xml {}` 失败：{error}",
-                    path.display()
-                )),
-                true,
-            )
-        })?;
+    let output = run_status_with_updates(&executable, &path)?;
 
     if !output.status.success() {
         return Err(NovaError::command(
@@ -522,6 +508,47 @@ pub fn scan_workspace_status(
         request.limit.unwrap_or(500),
         revision_summary,
     )
+}
+
+fn run_status_with_updates(
+    executable: &str,
+    path: &Path,
+) -> Result<std::process::Output, NovaError> {
+    let output = Command::new(executable)
+        .args(["status", "--xml", "--show-updates"])
+        .arg(path)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_STATUS_FAILED",
+                "无法扫描工作副本状态",
+                Some(format!(
+                    "执行 `{executable} status --xml --show-updates {}` 失败：{error}",
+                    path.display()
+                )),
+                true,
+            )
+        })?;
+
+    if output.status.success() {
+        return Ok(output);
+    }
+
+    Command::new(executable)
+        .args(["status", "--xml"])
+        .arg(path)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_STATUS_FAILED",
+                "无法扫描工作副本状态",
+                Some(format!(
+                    "执行 `{executable} status --xml {}` 失败：{error}",
+                    path.display()
+                )),
+                true,
+            )
+        })
 }
 
 fn normalize_relative_file_path(path: &str) -> Result<String, NovaError> {
@@ -771,9 +798,6 @@ fn parse_svn_status_xml(
 
         let item = wc_status.attribute("item").unwrap_or("normal").to_string();
         let props = wc_status.attribute("props").map(ToString::to_string);
-        if item == "normal" && props.as_deref().unwrap_or("none") == "none" {
-            continue;
-        }
 
         let property_changed = props
             .as_deref()
@@ -781,6 +805,15 @@ fn parse_svn_status_xml(
             .unwrap_or(false);
         let (lock_state, lock_owner, lock_comment) = parse_lock_info(entry, wc_status);
         let conflict_kind = parse_conflict_kind(entry, wc_status, &item, props.as_deref());
+        if item == "normal"
+            && props.as_deref().unwrap_or("none") == "none"
+            && lock_state == "none"
+            && lock_owner.is_none()
+            && lock_comment.is_none()
+            && conflict_kind.is_none()
+        {
+            continue;
+        }
 
         let display_path = display_status_path(raw_path, working_copy_root);
         let target_path = status_target_path(raw_path, working_copy_root);
@@ -1435,6 +1468,12 @@ mod tests {
     <entry path="C:\wc\Assets\Blocked.asset">
       <wc-status item="obstructed" props="none" />
     </entry>
+    <entry path="C:\wc\Assets\LockedOnly.asset">
+      <wc-status item="normal" props="none" />
+      <repos-status item="locked">
+        <lock><owner>bob</owner><comment>remote lock</comment></lock>
+      </repos-status>
+    </entry>
   </target>
 </status>
 "#;
@@ -1448,7 +1487,7 @@ mod tests {
         )
         .expect("status parses");
 
-        assert_eq!(status.total, 3);
+        assert_eq!(status.total, 4);
         assert_eq!(status.revision_range.as_deref(), Some("41:42M"));
         assert!(status.mixed_revision);
         assert_eq!(status.modified, 1);
@@ -1458,6 +1497,9 @@ mod tests {
         assert_eq!(status.files[0].lock_owner.as_deref(), Some("alice"));
         assert_eq!(status.files[1].conflict_kind.as_deref(), Some("tree:update"));
         assert!(status.files[2].abnormal);
+        assert_eq!(status.files[3].status, "normal");
+        assert_eq!(status.files[3].lock_state, "locked");
+        assert_eq!(status.files[3].lock_owner.as_deref(), Some("bob"));
     }
 
     #[test]
