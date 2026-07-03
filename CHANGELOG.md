@@ -12,8 +12,10 @@
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。
 - 支持 Unity 项目识别、`.meta` 配对检查、Unity 文件分组、大资源提醒和生成目录提醒。
-- 支持设置持久化、SVN 路径、Diff 偏好、提交模板、大文件阈值、Unity 规则和外部 diff/merge 工具路径。
-- 增加 Rust 自动化测试、性能基准脚本、Windows NSIS 安装包配置、macOS DMG 安装包配置和版本同步脚本。
+- 支持 `svn:externals` 配置展示和 externals 状态提醒。
+- 支持设置持久化、SVN 路径、工作副本池默认路径、Diff 偏好、提交模板、大文件阈值、Unity 规则、Unity 分组规则和外部 diff/merge 工具路径。
+- 增加 Rust 自动化测试、SVN 流程测试、部分提交流程测试、性能基准脚本、Windows NSIS 安装包配置、macOS DMG 安装包配置和版本同步脚本。
+- 性能基准记录状态扫描、diff、虚拟列表准备和提交准备耗时。
 
 ### 发布
 
