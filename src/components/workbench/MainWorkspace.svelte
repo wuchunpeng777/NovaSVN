@@ -318,6 +318,18 @@
     return statusLabels[status] ?? status;
   }
 
+  function formatBytes(bytes: number) {
+    if (bytes >= 1024 * 1024) {
+      return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+    }
+
+    if (bytes >= 1024) {
+      return `${Math.round(bytes / 1024)}KB`;
+    }
+
+    return `${bytes}B`;
+  }
+
   function statusMeta(file: ChangedFile) {
     return file.property_changed
       ? `${file.path} · 属性 ${file.property_status}`
@@ -1063,7 +1075,7 @@
           <button
             type="button"
             on:click={onExportRevisionDiffPatch}
-            disabled={!revisionDiffResult?.diff_text}
+            disabled={!revisionDiffResult?.diff_text || revisionDiffResult?.truncated}
           >
             导出 patch
           </button>
@@ -1162,7 +1174,17 @@
         <span>文件 {revisionDiffResult?.file_count ?? 0}</span>
         <span>行 {revisionDiffResult?.line_count ?? 0}</span>
         <span>{revisionDiffResult?.mode ?? revisionDiffForm.mode}</span>
+        {#if revisionDiffResult?.truncated}
+          <span>预览截断 {formatBytes(revisionDiffResult.max_bytes)}</span>
+        {/if}
       </div>
+
+      {#if revisionDiffResult?.truncated}
+        <p class="inline-warning">
+          Diff 结果超过预览上限，当前只显示前 {formatBytes(revisionDiffResult.max_bytes)}，导出 patch
+          已禁用。
+        </p>
+      {/if}
 
       <pre class="revision-diff-preview">{revisionDiffResult?.diff_text || "暂无 diff 结果"}</pre>
     </section>

@@ -2974,7 +2974,7 @@ function createWorkspaceStore() {
 
   function exportRevisionDiffPatch() {
     const result = get({ subscribe }).revisionDiffResult;
-    if (!result || typeof window === "undefined") {
+    if (!result || result.truncated || typeof window === "undefined") {
       return;
     }
 

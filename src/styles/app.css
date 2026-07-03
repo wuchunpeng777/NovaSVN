@@ -1735,6 +1735,16 @@ button {
   font-size: 13px;
 }
 
+.inline-warning {
+  margin: 0;
+  border: 1px solid #d5c38b;
+  border-radius: 8px;
+  background: #fffaf0;
+  color: #735c16;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
 .status-group {
   display: grid;
   gap: 7px;

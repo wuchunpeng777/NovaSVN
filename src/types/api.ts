@@ -264,6 +264,8 @@ export interface RevisionDiffResult {
   diff_text: string;
   file_count: number;
   line_count: number;
+  truncated: boolean;
+  max_bytes: number;
 }
 
 export interface MergeResult {

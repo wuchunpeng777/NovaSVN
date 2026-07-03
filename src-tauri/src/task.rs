@@ -20,6 +20,8 @@ use crate::{
     shadow::{self, ShadowWorkspaceRequest},
 };
 
+const REVISION_DIFF_PREVIEW_MAX_BYTES: usize = 2 * 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
@@ -233,6 +235,8 @@ pub struct RevisionDiffResult {
     pub diff_text: String,
     pub file_count: usize,
     pub line_count: usize,
+    pub truncated: bool,
+    pub max_bytes: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1782,17 +1786,31 @@ fn run_revision_diff_task(
 
     match command.output() {
         Ok(output) if output.status.success() => {
-            append_command_output(state, task_id, &output);
+            append_stream_lines(state, task_id, &String::from_utf8_lossy(&output.stderr));
             let diff_text = String::from_utf8_lossy(&output.stdout).to_string();
+            let file_count = count_diff_files(&diff_text);
+            let line_count = diff_text.lines().count();
+            let truncated = diff_text.len() > REVISION_DIFF_PREVIEW_MAX_BYTES;
+            let preview_text = truncate_utf8(&diff_text, REVISION_DIFF_PREVIEW_MAX_BYTES);
             let result = RevisionDiffResult {
                 mode: revision_diff_mode_label(&payload.mode).to_string(),
                 target,
-                file_count: count_diff_files(&diff_text),
-                line_count: diff_text.lines().count(),
-                diff_text,
+                diff_text: preview_text,
+                file_count,
+                line_count,
+                truncated,
+                max_bytes: REVISION_DIFF_PREVIEW_MAX_BYTES,
             };
-            let file_count = result.file_count;
-            let line_count = result.line_count;
+            if truncated {
+                append_task_log(
+                    state,
+                    task_id,
+                    &format!(
+                        "Diff 输出超过 {} 字节，界面仅保留预览片段",
+                        REVISION_DIFF_PREVIEW_MAX_BYTES
+                    ),
+                );
+            }
             set_task_result(
                 state,
                 task_id,
@@ -1806,7 +1824,10 @@ fn run_revision_diff_task(
                 state,
                 task_id,
                 TaskStatus::Success,
-                &format!("Revision diff 完成，{file_count} 个文件，{line_count} 行"),
+                &format!(
+                    "Revision diff 完成，{file_count} 个文件，{line_count} 行{}",
+                    if truncated { "，结果已截断预览" } else { "" }
+                ),
                 None,
             );
         }
@@ -2685,6 +2706,19 @@ fn count_diff_files(diff_text: &str) -> usize {
         .count()
 }
 
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    value[..end].to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2948,6 +2982,15 @@ mod tests {
         let diff = "Index: a.txt\n--- a.txt\n+++ a.txt\ndiff --git b/c b/c\n";
 
         assert_eq!(count_diff_files(diff), 2);
+    }
+
+    #[test]
+    fn truncates_revision_diff_preview_on_utf8_boundary() {
+        let text = "abc中文def";
+        let truncated = truncate_utf8(text, 5);
+
+        assert_eq!(truncated, "abc");
+        assert!(truncated.is_char_boundary(truncated.len()));
     }
 
     #[test]
