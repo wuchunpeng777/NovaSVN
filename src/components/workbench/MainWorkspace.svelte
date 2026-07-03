@@ -1182,7 +1182,14 @@
             <p>{entry.message || "无提交信息"}</p>
             <div class="svn-log-paths">
               {#each entry.changed_paths as path (`${entry.revision}:${path.path}:${path.action}`)}
-                <span>{path.action || "-"} {path.path}</span>
+                <span>
+                  {path.action || "-"} {path.path}
+                  {#if path.copy_from_path}
+                    <small>
+                      <- {path.copy_from_path}{path.copy_from_revision ? `@r${path.copy_from_revision}` : ""}
+                    </small>
+                  {/if}
+                </span>
               {/each}
             </div>
           </article>
