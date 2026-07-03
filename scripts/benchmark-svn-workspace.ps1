@@ -59,6 +59,36 @@ $results += Measure-Step "svn diff first file" {
   & $SvnExe diff (Join-Path $dataDir "file-00000.txt") | Out-Null
 }
 $results += Measure-Step "svn diff working copy" { & $SvnExe diff $wcPath | Out-Null }
+$results += Measure-Step "virtual list prepare 5000 changes" {
+  $rowHeight = 76
+  $viewportHeight = 720
+  $overscanPx = 360
+  $changes = @()
+  for ($i = 0; $i -lt [Math]::Min($ChangedCount, $FileCount); $i++) {
+    $changes += [pscustomobject]@{
+      path = "Assets/Benchmark/file-{0:D5}.txt" -f $i
+      status = "modified"
+      top = $i * $rowHeight
+      height = $rowHeight
+    }
+  }
+
+  $scrollTop = [Math]::Max(0, ($changes.Count * $rowHeight) / 2)
+  $start = [Math]::Max($scrollTop - $overscanPx, 0)
+  $end = $scrollTop + $viewportHeight + $overscanPx
+  $visible = $changes | Where-Object {
+    $itemBottom = $_.top + $_.height
+    $itemBottom -ge $start -and $_.top -le $end
+  }
+
+  [pscustomobject]@{
+    changed_count = $changes.Count
+    visible_count = $visible.Count
+    row_height = $rowHeight
+    viewport_height = $viewportHeight
+    overscan_px = $overscanPx
+  } | ConvertTo-Json -Compress | Out-Null
+}
 $results += Measure-Step "commit prepare staged files" {
   $stagedFiles = @()
   for ($i = 0; $i -lt [Math]::Min($ChangedCount, $FileCount); $i++) {
