@@ -1127,6 +1127,17 @@ fn normalize_workspace_path(path: &str) -> Result<PathBuf, NovaError> {
         ));
     }
 
+    if path.is_file() {
+        return path.parent().map(Path::to_path_buf).ok_or_else(|| {
+            NovaError::command(
+                "WORKSPACE_PATH_PARENT_MISSING",
+                "无法从文件路径定位工作副本目录",
+                Some(format!("路径：{}", path.display())),
+                true,
+            )
+        });
+    }
+
     if !path.is_dir() {
         return Err(NovaError::command(
             "WORKSPACE_PATH_NOT_DIRECTORY",
@@ -1630,6 +1641,23 @@ mod tests {
                 assert_eq!(code, "WORKSPACE_PATH_INVALID");
             }
         }
+    }
+
+    #[test]
+    fn accepts_file_paths_by_using_parent_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-workspace-file-path-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let file_path = root.join("selected.txt");
+        fs::write(&file_path, "selected").unwrap();
+
+        let normalized = normalize_workspace_path(&file_path.display().to_string()).unwrap();
+
+        assert_eq!(normalized, root);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
