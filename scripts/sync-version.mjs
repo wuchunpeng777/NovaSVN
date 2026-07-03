@@ -27,6 +27,11 @@ if (!version) {
   fail("package.json 中缺少 version 字段");
 }
 
+if (shouldPrint && !requestedVersion) {
+  console.log(version);
+  process.exit(0);
+}
+
 if (shouldCheck) {
   const cargoToml = fs.readFileSync(cargoPath, "utf8");
   const cargoVersion = readPackageVersion(cargoToml);

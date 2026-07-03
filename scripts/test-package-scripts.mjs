@@ -16,6 +16,7 @@ const benchmarkScript = fs.readFileSync(
   "utf8",
 );
 const benchmarkDoc = fs.readFileSync(path.join(root, "doc", "性能基准.md"), "utf8");
+const syncVersionScript = fs.readFileSync(path.join(root, "scripts", "sync-version.mjs"), "utf8");
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, "src-tauri", "tauri.conf.json"), "utf8"));
 const playwrightConfig = fs.readFileSync(path.join(root, "playwright.config.ts"), "utf8");
 const e2eSmokeSpec = fs.readFileSync(
@@ -142,6 +143,13 @@ if (!benchmarkDoc.includes("benchmark-results.md")) {
 
 if (packageJson.scripts?.["test:e2e"] !== "playwright test") {
   console.error("test:e2e 必须执行 Playwright 测试");
+  failed = true;
+}
+
+const printOnlyGuardIndex = syncVersionScript.indexOf("if (shouldPrint && !requestedVersion)");
+const packageWriteIndex = syncVersionScript.indexOf("writeJson(packagePath, packageJson)");
+if (printOnlyGuardIndex < 0 || packageWriteIndex < 0 || printOnlyGuardIndex > packageWriteIndex) {
+  console.error("version:print 不能在未设置新版本时写回版本文件");
   failed = true;
 }
 
