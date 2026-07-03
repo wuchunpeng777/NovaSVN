@@ -10,6 +10,7 @@ $ErrorActionPreference = "Stop"
 $rootPath = Join-Path (Resolve-Path -LiteralPath ".") $Root
 $repoPath = Join-Path $rootPath "repo"
 $wcPath = Join-Path $rootPath "wc"
+$conflictWcPath = Join-Path $rootPath "wc-conflict"
 
 function Invoke-Svn {
   param([string[]]$Arguments)
@@ -80,6 +81,18 @@ try {
 
   $log = (Invoke-Svn @("log", "--xml", "--limit", "2", $wcPath)) -join "`n"
   Assert-Contains $log "<logentry" "log XML 未包含 revision"
+
+  Invoke-Svn @("revert", $missingPath) | Out-Null
+  Invoke-Svn @("checkout", "file:///$($repoPath.Replace('\', '/'))", $conflictWcPath) | Out-Null
+  $primaryConflictFile = Join-Path $srcDir "main.txt"
+  $secondaryConflictFile = Join-Path $conflictWcPath "src\main.txt"
+  Set-Content -LiteralPath $primaryConflictFile -Value @("line 1", "remote conflict") -Encoding UTF8
+  Invoke-Svn @("commit", $primaryConflictFile, "-m", "制造远端冲突变更") | Out-Null
+  Set-Content -LiteralPath $secondaryConflictFile -Value @("line 1", "local conflict") -Encoding UTF8
+  & $SvnExe update $conflictWcPath | Out-Null
+  $conflictStatusXml = (Invoke-Svn @("status", "--xml", $conflictWcPath)) -join "`n"
+  Assert-Contains $conflictStatusXml 'item="conflicted"' "conflict 状态未出现"
+  Invoke-Svn @("revert", "-R", $conflictWcPath) | Out-Null
 
   Write-Host "NovaSVN SVN workflow test complete: $wcPath"
 } finally {
