@@ -32,6 +32,7 @@ pub struct SaveBranchPoolEntryRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RemoveBranchPoolEntryRequest {
     pub id: String,
+    pub delete_local_copy: Option<bool>,
 }
 
 pub fn read_branch_pool(app: &AppHandle) -> Result<BranchPool, NovaError> {
@@ -107,9 +108,66 @@ pub fn remove_branch_pool_entry(
     request: RemoveBranchPoolEntryRequest,
 ) -> Result<BranchPool, NovaError> {
     let mut pool = read_branch_pool(app)?;
-    pool.entries.retain(|entry| entry.id != request.id);
+    let Some(index) = pool.entries.iter().position(|entry| entry.id == request.id) else {
+        return Ok(pool);
+    };
+
+    let entry = pool.entries[index].clone();
+    if request.delete_local_copy.unwrap_or(false) {
+        remove_local_working_copy(&entry)?;
+    }
+
+    pool.entries.remove(index);
     write_branch_pool(app, &pool)?;
     Ok(pool)
+}
+
+fn remove_local_working_copy(entry: &BranchPoolEntry) -> Result<(), NovaError> {
+    let path = PathBuf::from(entry.local_path.trim());
+    if path.as_os_str().is_empty() {
+        return Err(NovaError::command(
+            "BRANCH_POOL_LOCAL_PATH_EMPTY",
+            "分支工作副本路径为空，无法清理",
+            Some(format!("池项：{}", entry.branch_url)),
+            true,
+        ));
+    }
+
+    let metadata = fs::symlink_metadata(&path).map_err(|error| {
+        NovaError::command(
+            "BRANCH_POOL_LOCAL_PATH_MISSING",
+            "分支工作副本路径不存在，未移除池项",
+            Some(format!("路径：{}。错误：{error}", path.display())),
+            true,
+        )
+    })?;
+
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(NovaError::command(
+            "BRANCH_POOL_LOCAL_PATH_INVALID",
+            "分支工作副本路径不是普通目录，未移除池项",
+            Some(format!("路径：{}", path.display())),
+            true,
+        ));
+    }
+
+    if !path.join(".svn").is_dir() {
+        return Err(NovaError::command(
+            "BRANCH_POOL_LOCAL_PATH_NOT_SVN",
+            "分支工作副本路径不是 SVN 工作副本根目录，未移除池项",
+            Some(format!("路径：{}", path.display())),
+            true,
+        ));
+    }
+
+    fs::remove_dir_all(&path).map_err(|error| {
+        NovaError::command(
+            "BRANCH_POOL_LOCAL_DELETE_FAILED",
+            "删除分支工作副本目录失败，未移除池项",
+            Some(format!("路径：{}。错误：{error}", path.display())),
+            true,
+        )
+    })
 }
 
 fn write_branch_pool(app: &AppHandle, pool: &BranchPool) -> Result<(), NovaError> {
@@ -171,4 +229,58 @@ fn timestamp_millis() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("系统时间早于 UNIX_EPOCH")
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_branch_pool_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "novasvn-branch-pool-{name}-{}-{}",
+            std::process::id(),
+            timestamp_millis()
+        ))
+    }
+
+    fn branch_entry(path: &std::path::Path) -> BranchPoolEntry {
+        BranchPoolEntry {
+            id: "pool-test".to_string(),
+            branch_url: "https://example.com/svn/branches/feature".to_string(),
+            local_path: path.to_string_lossy().to_string(),
+            revision: "123".to_string(),
+            local_changes: 0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn removes_local_svn_working_copy_directory() {
+        let root = temp_branch_pool_dir("remove");
+        let working_copy = root.join("feature");
+        fs::create_dir_all(working_copy.join(".svn")).expect("create fake working copy");
+        fs::write(working_copy.join("README.txt"), "demo").expect("create file");
+
+        remove_local_working_copy(&branch_entry(&working_copy)).expect("remove local copy");
+
+        assert!(!working_copy.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn refuses_to_remove_non_svn_directory() {
+        let root = temp_branch_pool_dir("non-svn");
+        fs::create_dir_all(&root).expect("create normal directory");
+
+        let error = remove_local_working_copy(&branch_entry(&root)).expect_err("reject non svn");
+
+        match error {
+            NovaError::Command { code, .. } => {
+                assert_eq!(code, "BRANCH_POOL_LOCAL_PATH_NOT_SVN");
+            }
+        }
+        assert!(root.exists());
+        let _ = fs::remove_dir_all(root);
+    }
 }

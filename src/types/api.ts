@@ -198,6 +198,7 @@ export interface SaveBranchPoolEntryRequest {
 
 export interface RemoveBranchPoolEntryRequest {
   id: string;
+  delete_local_copy?: boolean;
 }
 
 export interface TaskWorkspaceEntry {

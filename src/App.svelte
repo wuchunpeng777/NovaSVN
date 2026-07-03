@@ -373,7 +373,9 @@
       return;
     }
 
-    const confirmed = window.confirm(`确定从分支池移除该工作副本吗？\n${entry.local_path}`);
+    const confirmed = window.confirm(
+      `确定清理该分支工作副本吗？\n\n将删除本地目录并从分支池移除：\n${entry.local_path}`,
+    );
     if (!confirmed) {
       return;
     }

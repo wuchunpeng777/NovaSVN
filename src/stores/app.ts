@@ -868,7 +868,10 @@ function createBranchPoolStore() {
     update((state) => ({ ...state, loading: true, error: null }));
 
     try {
-      const pool = await removeBranchPoolEntry({ id: entry.id });
+      const pool = await removeBranchPoolEntry({
+        id: entry.id,
+        delete_local_copy: true,
+      });
       update((state) => ({
         ...state,
         pool,
