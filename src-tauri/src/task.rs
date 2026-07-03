@@ -16,6 +16,7 @@ use tauri::AppHandle;
 
 use crate::{
     error::NovaError,
+    executable::normalize_executable_setting,
     shadow::{self, ShadowWorkspaceRequest},
 };
 
@@ -406,11 +407,7 @@ impl TaskQueue {
             ));
         }
 
-        let svn_executable = request
-            .svn_executable
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "svn".to_string());
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
         let task = Task {
@@ -467,11 +464,7 @@ impl TaskQueue {
             )?),
             SvnOperationKind::Update | SvnOperationKind::Cleanup => None,
         };
-        let svn_executable = request
-            .svn_executable
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "svn".to_string());
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let title = operation_title(&request.kind, file_path.as_deref());
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
@@ -622,11 +615,7 @@ impl TaskQueue {
         request: CreateRepositoryListTaskRequest,
     ) -> Result<Task, NovaError> {
         let url = normalize_repository_url(&request.url)?;
-        let svn_executable = request
-            .svn_executable
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "svn".to_string());
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
         let task = Task {
@@ -681,11 +670,7 @@ impl TaskQueue {
             "REPOSITORY_COPY_REVISION_INVALID",
             "创建分支或标签的 revision 无效",
         )?;
-        let svn_executable = request
-            .svn_executable
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "svn".to_string());
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
         let title = match request.kind {
@@ -729,11 +714,7 @@ impl TaskQueue {
             "CHECKOUT_REVISION_INVALID",
             "分支 checkout revision 无效",
         )?;
-        let svn_executable = request
-            .svn_executable
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "svn".to_string());
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
         let task = Task {
@@ -766,11 +747,7 @@ impl TaskQueue {
     ) -> Result<Task, NovaError> {
         let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
         let target_url = normalize_repository_url(&request.target_url)?;
-        let svn_executable = request
-            .svn_executable
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "svn".to_string());
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
         let task = Task {
@@ -800,12 +777,7 @@ impl TaskQueue {
         &self,
         request: CreateRevisionDiffTaskRequest,
     ) -> Result<Task, NovaError> {
-        let svn_executable = request
-            .svn_executable
-            .clone()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "svn".to_string());
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let payload = normalize_revision_diff_payload(request, svn_executable)?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
@@ -838,11 +810,7 @@ impl TaskQueue {
         let source_url = normalize_repository_url(&request.source_url)?;
         let (start_revision, end_revision) =
             normalize_merge_revision_range(request.start_revision, request.end_revision)?;
-        let svn_executable = request
-            .svn_executable
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "svn".to_string());
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
         let task = Task {
@@ -2176,6 +2144,15 @@ fn timestamp_millis() -> u64 {
         .as_millis() as u64
 }
 
+fn normalize_svn_executable(executable: Option<&str>) -> Result<String, NovaError> {
+    normalize_executable_setting(
+        executable,
+        "svn",
+        "SVN_EXECUTABLE_INVALID",
+        "SVN 可执行文件路径无效",
+    )
+}
+
 fn normalize_workspace_root(path: &str) -> Result<PathBuf, NovaError> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -2630,6 +2607,15 @@ mod tests {
             None
         );
         assert!(normalize_optional_revision_value(Some("42\n43"), "INVALID", "invalid").is_err());
+    }
+
+    #[test]
+    fn validates_svn_executable_values() {
+        assert_eq!(normalize_svn_executable(None).unwrap(), "svn");
+        assert_eq!(normalize_svn_executable(Some(" svn.exe ")).unwrap(), "svn.exe");
+        assert!(normalize_svn_executable(Some("C:\\Tools\\svn.exe")).is_ok());
+        assert!(normalize_svn_executable(Some("tools\\svn.exe")).is_err());
+        assert!(normalize_svn_executable(Some("svn\n")).is_err());
     }
 
     #[test]
