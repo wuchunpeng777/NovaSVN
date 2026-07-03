@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
+  createMergeTask: vi.fn(),
   createRevisionDiffTask: vi.fn(),
   detectSvn: vi.fn(),
   getFileContentDiff: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("../lib/api", () => ({
 import { get } from "svelte/store";
 
 import {
+  createMergeTask,
   createRevisionDiffTask,
   detectSvn,
   getFileContentDiff,
@@ -39,6 +41,7 @@ import type {
   RevisionDiffResult,
   SvnLog,
   SvnLogEntry,
+  Task,
   TaskWorkspaceEntry,
   TaskWorkspaceList,
   WorkingCopyStatus,
@@ -50,10 +53,12 @@ import {
   isSameRepositoryUrl,
   revisionDiffPatchFileName,
   svnStore,
+  taskStore,
   taskWorkspaceStore,
   workspaceStore,
 } from "./app";
 
+const createMergeTaskMock = vi.mocked(createMergeTask);
 const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
 const detectSvnMock = vi.mocked(detectSvn);
 const getFileContentDiffMock = vi.mocked(getFileContentDiff);
@@ -69,6 +74,7 @@ const saveTaskWorkspaceMock = vi.mocked(saveTaskWorkspace);
 const setSvnPropertyMock = vi.mocked(setSvnProperty);
 
 beforeEach(() => {
+  createMergeTaskMock.mockReset();
   createRevisionDiffTaskMock.mockReset();
   detectSvnMock.mockReset();
   getFileContentDiffMock.mockReset();
@@ -689,6 +695,31 @@ describe("workspaceStore svn log", () => {
   });
 });
 
+describe("taskStore merge tasks", () => {
+  it("creates merge tasks with revision range and dry-run options", async () => {
+    createMergeTaskMock.mockResolvedValue(makeTask({ task_id: "merge-1" }));
+
+    const task = await taskStore.createMerge({
+      workingCopyRoot: "C:/repo/wc",
+      sourceUrl: "https://example.com/svn/branches/feature",
+      startRevision: "10",
+      endRevision: "12",
+      dryRun: true,
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(task?.task_id).toBe("merge-1");
+    expect(createMergeTaskMock).toHaveBeenCalledWith({
+      working_copy_root: "C:/repo/wc",
+      source_url: "https://example.com/svn/branches/feature",
+      start_revision: "10",
+      end_revision: "12",
+      dry_run: true,
+      svn_executable: "C:/svn/svn.exe",
+    });
+  });
+});
+
 describe("taskWorkspaceStore drafts", () => {
   it("restores staged files, commit message, review state, and warning confirmations per task", async () => {
     const workspace = makeWorkspace();
@@ -904,6 +935,20 @@ function makeRevisionDiffResult(result: Partial<RevisionDiffResult> = {}): Revis
     patch_file_dir: null,
     patch_file_name: null,
     ...result,
+  };
+}
+
+function makeTask(task: Partial<Task> = {}): Task {
+  return {
+    task_id: "task-1",
+    title: "测试任务",
+    status: "pending",
+    error: null,
+    created_at: 1,
+    updated_at: 1,
+    logs: [],
+    result: null,
+    ...task,
   };
 }
 

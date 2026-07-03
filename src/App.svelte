@@ -918,14 +918,19 @@
     $taskStore.selectedTask.status === "success"
   ) {
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
-    workspaceStore.completeMergeTask($taskStore.selectedTask.result?.merge_result ?? null);
-    if (workingCopyRoot && !$workspaceStore.mergeForm.dryRun) {
-      void refreshStatusAndSyncBranchPool(workingCopyRoot).then((status) => {
-        if ((status?.conflicted ?? 0) > 0) {
-          setCurrentView("changes");
-          workspaceStore.focusConflictFilter();
-        }
-      });
+    const mergeResult = $taskStore.selectedTask.result?.merge_result;
+    if (mergeResult) {
+      workspaceStore.completeMergeTask(mergeResult);
+      if (workingCopyRoot && !mergeResult.dry_run) {
+        void refreshStatusAndSyncBranchPool(workingCopyRoot).then((status) => {
+          if ((status?.conflicted ?? 0) > 0) {
+            setCurrentView("changes");
+            workspaceStore.focusConflictFilter();
+          }
+        });
+      }
+    } else {
+      workspaceStore.failMergeTask("Merge 任务没有返回结果");
     }
   }
 
