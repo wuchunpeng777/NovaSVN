@@ -142,6 +142,35 @@ describe("appSettingsStore", () => {
       assets: true,
     });
   });
+
+  it("saves external tool and branch pool settings and validates invalid paths", () => {
+    appSettingsStore.setField("externalDiffTool", "code");
+    appSettingsStore.setField("externalMergeTool", "C:\\Tools\\merge.exe");
+    appSettingsStore.setField("branchPoolBasePath", "~/NovaSVN/branches");
+
+    appSettingsStore.load();
+
+    expect(get(appSettingsStore)).toMatchObject({
+      externalDiffTool: "code",
+      externalMergeTool: "C:\\Tools\\merge.exe",
+      branchPoolBasePath: "~/NovaSVN/branches",
+      validationErrors: {
+        externalDiffTool: null,
+        externalMergeTool: null,
+        branchPoolBasePath: null,
+      },
+    });
+
+    appSettingsStore.setField("externalDiffTool", "tools\\diff.exe");
+    appSettingsStore.setField("externalMergeTool", "merge\n.exe");
+    appSettingsStore.setField("branchPoolBasePath", "relative\\branches");
+
+    expect(get(appSettingsStore).validationErrors).toMatchObject({
+      externalDiffTool: "外部 Diff 工具需要是命令名、绝对路径或 ~/ 开头路径",
+      externalMergeTool: "外部 Merge 工具不能包含控制字符",
+      branchPoolBasePath: "工作副本池路径需要是绝对路径或 ~/ 开头路径",
+    });
+  });
 });
 
 describe("workspaceStore safety warnings", () => {
