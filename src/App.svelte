@@ -5,7 +5,7 @@
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
   import Toolbar from "./components/workbench/Toolbar.svelte";
   import { onDestroy, onMount } from "svelte";
-  import { callBackend } from "./lib/api";
+  import { callBackend, getStartupIntent } from "./lib/api";
   import { detailSections, navigationItems, workbenchViews } from "./lib/workbench";
   import {
     branchPoolStore,
@@ -376,6 +376,55 @@
     await taskWorkspaceStore.remove(entry);
   }
 
+  async function handleStartupIntent() {
+    const intent = await getStartupIntent();
+    const targetPath = intent.path?.trim();
+    if (targetPath) {
+      workspaceStore.setPathInput(targetPath);
+      await workspaceStore.openPath(
+        $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+      );
+    }
+
+    switch (intent.action) {
+      case "commit":
+        setCurrentView("staging");
+        break;
+      case "update":
+        setCurrentView("changes");
+        if ($workspaceStore.current) {
+          await runSvnOperation("update");
+        }
+        break;
+      case "cleanup":
+        setCurrentView("changes");
+        if ($workspaceStore.current) {
+          await runSvnOperation("cleanup");
+        }
+        break;
+      case "diff":
+        setCurrentView("changes");
+        break;
+      case "log":
+        setCurrentView("history");
+        await workspaceStore.refreshSvnLog(
+          $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable,
+        );
+        break;
+      case "revert":
+        setCurrentView("changes");
+        break;
+      case "branch-workspace":
+        setCurrentView("branches");
+        break;
+      default:
+        if (targetPath) {
+          setCurrentView("changes");
+        }
+        break;
+    }
+  }
+
   async function runSvnSwitch() {
     if (!$workspaceStore.current) {
       workspaceStore.failSvnSwitchTask("请先打开 SVN 工作副本");
@@ -716,7 +765,7 @@
   onMount(() => {
     taskStore.startPolling();
     void svnStore.detect();
-    void workspaceStore.loadRecent();
+    void workspaceStore.loadRecent().then(() => handleStartupIntent());
     void branchPoolStore.load();
     void taskWorkspaceStore.load();
   });

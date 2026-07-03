@@ -4,6 +4,7 @@ mod error;
 mod shadow;
 mod staging;
 mod svn;
+mod system_integration;
 mod task;
 mod task_workspace;
 mod workspace;
@@ -13,6 +14,7 @@ use diff::{GenerateSelectedPatchRequest, ParsedDiff, SelectedPatch};
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
 use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
+use system_integration::StartupIntent;
 use task::{
     CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest, CreateMergeTaskRequest,
     CreateMockTaskRequest,
@@ -46,6 +48,13 @@ fn fail_for_preview() -> CommandResult<()> {
         "这是用于验证 UI 错误展示的开发错误",
         Some("后续真实 SVN 错误会复用同一结构。".to_string()),
         true,
+    ))
+}
+
+#[tauri::command]
+fn get_startup_intent() -> CommandResult<StartupIntent> {
+    Ok(CommandResponse::success(
+        system_integration::startup_intent(),
     ))
 }
 
@@ -337,6 +346,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ping,
             fail_for_preview,
+            get_startup_intent,
             create_mock_task,
             create_commit_task,
             create_svn_operation_task,

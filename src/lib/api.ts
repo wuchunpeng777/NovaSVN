@@ -35,6 +35,7 @@ import type {
   SvnDetection,
   SvnLog,
   SvnProperties,
+  StartupIntent,
   SelectedPatch,
   ShadowWorkspaceRequest,
   ShadowWorkspaceStatus,
@@ -79,6 +80,10 @@ export async function callBackend<T>(
 
 export function createMockTask(request: CreateMockTaskRequest): Promise<Task> {
   return callBackend<Task>("create_mock_task", { request });
+}
+
+export function getStartupIntent(): Promise<StartupIntent> {
+  return callBackend<StartupIntent>("get_startup_intent");
 }
 
 export function createCommitTask(request: CreateCommitTaskRequest): Promise<Task> {

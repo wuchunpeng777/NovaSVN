@@ -16,6 +16,11 @@ export interface HealthPayload {
   backend: string;
 }
 
+export interface StartupIntent {
+  action: string | null;
+  path: string | null;
+}
+
 export type TaskStatus =
   | "pending"
   | "running"
