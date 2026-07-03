@@ -87,19 +87,9 @@ pub fn open_file_location(
     let root = normalize_root(&request.working_copy_root)?;
     let target = normalize_file_path(&root, &request.file_path)?;
 
-    let mut command = if cfg!(target_os = "windows") {
-        let mut command = Command::new("explorer");
-        command.arg("/select,").arg(&target);
-        command
-    } else if cfg!(target_os = "macos") {
-        let mut command = Command::new("open");
-        command.arg("-R").arg(&target);
-        command
-    } else {
-        let mut command = Command::new("xdg-open");
-        command.arg(target.parent().unwrap_or(&root));
-        command
-    };
+    let (program, args) = open_file_location_command(&root, &target);
+    let mut command = Command::new(program);
+    command.args(args);
 
     command.spawn().map_err(|error| {
         NovaError::command(
@@ -113,6 +103,24 @@ pub fn open_file_location(
     Ok(OpenFileLocation {
         target_path: target.display().to_string(),
     })
+}
+
+fn open_file_location_command(root: &Path, target: &Path) -> (&'static str, Vec<String>) {
+    if cfg!(target_os = "windows") {
+        return ("explorer", vec![format!("/select,{}", target.display())]);
+    }
+
+    if cfg!(target_os = "macos") {
+        return (
+            "open",
+            vec!["-R".to_string(), target.display().to_string()],
+        );
+    }
+
+    (
+        "xdg-open",
+        vec![target.parent().unwrap_or(root).display().to_string()],
+    )
 }
 
 fn expand_home_path(value: &str) -> PathBuf {
@@ -191,5 +199,31 @@ mod tests {
     fn rejects_absolute_or_parent_file_targets() {
         assert!(normalize_file_path(Path::new("C:\\wc"), "..\\secret.txt").is_err());
         assert!(normalize_file_path(Path::new("C:\\wc"), "C:\\other\\a.txt").is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn uses_single_explorer_select_argument() {
+        let target = Path::new("C:\\wc\\src\\main.rs");
+        let (program, args) = open_file_location_command(Path::new("C:\\wc"), target);
+
+        assert_eq!(program, "explorer");
+        assert_eq!(args, vec![format!("/select,{}", target.display())]);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn opens_file_location_parent_on_linux_like_platforms() {
+        let root = Path::new("/tmp/wc");
+        let target = root.join("src/main.rs");
+        let (program, args) = open_file_location_command(root, &target);
+
+        if cfg!(target_os = "macos") {
+            assert_eq!(program, "open");
+            assert_eq!(args, vec!["-R".to_string(), target.display().to_string()]);
+        } else {
+            assert_eq!(program, "xdg-open");
+            assert_eq!(args, vec![root.join("src").display().to_string()]);
+        }
     }
 }
