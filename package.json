@@ -21,7 +21,7 @@
     "version:print": "node scripts/sync-version.mjs --print",
     "version:check": "node scripts/sync-version.mjs --check",
     "release:windows": "npm run version:check && tauri build --bundles nsis",
-    "release:macos": "npm run version:check && tauri build --bundles dmg"
+    "release:macos": "npm run version:check && bash scripts/build-macos-finder-sync.sh && tauri build --bundles dmg && bash scripts/inject-macos-finder-sync-into-dmg.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

@@ -11,6 +11,18 @@ const macosFinderScript = fs.readFileSync(
   path.join(root, "scripts", "macos-finder-quick-actions.sh"),
   "utf8",
 );
+const macosFinderSyncBuildScript = fs.readFileSync(
+  path.join(root, "scripts", "build-macos-finder-sync.sh"),
+  "utf8",
+);
+const macosFinderSyncDmgInjectScript = fs.readFileSync(
+  path.join(root, "scripts", "inject-macos-finder-sync-into-dmg.sh"),
+  "utf8",
+);
+const macosFinderSyncSource = fs.readFileSync(
+  path.join(root, "src-tauri", "macos-finder-sync", "NovaSVNFinderSync.swift"),
+  "utf8",
+);
 const benchmarkScript = fs.readFileSync(
   path.join(root, "scripts", "benchmark-svn-workspace.ps1"),
   "utf8",
@@ -112,6 +124,28 @@ if (!packageJson.scripts?.["release:macos"]?.includes("--bundles dmg")) {
   failed = true;
 }
 
+if (
+  !packageJson.scripts?.["release:macos"]?.includes("build-macos-finder-sync.sh") ||
+  !packageJson.scripts?.["release:macos"]?.includes("inject-macos-finder-sync-into-dmg.sh")
+) {
+  console.error("release:macos 必须构建 Finder Sync 扩展并注入 DMG");
+  failed = true;
+}
+
+if (
+  !macosFinderSyncDmgInjectScript.includes("Contents/PlugIns") ||
+  !macosFinderSyncDmgInjectScript.includes("codesign --force --deep --sign -") ||
+  !macosFinderSyncDmgInjectScript.includes("hdiutil convert")
+) {
+  console.error("Finder Sync DMG 注入脚本必须嵌入扩展并重新签名 App");
+  failed = true;
+}
+
+if (!macosFinderSyncBuildScript.includes("-framework FinderSync")) {
+  console.error("Finder Sync 构建脚本必须链接 FinderSync framework");
+  failed = true;
+}
+
 for (const scriptName of benchmarkScripts) {
   const command = packageJson.scripts?.[scriptName];
   if (typeof command !== "string") {
@@ -190,6 +224,11 @@ for (const action of systemIntegrationActions) {
     console.error(`macOS Finder Quick Action 缺少 action：${action}`);
     failed = true;
   }
+
+  if (!macosFinderSyncSource.includes(`"${action}"`)) {
+    console.error(`macOS Finder Sync 扩展缺少 action：${action}`);
+    failed = true;
+  }
 }
 
 if (!windowsExplorerScript.includes("--novasvn-path")) {
@@ -202,8 +241,17 @@ if (!windowsExplorerScript.includes("%1") || !windowsExplorerScript.includes("%V
   failed = true;
 }
 
-if (!macosFinderScript.includes("--novasvn-path \"$f\"")) {
+if (!macosFinderScript.includes('--novasvn-path "\\$f"')) {
   console.error("macOS Finder Quick Action 必须传递选中的 Finder 路径");
+  failed = true;
+}
+
+if (
+  !macosFinderSyncSource.includes('"NovaSVN"') ||
+  !macosFinderSyncSource.includes('"--novasvn-path"') ||
+  !macosFinderSyncSource.includes("FIMenuKind")
+) {
+  console.error("macOS Finder Sync 扩展必须提供 Finder 右键菜单并传递选中路径");
   failed = true;
 }
 

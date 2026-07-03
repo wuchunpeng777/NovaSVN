@@ -101,8 +101,8 @@ PLIST
         <key>ActionParameters</key>
         <dict>
           <key>COMMAND_STRING</key>
-          <string>for f in "$@"; do
-  open -a "${APP_NAME}" --args --novasvn-action "${action}" --novasvn-path "$f"
+          <string>for f in "\$@"; do
+  open -a "${APP_NAME}" --args --novasvn-action "${action}" --novasvn-path "\$f"
 done</string>
           <key>CheckedForUserDefaultShell</key>
           <true/>
