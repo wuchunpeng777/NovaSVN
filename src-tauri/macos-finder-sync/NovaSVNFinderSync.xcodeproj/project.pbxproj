@@ -1,0 +1,239 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		4A0000010000000000000001 /* NovaSVNFinderSync.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A0000010000000000000011 /* NovaSVNFinderSync.m */; };
+		4A0000010000000000000002 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4A0000010000000000000014 /* Cocoa.framework */; };
+		4A0000010000000000000003 /* FinderSync.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4A0000010000000000000015 /* FinderSync.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		4A0000010000000000000010 /* NovaSVNFinderSync.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = NovaSVNFinderSync.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		4A0000010000000000000011 /* NovaSVNFinderSync.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = NovaSVNFinderSync.m; sourceTree = "<group>"; };
+		4A0000010000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		4A0000010000000000000013 /* NovaSVNFinderSync.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NovaSVNFinderSync.entitlements; sourceTree = "<group>"; };
+		4A0000010000000000000014 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = System/Library/Frameworks/Cocoa.framework; sourceTree = SDKROOT; };
+		4A0000010000000000000015 /* FinderSync.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FinderSync.framework; path = System/Library/Frameworks/FinderSync.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		4A0000010000000000000020 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4A0000010000000000000002 /* Cocoa.framework in Frameworks */,
+				4A0000010000000000000003 /* FinderSync.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		4A0000010000000000000030 = {
+			isa = PBXGroup;
+			children = (
+				4A0000010000000000000031 /* NovaSVNFinderSync */,
+				4A0000010000000000000032 /* Frameworks */,
+				4A0000010000000000000033 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		4A0000010000000000000031 /* NovaSVNFinderSync */ = {
+			isa = PBXGroup;
+			children = (
+				4A0000010000000000000011 /* NovaSVNFinderSync.m */,
+				4A0000010000000000000012 /* Info.plist */,
+				4A0000010000000000000013 /* NovaSVNFinderSync.entitlements */,
+			);
+			path = "";
+			sourceTree = "<group>";
+		};
+		4A0000010000000000000032 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				4A0000010000000000000014 /* Cocoa.framework */,
+				4A0000010000000000000015 /* FinderSync.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		4A0000010000000000000033 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				4A0000010000000000000010 /* NovaSVNFinderSync.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4A0000010000000000000040 /* NovaSVNFinderSync */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4A0000010000000000000080 /* Build configuration list for PBXNativeTarget "NovaSVNFinderSync" */;
+			buildPhases = (
+				4A0000010000000000000021 /* Sources */,
+				4A0000010000000000000020 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NovaSVNFinderSync;
+			productName = NovaSVNFinderSync;
+			productReference = 4A0000010000000000000010 /* NovaSVNFinderSync.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4A0000010000000000000050 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 1540;
+				TargetAttributes = {
+					4A0000010000000000000040 = {
+						CreatedOnToolsVersion = 15.4;
+					};
+				};
+			};
+			buildConfigurationList = 4A0000010000000000000070 /* Build configuration list for PBXProject "NovaSVNFinderSync" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = zh_CN;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				zh_CN,
+				en,
+				Base,
+			);
+			mainGroup = 4A0000010000000000000030;
+			productRefGroup = 4A0000010000000000000033 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				4A0000010000000000000040 /* NovaSVNFinderSync */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4A0000010000000000000021 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4A0000010000000000000001 /* NovaSVNFinderSync.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		4A0000010000000000000060 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				SUPPORTED_PLATFORMS = macosx;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		4A0000010000000000000061 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				SUPPORTED_PLATFORMS = macosx;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		4A0000010000000000000062 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_ENTITLEMENTS = NovaSVNFinderSync.entitlements;
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 0.1.0;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACH_O_TYPE = mh_execute;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.novasvn.app.finder-sync;
+				PRODUCT_NAME = NovaSVNFinderSync;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				WRAPPER_EXTENSION = appex;
+			};
+			name = Debug;
+		};
+		4A0000010000000000000063 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_ENTITLEMENTS = NovaSVNFinderSync.entitlements;
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 0.1.0;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Info.plist;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACH_O_TYPE = mh_execute;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.novasvn.app.finder-sync;
+				PRODUCT_NAME = NovaSVNFinderSync;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = macosx;
+				WRAPPER_EXTENSION = appex;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4A0000010000000000000070 /* Build configuration list for PBXProject "NovaSVNFinderSync" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4A0000010000000000000060 /* Debug */,
+				4A0000010000000000000061 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4A0000010000000000000080 /* Build configuration list for PBXNativeTarget "NovaSVNFinderSync" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4A0000010000000000000062 /* Debug */,
+				4A0000010000000000000063 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 4A0000010000000000000050 /* Project object */;
+}

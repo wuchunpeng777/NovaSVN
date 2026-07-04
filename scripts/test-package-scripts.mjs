@@ -20,7 +20,33 @@ const macosFinderSyncDmgInjectScript = fs.readFileSync(
   "utf8",
 );
 const macosFinderSyncSource = fs.readFileSync(
-  path.join(root, "src-tauri", "macos-finder-sync", "NovaSVNFinderSync.swift"),
+  path.join(root, "src-tauri", "macos-finder-sync", "NovaSVNFinderSync.m"),
+  "utf8",
+);
+const macosFinderSyncEntitlements = fs.readFileSync(
+  path.join(root, "src-tauri", "macos-finder-sync", "NovaSVNFinderSync.entitlements"),
+  "utf8",
+);
+const macosFinderSyncXcodeProject = fs.readFileSync(
+  path.join(
+    root,
+    "src-tauri",
+    "macos-finder-sync",
+    "NovaSVNFinderSync.xcodeproj",
+    "project.pbxproj",
+  ),
+  "utf8",
+);
+const macosFinderSyncXcodeScheme = fs.readFileSync(
+  path.join(
+    root,
+    "src-tauri",
+    "macos-finder-sync",
+    "NovaSVNFinderSync.xcodeproj",
+    "xcshareddata",
+    "xcschemes",
+    "NovaSVNFinderSync.xcscheme",
+  ),
   "utf8",
 );
 const benchmarkScript = fs.readFileSync(
@@ -134,15 +160,40 @@ if (
 
 if (
   !macosFinderSyncDmgInjectScript.includes("Contents/PlugIns") ||
-  !macosFinderSyncDmgInjectScript.includes("codesign --force --deep --sign -") ||
+  !macosFinderSyncDmgInjectScript.includes("codesign --force --sign -") ||
   !macosFinderSyncDmgInjectScript.includes("hdiutil convert")
 ) {
   console.error("Finder Sync DMG 注入脚本必须嵌入扩展并重新签名 App");
   failed = true;
 }
 
-if (!macosFinderSyncBuildScript.includes("-framework FinderSync")) {
-  console.error("Finder Sync 构建脚本必须链接 FinderSync framework");
+if (!macosFinderSyncXcodeProject.includes("FinderSync.framework")) {
+  console.error("Finder Sync Xcode 工程必须链接 FinderSync framework");
+  failed = true;
+}
+
+if (!macosFinderSyncXcodeScheme.includes('BuildableName = "NovaSVNFinderSync.appex"')) {
+  console.error("Finder Sync Xcode 工程必须提供共享 scheme 以便命令行稳定构建");
+  failed = true;
+}
+
+if (
+  !macosFinderSyncBuildScript.includes("xcodebuild") ||
+  !macosFinderSyncBuildScript.includes("NovaSVNFinderSync.xcodeproj") ||
+  !macosFinderSyncBuildScript.includes("-scheme NovaSVNFinderSync") ||
+  !macosFinderSyncBuildScript.includes("generic/platform=macOS") ||
+  !macosFinderSyncBuildScript.includes("CODE_SIGNING_ALLOWED=NO")
+) {
+  console.error("Finder Sync 构建脚本必须使用 Xcode extension target 并由脚本统一签名");
+  failed = true;
+}
+
+if (
+  !macosFinderSyncEntitlements.includes("com.apple.security.app-sandbox") ||
+  !macosFinderSyncBuildScript.includes("--entitlements") ||
+  !macosFinderSyncDmgInjectScript.includes("--entitlements")
+) {
+  console.error("Finder Sync 扩展必须启用 App Sandbox entitlement");
   failed = true;
 }
 

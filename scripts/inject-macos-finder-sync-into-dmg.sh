@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DMG_PATH="${ROOT_DIR}/src-tauri/target/release/bundle/dmg/NovaSVN_0.1.0_aarch64.dmg"
 APPEX_PATH="${ROOT_DIR}/src-tauri/target/macos-finder-sync/NovaSVNFinderSync.appex"
+ENTITLEMENTS_PATH="${ROOT_DIR}/src-tauri/macos-finder-sync/NovaSVNFinderSync.entitlements"
 WORK_DIR="${ROOT_DIR}/src-tauri/target/macos-finder-sync-dmg"
 RW_DMG="${WORK_DIR}/NovaSVN_rw.dmg"
 MOUNT_DIR="${WORK_DIR}/mount"
@@ -34,7 +35,8 @@ PLUGINS_DIR="${APP_DIR}/Contents/PlugIns"
 mkdir -p "${PLUGINS_DIR}"
 rm -rf "${PLUGINS_DIR}/NovaSVNFinderSync.appex"
 cp -R "${APPEX_PATH}" "${PLUGINS_DIR}/NovaSVNFinderSync.appex"
-codesign --force --deep --sign - "${APP_DIR}" >/dev/null
+codesign --force --sign - --entitlements "${ENTITLEMENTS_PATH}" "${PLUGINS_DIR}/NovaSVNFinderSync.appex" >/dev/null
+codesign --force --sign - "${APP_DIR}" >/dev/null
 
 cleanup
 trap - EXIT

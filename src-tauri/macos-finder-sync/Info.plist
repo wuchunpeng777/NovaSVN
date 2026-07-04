@@ -25,7 +25,7 @@
     <key>NSExtensionPointIdentifier</key>
     <string>com.apple.FinderSync</string>
     <key>NSExtensionPrincipalClass</key>
-    <string>NovaSVNFinderSync.NovaSVNFinderSync</string>
+    <string>NovaSVNFinderSync</string>
   </dict>
 </dict>
 </plist>
