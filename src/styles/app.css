@@ -33,8 +33,8 @@ button {
   gap: 22px;
   min-height: 100vh;
   padding: 18px;
-  background: #20262d;
-  color: #f7f9fb;
+  background: #ffffff;
+  color: #17212f;
 }
 
 .brand {
@@ -67,7 +67,7 @@ button {
 
 .brand p {
   margin-top: 2px;
-  color: #b5c0ca;
+  color: #657385;
   font-size: 12px;
 }
 
@@ -82,8 +82,8 @@ button {
   min-height: 42px;
   border: 0;
   border-radius: 6px;
-  background: transparent;
-  color: #dce4ec;
+  background: #ffffff;
+  color: #334155;
   text-align: left;
   padding: 7px 10px;
   cursor: pointer;
@@ -106,15 +106,15 @@ button {
 }
 
 .nav-list button small {
-  color: #9facba;
+  color: #657385;
   font-size: 11px;
 }
 
 .nav-list button:hover,
 .nav-list button.active,
 .sidebar-filter button:hover {
-  background: #303943;
-  color: #ffffff;
+  background: #e4f2ef;
+  color: #0b554f;
 }
 
 .sidebar-filter {
@@ -123,7 +123,7 @@ button {
 
 .sidebar-filter h2 {
   margin: 0 0 4px;
-  color: #9facba;
+  color: #657385;
   font-size: 12px;
   font-weight: 600;
 }
@@ -138,17 +138,17 @@ button {
 }
 
 .sidebar-filter button.active {
-  background: #303943;
-  color: #ffffff;
+  background: #e4f2ef;
+  color: #0b554f;
 }
 
 .sidebar-filter button:disabled {
   cursor: default;
-  opacity: 0.45;
+  color: #7f8b98;
 }
 
 .sidebar-filter button small {
-  color: #9facba;
+  color: #657385;
   font-size: 11px;
 }
 
@@ -289,7 +289,8 @@ button {
 
 .workspace-open-actions button:disabled {
   cursor: default;
-  opacity: 0.6;
+  background: #f7f9fb;
+  color: #7a8794;
 }
 
 .workspace-path-row input {
@@ -389,7 +390,8 @@ button {
 }
 
 .virtual-work-list:focus-visible {
-  box-shadow: 0 0 0 2px rgba(91, 169, 165, 0.22);
+  outline: 2px solid #5ba9a5;
+  outline-offset: 2px;
 }
 
 .virtual-work-spacer {
@@ -517,7 +519,7 @@ button {
   justify-content: flex-start;
   gap: 8px;
   border: 0;
-  background: transparent;
+  background: #ffffff;
   color: #637282;
   cursor: pointer;
   padding: 0;
@@ -671,7 +673,8 @@ button {
 .repository-toolbar button:disabled,
 .repository-breadcrumbs button:disabled {
   cursor: default;
-  opacity: 0.6;
+  background: #f7f9fb;
+  color: #7a8794;
 }
 
 .repository-breadcrumbs {
@@ -1994,7 +1997,8 @@ button {
 .detail-heading button:disabled,
 .svn-path-row button:disabled {
   cursor: default;
-  opacity: 0.6;
+  background: #f7f9fb;
+  color: #7a8794;
 }
 
 .svn-detection {
@@ -2424,7 +2428,8 @@ button {
 .task-actions button:disabled,
 .cancel-task:disabled {
   cursor: default;
-  opacity: 0.6;
+  background: #f7f9fb;
+  color: #7a8794;
 }
 
 .task-list {
@@ -2484,37 +2489,34 @@ button {
   font-size: 12px;
 }
 
-/* 视觉刷新：统一工作台质感、层次和控件状态。 */
+/* 纯色视觉方案：用实体色块、边框和状态色建立层次。 */
 :root {
   color: #17212f;
-  background: #e9edf2;
-  --color-bg: #e9edf2;
-  --color-bg-soft: #f4f6f8;
-  --color-surface: rgba(255, 255, 255, 0.92);
+  background: #e8edf2;
+  --color-bg: #e8edf2;
+  --color-bg-soft: #f3f6f9;
+  --color-surface: #ffffff;
   --color-surface-solid: #ffffff;
-  --color-surface-muted: #f8fafc;
-  --color-border: #d7dee7;
-  --color-border-strong: #c2ccd8;
+  --color-surface-muted: #f6f8fa;
+  --color-surface-selected: #e4f2ef;
+  --color-border: #d5dde6;
+  --color-border-strong: #b8c4d1;
   --color-text: #17212f;
   --color-muted: #657385;
   --color-subtle: #8793a3;
-  --color-accent: #0f766e;
-  --color-accent-strong: #0b5f59;
-  --color-accent-soft: #e7f4f2;
+  --color-accent: #116b63;
+  --color-accent-strong: #0b554f;
+  --color-accent-soft: #e4f2ef;
   --color-blue: #2f6ea4;
   --color-warning: #a16207;
   --color-danger: #b42318;
-  --shadow-panel: 0 18px 48px rgba(22, 34, 51, 0.08);
-  --shadow-card: 0 8px 24px rgba(22, 34, 51, 0.06);
   --radius-panel: 8px;
   --radius-control: 7px;
 }
 
 body {
   color: var(--color-text);
-  background:
-    linear-gradient(180deg, #f5f7fa 0%, var(--color-bg) 420px),
-    var(--color-bg);
+  background: var(--color-bg);
 }
 
 button,
@@ -2528,8 +2530,7 @@ button {
   transition:
     border-color 120ms ease,
     background-color 120ms ease,
-    color 120ms ease,
-    box-shadow 120ms ease;
+    color 120ms ease;
 }
 
 input,
@@ -2542,53 +2543,51 @@ input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--color-accent) !important;
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+  outline: 2px solid #8fc6bf;
+  outline-offset: 1px;
 }
 
 button:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.16);
+  outline: 2px solid #8fc6bf;
+  outline-offset: 2px;
 }
 
 .app-shell {
   grid-template-columns: 264px minmax(0, 1fr);
-  background:
-    radial-gradient(circle at 100% 0%, rgba(47, 110, 164, 0.12), transparent 320px),
-    linear-gradient(180deg, #f6f8fb 0%, #e9edf2 100%);
+  background: var(--color-bg);
 }
 
 .sidebar {
   gap: 20px;
   padding: 18px 14px;
-  background: #17212f;
-  color: #eef4f8;
-  box-shadow: inset -1px 0 rgba(255, 255, 255, 0.06);
+  background: var(--color-surface-solid);
+  color: var(--color-text);
+  border-right: 1px solid var(--color-border-strong);
 }
 
 .brand {
   min-height: 56px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--color-border);
   padding: 2px 4px 16px;
 }
 
 .brand-mark {
   width: 42px;
   height: 42px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid #57a5a0;
   border-radius: 8px;
-  background: linear-gradient(145deg, #0f766e, #2f6ea4);
-  box-shadow: 0 10px 26px rgba(6, 95, 70, 0.28);
+  background: #116b63;
   font-size: 17px;
 }
 
 .brand h1 {
-  color: #ffffff;
+  color: var(--color-text);
   font-size: 18px;
   font-weight: 750;
 }
 
 .brand p {
-  color: #9fb0c0;
+  color: var(--color-muted);
 }
 
 .nav-list,
@@ -2598,9 +2597,9 @@ button:focus-visible {
 
 .nav-list button,
 .sidebar-filter button {
-  border: 1px solid transparent;
+  border: 1px solid #ffffff;
   border-radius: var(--radius-control);
-  color: #cfdae5;
+  color: #334155;
   padding: 8px 10px;
 }
 
@@ -2608,35 +2607,34 @@ button:focus-visible {
 .nav-list button.active,
 .sidebar-filter button:hover,
 .sidebar-filter button.active {
-  border-color: rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.08);
-  color: #ffffff;
+  border-color: #b9d7d3;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
 }
 
 .nav-list button.active {
-  box-shadow: inset 3px 0 0 #38b2a8;
+  border-left-color: #57a5a0;
 }
 
 .nav-list button small,
 .sidebar-filter h2,
 .sidebar-filter button small,
 .sidebar-filter-divider {
-  color: #8fa0b0;
+  color: var(--color-muted);
 }
 
 .sidebar-filter-heading button {
-  color: #aebccd;
+  color: var(--color-muted);
 }
 
 .main-panel {
-  background: transparent;
+  background: var(--color-bg);
 }
 
 .toolbar {
   min-height: 72px;
-  border-bottom: 1px solid rgba(194, 204, 216, 0.82);
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--color-border-strong);
+  background: var(--color-surface-solid);
   padding: 14px 20px;
 }
 
@@ -2741,13 +2739,6 @@ button:focus-visible {
   border-color: var(--color-border);
   border-radius: var(--radius-panel);
   background: var(--color-surface);
-  box-shadow: var(--shadow-card);
-}
-
-.workspace-open-panel,
-.settings-panel,
-.bottom-panel {
-  box-shadow: var(--shadow-panel);
 }
 
 .workspace-open-header h3,
@@ -2793,7 +2784,7 @@ button:focus-visible {
 .commit-placeholder textarea {
   border-color: var(--color-border-strong);
   border-radius: var(--radius-control);
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--color-surface-solid);
   color: var(--color-text);
 }
 
@@ -2833,8 +2824,8 @@ button:focus-visible {
 }
 
 .work-row {
-  border-left: 3px solid transparent;
-  background: rgba(255, 255, 255, 0.86);
+  border-left: 3px solid #ffffff;
+  background: var(--color-surface-solid);
 }
 
 .work-row:hover,
@@ -2842,8 +2833,7 @@ button:focus-visible {
 .work-row[role="button"]:hover,
 .work-row[role="option"]:hover {
   border-color: var(--color-accent);
-  background: #f4fbfa;
-  box-shadow: 0 10px 28px rgba(15, 118, 110, 0.09);
+  background: var(--color-surface-selected);
 }
 
 .work-row h3 {
@@ -2856,7 +2846,7 @@ button:focus-visible {
 .unity-summary span,
 .revision-diff-summary span,
 .svn-log-paths span {
-  border: 1px solid rgba(15, 118, 110, 0.12);
+  border: 1px solid #b9d7d3;
   border-radius: 999px;
   background: var(--color-accent-soft);
   color: var(--color-accent-strong);
@@ -2936,7 +2926,7 @@ button:focus-visible {
 
 .repository-row {
   border-bottom-color: #edf1f5;
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--color-surface-solid);
 }
 
 .repository-header {
@@ -3002,7 +2992,7 @@ button:focus-visible {
 
 .detail-block {
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--color-surface-solid);
 }
 
 .detail-heading {
@@ -3032,8 +3022,8 @@ button:focus-visible {
 
 .bottom-panel {
   height: 236px;
-  border-top-color: rgba(194, 204, 216, 0.9);
-  background: rgba(255, 255, 255, 0.9);
+  border-top-color: var(--color-border-strong);
+  background: var(--color-surface-solid);
 }
 
 .bottom-panel strong {
@@ -3080,7 +3070,6 @@ button:focus-visible {
 
 .error-notice {
   border-radius: var(--radius-panel);
-  box-shadow: 0 8px 22px rgba(180, 35, 24, 0.06);
 }
 
 .detail-panel .error-notice {

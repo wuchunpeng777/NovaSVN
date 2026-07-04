@@ -62,6 +62,7 @@ const e2eSmokeSpec = fs.readFileSync(
   "utf8",
 );
 const appSvelte = fs.readFileSync(path.join(root, "src", "App.svelte"), "utf8");
+const appCss = fs.readFileSync(path.join(root, "src", "styles", "app.css"), "utf8");
 const frontendApi = fs.readFileSync(path.join(root, "src", "lib", "api.ts"), "utf8");
 const mainWorkspace = fs.readFileSync(
   path.join(root, "src", "components", "workbench", "MainWorkspace.svelte"),
@@ -256,6 +257,23 @@ if (!playwrightConfig.includes('testDir: "./tests/e2e"')) {
 if (!playwrightConfig.includes("webServer")) {
   console.error("Playwright 配置必须包含 webServer 冒烟测试入口");
   failed = true;
+}
+
+const prohibitedUiEffects = [
+  "linear-gradient",
+  "radial-gradient",
+  "rgba(",
+  "hsla(",
+  "backdrop-filter",
+  "box-shadow",
+  "transparent",
+  "opacity:",
+];
+for (const effect of prohibitedUiEffects) {
+  if (appCss.includes(effect)) {
+    console.error(`纯色 UI 方案不能包含 ${effect}`);
+    failed = true;
+  }
 }
 
 for (const assertion of e2eSmokeAssertions) {
