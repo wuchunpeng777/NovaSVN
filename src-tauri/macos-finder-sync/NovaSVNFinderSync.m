@@ -27,14 +27,21 @@
   }
 
   NSMenu *menu = [[NSMenu alloc] initWithTitle:@"NovaSVN"];
-  [self addMenuItem:@"NovaSVN 打开工作副本" actionName:@"open" toMenu:menu];
-  [self addMenuItem:@"NovaSVN 提交" actionName:@"commit" toMenu:menu];
-  [self addMenuItem:@"NovaSVN 更新" actionName:@"update" toMenu:menu];
-  [self addMenuItem:@"NovaSVN Diff" actionName:@"diff" toMenu:menu];
-  [self addMenuItem:@"NovaSVN 日志" actionName:@"log" toMenu:menu];
-  [self addMenuItem:@"NovaSVN 撤销" actionName:@"revert" toMenu:menu];
-  [self addMenuItem:@"NovaSVN 清理" actionName:@"cleanup" toMenu:menu];
-  [self addMenuItem:@"NovaSVN 分支工作区" actionName:@"branch-workspace" toMenu:menu];
+  NSMenuItem *rootItem = [[NSMenuItem alloc] initWithTitle:@"NovaSVN"
+                                                    action:nil
+                                             keyEquivalent:@""];
+  NSMenu *submenu = [[NSMenu alloc] initWithTitle:@"NovaSVN"];
+  rootItem.submenu = submenu;
+  [menu addItem:rootItem];
+
+  [self addMenuItem:@"打开工作副本" actionName:@"open" toMenu:submenu];
+  [self addMenuItem:@"提交" actionName:@"commit" toMenu:submenu];
+  [self addMenuItem:@"更新" actionName:@"update" toMenu:submenu];
+  [self addMenuItem:@"Diff" actionName:@"diff" toMenu:submenu];
+  [self addMenuItem:@"日志" actionName:@"log" toMenu:submenu];
+  [self addMenuItem:@"撤销" actionName:@"revert" toMenu:submenu];
+  [self addMenuItem:@"清理" actionName:@"cleanup" toMenu:submenu];
+  [self addMenuItem:@"分支工作区" actionName:@"branch-workspace" toMenu:submenu];
   return menu;
 }
 

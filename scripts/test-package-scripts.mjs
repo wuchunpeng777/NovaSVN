@@ -306,6 +306,14 @@ if (
   failed = true;
 }
 
+if (
+  !macosFinderSyncSource.includes("rootItem.submenu = submenu") ||
+  !macosFinderSyncSource.includes('addMenuItem:@"提交"')
+) {
+  console.error("macOS Finder Sync 扩展必须把操作收进 NovaSVN 统一上级菜单");
+  failed = true;
+}
+
 for (const action of systemIntegrationActions.filter((value) => value !== "open")) {
   if (!appSvelte.includes(`case "${action}":`)) {
     console.error(`启动意图分发缺少 action：${action}`);
