@@ -1,28 +1,38 @@
 <script lang="ts">
-  import { tick } from "svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
+  import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
   import type {
     BranchPool,
+    BranchPoolEntry,
     ChangedFile,
     CommandError,
+    ExternalToolKind,
+    FileContentDiff,
+    FileDiff,
     MergeResult,
+    ParsedFileDiff,
     RepositoryCopyKind,
     RepositoryListResult,
     RevisionDiffMode,
     RevisionDiffResult,
+    SvnDetection,
     SvnLog,
+    SvnProperties,
+    Task,
+    TaskStatus,
+    TaskSummary,
     TaskWorkspaceList,
     WorkingCopyStatus,
     WorkspaceSummary,
   } from "../../types/api";
   import type {
     AppSettingsState,
-    WorkbenchView,
+    AppView,
     ReviewedFileState,
-    WorkspaceGroupMode,
+    SafetyCheckSummary,
+    WorkbenchView,
     WorkspaceStageFilter,
   } from "../../types/app";
-  import { unityGroupLabel } from "../../lib/unity";
 
   export let view: WorkbenchView;
   export let workspace: WorkspaceSummary | null = null;
@@ -31,18 +41,15 @@
   export let workspaceError: CommandError | null = null;
   export let workingCopyStatus: WorkingCopyStatus | null = null;
   export let searchText = "";
-  export let groupByStatus = true;
   export let stageFilter: WorkspaceStageFilter = "all";
-  export let abnormalOnly = false;
-  export let unreviewedOnly = false;
-  export let generatedOnly = false;
-  export let statusFilters: string[] = [];
-  export let groupMode: WorkspaceGroupMode = "status";
   export let selectedFilePath: string | null = null;
+  export let selectedFile: ChangedFile | null = null;
+  export let selectedFileReviewed = false;
   export let stagedFiles: Array<{ path: string; status: string }> = [];
   export let reviewedFiles: ReviewedFileState[] = [];
   export let statusLoading = false;
   export let statusError: CommandError | null = null;
+
   export let repositoryUrlInput = "";
   export let repositoryList: RepositoryListResult | null = null;
   export let repositoryLoading = false;
@@ -86,39 +93,7 @@
   };
   export let repositoryCopyError: string | null = null;
   export let repositoryCopyRunning = false;
-  export let branchPool: BranchPool = { entries: [] };
-  export let branchPoolForm = {
-    branchUrl: "",
-    localPath: "",
-    revision: "",
-  };
-  export let branchPoolFormErrors = {
-    localPath: null as string | null,
-  };
-  export let branchPoolLoading = false;
-  export let branchPoolError: CommandError | null = null;
-  export let branchCheckoutError: string | null = null;
-  export let branchCheckoutRunning = false;
-  export let mergeForm = {
-    sourceUrl: "",
-    startRevision: "",
-    endRevision: "",
-    dryRun: true,
-  };
-  export let mergeRunning = false;
-  export let mergeError: string | null = null;
-  export let mergeResult: MergeResult | null = null;
-  export let taskWorkspaces: TaskWorkspaceList = { entries: [] };
-  export let taskWorkspaceForm = {
-    name: "",
-    branchPoolEntryId: "",
-  };
-  export let activeTaskWorkspaceId: string | null = null;
-  export let taskWorkspaceLoading = false;
-  export let taskWorkspaceError: CommandError | null = null;
-  export let svnSwitchTargetUrl = "";
-  export let svnSwitchError: string | null = null;
-  export let svnSwitchRunning = false;
+
   export let svnLog: SvnLog | null = null;
   export let svnLogLoading = false;
   export let svnLogError: CommandError | null = null;
@@ -144,6 +119,75 @@
   export let revisionDiffLoading = false;
   export let revisionDiffError: string | null = null;
   export let revisionDiffResult: RevisionDiffResult | null = null;
+
+  export let branchPool: BranchPool = { entries: [] };
+  export let branchPoolForm = {
+    branchUrl: "",
+    localPath: "",
+    revision: "",
+  };
+  export let branchPoolFormErrors = {
+    localPath: null as string | null,
+  };
+  export let branchPoolLoading = false;
+  export let branchPoolError: CommandError | null = null;
+  export let branchCheckoutError: string | null = null;
+  export let branchCheckoutRunning = false;
+  export let mergeForm = {
+    sourceUrl: "",
+    startRevision: "",
+    endRevision: "",
+    dryRun: true,
+  };
+  export let mergeRunning = false;
+  export let mergeError: string | null = null;
+  export let mergeResult: MergeResult | null = null;
+  export let taskWorkspaces: TaskWorkspaceList = { entries: [] };
+  export let activeTaskWorkspaceId: string | null = null;
+
+  export let selectedFileDiff: FileDiff | null = null;
+  export let selectedFileContentDiff: FileContentDiff | null = null;
+  export let selectedFileParsedDiff: ParsedFileDiff | null = null;
+  export let selectedHunkIds: string[] = [];
+  export let selectedPatch: { text: string; file_count: number; hunk_count: number } | null = null;
+  export let diffLoading = false;
+  export let contentDiffLoading = false;
+  export let selectedPatchLoading = false;
+  export let diffError: CommandError | null = null;
+  export let contentDiffError: CommandError | null = null;
+  export let parsedDiffError: CommandError | null = null;
+  export let selectedPatchError: CommandError | null = null;
+  export let safetyCheck: SafetyCheckSummary = {
+    blockers: [],
+    warnings: [],
+    infos: [],
+    confirmedWarningIds: [],
+  };
+  export let svnProperties: SvnProperties | null = null;
+  export let svnPropertiesLoading = false;
+  export let svnPropertiesError: CommandError | null = null;
+  export let propertyEditForm = {
+    name: "",
+    value: "",
+  };
+
+  export let commitTemplate = "";
+  export let commitHistory: string[] = [];
+  export let commitMessage = "";
+  export let commitError: string | null = null;
+  export let commitDisabled = false;
+  export let partialCommitDisabled = false;
+  export let tasks: TaskSummary[] = [];
+  export let selectedTask: Task | null = null;
+  export let runningTaskId: string | null = null;
+  export let taskError: CommandError | null = null;
+  export let backendMessage = "";
+  export let commandError: CommandError | null = null;
+
+  export let svnDetection: SvnDetection | null = null;
+  export let svnError: CommandError | null = null;
+  export let svnExecutableInput = "";
+  export let svnLoading = false;
   export let appSettings: AppSettingsState = {
     svnExecutable: "",
     diffMode: "side_by_side",
@@ -151,15 +195,6 @@
     commitTemplate: "",
     branchPoolBasePath: "",
     largeFileThresholdMb: 20,
-    unityRulesEnabled: true,
-    unityGroupRules: {
-      addressables: true,
-      projectSettings: true,
-      packages: true,
-      scenes: true,
-      prefabs: true,
-      assets: true,
-    },
     externalDiffTool: "",
     externalMergeTool: "",
     diagnosticExportPath: "",
@@ -172,64 +207,60 @@
     },
     loading: false,
   };
-  export let onChooseWorkspace: () => void;
-  export let onOpenWorkspace: () => void;
-  export let onRefreshStatus: () => void;
-  export let onUpdateWorkspace: () => void;
-  export let onCleanupWorkspace: () => void;
-  export let onLoadMoreStatus: () => void;
-  export let onWorkspacePathInput: (value: string) => void;
-  export let onSearchTextInput: (value: string) => void;
-  export let onToggleGroupByStatus: () => void;
-  export let onToggleUnreviewedOnly: () => void;
-  export let onToggleGeneratedOnly: () => void;
-  export let onGroupModeChange: (value: WorkspaceGroupMode) => void;
-  export let onClearFilters: () => void;
-  export let onSelectFile: (path: string) => void;
-  export let onStageFile: (path: string) => void;
-  export let onUnstageFile: (path: string) => void;
-  export let onRepositoryUrlInput: (value: string) => void;
-  export let onUseWorkspaceRepositoryRoot: () => void;
-  export let onLoadRepositoryUrl: (url?: string) => void;
+
+  export let onSelectView: (value: AppView) => void = () => {};
+  export let onChooseWorkspace: () => void = () => {};
+  export let onOpenWorkspace: () => void = () => {};
+  export let onRefreshStatus: () => void = () => {};
+  export let onUpdateWorkspace: () => void = () => {};
+  export let onCleanupWorkspace: () => void = () => {};
+  export let onLoadMoreStatus: () => void = () => {};
+  export let onWorkspacePathInput: (value: string) => void = () => {};
+  export let onSearchTextInput: (value: string) => void = () => {};
+  export let onStageFilter: (value: WorkspaceStageFilter) => void = () => {};
+  export let onClearFilters: () => void = () => {};
+  export let onSelectFile: (path: string) => void = () => {};
+  export let onStageFile: (path: string) => void = () => {};
+  export let onUnstageFile: (path: string) => void = () => {};
+  export let onRevertFile: (path: string) => void = () => {};
+  export let onLockFile: (path: string) => void = () => {};
+  export let onUnlockFile: (path: string) => void = () => {};
+  export let onForceUnlockFile: (path: string) => void = () => {};
+  export let onResolveWorking: (path: string) => void = () => {};
+  export let onResolveMineFull: (path: string) => void = () => {};
+  export let onResolveTheirsFull: (path: string) => void = () => {};
+  export let onOpenFileLocation: (path: string) => void = () => {};
+  export let onOpenWorkspaceFile: (path: string) => void = () => {};
+  export let onLaunchExternalTool: (kind: ExternalToolKind, path: string) => void = () => {};
+  export let onMarkFileReviewed: (path: string) => void = () => {};
+  export let onMarkFileUnreviewed: (path: string) => void = () => {};
+  export let onToggleHunkSelection: (filePath: string, hunkId: string) => void = () => {};
+  export let onPreviewSelectedPatch: () => void = () => {};
+  export let onRefreshSvnProperties: () => void = () => {};
+  export let onPropertyEditInput: (field: keyof typeof propertyEditForm, value: string) => void =
+    () => {};
+  export let onUsePropertyForEdit: (name: string, value: string) => void = () => {};
+  export let onSaveSvnProperty: () => void = () => {};
+
+  export let onRepositoryUrlInput: (value: string) => void = () => {};
+  export let onUseWorkspaceRepositoryRoot: () => void = () => {};
+  export let onLoadRepositoryUrl: (url?: string) => void = () => {};
   export let onRepositoryLayoutPathInput: (
     kind: "trunk" | "branches" | "tags",
     value: string,
-  ) => void;
-  export let onDetectRepositoryLayout: () => void;
+  ) => void = () => {};
+  export let onDetectRepositoryLayout: () => void = () => {};
   export let onRepositoryCopyFormInput: (
     field: keyof typeof repositoryCopyForm,
     value: string,
-  ) => void;
+  ) => void = () => {};
   export let onPrepareRepositoryCopyTarget: (
     kind: RepositoryCopyKind,
     targetBaseUrl?: string | null,
-  ) => void;
-  export let onCreateRepositoryCopy: () => void;
-  export let onBranchPoolFormInput: (
-    field: keyof typeof branchPoolForm,
-    value: string,
-  ) => void;
-  export let onUseBranchUrlForPool: (branchUrl: string) => void;
-  export let onCheckoutBranchPoolEntry: () => void;
-  export let onReuseBranchPoolEntry: () => void;
-  export let onOpenBranchPoolEntry: (localPath: string) => void;
-  export let onRemoveBranchPoolEntry: (entryId: string, deleteLocalCopy?: boolean) => void;
-  export let onMergeFormInput: (
-    field: keyof typeof mergeForm,
-    value: string | boolean,
-  ) => void;
-  export let onUseRepositoryUrlForMerge: (url: string) => void;
-  export let onRunMerge: () => void;
-  export let onTaskWorkspaceFormInput: (
-    field: keyof typeof taskWorkspaceForm,
-    value: string,
-  ) => void;
-  export let onCreateTaskWorkspace: () => void;
-  export let onSwitchTaskWorkspace: (taskId: string) => void;
-  export let onRemoveTaskWorkspace: (taskId: string) => void;
-  export let onSvnSwitchTargetInput: (value: string) => void;
-  export let onRunSvnSwitch: () => void;
-  export let onRefreshSvnLog: () => void;
+  ) => void = () => {};
+  export let onCreateRepositoryCopy: () => void = () => {};
+
+  export let onRefreshSvnLog: () => void = () => {};
   export let onSvnLogFilterInput: (
     field:
       | "svnLogAuthorFilter"
@@ -237,28 +268,56 @@
       | "svnLogDateFromFilter"
       | "svnLogDateToFilter",
     value: string,
-  ) => void;
-  export let onSvnLogFileOnlyInput: (value: boolean) => void;
-  export let onSvnLogLimitInput: (value: number) => void;
-  export let onLoadMoreSvnLog: () => void;
+  ) => void = () => {};
+  export let onSvnLogFileOnlyInput: (value: boolean) => void = () => {};
+  export let onSvnLogLimitInput: (value: number) => void = () => {};
+  export let onLoadMoreSvnLog: () => void = () => {};
   export let onRevisionDiffFormInput: (
     field: keyof typeof revisionDiffForm,
     value: string,
-  ) => void;
-  export let onRunRevisionDiff: () => void;
-  export let onPrepareRevisionDiffFromLog: (revision: string) => void;
-  export let onExportRevisionDiffPatch: () => void;
+  ) => void = () => {};
+  export let onRunRevisionDiff: () => void = () => {};
+  export let onPrepareRevisionDiffFromLog: (revision: string) => void = () => {};
+  export let onExportRevisionDiffPatch: () => void = () => {};
+
+  export let onCommitMessageInput: (value: string) => void = () => {};
+  export let onCommitTemplateInput: (value: string) => void = () => {};
+  export let onUseCommitHistoryMessage: (value: string) => void = () => {};
+  export let onConfirmSafetyWarnings: () => void = () => {};
+  export let onClearWorkspaceDraft: () => void = () => {};
+  export let onCommit: () => void = () => {};
+  export let onPartialCommit: () => void = () => {};
+  export let onSelectTask: (taskId: string) => void = () => {};
+  export let onCancelTask: (taskId: string) => void = () => {};
+
+  export let onBranchPoolFormInput: (
+    field: keyof typeof branchPoolForm,
+    value: string,
+  ) => void = () => {};
+  export let onUseBranchUrlForPool: (branchUrl: string) => void = () => {};
+  export let onCheckoutBranchPoolEntry: () => void = () => {};
+  export let onReuseBranchPoolEntry: () => void = () => {};
+  export let onOpenBranchPoolEntry: (localPath: string) => void = () => {};
+  export let onRemoveBranchPoolEntry: (entryId: string, deleteLocalCopy?: boolean) => void =
+    () => {};
+  export let onMergeFormInput: (field: keyof typeof mergeForm, value: string | boolean) => void =
+    () => {};
+  export let onUseRepositoryUrlForMerge: (url: string) => void = () => {};
+  export let onRunMerge: () => void = () => {};
+  export let onRunSvnSwitch: () => void = () => {};
+  export let svnSwitchTargetUrl = "";
+  export let svnSwitchError: string | null = null;
+  export let svnSwitchRunning = false;
+  export let onSvnSwitchTargetInput: (value: string) => void = () => {};
+
+  export let onDetectSvn: () => void = () => {};
+  export let onDetectSvnWithInput: () => void = () => {};
+  export let onSvnExecutableInput: (value: string) => void = () => {};
   export let onAppSettingInput: <K extends keyof AppSettingsState>(
     field: K,
     value: AppSettingsState[K],
-  ) => void;
-  export let onExportDiagnosticLog: () => void;
-
-  const fileRowHeight = 76;
-  const sectionHeaderHeight = 32;
-  const statusHeaderHeight = 28;
-  const emptyRowHeight = 54;
-  const overscanPx = 360;
+  ) => void = () => {};
+  export let onExportDiagnosticLog: () => void = () => {};
 
   const statusLabels: Record<string, string> = {
     modified: "修改",
@@ -268,416 +327,153 @@
     unversioned: "未版本控制",
     conflicted: "冲突",
     obstructed: "阻塞",
-    external: "外部定义",
+    external: "外部",
   };
 
-  type FileGroup = {
-    key: string;
-    label: string;
-    files: ChangedFile[];
+  const taskStatusLabels: Record<TaskStatus, string> = {
+    pending: "排队",
+    running: "运行",
+    success: "完成",
+    failed: "失败",
+    cancelled: "取消",
   };
 
-  type VirtualItem =
-    | {
-        kind: "section";
-        key: string;
-        height: number;
-        title: string;
-      }
-    | {
-        kind: "status";
-        key: string;
-        groupKey: string;
-        height: number;
-        title: string;
-        collapsed: boolean;
-      }
-    | {
-        kind: "empty";
-        key: string;
-        height: number;
-        title: string;
-      }
-    | {
-        kind: "file";
-        key: string;
-        height: number;
-        file: ChangedFile;
-        staged: boolean;
-      };
+  let selectedCommitHistoryMessage = "";
+  let diffInline = false;
+  let showWhitespace = false;
 
-  type PositionedVirtualItem = VirtualItem & {
-    top: number;
-  };
-
-  let virtualListElement: HTMLDivElement | null = null;
-  let virtualScrollTop = 0;
-  let virtualViewportHeight = 0;
-  let collapsedGroups = new Set<string>();
+  $: if (appSettings.diffMode) {
+    diffInline = appSettings.diffMode === "inline";
+  }
+  $: showWhitespace = appSettings.showWhitespace;
 
   function labelStatus(status: string) {
     return statusLabels[status] ?? status;
   }
 
-  function formatBytes(bytes: number) {
+  function statusClass(status: string) {
+    return `status-${status.replace(/[^a-z0-9_-]/gi, "-").toLowerCase()}`;
+  }
+
+  function normalizePath(path: string) {
+    return path.replaceAll("\\", "/");
+  }
+
+  function basename(path: string) {
+    return normalizePath(path).split("/").pop() || path;
+  }
+
+  function dirname(path: string) {
+    const normalized = normalizePath(path);
+    const index = normalized.lastIndexOf("/");
+    return index > 0 ? normalized.slice(0, index) : "根目录";
+  }
+
+  function formatBytes(bytes: number | null) {
+    if (bytes === null) {
+      return "-";
+    }
+    if (bytes >= 1024 * 1024 * 1024) {
+      return `${(bytes / 1024 / 1024 / 1024).toFixed(1)}GB`;
+    }
     if (bytes >= 1024 * 1024) {
       return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
     }
-
     if (bytes >= 1024) {
       return `${Math.round(bytes / 1024)}KB`;
     }
-
     return `${bytes}B`;
   }
 
-  function statusMeta(file: ChangedFile) {
-    return file.property_changed
-      ? `${file.path} · 属性 ${file.property_status}`
-      : file.path;
+  function formatDate(value: string) {
+    if (!value) {
+      return "-";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return date.toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
   }
 
-  function isStaged(path: string, stagedPaths = stagedFilePaths) {
-    return stagedPaths.has(path);
+  function formatTaskTime(value: number) {
+    return new Date(value).toLocaleTimeString("zh-CN", {
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
   }
 
-  function isReviewed(path: string, reviewedPaths = reviewedFilePaths) {
-    return reviewedPaths.has(path);
+  function isStaged(path: string) {
+    return stagedFiles.some((file) => file.path === path);
+  }
+
+  function isReviewed(path: string) {
+    return reviewedFiles.some((file) => file.path === path);
   }
 
   function isStageable(file: ChangedFile) {
-    return !["missing", "conflicted", "obstructed"].includes(file.status);
+    return !["missing", "conflicted", "obstructed", "external"].includes(file.status);
   }
 
-  function filterFiles(
-    files: ChangedFile[],
-    search: string,
-    currentStageFilter: WorkspaceStageFilter,
-    currentAbnormalOnly: boolean,
-    currentUnreviewedOnly: boolean,
-    currentGeneratedOnly: boolean,
-    currentStatusFilters: string[],
-    stagedPaths: Set<string>,
-    reviewedPaths: Set<string>,
-  ) {
-    const selectedStatuses = new Set(currentStatusFilters);
+  function isSelected(file: ChangedFile) {
+    return selectedFilePath === file.path;
+  }
+
+  function filterFiles(files: ChangedFile[]) {
+    const query = searchText.trim().toLowerCase();
     return files.filter((file) => {
-      if (search && !file.path.toLowerCase().includes(search)) {
+      if (query && !file.path.toLowerCase().includes(query)) {
         return false;
       }
-
-      if (currentStageFilter === "staged" && !isStaged(file.path, stagedPaths)) {
+      if (stageFilter === "staged" && !isStaged(file.path)) {
         return false;
       }
-
-      if (currentStageFilter === "unstaged" && isStaged(file.path, stagedPaths)) {
+      if (stageFilter === "unstaged" && isStaged(file.path)) {
         return false;
       }
-
-      if (currentAbnormalOnly && !file.abnormal) {
-        return false;
-      }
-
-      if (currentUnreviewedOnly && isReviewed(file.path, reviewedPaths)) {
-        return false;
-      }
-
-      if (currentGeneratedOnly && !looksLikeGeneratedOrTemporaryPath(file.path)) {
-        return false;
-      }
-
-      if (selectedStatuses.size > 0 && !selectedStatuses.has(file.status)) {
-        return false;
-      }
-
       return true;
     });
   }
 
-  function looksLikeGeneratedOrTemporaryPath(path: string) {
-    const normalized = path.replaceAll("\\", "/").toLowerCase();
-    const segments = normalized.split("/");
-    const fileName = segments.at(-1) ?? normalized;
+  function filterLogEntries(entries: SvnLog["entries"]) {
+    const author = svnLogAuthorFilter.trim().toLowerCase();
+    const keyword = svnLogKeywordFilter.trim().toLowerCase();
+    const fromTime = svnLogDateFromFilter ? new Date(svnLogDateFromFilter).getTime() : null;
+    const toTime = svnLogDateToFilter
+      ? new Date(`${svnLogDateToFilter}T23:59:59`).getTime()
+      : null;
 
-    return (
-      segments.some((segment) =>
-        [
-          "dist",
-          "build",
-          "target",
-          "node_modules",
-          ".cache",
-          "coverage",
-          "library",
-          "temp",
-          "logs",
-          "obj",
-        ].includes(segment),
-      ) ||
-      fileName.endsWith(".log") ||
-      fileName.endsWith(".tmp") ||
-      fileName.endsWith(".temp") ||
-      fileName.endsWith(".bak") ||
-      fileName.endsWith(".swp") ||
-      fileName === ".ds_store"
-    );
-  }
-
-  function handleRowKeydown(event: KeyboardEvent, path: string) {
-    if (event.key !== "Enter" && event.key !== " ") {
-      return;
-    }
-
-    event.preventDefault();
-    onSelectFile(path);
-  }
-
-  function handleVirtualListKeydown(event: KeyboardEvent) {
-    const target = event.target as HTMLElement | null;
-    if (target && ["BUTTON", "INPUT", "TEXTAREA"].includes(target.tagName)) {
-      return;
-    }
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      moveSelection(1);
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      moveSelection(-1);
-    }
-  }
-
-  function moveSelection(direction: 1 | -1) {
-    const selectableItems = positionedVirtualItems.filter((item) => item.kind === "file");
-    if (selectableItems.length === 0) {
-      return;
-    }
-
-    const currentIndex = selectableItems.findIndex(
-      (item) => item.kind === "file" && item.file.path === selectedFilePath,
-    );
-    const fallbackIndex = direction > 0 ? 0 : selectableItems.length - 1;
-    const nextIndex =
-      currentIndex === -1
-        ? fallbackIndex
-        : Math.min(Math.max(currentIndex + direction, 0), selectableItems.length - 1);
-    const nextItem = selectableItems[nextIndex];
-    if (nextItem.kind !== "file") {
-      return;
-    }
-
-    onSelectFile(nextItem.file.path);
-    void scrollFileIntoView(nextItem.file.path);
-  }
-
-  async function scrollFileIntoView(path: string) {
-    await tick();
-
-    if (!virtualListElement) {
-      return;
-    }
-
-    const item = positionedVirtualItems.find(
-      (candidate) => candidate.kind === "file" && candidate.file.path === path,
-    );
-    if (!item) {
-      return;
-    }
-
-    const itemBottom = item.top + item.height;
-    const visibleTop = virtualListElement.scrollTop;
-    const visibleBottom = visibleTop + virtualListElement.clientHeight;
-
-    if (item.top < visibleTop) {
-      virtualListElement.scrollTop = item.top;
-    } else if (itemBottom > visibleBottom) {
-      virtualListElement.scrollTop = itemBottom - virtualListElement.clientHeight;
-    }
-  }
-
-  function buildGroups(files: ChangedFile[], mode: WorkspaceGroupMode) {
-    const groups: FileGroup[] = [];
-
-    for (const file of files) {
-      const key = getGroupKey(file, mode);
-      let group = groups.find((item) => item.key === key);
-      if (!group) {
-        group = { key, label: getGroupLabel(file, mode), files: [] };
-        groups.push(group);
+    return entries.filter((entry) => {
+      const entryTime = new Date(entry.date).getTime();
+      if (author && !entry.author.toLowerCase().includes(author)) {
+        return false;
       }
-      group.files.push(file);
-    }
-
-    return groups;
-  }
-
-  function getGroupKey(file: ChangedFile, mode: WorkspaceGroupMode) {
-    if (mode === "directory") {
-      const directory = getDirectoryName(file.path);
-      return `directory:${directory}`;
-    }
-
-    if (mode === "extension") {
-      const extension = getFileExtension(file.path);
-      return `extension:${extension}`;
-    }
-
-    if (mode === "unity") {
-      return `unity:${getUnityGroupLabel(file.path)}`;
-    }
-
-    return `status:${file.status}`;
-  }
-
-  function getGroupLabel(file: ChangedFile, mode: WorkspaceGroupMode) {
-    if (mode === "directory") {
-      return getDirectoryName(file.path);
-    }
-
-    if (mode === "extension") {
-      return getFileExtension(file.path);
-    }
-
-    if (mode === "unity") {
-      return getUnityGroupLabel(file.path);
-    }
-
-    return labelStatus(file.status);
-  }
-
-  function getDirectoryName(path: string) {
-    const normalizedPath = path.replaceAll("\\", "/");
-    const index = normalizedPath.lastIndexOf("/");
-    return index > 0 ? normalizedPath.slice(0, index) : "根目录";
-  }
-
-  function getFileExtension(path: string) {
-    const fileName = path.replaceAll("\\", "/").split("/").pop() ?? path;
-    const index = fileName.lastIndexOf(".");
-    return index > 0 && index < fileName.length - 1
-      ? fileName.slice(index + 1).toLowerCase()
-      : "无扩展名";
-  }
-
-  function getUnityGroupLabel(path: string) {
-    return unityGroupLabel(path, appSettings.unityGroupRules);
-  }
-
-  function appendFileItems(items: VirtualItem[], files: ChangedFile[], staged: boolean) {
-    for (const file of files) {
-      items.push({
-        kind: "file",
-        key: `${staged ? "staged" : "unstaged"}:${file.path}`,
-        height: fileRowHeight,
-        file,
-        staged,
-      });
-    }
-  }
-
-  function appendGroupedFileItems(
-    items: VirtualItem[],
-    groups: FileGroup[],
-    staged: boolean,
-    currentCollapsedGroups: Set<string>,
-  ) {
-    for (const group of groups) {
-      const scopedGroupKey = `${staged ? "staged" : "unstaged"}:${group.key}`;
-      items.push({
-        kind: "status",
-        key: `${staged ? "staged" : "unstaged"}:group:${group.key}`,
-        groupKey: scopedGroupKey,
-        height: statusHeaderHeight,
-        title: `${group.label} · ${group.files.length}`,
-        collapsed: currentCollapsedGroups.has(scopedGroupKey),
-      });
-      if (!currentCollapsedGroups.has(scopedGroupKey)) {
-        appendFileItems(items, group.files, staged);
+      if (
+        keyword &&
+        !`${entry.revision} ${entry.author} ${entry.message} ${entry.changed_paths
+          .map((path) => path.path)
+          .join(" ")}`
+          .toLowerCase()
+          .includes(keyword)
+      ) {
+        return false;
       }
-    }
-  }
-
-  function buildVirtualItems(
-    stagedFilesInView: ChangedFile[],
-    stagedGroupsInView: FileGroup[],
-    unstagedFilesInView: ChangedFile[],
-    unstagedGroupsInView: FileGroup[],
-    shouldGroupByStatus: boolean,
-    currentCollapsedGroups: Set<string>,
-  ) {
-    const items: VirtualItem[] = [];
-
-    items.push({
-      kind: "section",
-      key: "section:staged",
-      height: sectionHeaderHeight,
-      title: `已暂存 · ${stagedFilesInView.length}`,
+      if (fromTime !== null && !Number.isNaN(entryTime) && entryTime < fromTime) {
+        return false;
+      }
+      if (toTime !== null && !Number.isNaN(entryTime) && entryTime > toTime) {
+        return false;
+      }
+      return true;
     });
-
-    if (stagedFilesInView.length === 0) {
-      items.push({
-        kind: "empty",
-        key: "empty:staged",
-        height: emptyRowHeight,
-        title: "暂无已暂存文件",
-      });
-    } else if (shouldGroupByStatus) {
-      appendGroupedFileItems(items, stagedGroupsInView, true, currentCollapsedGroups);
-    } else {
-      appendFileItems(items, stagedFilesInView, true);
-    }
-
-    items.push({
-      kind: "section",
-      key: "section:unstaged",
-      height: sectionHeaderHeight,
-      title: `未暂存 · ${unstagedFilesInView.length}`,
-    });
-
-    if (unstagedFilesInView.length === 0) {
-      items.push({
-        kind: "empty",
-        key: "empty:unstaged",
-        height: emptyRowHeight,
-        title: "暂无未暂存文件",
-      });
-    } else if (shouldGroupByStatus) {
-      appendGroupedFileItems(items, unstagedGroupsInView, false, currentCollapsedGroups);
-    } else {
-      appendFileItems(items, unstagedFilesInView, false);
-    }
-
-    return items;
-  }
-
-  function positionVirtualItems(items: VirtualItem[]) {
-    let top = 0;
-    return items.map((item) => {
-      const positionedItem = { ...item, top };
-      top += item.height;
-      return positionedItem;
-    });
-  }
-
-  function getVisibleVirtualItems(
-    items: PositionedVirtualItem[],
-    scrollTop: number,
-    measuredViewportHeight: number,
-    elementViewportHeight: number,
-  ) {
-    const viewportHeight = measuredViewportHeight || elementViewportHeight || 560;
-    const start = Math.max(scrollTop - overscanPx, 0);
-    const end = scrollTop + viewportHeight + overscanPx;
-    return items.filter((item) => item.top + item.height >= start && item.top <= end);
-  }
-
-  function toggleGroupCollapse(key: string) {
-    collapsedGroups = new Set(collapsedGroups);
-    if (collapsedGroups.has(key)) {
-      collapsedGroups.delete(key);
-    } else {
-      collapsedGroups.add(key);
-    }
   }
 
   function joinRepositoryUrl(baseUrl: string, name: string) {
@@ -686,11 +482,12 @@
 
   function parentRepositoryUrl(url: string) {
     const normalized = url.replace(/\/+$/, "");
+    const protocolMatch = normalized.match(/^[a-z][a-z0-9+.-]*:\/\//i);
+    const minimum = protocolMatch ? protocolMatch[0].length : 0;
     const slashIndex = normalized.lastIndexOf("/");
-    if (slashIndex <= "https://".length) {
+    if (slashIndex <= minimum) {
       return normalized;
     }
-
     return normalized.slice(0, slashIndex);
   }
 
@@ -721,1650 +518,1374 @@
     ];
   }
 
-  function formatRepositoryDate(value: string) {
-    if (!value) {
-      return "-";
-    }
-
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return value;
-    }
-
-    return date.toLocaleString();
+  function branchName(entry: BranchPoolEntry) {
+    const url = entry.branch_url.replace(/\/+$/, "");
+    return url.slice(url.lastIndexOf("/") + 1) || entry.branch_url;
   }
 
-  function filterLogEntries(
-    entries: SvnLog["entries"],
-    author: string,
-    keyword: string,
-    dateFrom: string,
-    dateTo: string,
-  ) {
-    const normalizedAuthor = author.trim().toLowerCase();
-    const normalizedKeyword = keyword.trim().toLowerCase();
-    const fromTime = dateFrom ? new Date(dateFrom).getTime() : null;
-    const toTime = dateTo ? new Date(`${dateTo}T23:59:59`).getTime() : null;
-
-    return entries.filter((entry) => {
-      const entryTime = new Date(entry.date).getTime();
-      if (normalizedAuthor && !entry.author.toLowerCase().includes(normalizedAuthor)) {
-        return false;
-      }
-      if (
-        normalizedKeyword &&
-        !`${entry.revision} ${entry.message} ${entry.changed_paths.map((path) => path.path).join(" ")}`
-          .toLowerCase()
-          .includes(normalizedKeyword)
-      ) {
-        return false;
-      }
-      if (fromTime !== null && !Number.isNaN(entryTime) && entryTime < fromTime) {
-        return false;
-      }
-      if (toTime !== null && !Number.isNaN(entryTime) && entryTime > toTime) {
-        return false;
-      }
-
-      return true;
-    });
+  function repositoryName(url: string) {
+    const normalized = url.replace(/\/+$/, "");
+    const name = normalized.slice(normalized.lastIndexOf("/") + 1);
+    return name || normalized || "仓库";
   }
 
-  $: changedFiles = workingCopyStatus?.files ?? [];
-  $: normalizedSearch = searchText.trim().toLowerCase();
-  $: stagedFilePaths = new Set(stagedFiles.map((file) => file.path));
-  $: reviewedFilePaths = new Set(reviewedFiles.map((file) => file.path));
-  $: filteredFiles = filterFiles(
-    changedFiles,
-    normalizedSearch,
-    stageFilter,
-    abnormalOnly,
-    unreviewedOnly,
-    generatedOnly,
-    statusFilters,
-    stagedFilePaths,
-    reviewedFilePaths,
-  );
-  $: stagedVisibleFiles = filteredFiles.filter((file) => isStaged(file.path, stagedFilePaths));
-  $: unstagedVisibleFiles = filteredFiles.filter((file) => !isStaged(file.path, stagedFilePaths));
-  $: groupedStagedFiles = buildGroups(stagedVisibleFiles, groupMode);
-  $: groupedUnstagedFiles = buildGroups(unstagedVisibleFiles, groupMode);
-  $: virtualItems = buildVirtualItems(
-    stagedVisibleFiles,
-    groupedStagedFiles,
-    unstagedVisibleFiles,
-    groupedUnstagedFiles,
-    groupByStatus,
-    collapsedGroups,
-  );
-  $: positionedVirtualItems = positionVirtualItems(virtualItems);
-  $: lastVirtualItem = positionedVirtualItems.at(-1);
-  $: totalVirtualHeight = lastVirtualItem ? lastVirtualItem.top + lastVirtualItem.height : 0;
-  $: visibleVirtualItems = getVisibleVirtualItems(
-    positionedVirtualItems,
-    virtualScrollTop,
-    virtualViewportHeight,
-    virtualListElement?.clientHeight ?? 0,
-  );
+  function selectRepositoryProject(url: string) {
+    onSelectView("repository");
+    if (!url) {
+      return;
+    }
+    onRepositoryUrlInput(url);
+    onLoadRepositoryUrl(url);
+  }
+
+  function chooseDefaultRepositoryUrl() {
+    if (repositoryUrlInput.trim()) {
+      onLoadRepositoryUrl();
+      return;
+    }
+    if (workspace?.repository_root) {
+      onLoadRepositoryUrl(workspace.repository_root);
+    }
+  }
+
+  function applyCommitHistoryMessage() {
+    if (!selectedCommitHistoryMessage) {
+      return;
+    }
+    onUseCommitHistoryMessage(selectedCommitHistoryMessage);
+    selectedCommitHistoryMessage = "";
+  }
+
+  $: files = workingCopyStatus?.files ?? [];
+  $: filteredFiles = filterFiles(files);
+  $: stagedCount = stagedFiles.length;
+  $: unstagedCount = Math.max((workingCopyStatus?.total ?? files.length) - stagedCount, 0);
   $: abnormalCount =
     (workingCopyStatus?.missing ?? 0) +
     (workingCopyStatus?.conflicted ?? 0) +
     (workingCopyStatus?.obstructed ?? 0);
-  $: externalFiles = changedFiles.filter((file) => file.status === "external");
-  $: externalAbnormalCount = externalFiles.filter((file) => file.abnormal).length;
-  $: generatedFileCount = changedFiles.filter((file) =>
-    looksLikeGeneratedOrTemporaryPath(file.path),
-  ).length;
-  $: reviewedCount = changedFiles.filter((file) => isReviewed(file.path)).length;
-  $: unreviewedCount = Math.max(changedFiles.length - reviewedCount, 0);
   $: repositoryEntries = repositoryList?.entries ?? [];
-  $: repositoryDirectoryCount = repositoryEntries.filter((entry) => entry.kind === "dir").length;
-  $: repositoryFileCount = repositoryEntries.filter((entry) => entry.kind !== "dir").length;
   $: repositoryCurrentUrl = repositoryList?.url ?? repositoryUrlInput.trim();
+  $: repositoryProjectUrl =
+    repositoryCurrentUrl || workspace?.repository_root || workspace?.repository_url || "";
   $: breadcrumbs = repositoryBreadcrumbs(repositoryCurrentUrl);
-  $: branchEntries = repositoryLayoutResults.branches?.entries.filter(
-    (entry) => entry.kind === "dir",
-  ) ?? [];
-  $: tagEntries = repositoryLayoutResults.tags?.entries.filter(
-    (entry) => entry.kind === "dir",
-  ) ?? [];
-  $: trunkDetected = repositoryLayoutResults.trunk !== null && !repositoryLayoutErrors.trunk;
-  $: totalBranchLocalChanges = branchPool.entries.reduce(
-    (total, entry) => total + entry.local_changes,
-    0,
-  );
-  $: selectedTaskBranch = branchPool.entries.find(
-    (entry) => entry.id === taskWorkspaceForm.branchPoolEntryId,
-  );
-  $: filteredLogEntries = filterLogEntries(
-    svnLog?.entries ?? [],
-    svnLogAuthorFilter,
-    svnLogKeywordFilter,
-    svnLogDateFromFilter,
-    svnLogDateToFilter,
-  );
+  $: branchEntries =
+    repositoryLayoutResults.branches?.entries.filter((entry) => entry.kind === "dir") ?? [];
+  $: tagEntries =
+    repositoryLayoutResults.tags?.entries.filter((entry) => entry.kind === "dir") ?? [];
+  $: filteredLogEntries = filterLogEntries(svnLog?.entries ?? []);
+  $: unconfirmedWarningCount = safetyCheck.warnings.filter(
+    (item) => !safetyCheck.confirmedWarningIds.includes(item.id),
+  ).length;
+  $: activeTask = selectedTask ?? null;
 </script>
 
-<section class="main-workspace" aria-label={view.title}>
-  <section class="workspace-open-panel">
-    <div class="workspace-open-header">
-      <div>
-        <h3>工作副本</h3>
-        {#if workspace}
-          <p>{workspace.working_copy_root}</p>
+<section class="versions-workbench" aria-label="NovaSVN 工作台">
+  <header class="versions-titlebar">
+    <div class="traffic-lights" aria-hidden="true">
+      <span class="close"></span>
+      <span class="minimize"></span>
+      <span class="zoom"></span>
+    </div>
+    <div class="window-identity">
+      <strong>NovaSVN</strong>
+      <span>{workspace ? basename(workspace.working_copy_root) : "Subversion Client"}</span>
+    </div>
+    <nav class="mode-switcher" aria-label="主视图">
+      <button
+        type="button"
+        class:active={view.id === "changes" || view.id === "staging"}
+        on:click={() => onSelectView("changes")}
+      >
+        工作副本
+      </button>
+      <button
+        type="button"
+        class:active={view.id === "history"}
+        on:click={() => onSelectView("history")}
+      >
+        时间线
+      </button>
+      <button
+        type="button"
+        class:active={view.id === "repository"}
+        on:click={() => onSelectView("repository")}
+      >
+        仓库
+      </button>
+      <button
+        type="button"
+        class:active={view.id === "branches" || view.id === "settings"}
+        on:click={() => onSelectView("branches")}
+      >
+        更多
+      </button>
+    </nav>
+    <div class="toolbar-actions">
+      <button type="button" on:click={onRefreshStatus} disabled={!workspace || statusLoading}>
+        {statusLoading ? "刷新中" : "刷新"}
+      </button>
+      <button type="button" on:click={onUpdateWorkspace} disabled={!workspace || runningTaskId !== null}>
+        更新
+      </button>
+      <button type="button" on:click={onCleanupWorkspace} disabled={!workspace || runningTaskId !== null}>
+        清理
+      </button>
+    </div>
+  </header>
+
+  <div class="workspace-location">
+    <input
+      type="text"
+      value={workspacePathInput}
+      placeholder="拖入或输入 SVN 工作副本路径"
+      on:input={(event) =>
+        onWorkspacePathInput((event.currentTarget as HTMLInputElement).value)}
+      on:keydown={(event) => {
+        if (event.key === "Enter") {
+          onOpenWorkspace();
+        }
+      }}
+    />
+    <button type="button" on:click={onChooseWorkspace} disabled={workspaceLoading}>
+      选择
+    </button>
+    <button type="button" class="primary" on:click={onOpenWorkspace} disabled={workspaceLoading}>
+      {workspaceLoading ? "打开中" : "打开"}
+    </button>
+  </div>
+
+  <div class="versions-layout">
+    <aside class="source-list" aria-label="项目列表">
+      <section>
+        <h2>项目</h2>
+        <button
+          type="button"
+          class="source-item"
+          class:active={view.id === "changes" || view.id === "staging"}
+          on:click={() => onSelectView("changes")}
+        >
+          <span class="source-icon">W</span>
+          <span>
+            <strong>{workspace ? basename(workspace.working_copy_root) : "打开工作副本"}</strong>
+            <small>{workspace?.working_copy_root ?? "选择或输入本地项目目录"}</small>
+          </span>
+          <em>{workingCopyStatus?.total ?? 0}</em>
+        </button>
+        {#if branchPool.entries.length > 0}
+          {#each branchPool.entries as entry (entry.id)}
+            <button
+              type="button"
+              class="source-item"
+              on:click={() => onOpenBranchPoolEntry(entry.local_path)}
+            >
+              <span class="source-icon">B</span>
+              <span>
+                <strong>{branchName(entry)}</strong>
+                <small>{entry.local_path}</small>
+              </span>
+              <em>{entry.local_changes}</em>
+            </button>
+          {/each}
+        {/if}
+      </section>
+
+      <section>
+        <h2>仓库</h2>
+        {#if repositoryProjectUrl}
+          <button
+            type="button"
+            class="source-item"
+            class:active={view.id === "repository"}
+            on:click={() => selectRepositoryProject(repositoryProjectUrl)}
+          >
+            <span class="source-icon">R</span>
+            <span>
+              <strong>{repositoryName(repositoryProjectUrl)}</strong>
+              <small>{repositoryProjectUrl}</small>
+            </span>
+            <em>{repositoryEntries.length}</em>
+          </button>
         {:else}
-          <p>选择或输入 SVN 工作副本目录</p>
-        {/if}
-      </div>
-      <div class="workspace-open-actions">
-        <button type="button" on:click={onChooseWorkspace} disabled={workspaceLoading}>
-          选择目录
-        </button>
-        <button type="button" on:click={onOpenWorkspace} disabled={workspaceLoading}>
-          {workspaceLoading ? "打开中" : "打开"}
-        </button>
-        <button
-          type="button"
-          on:click={onRefreshStatus}
-          disabled={!workspace || statusLoading}
-        >
-          {statusLoading ? "刷新中" : "刷新状态"}
-        </button>
-        {#if workingCopyStatus && workingCopyStatus.files.length < workingCopyStatus.total}
           <button
             type="button"
-            on:click={onLoadMoreStatus}
-            disabled={!workspace || statusLoading}
+            class="source-item"
+            class:active={view.id === "repository"}
+            on:click={() => onSelectView("repository")}
           >
-            更多改动
+            <span class="source-icon">R</span>
+            <span>
+              <strong>添加仓库</strong>
+              <small>输入 SVN URL 后会显示在这里</small>
+            </span>
+            <em>0</em>
           </button>
         {/if}
-        <button type="button" on:click={onUpdateWorkspace} disabled={!workspace}>
-          更新
-        </button>
-        <button type="button" on:click={onCleanupWorkspace} disabled={!workspace}>
-          清理
-        </button>
-      </div>
-    </div>
+      </section>
 
-    <div class="workspace-path-row">
-      <input
-        type="text"
-        value={workspacePathInput}
-        placeholder="输入 SVN 工作副本目录"
-        on:input={(event) =>
-          onWorkspacePathInput((event.currentTarget as HTMLInputElement).value)}
-      />
-    </div>
+      <section class="source-sidebar-meta">
+        <h2>状态</h2>
+        <p>{backendMessage}</p>
+      </section>
+    </aside>
 
-    <ErrorNotice error={workspaceError} />
-    <ErrorNotice error={statusError} />
+    <main class="content-pane" aria-label={view.title}>
+      <ErrorNotice error={workspaceError} />
+      <ErrorNotice error={statusError} />
+      <ErrorNotice error={commandError} />
 
-    {#if workspace}
-      <dl class="workspace-summary">
-        <div>
-          <dt>Repository URL</dt>
-          <dd>{workspace.repository_url}</dd>
-        </div>
-        <div>
-          <dt>Repository Root</dt>
-          <dd>{workspace.repository_root}</dd>
-        </div>
-        <div>
-          <dt>Revision</dt>
-          <dd>{workspace.revision}</dd>
-        </div>
-        <div>
-          <dt>Unity</dt>
-          <dd>{workspace.unity.detected ? "已识别" : "未识别"}</dd>
-        </div>
-        <div>
-          <dt>Local Path</dt>
-          <dd>{workspace.local_path}</dd>
-        </div>
-      </dl>
-      {#if workspace.unity.detected}
-        <div class="unity-summary">
-          <span>Assets</span>
-          <span>ProjectSettings</span>
-          <span>Packages/manifest.json</span>
-        </div>
-      {/if}
-    {/if}
-  </section>
+      {#if view.id === "history"}
+        <section class="pane-header">
+          <div>
+            <h1>时间线</h1>
+            <p>{svnLog?.target ?? workspace?.repository_url ?? "读取工作副本历史"}</p>
+          </div>
+          <div class="pane-actions">
+            <button type="button" on:click={onRefreshSvnLog} disabled={!workspace || svnLogLoading}>
+              {svnLogLoading ? "读取中" : "读取日志"}
+            </button>
+            <button
+              type="button"
+              on:click={onLoadMoreSvnLog}
+              disabled={!workspace || svnLogLoading || !svnLog?.has_more}
+            >
+              更多
+            </button>
+          </div>
+        </section>
 
-  {#if view.id === "history"}
-    <div class="metric-row">
-      <div class="metric">
-        <span>Revision</span>
-        <strong>{svnLog?.entries.length ?? 0}</strong>
-      </div>
-      <div class="metric">
-        <span>显示</span>
-        <strong>{filteredLogEntries.length}</strong>
-      </div>
-      <div class="metric">
-        <span>目标</span>
-        <strong>{svnLogFileOnly ? "文件" : "工作副本"}</strong>
-      </div>
-      <div class="metric">
-        <span>每页</span>
-        <strong>{svnLogLimit}</strong>
-      </div>
-      <div class="metric">
-        <span>状态</span>
-        <strong>{svnLogLoading ? "加载" : svnLog ? "完成" : "待查"}</strong>
-      </div>
-    </div>
-
-    <section class="svn-log-panel" aria-label="SVN 日志过滤">
-      <div class="repository-layout-header">
-        <div>
-          <h3>SVN Log</h3>
-          <p>{svnLog?.target ?? "读取工作副本或选中文件历史"}</p>
-        </div>
-        <button type="button" on:click={onRefreshSvnLog} disabled={!workspace || svnLogLoading}>
-          {svnLogLoading ? "加载中" : "读取日志"}
-        </button>
-        <button
-          type="button"
-          on:click={onLoadMoreSvnLog}
-          disabled={!workspace || svnLogLoading || !svnLog?.has_more}
-        >
-          加载更多
-        </button>
-      </div>
-
-      <div class="svn-log-filters">
-        <input
-          type="search"
-          value={svnLogAuthorFilter}
-          placeholder="作者"
-          on:input={(event) =>
-            onSvnLogFilterInput(
-              "svnLogAuthorFilter",
-              (event.currentTarget as HTMLInputElement).value,
-            )}
-        />
-        <input
-          type="search"
-          value={svnLogKeywordFilter}
-          placeholder="关键字"
-          on:input={(event) =>
-            onSvnLogFilterInput(
-              "svnLogKeywordFilter",
-              (event.currentTarget as HTMLInputElement).value,
-            )}
-        />
-        <input
-          type="date"
-          value={svnLogDateFromFilter}
-          on:input={(event) =>
-            onSvnLogFilterInput(
-              "svnLogDateFromFilter",
-              (event.currentTarget as HTMLInputElement).value,
-            )}
-        />
-        <input
-          type="date"
-          value={svnLogDateToFilter}
-          on:input={(event) =>
-            onSvnLogFilterInput(
-              "svnLogDateToFilter",
-              (event.currentTarget as HTMLInputElement).value,
-            )}
-        />
-        <input
-          type="number"
-          min="1"
-          max="200"
-          value={svnLogLimit}
-          on:input={(event) =>
-            onSvnLogLimitInput(Number((event.currentTarget as HTMLInputElement).value))}
-        />
-        <label>
+        <section class="timeline-filters" aria-label="日志过滤">
           <input
-            type="checkbox"
-            checked={svnLogFileOnly}
-            on:change={(event) =>
-              onSvnLogFileOnlyInput((event.currentTarget as HTMLInputElement).checked)}
+            type="search"
+            value={svnLogKeywordFilter}
+            placeholder="搜索 revision、路径或提交信息"
+            on:input={(event) =>
+              onSvnLogFilterInput(
+                "svnLogKeywordFilter",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
           />
-          <span>选中文件</span>
-        </label>
-      </div>
-      <ErrorNotice error={svnLogError} />
-    </section>
-
-    <section class="revision-diff-panel" aria-label="Revision Diff 和分支比较">
-      <div class="repository-layout-header">
-        <div>
-          <h3>Revision Diff</h3>
-          <p>{revisionDiffResult?.target ?? "比较 revision、工作副本或两个分支 URL"}</p>
-        </div>
-        <div class="repository-copy-presets">
-          <button
-            type="button"
-            on:click={onRunRevisionDiff}
-            disabled={revisionDiffLoading}
-          >
-            {revisionDiffLoading ? "比较中" : "开始比较"}
-          </button>
-          <button
-            type="button"
-            on:click={onExportRevisionDiffPatch}
-            disabled={
-              !revisionDiffResult ||
-              (!revisionDiffResult.diff_text && !revisionDiffResult.patch_file_path) ||
-              (revisionDiffResult.truncated && !revisionDiffResult.patch_file_path)
-            }
-          >
-            {revisionDiffResult?.truncated ? "打开完整 patch" : "导出 patch"}
-          </button>
-        </div>
-      </div>
-
-      <div class="revision-diff-mode" role="group" aria-label="Diff 类型">
-        <button
-          type="button"
-          class:active={revisionDiffForm.mode === "revisions"}
-          on:click={() => onRevisionDiffFormInput("mode", "revisions")}
-        >
-          Revision
-        </button>
-        <button
-          type="button"
-          class:active={revisionDiffForm.mode === "working_copy_to_revision"}
-          on:click={() => onRevisionDiffFormInput("mode", "working_copy_to_revision")}
-        >
-          工作副本
-        </button>
-        <button
-          type="button"
-          class:active={revisionDiffForm.mode === "urls"}
-          on:click={() => onRevisionDiffFormInput("mode", "urls")}
-        >
-          分支 URL
-        </button>
-      </div>
-
-      {#if revisionDiffForm.mode === "urls"}
-        <div class="revision-diff-grid">
+          <input
+            type="search"
+            value={svnLogAuthorFilter}
+            placeholder="作者"
+            on:input={(event) =>
+              onSvnLogFilterInput(
+                "svnLogAuthorFilter",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
+          />
+          <input
+            type="number"
+            min="1"
+            max="200"
+            value={svnLogLimit}
+            on:input={(event) =>
+              onSvnLogLimitInput(Number((event.currentTarget as HTMLInputElement).value))}
+          />
           <label>
-            <span>左侧 URL</span>
             <input
-              type="url"
-              value={revisionDiffForm.leftUrl}
-              on:input={(event) =>
-                onRevisionDiffFormInput(
-                  "leftUrl",
-                  (event.currentTarget as HTMLInputElement).value,
-                )}
+              type="checkbox"
+              checked={svnLogFileOnly}
+              on:change={(event) =>
+                onSvnLogFileOnlyInput((event.currentTarget as HTMLInputElement).checked)}
             />
+            <span>选中文件</span>
           </label>
-          <label>
-            <span>右侧 URL</span>
-            <input
-              type="url"
-              value={revisionDiffForm.rightUrl}
-              on:input={(event) =>
-                onRevisionDiffFormInput(
-                  "rightUrl",
-                  (event.currentTarget as HTMLInputElement).value,
-                )}
-            />
-          </label>
-        </div>
-      {:else}
-        <div class="revision-diff-grid">
-          {#if revisionDiffForm.mode === "revisions"}
-            <label>
-              <span>左侧 Revision</span>
+        </section>
+        <ErrorNotice error={svnLogError} />
+
+        <div class="timeline-layout">
+          <section class="timeline-list" aria-label="Revision 列表">
+            {#if filteredLogEntries.length > 0}
+              {#each filteredLogEntries as entry (entry.revision)}
+                <article class="timeline-entry">
+                  <button type="button" on:click={() => onPrepareRevisionDiffFromLog(entry.revision)}>
+                    <strong>r{entry.revision}</strong>
+                    <span>{entry.author || "-"}</span>
+                    <time>{formatDate(entry.date)}</time>
+                  </button>
+                  <p>{entry.message || "无提交信息"}</p>
+                  <div>
+                    {#each entry.changed_paths.slice(0, 5) as path (`${entry.revision}:${path.path}:${path.action}`)}
+                      <small>{path.action || "-"} {path.path}</small>
+                    {/each}
+                    {#if entry.changed_paths.length > 5}
+                      <small>另有 {entry.changed_paths.length - 5} 项</small>
+                    {/if}
+                  </div>
+                </article>
+              {/each}
+            {:else if svnLogLoading}
+              <article class="empty-state">正在读取日志</article>
+            {:else}
+              <article class="empty-state">点击“读取日志”查看修订历史</article>
+            {/if}
+          </section>
+
+          <aside class="revision-compare" aria-label="Revision 比较">
+            <h2>比较</h2>
+            <div class="segmented-control">
+              <button
+                type="button"
+                class:active={revisionDiffForm.mode === "revisions"}
+                on:click={() => onRevisionDiffFormInput("mode", "revisions")}
+              >
+                Revision
+              </button>
+              <button
+                type="button"
+                class:active={revisionDiffForm.mode === "working_copy_to_revision"}
+                on:click={() => onRevisionDiffFormInput("mode", "working_copy_to_revision")}
+              >
+                工作副本
+              </button>
+              <button
+                type="button"
+                class:active={revisionDiffForm.mode === "urls"}
+                on:click={() => onRevisionDiffFormInput("mode", "urls")}
+              >
+                URL
+              </button>
+            </div>
+
+            {#if revisionDiffForm.mode === "urls"}
               <input
-                type="text"
-                value={revisionDiffForm.leftRevision}
-                placeholder="例如 120"
+                type="url"
+                value={revisionDiffForm.leftUrl}
+                placeholder="左侧 URL"
                 on:input={(event) =>
                   onRevisionDiffFormInput(
-                    "leftRevision",
+                    "leftUrl",
+                    (event.currentTarget as HTMLInputElement).value,
+                  )}
+              />
+              <input
+                type="url"
+                value={revisionDiffForm.rightUrl}
+                placeholder="右侧 URL"
+                on:input={(event) =>
+                  onRevisionDiffFormInput(
+                    "rightUrl",
+                    (event.currentTarget as HTMLInputElement).value,
+                  )}
+              />
+            {:else}
+              {#if revisionDiffForm.mode === "revisions"}
+                <input
+                  type="text"
+                  value={revisionDiffForm.leftRevision}
+                  placeholder="左侧 revision"
+                  on:input={(event) =>
+                    onRevisionDiffFormInput(
+                      "leftRevision",
+                      (event.currentTarget as HTMLInputElement).value,
+                    )}
+                />
+              {/if}
+              <input
+                type="text"
+                value={revisionDiffForm.rightRevision}
+                placeholder={workspace?.revision ? `目标 revision，例如 ${workspace.revision}` : "目标 revision"}
+                on:input={(event) =>
+                  onRevisionDiffFormInput(
+                    "rightRevision",
+                    (event.currentTarget as HTMLInputElement).value,
+                  )}
+              />
+            {/if}
+
+            {#if revisionDiffError}
+              <p class="inline-error">{revisionDiffError}</p>
+            {/if}
+            <button type="button" class="primary" on:click={onRunRevisionDiff} disabled={revisionDiffLoading}>
+              {revisionDiffLoading ? "比较中" : "比较"}
+            </button>
+            <button
+              type="button"
+              on:click={onExportRevisionDiffPatch}
+              disabled={!revisionDiffResult || (!revisionDiffResult.diff_text && !revisionDiffResult.patch_file_path)}
+            >
+              导出 Patch
+            </button>
+            <div class="revision-result">
+              <span>{revisionDiffResult?.file_count ?? 0} 文件</span>
+              <span>{revisionDiffResult?.line_count ?? 0} 行</span>
+            </div>
+            <pre>{revisionDiffResult?.diff_text || "暂无比较结果"}</pre>
+          </aside>
+        </div>
+      {:else if view.id === "repository"}
+        <section class="pane-header">
+          <div>
+            <h1>仓库</h1>
+            <p>{repositoryCurrentUrl || workspace?.repository_root || "浏览远端 SVN 仓库"}</p>
+          </div>
+          <div class="pane-actions">
+            <button type="button" on:click={onUseWorkspaceRepositoryRoot} disabled={!workspace}>
+              使用 Root
+            </button>
+            <button type="button" class="primary" on:click={chooseDefaultRepositoryUrl} disabled={repositoryLoading}>
+              {repositoryLoading ? "加载中" : "浏览"}
+            </button>
+          </div>
+        </section>
+
+        <section class="repository-urlbar">
+          <input
+            type="url"
+            value={repositoryUrlInput}
+            placeholder="https://example.com/svn/project"
+            on:input={(event) =>
+              onRepositoryUrlInput((event.currentTarget as HTMLInputElement).value)}
+            on:keydown={(event) => {
+              if (event.key === "Enter") {
+                onLoadRepositoryUrl();
+              }
+            }}
+          />
+        </section>
+
+        {#if repositoryError}
+          <p class="inline-error">{repositoryError}</p>
+        {/if}
+
+        {#if breadcrumbs.length > 0}
+          <nav class="breadcrumbs" aria-label="仓库路径">
+            {#each breadcrumbs as crumb, index (crumb.url)}
+              <button
+                type="button"
+                disabled={repositoryLoading || crumb.url === repositoryCurrentUrl}
+                on:click={() => onLoadRepositoryUrl(crumb.url)}
+              >
+                {crumb.label}
+              </button>
+              {#if index < breadcrumbs.length - 1}
+                <span>/</span>
+              {/if}
+            {/each}
+          </nav>
+        {/if}
+
+        <section class="repository-table" aria-label="仓库目录">
+          <div class="table-head">
+            <span>名称</span>
+            <span>类型</span>
+            <span>Revision</span>
+            <span>作者</span>
+            <span>日期</span>
+          </div>
+          {#if repositoryLoading}
+            <article class="empty-state">仓库目录加载中</article>
+          {:else if repositoryList}
+            <button
+              type="button"
+              class="repository-row"
+              on:click={() => onLoadRepositoryUrl(parentRepositoryUrl(repositoryList.url))}
+            >
+              <strong>..</strong>
+              <span>目录</span>
+              <span>-</span>
+              <span>-</span>
+              <span>-</span>
+            </button>
+            {#each repositoryEntries as entry (entry.kind + ":" + entry.name)}
+              <button
+                type="button"
+                class="repository-row"
+                disabled={entry.kind !== "dir"}
+                on:click={() => onLoadRepositoryUrl(joinRepositoryUrl(repositoryList.url, entry.name))}
+              >
+                <strong>{entry.name || "/"}</strong>
+                <span>{entry.kind === "dir" ? "目录" : "文件"}</span>
+                <span>{entry.revision || "-"}</span>
+                <span>{entry.author || "-"}</span>
+                <span>{formatDate(entry.date)}</span>
+              </button>
+            {/each}
+            {#if repositoryEntries.length === 0}
+              <article class="empty-state">当前目录为空</article>
+            {/if}
+          {:else}
+            <article class="empty-state">输入仓库 URL 后开始浏览</article>
+          {/if}
+        </section>
+
+        <details class="advanced-section">
+          <summary>分支和标签</summary>
+          <div class="layout-detect">
+            <label>
+              <span>trunk</span>
+              <input
+                type="text"
+                value={repositoryLayout.trunkPath}
+                on:input={(event) =>
+                  onRepositoryLayoutPathInput("trunk", (event.currentTarget as HTMLInputElement).value)}
+              />
+            </label>
+            <label>
+              <span>branches</span>
+              <input
+                type="text"
+                value={repositoryLayout.branchesPath}
+                on:input={(event) =>
+                  onRepositoryLayoutPathInput(
+                    "branches",
                     (event.currentTarget as HTMLInputElement).value,
                   )}
               />
             </label>
-          {/if}
-          <label>
-            <span>{revisionDiffForm.mode === "revisions" ? "右侧 Revision" : "目标 Revision"}</span>
-            <input
-              type="text"
-              value={revisionDiffForm.rightRevision}
-              placeholder={workspace?.revision ?? "例如 HEAD"}
-              on:input={(event) =>
-                onRevisionDiffFormInput(
-                  "rightRevision",
-                  (event.currentTarget as HTMLInputElement).value,
-                )}
-            />
-          </label>
-        </div>
-      {/if}
-
-      {#if revisionDiffError}
-        <p class="inline-error">{revisionDiffError}</p>
-      {/if}
-
-      <div class="revision-diff-summary">
-        <span>文件 {revisionDiffResult?.file_count ?? 0}</span>
-        <span>行 {revisionDiffResult?.line_count ?? 0}</span>
-        <span>{revisionDiffResult?.mode ?? revisionDiffForm.mode}</span>
-        {#if revisionDiffResult?.truncated}
-          <span>预览截断 {formatBytes(revisionDiffResult.max_bytes)}</span>
-        {/if}
-      </div>
-
-      {#if revisionDiffResult?.truncated}
-        <p class="inline-warning">
-          Diff 结果超过预览上限，当前只显示前 {formatBytes(revisionDiffResult.max_bytes)}，可打开后台生成的完整 patch 文件。
-        </p>
-      {/if}
-
-      <pre class="revision-diff-preview">{revisionDiffResult?.diff_text || "暂无 diff 结果"}</pre>
-    </section>
-
-    <section class="svn-log-list" aria-label="SVN 日志列表">
-      {#if filteredLogEntries.length > 0}
-        {#each filteredLogEntries as entry (entry.revision)}
-          <article class="svn-log-entry">
-            <header>
-              <strong>r{entry.revision}</strong>
-              <span>{entry.author || "-"}</span>
-              <span>{formatRepositoryDate(entry.date)}</span>
-              <button type="button" on:click={() => onPrepareRevisionDiffFromLog(entry.revision)}>
-                比较
-              </button>
-            </header>
-            <p>{entry.message || "无提交信息"}</p>
-            <div class="svn-log-paths">
-              {#each entry.changed_paths as path (`${entry.revision}:${path.path}:${path.action}`)}
-                <span>
-                  {path.action || "-"} {path.path}
-                  {#if path.copy_from_path}
-                    <small>
-                      &lt;- {path.copy_from_path}{path.copy_from_revision ? `@r${path.copy_from_revision}` : ""}
-                    </small>
-                  {/if}
-                </span>
-              {/each}
-            </div>
-          </article>
-        {/each}
-      {:else if svnLog}
-        <article class="repository-empty">没有匹配的日志</article>
-      {:else}
-        <article class="repository-empty">点击读取日志开始查看历史</article>
-      {/if}
-    </section>
-  {:else if view.id === "settings"}
-    <div class="metric-row">
-      <div class="metric">
-        <span>SVN</span>
-        <strong>{appSettings.svnExecutable ? "自定义" : "默认"}</strong>
-      </div>
-      <div class="metric">
-        <span>Diff</span>
-        <strong>{appSettings.diffMode === "inline" ? "行内" : "双栏"}</strong>
-      </div>
-      <div class="metric">
-        <span>Unity</span>
-        <strong>{appSettings.unityRulesEnabled ? "启用" : "关闭"}</strong>
-      </div>
-      <div class="metric">
-        <span>阈值</span>
-        <strong>{appSettings.largeFileThresholdMb}MB</strong>
-      </div>
-      <div class="metric">
-        <span>工具</span>
-        <strong>{appSettings.externalDiffTool || appSettings.externalMergeTool ? "已设" : "默认"}</strong>
-      </div>
-    </div>
-
-    <section class="settings-panel" aria-label="设置和用户偏好">
-      <label>
-        <span>SVN 路径</span>
-        <input
-          type="text"
-          value={appSettings.svnExecutable}
-          placeholder="svn 或 svn.exe"
-          on:input={(event) =>
-            onAppSettingInput(
-              "svnExecutable",
-              (event.currentTarget as HTMLInputElement).value,
-            )}
-        />
-        {#if appSettings.validationErrors.svnExecutable}
-          <small class="settings-field-error">{appSettings.validationErrors.svnExecutable}</small>
-        {/if}
-      </label>
-      <label>
-        <span>提交模板</span>
-        <textarea
-          rows="3"
-          value={appSettings.commitTemplate}
-          on:input={(event) =>
-            onAppSettingInput(
-              "commitTemplate",
-              (event.currentTarget as HTMLTextAreaElement).value,
-            )}
-        ></textarea>
-      </label>
-      <label>
-        <span>工作副本池路径</span>
-        <input
-          type="text"
-          value={appSettings.branchPoolBasePath}
-          placeholder="~/NovaSVN/branches"
-          on:input={(event) =>
-            onAppSettingInput(
-              "branchPoolBasePath",
-              (event.currentTarget as HTMLInputElement).value,
-            )}
-        />
-        {#if appSettings.validationErrors.branchPoolBasePath}
-          <small class="settings-field-error">{appSettings.validationErrors.branchPoolBasePath}</small>
-        {/if}
-      </label>
-      <label>
-        <span>默认 Diff 模式</span>
-        <select
-          value={appSettings.diffMode}
-          on:change={(event) =>
-            onAppSettingInput(
-              "diffMode",
-              (event.currentTarget as HTMLSelectElement).value as AppSettingsState["diffMode"],
-            )}
-        >
-          <option value="side_by_side">双栏</option>
-          <option value="inline">行内</option>
-        </select>
-      </label>
-      <label>
-        <span>大文件阈值 MB</span>
-        <input
-          type="number"
-          min="1"
-          max="2048"
-          value={appSettings.largeFileThresholdMb}
-          on:input={(event) =>
-            onAppSettingInput(
-              "largeFileThresholdMb",
-              (event.currentTarget as HTMLInputElement).valueAsNumber,
-            )}
-        />
-      </label>
-      <label>
-        <span>外部 Diff 工具</span>
-        <input
-          type="text"
-          value={appSettings.externalDiffTool}
-          on:input={(event) =>
-            onAppSettingInput(
-              "externalDiffTool",
-              (event.currentTarget as HTMLInputElement).value,
-            )}
-        />
-        {#if appSettings.validationErrors.externalDiffTool}
-          <small class="settings-field-error">{appSettings.validationErrors.externalDiffTool}</small>
-        {/if}
-      </label>
-      <label>
-        <span>外部 Merge 工具</span>
-        <input
-          type="text"
-          value={appSettings.externalMergeTool}
-          on:input={(event) =>
-            onAppSettingInput(
-              "externalMergeTool",
-              (event.currentTarget as HTMLInputElement).value,
-            )}
-        />
-        {#if appSettings.validationErrors.externalMergeTool}
-          <small class="settings-field-error">{appSettings.validationErrors.externalMergeTool}</small>
-        {/if}
-      </label>
-      <label class="settings-toggle">
-        <input
-          type="checkbox"
-          checked={appSettings.showWhitespace}
-          on:change={(event) =>
-            onAppSettingInput(
-              "showWhitespace",
-              (event.currentTarget as HTMLInputElement).checked,
-            )}
-        />
-        <span>默认显示空白字符</span>
-      </label>
-      <label class="settings-toggle">
-        <input
-          type="checkbox"
-          checked={appSettings.unityRulesEnabled}
-          on:change={(event) =>
-            onAppSettingInput(
-              "unityRulesEnabled",
-              (event.currentTarget as HTMLInputElement).checked,
-            )}
-        />
-        <span>启用 Unity 规则</span>
-      </label>
-      <div class="settings-rule-group">
-        <span>Unity 分组规则</span>
-        <label>
-          <input
-            type="checkbox"
-            checked={appSettings.unityGroupRules.addressables}
-            on:change={(event) =>
-              onAppSettingInput("unityGroupRules", {
-                ...appSettings.unityGroupRules,
-                addressables: (event.currentTarget as HTMLInputElement).checked,
-              })}
-          />
-          <span>Addressables</span>
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={appSettings.unityGroupRules.projectSettings}
-            on:change={(event) =>
-              onAppSettingInput("unityGroupRules", {
-                ...appSettings.unityGroupRules,
-                projectSettings: (event.currentTarget as HTMLInputElement).checked,
-              })}
-          />
-          <span>ProjectSettings</span>
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={appSettings.unityGroupRules.packages}
-            on:change={(event) =>
-              onAppSettingInput("unityGroupRules", {
-                ...appSettings.unityGroupRules,
-                packages: (event.currentTarget as HTMLInputElement).checked,
-              })}
-          />
-          <span>Packages</span>
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={appSettings.unityGroupRules.scenes}
-            on:change={(event) =>
-              onAppSettingInput("unityGroupRules", {
-                ...appSettings.unityGroupRules,
-                scenes: (event.currentTarget as HTMLInputElement).checked,
-              })}
-          />
-          <span>Scene</span>
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={appSettings.unityGroupRules.prefabs}
-            on:change={(event) =>
-              onAppSettingInput("unityGroupRules", {
-                ...appSettings.unityGroupRules,
-                prefabs: (event.currentTarget as HTMLInputElement).checked,
-              })}
-          />
-          <span>Prefab</span>
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={appSettings.unityGroupRules.assets}
-            on:change={(event) =>
-              onAppSettingInput("unityGroupRules", {
-                ...appSettings.unityGroupRules,
-                assets: (event.currentTarget as HTMLInputElement).checked,
-              })}
-          />
-          <span>Assets</span>
-        </label>
-      </div>
-      <div class="settings-diagnostics">
-        <button type="button" on:click={onExportDiagnosticLog} disabled={appSettings.loading}>
-          {appSettings.loading ? "导出中" : "导出诊断日志"}
-        </button>
-        {#if appSettings.diagnosticExportPath}
-          <p>{appSettings.diagnosticExportPath}</p>
-        {:else if appSettings.diagnosticExportError}
-          <p class="inline-error">{appSettings.diagnosticExportError}</p>
-        {/if}
-      </div>
-    </section>
-  {:else if view.id === "staging"}
-    <div class="metric-row">
-      <div class="metric">
-        <span>任务</span>
-        <strong>{taskWorkspaces.entries.length}</strong>
-      </div>
-      <div class="metric">
-        <span>分支池</span>
-        <strong>{branchPool.entries.length}</strong>
-      </div>
-      <div class="metric">
-        <span>已暂存</span>
-        <strong>{stagedFiles.length}</strong>
-      </div>
-      <div class="metric">
-        <span>已审</span>
-        <strong>{reviewedCount}</strong>
-      </div>
-      <div class="metric">
-        <span>当前</span>
-        <strong>{activeTaskWorkspaceId ? "任务" : "无"}</strong>
-      </div>
-    </div>
-
-    <section class="task-workspace-panel" aria-label="任务工作区">
-      <div class="repository-layout-header">
-        <div>
-          <h3>任务工作区</h3>
-          <p>任务保存 NovaSVN 草稿，不影响 SVN 元数据</p>
-        </div>
-      </div>
-
-      <div class="task-workspace-form">
-        <label>
-          <span>任务名称</span>
-          <input
-            type="text"
-            value={taskWorkspaceForm.name}
-            on:input={(event) =>
-              onTaskWorkspaceFormInput(
-                "name",
-                (event.currentTarget as HTMLInputElement).value,
-              )}
-          />
-        </label>
-        <label>
-          <span>绑定分支工作副本</span>
-          <select
-            value={taskWorkspaceForm.branchPoolEntryId}
-            on:change={(event) =>
-              onTaskWorkspaceFormInput(
-                "branchPoolEntryId",
-                (event.currentTarget as HTMLSelectElement).value,
-              )}
-          >
-            <option value="">选择分支工作副本</option>
-            {#each branchPool.entries as entry (entry.id)}
-              <option value={entry.id}>{entry.branch_url}</option>
-            {/each}
-          </select>
-        </label>
-        <button
-          type="button"
-          on:click={onCreateTaskWorkspace}
-          disabled={taskWorkspaceLoading || !taskWorkspaceForm.branchPoolEntryId}
-        >
-          创建任务
-        </button>
-      </div>
-
-      {#if selectedTaskBranch}
-        <p class="task-workspace-bound">{selectedTaskBranch.local_path}</p>
-      {/if}
-      <ErrorNotice error={taskWorkspaceError} />
-    </section>
-
-    <section class="task-workspace-list" aria-label="任务工作区列表">
-      {#if taskWorkspaces.entries.length > 0}
-        {#each taskWorkspaces.entries as entry (entry.id)}
-          <article class="task-workspace-entry" class:active={entry.id === activeTaskWorkspaceId}>
-            <div>
-              <h3>{entry.name}</h3>
-              <p>{entry.branch_url || entry.local_path}</p>
-            </div>
-            <span>{entry.id === activeTaskWorkspaceId ? "当前" : "任务"}</span>
-            <button type="button" on:click={() => onSwitchTaskWorkspace(entry.id)}>
-              切换
+            <label>
+              <span>tags</span>
+              <input
+                type="text"
+                value={repositoryLayout.tagsPath}
+                on:input={(event) =>
+                  onRepositoryLayoutPathInput("tags", (event.currentTarget as HTMLInputElement).value)}
+              />
+            </label>
+            <button type="button" on:click={onDetectRepositoryLayout} disabled={repositoryLayoutLoading}>
+              {repositoryLayoutLoading ? "识别中" : "识别"}
             </button>
-            <button type="button" on:click={() => onRemoveTaskWorkspace(entry.id)}>
-              删除
-            </button>
-          </article>
-        {/each}
-      {:else}
-        <article class="repository-empty">暂无任务工作区</article>
-      {/if}
-    </section>
-  {:else if view.id === "branches"}
-    <div class="metric-row">
-      <div class="metric">
-        <span>池项</span>
-        <strong>{branchPool.entries.length}</strong>
-      </div>
-      <div class="metric">
-        <span>本地改动</span>
-        <strong>{totalBranchLocalChanges}</strong>
-      </div>
-      <div class="metric">
-        <span>当前</span>
-        <strong>{workspace ? "已打开" : "未打开"}</strong>
-      </div>
-      <div class="metric">
-        <span>状态</span>
-        <strong>{branchCheckoutRunning ? "Checkout" : "就绪"}</strong>
-      </div>
-      <div class="metric">
-        <span>保存</span>
-        <strong>{branchPoolLoading ? "同步" : "本地"}</strong>
-      </div>
-    </div>
-
-    <section class="branch-pool-panel" aria-label="分支工作副本池">
-      <div class="repository-layout-header">
-        <div>
-          <h3>分支工作副本池</h3>
-          <p>切换池项会打开对应工作副本，不执行 svn switch</p>
-        </div>
-      </div>
-
-      <div class="branch-pool-form">
-        <label>
-          <span>分支 URL</span>
-          <input
-            type="url"
-            value={branchPoolForm.branchUrl}
-            on:input={(event) =>
-              onBranchPoolFormInput(
-                "branchUrl",
-                (event.currentTarget as HTMLInputElement).value,
-              )}
-          />
-        </label>
-        <label>
-          <span>本地路径</span>
-          <input
-            type="text"
-            value={branchPoolForm.localPath}
-            on:input={(event) =>
-              onBranchPoolFormInput(
-                "localPath",
-                (event.currentTarget as HTMLInputElement).value,
-              )}
-          />
-          {#if branchPoolFormErrors.localPath}
-            <small class="settings-field-error">{branchPoolFormErrors.localPath}</small>
-          {/if}
-        </label>
-        <label>
-          <span>Revision</span>
-          <input
-            type="text"
-            value={branchPoolForm.revision}
-            placeholder="留空使用 HEAD"
-            on:input={(event) =>
-              onBranchPoolFormInput(
-                "revision",
-                (event.currentTarget as HTMLInputElement).value,
-              )}
-          />
-        </label>
-      </div>
-
-      {#if branchCheckoutError}
-        <p class="inline-error">{branchCheckoutError}</p>
-      {/if}
-      <ErrorNotice error={branchPoolError} />
-
-      <div class="branch-pool-actions">
-        <button
-          type="button"
-          on:click={onCheckoutBranchPoolEntry}
-          disabled={branchCheckoutRunning}
-        >
-          {branchCheckoutRunning ? "Checkout 中" : "Checkout 创建"}
-        </button>
-        <button type="button" on:click={onReuseBranchPoolEntry} disabled={branchPoolLoading}>
-          复用已有
-        </button>
-      </div>
-    </section>
-
-    <section class="branch-pool-list" aria-label="分支工作副本池列表">
-      {#if branchPool.entries.length > 0}
-        {#each branchPool.entries as entry (entry.id)}
-          <article class="branch-pool-entry">
-            <div>
-              <h3>{entry.branch_url}</h3>
-              <p>{entry.local_path}</p>
-            </div>
-            <span>r{entry.revision || "-"}</span>
-            <span>{entry.local_changes} 改动</span>
-            <button type="button" on:click={() => onOpenBranchPoolEntry(entry.local_path)}>
-              切换
-            </button>
-            <button type="button" on:click={() => onRemoveBranchPoolEntry(entry.id, false)}>
-              移除池项
-            </button>
-            <button type="button" on:click={() => onRemoveBranchPoolEntry(entry.id, true)}>
-              清理本地
-            </button>
-          </article>
-        {/each}
-      {:else}
-        <article class="repository-empty">暂无分支工作副本池项</article>
-      {/if}
-    </section>
-
-    <section class="merge-panel" aria-label="Merge 基础流程">
-      <div class="repository-layout-header">
-        <div>
-          <h3>Merge</h3>
-          <p>从源 URL 合并到当前工作副本，可先 dry-run</p>
-        </div>
-        <button
-          type="button"
-          on:click={onRunMerge}
-          disabled={!workspace || mergeRunning || !mergeForm.sourceUrl.trim()}
-        >
-          {mergeRunning ? "Merge 中" : mergeForm.dryRun ? "Dry-run" : "执行 Merge"}
-        </button>
-      </div>
-
-      <div class="merge-form">
-        <label>
-          <span>源 URL</span>
-          <input
-            type="url"
-            value={mergeForm.sourceUrl}
-            on:input={(event) =>
-              onMergeFormInput(
-                "sourceUrl",
-                (event.currentTarget as HTMLInputElement).value,
-              )}
-          />
-        </label>
-        <label>
-          <span>起始 Revision</span>
-          <input
-            type="text"
-            value={mergeForm.startRevision}
-            placeholder="留空使用默认"
-            on:input={(event) =>
-              onMergeFormInput(
-                "startRevision",
-                (event.currentTarget as HTMLInputElement).value,
-              )}
-          />
-        </label>
-        <label>
-          <span>结束 Revision</span>
-          <input
-            type="text"
-            value={mergeForm.endRevision}
-            placeholder="留空使用默认"
-            on:input={(event) =>
-              onMergeFormInput(
-                "endRevision",
-                (event.currentTarget as HTMLInputElement).value,
-              )}
-          />
-        </label>
-        <label class="merge-dry-run">
-          <input
-            type="checkbox"
-            checked={mergeForm.dryRun}
-            on:change={(event) =>
-              onMergeFormInput("dryRun", (event.currentTarget as HTMLInputElement).checked)}
-          />
-          <span>Dry-run</span>
-        </label>
-      </div>
-
-      {#if branchPool.entries.length > 0}
-        <div class="branch-url-picks">
-          {#each branchPool.entries as entry (entry.id)}
-            <button type="button" on:click={() => onUseRepositoryUrlForMerge(entry.branch_url)}>
-              {entry.branch_url}
-            </button>
-          {/each}
-        </div>
-      {/if}
-
-      {#if mergeError}
-        <p class="inline-error">{mergeError}</p>
-      {/if}
-
-      {#if mergeResult}
-        <div class="merge-result">
-          <div>
-            <span>{mergeResult.dry_run ? "Dry-run 结果" : "Merge 结果"}</span>
-            <strong>{mergeResult.file_count} 个文件 · {mergeResult.line_count} 行</strong>
           </div>
-          <small>{mergeResult.source_url} · r{mergeResult.revision_range}</small>
-          <pre>{mergeResult.output_text || "svn merge 没有输出。"}</pre>
-        </div>
-      {/if}
-    </section>
-
-    {#if branchEntries.length > 0}
-      <section class="branch-pool-panel" aria-label="已识别分支">
-        <div class="repository-layout-header">
-          <div>
-            <h3>已识别分支</h3>
-            <p>从仓库视图识别结果快速填入分支 URL</p>
-          </div>
-        </div>
-        <div class="branch-url-picks">
-          {#each branchEntries as entry (entry.name)}
-            <button
-              type="button"
-              on:click={() =>
-                repositoryLayoutResults.branches &&
-                onUseBranchUrlForPool(
-                  joinRepositoryUrl(repositoryLayoutResults.branches.url, entry.name),
-                )}
-            >
-              {entry.name}
-            </button>
-          {/each}
-        </div>
-      </section>
-    {/if}
-  {:else if view.id === "repository"}
-    <div class="metric-row">
-      <div class="metric">
-        <span>目录</span>
-        <strong>{repositoryDirectoryCount}</strong>
-      </div>
-      <div class="metric">
-        <span>文件</span>
-        <strong>{repositoryFileCount}</strong>
-      </div>
-      <div class="metric">
-        <span>总项</span>
-        <strong>{repositoryEntries.length}</strong>
-      </div>
-      <div class="metric">
-        <span>状态</span>
-        <strong>{repositoryLoading ? "加载" : repositoryList ? "完成" : "待选"}</strong>
-      </div>
-    </div>
-
-    <section class="repository-browser">
-      <div class="repository-toolbar">
-        <input
-          type="url"
-          value={repositoryUrlInput}
-          placeholder="输入 SVN 仓库 URL"
-          on:input={(event) =>
-            onRepositoryUrlInput((event.currentTarget as HTMLInputElement).value)}
-          on:keydown={(event) => {
-            if (event.key === "Enter") {
-              onLoadRepositoryUrl();
-            }
-          }}
-        />
-        <button type="button" on:click={onUseWorkspaceRepositoryRoot} disabled={!workspace}>
-          使用 Root
-        </button>
-        <button
-          type="button"
-          on:click={() => onLoadRepositoryUrl()}
-          disabled={repositoryLoading || !repositoryUrlInput.trim()}
-        >
-          {repositoryLoading ? "加载中" : "浏览"}
-        </button>
-      </div>
-
-      {#if repositoryError}
-        <p class="inline-error">{repositoryError}</p>
-      {/if}
-
-      <section class="repository-layout-panel" aria-label="分支和标签识别">
-        <div class="repository-layout-header">
-          <div>
-            <h3>分支和标签</h3>
-            <p>标准布局默认识别 trunk、branches、tags</p>
-          </div>
-          <button
-            type="button"
-            on:click={onDetectRepositoryLayout}
-            disabled={repositoryLayoutLoading || !repositoryUrlInput.trim()}
-          >
-            {repositoryLayoutLoading ? "识别中" : "识别布局"}
-          </button>
-        </div>
-
-        <div class="repository-layout-inputs">
-          <label>
-            <span>trunk</span>
-            <input
-              type="text"
-              value={repositoryLayout.trunkPath}
-              on:input={(event) =>
-                onRepositoryLayoutPathInput(
-                  "trunk",
-                  (event.currentTarget as HTMLInputElement).value,
-                )}
-            />
-          </label>
-          <label>
-            <span>branches</span>
-            <input
-              type="text"
-              value={repositoryLayout.branchesPath}
-              on:input={(event) =>
-                onRepositoryLayoutPathInput(
-                  "branches",
-                  (event.currentTarget as HTMLInputElement).value,
-                )}
-            />
-          </label>
-          <label>
-            <span>tags</span>
-            <input
-              type="text"
-              value={repositoryLayout.tagsPath}
-              on:input={(event) =>
-                onRepositoryLayoutPathInput(
-                  "tags",
-                  (event.currentTarget as HTMLInputElement).value,
-                )}
-            />
-          </label>
-        </div>
-
-        <div class="repository-layout-summary">
-          <article class:active={trunkDetected}>
-            <span>trunk</span>
-            <strong>{trunkDetected ? "已识别" : "未识别"}</strong>
-            {#if repositoryLayoutErrors.trunk}
-              <p>{repositoryLayoutErrors.trunk}</p>
-            {:else if repositoryLayoutResults.trunk}
-              <p>{repositoryLayoutResults.trunk.url}</p>
-            {:else}
-              <p>等待识别</p>
-            {/if}
-          </article>
-          <article class:active={branchEntries.length > 0}>
-            <span>branches</span>
-            <strong>{branchEntries.length}</strong>
-            {#if repositoryLayoutErrors.branches}
-              <p>{repositoryLayoutErrors.branches}</p>
-            {:else if repositoryLayoutResults.branches}
-              <p>{repositoryLayoutResults.branches.url}</p>
-            {:else}
-              <p>等待识别</p>
-            {/if}
-          </article>
-          <article class:active={tagEntries.length > 0}>
-            <span>tags</span>
-            <strong>{tagEntries.length}</strong>
-            {#if repositoryLayoutErrors.tags}
-              <p>{repositoryLayoutErrors.tags}</p>
-            {:else if repositoryLayoutResults.tags}
-              <p>{repositoryLayoutResults.tags.url}</p>
-            {:else}
-              <p>等待识别</p>
-            {/if}
-          </article>
-        </div>
-
-        <div class="repository-layout-lists">
-          <section>
-            <h4>分支</h4>
-            {#if branchEntries.length > 0}
+          <div class="branch-tags">
+            <section>
+              <h3>分支 {branchEntries.length}</h3>
+              {#if repositoryLayoutErrors.branches}
+                <p class="inline-error">{repositoryLayoutErrors.branches}</p>
+              {/if}
               {#each branchEntries as entry (entry.name)}
-                <button
-                  type="button"
-                  on:click={() =>
-                    repositoryLayoutResults.branches &&
-                    onLoadRepositoryUrl(
-                      joinRepositoryUrl(repositoryLayoutResults.branches.url, entry.name),
-                    )}
-                >
-                  <span>{entry.name}</span>
-                  <small>r{entry.revision || "-"} · {entry.author || "-"}</small>
-                  <small>{formatRepositoryDate(entry.date)}</small>
-                </button>
+                <div class="branch-pick-row">
+                  <button
+                    type="button"
+                    on:click={() =>
+                      repositoryLayoutResults.branches &&
+                      onLoadRepositoryUrl(joinRepositoryUrl(repositoryLayoutResults.branches.url, entry.name))}
+                  >
+                    {entry.name}
+                  </button>
+                  <button
+                    type="button"
+                    on:click={() =>
+                      repositoryLayoutResults.branches &&
+                      onUseBranchUrlForPool(
+                        joinRepositoryUrl(repositoryLayoutResults.branches.url, entry.name),
+                      )}
+                  >
+                    加入池
+                  </button>
+                </div>
               {/each}
-            {:else}
-              <p>暂无分支结果</p>
-            {/if}
-          </section>
-          <section>
-            <h4>标签</h4>
-            {#if tagEntries.length > 0}
+            </section>
+            <section>
+              <h3>标签 {tagEntries.length}</h3>
+              {#if repositoryLayoutErrors.tags}
+                <p class="inline-error">{repositoryLayoutErrors.tags}</p>
+              {/if}
               {#each tagEntries as entry (entry.name)}
                 <button
                   type="button"
                   on:click={() =>
                     repositoryLayoutResults.tags &&
-                    onLoadRepositoryUrl(
-                      joinRepositoryUrl(repositoryLayoutResults.tags.url, entry.name),
-                    )}
+                    onLoadRepositoryUrl(joinRepositoryUrl(repositoryLayoutResults.tags.url, entry.name))}
                 >
-                  <span>{entry.name}</span>
-                  <small>r{entry.revision || "-"} · {entry.author || "-"}</small>
-                  <small>{formatRepositoryDate(entry.date)}</small>
+                  {entry.name}
                 </button>
               {/each}
-            {:else}
-              <p>暂无标签结果</p>
-            {/if}
-          </section>
-        </div>
-      </section>
-
-      <section class="repository-copy-panel" aria-label="创建分支和标签">
-        <div class="repository-layout-header">
-          <div>
-            <h3>创建分支或标签</h3>
-            <p>使用 svn copy 从源 URL 创建远端 branch/tag</p>
+            </section>
           </div>
-          <div class="repository-copy-presets">
+        </details>
+
+        <details class="advanced-section">
+          <summary>创建分支或标签</summary>
+          <div class="copy-form">
+            <div class="segmented-control">
+              <button
+                type="button"
+                class:active={repositoryCopyForm.kind === "branch"}
+                on:click={() => onRepositoryCopyFormInput("kind", "branch")}
+              >
+                Branch
+              </button>
+              <button
+                type="button"
+                class:active={repositoryCopyForm.kind === "tag"}
+                on:click={() => onRepositoryCopyFormInput("kind", "tag")}
+              >
+                Tag
+              </button>
+            </div>
             <button
               type="button"
               on:click={() =>
-                onPrepareRepositoryCopyTarget(
-                  "branch",
-                  repositoryLayoutResults.branches?.url,
-                )}
+                onPrepareRepositoryCopyTarget("branch", repositoryLayoutResults.branches?.url)}
             >
-              新分支
+              填充分支目标
             </button>
             <button
               type="button"
-              on:click={() =>
-                onPrepareRepositoryCopyTarget("tag", repositoryLayoutResults.tags?.url)}
+              on:click={() => onPrepareRepositoryCopyTarget("tag", repositoryLayoutResults.tags?.url)}
             >
-              新标签
+              填充标签目标
             </button>
-          </div>
-        </div>
-
-        <div class="repository-copy-kind" role="group" aria-label="创建类型">
-          <button
-            type="button"
-            class:active={repositoryCopyForm.kind === "branch"}
-            on:click={() => onRepositoryCopyFormInput("kind", "branch")}
-          >
-            Branch
-          </button>
-          <button
-            type="button"
-            class:active={repositoryCopyForm.kind === "tag"}
-            on:click={() => onRepositoryCopyFormInput("kind", "tag")}
-          >
-            Tag
-          </button>
-        </div>
-
-        <div class="repository-copy-grid">
-          <label>
-            <span>源 URL</span>
             <input
               type="url"
               value={repositoryCopyForm.sourceUrl}
+              placeholder="源 URL"
               on:input={(event) =>
                 onRepositoryCopyFormInput(
                   "sourceUrl",
                   (event.currentTarget as HTMLInputElement).value,
                 )}
             />
-          </label>
-          <label>
-            <span>目标 URL</span>
             <input
               type="url"
               value={repositoryCopyForm.targetUrl}
+              placeholder="目标 URL"
               on:input={(event) =>
                 onRepositoryCopyFormInput(
                   "targetUrl",
                   (event.currentTarget as HTMLInputElement).value,
                 )}
             />
-          </label>
-          <label>
-            <span>Revision</span>
             <input
               type="text"
               value={repositoryCopyForm.revision}
-              placeholder="留空使用 HEAD"
+              placeholder="Revision，留空为 HEAD"
               on:input={(event) =>
                 onRepositoryCopyFormInput(
                   "revision",
                   (event.currentTarget as HTMLInputElement).value,
                 )}
             />
-          </label>
-        </div>
-
-        <label class="repository-copy-message">
-          <span>提交信息</span>
-          <textarea
-            rows="3"
-            value={repositoryCopyForm.message}
-            on:input={(event) =>
-              onRepositoryCopyFormInput(
-                "message",
-                (event.currentTarget as HTMLTextAreaElement).value,
-              )}
-          ></textarea>
-        </label>
-
-        {#if repositoryCopyError}
-          <p class="inline-error">{repositoryCopyError}</p>
-        {/if}
-
-        <div class="repository-copy-actions">
-          <button
-            type="button"
-            on:click={onCreateRepositoryCopy}
-            disabled={repositoryCopyRunning}
-          >
-            {repositoryCopyRunning
-              ? "创建中"
-              : repositoryCopyForm.kind === "branch"
-                ? "创建分支"
-                : "创建标签"}
-          </button>
-        </div>
-      </section>
-
-      {#if breadcrumbs.length > 0}
-        <nav class="repository-breadcrumbs" aria-label="仓库路径">
-          {#each breadcrumbs as crumb, index (crumb.url)}
-            <button
-              type="button"
-              disabled={repositoryLoading || crumb.url === repositoryCurrentUrl}
-              on:click={() => onLoadRepositoryUrl(crumb.url)}
-            >
-              {crumb.label}
-            </button>
-            {#if index < breadcrumbs.length - 1}
-              <span>/</span>
+            <textarea
+              rows="3"
+              value={repositoryCopyForm.message}
+              placeholder="提交信息"
+              on:input={(event) =>
+                onRepositoryCopyFormInput(
+                  "message",
+                  (event.currentTarget as HTMLTextAreaElement).value,
+                )}
+            ></textarea>
+            {#if repositoryCopyError}
+              <p class="inline-error">{repositoryCopyError}</p>
             {/if}
-          {/each}
-        </nav>
-      {/if}
+            <button type="button" class="primary" on:click={onCreateRepositoryCopy} disabled={repositoryCopyRunning}>
+              {repositoryCopyRunning ? "创建中" : "创建"}
+            </button>
+          </div>
+        </details>
+      {:else if view.id === "branches"}
+        <section class="pane-header">
+          <div>
+            <h1>高级</h1>
+            <p>分支工作副本、Merge 和 switch 放在这里，不打扰日常提交。</p>
+          </div>
+          <div class="pane-actions">
+            <button type="button" on:click={() => onSelectView("settings")}>偏好</button>
+          </div>
+        </section>
 
-      <div class="repository-list" role="table" aria-label="仓库目录列表">
-        <div class="repository-row repository-header" role="row">
-          <span>名称</span>
-          <span>类型</span>
-          <span>Revision</span>
-          <span>作者</span>
-          <span>日期</span>
-        </div>
+        <section class="advanced-grid">
+          <article class="advanced-card">
+            <h2>分支工作副本</h2>
+            <input
+              type="url"
+              value={branchPoolForm.branchUrl}
+              placeholder="分支 URL"
+              on:input={(event) =>
+                onBranchPoolFormInput(
+                  "branchUrl",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            <input
+              type="text"
+              value={branchPoolForm.localPath}
+              placeholder="本地路径"
+              on:input={(event) =>
+                onBranchPoolFormInput(
+                  "localPath",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            {#if branchPoolFormErrors.localPath}
+              <p class="inline-error">{branchPoolFormErrors.localPath}</p>
+            {/if}
+            <input
+              type="text"
+              value={branchPoolForm.revision}
+              placeholder="Revision，留空为 HEAD"
+              on:input={(event) =>
+                onBranchPoolFormInput(
+                  "revision",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            <div class="button-row">
+              <button type="button" class="primary" on:click={onCheckoutBranchPoolEntry} disabled={branchCheckoutRunning}>
+                {branchCheckoutRunning ? "Checkout 中" : "Checkout"}
+              </button>
+              <button type="button" on:click={onReuseBranchPoolEntry} disabled={branchPoolLoading}>
+                复用已有
+              </button>
+            </div>
+            {#if branchCheckoutError}
+              <p class="inline-error">{branchCheckoutError}</p>
+            {/if}
+            <ErrorNotice error={branchPoolError} />
+            <div class="branch-pool-list">
+              {#each branchPool.entries as entry (entry.id)}
+                <div>
+                  <strong>{branchName(entry)}</strong>
+                  <span>{entry.local_changes} 改动 · r{entry.revision || "-"}</span>
+                  <button type="button" on:click={() => onOpenBranchPoolEntry(entry.local_path)}>
+                    打开
+                  </button>
+                  <button type="button" on:click={() => onRemoveBranchPoolEntry(entry.id, false)}>
+                    移除
+                  </button>
+                </div>
+              {/each}
+            </div>
+          </article>
 
-        {#if repositoryLoading}
-          <article class="repository-empty">仓库目录加载中</article>
-        {:else if repositoryList}
-          <button
-            type="button"
-            class="repository-row repository-entry"
-            on:click={() => onLoadRepositoryUrl(parentRepositoryUrl(repositoryList.url))}
-          >
-            <span>..</span>
-            <span>目录</span>
-            <span>-</span>
-            <span>-</span>
-            <span>-</span>
-          </button>
-          {#each repositoryEntries as entry (entry.kind + ":" + entry.name)}
+          <article class="advanced-card">
+            <h2>Merge</h2>
+            <input
+              type="url"
+              value={mergeForm.sourceUrl}
+              placeholder="源 URL"
+              on:input={(event) =>
+                onMergeFormInput("sourceUrl", (event.currentTarget as HTMLInputElement).value)}
+            />
+            <div class="two-cols">
+              <input
+                type="text"
+                value={mergeForm.startRevision}
+                placeholder="起始 revision"
+                on:input={(event) =>
+                  onMergeFormInput(
+                    "startRevision",
+                    (event.currentTarget as HTMLInputElement).value,
+                  )}
+              />
+              <input
+                type="text"
+                value={mergeForm.endRevision}
+                placeholder="结束 revision"
+                on:input={(event) =>
+                  onMergeFormInput("endRevision", (event.currentTarget as HTMLInputElement).value)}
+              />
+            </div>
+            <label class="checkbox-row">
+              <input
+                type="checkbox"
+                checked={mergeForm.dryRun}
+                on:change={(event) =>
+                  onMergeFormInput("dryRun", (event.currentTarget as HTMLInputElement).checked)}
+              />
+              <span>先 Dry-run</span>
+            </label>
+            {#if branchPool.entries.length > 0}
+              <div class="quick-picks">
+                {#each branchPool.entries as entry (entry.id)}
+                  <button type="button" on:click={() => onUseRepositoryUrlForMerge(entry.branch_url)}>
+                    {branchName(entry)}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+            {#if mergeError}
+              <p class="inline-error">{mergeError}</p>
+            {/if}
             <button
               type="button"
-              class="repository-row repository-entry"
-              disabled={entry.kind !== "dir"}
-              on:click={() => onLoadRepositoryUrl(joinRepositoryUrl(repositoryList.url, entry.name))}
+              class="primary"
+              on:click={onRunMerge}
+              disabled={!workspace || mergeRunning || !mergeForm.sourceUrl.trim()}
             >
-              <span>{entry.name || "/"}</span>
-              <span>{entry.kind === "dir" ? "目录" : "文件"}</span>
-              <span>{entry.revision || "-"}</span>
-              <span>{entry.author || "-"}</span>
-              <span>{formatRepositoryDate(entry.date)}</span>
+              {mergeRunning ? "执行中" : mergeForm.dryRun ? "Dry-run" : "Merge"}
             </button>
-          {/each}
-          {#if repositoryEntries.length === 0}
-            <article class="repository-empty">当前仓库目录为空</article>
-          {/if}
-        {:else}
-          <article class="repository-empty">输入仓库 URL 或使用当前工作副本 Root 后开始浏览</article>
-        {/if}
-      </div>
-    </section>
-  {:else}
-    <div class="metric-row">
-      <div class="metric">
-        <span>总改动</span>
-        <strong>{workingCopyStatus?.total ?? 0}</strong>
-      </div>
-      <div class="metric">
-        <span>已暂存</span>
-        <strong>{stagedFiles.length}</strong>
-      </div>
-      <div class="metric">
-        <span>未暂存</span>
-        <strong>{Math.max((workingCopyStatus?.total ?? 0) - stagedFiles.length, 0)}</strong>
-      </div>
-      <div class="metric">
-        <span>异常</span>
-        <strong>{abnormalCount}</strong>
-      </div>
-      <div class="metric">
-        <span>未审</span>
-        <strong>{unreviewedCount}</strong>
-      </div>
-    </div>
+            {#if mergeResult}
+              <pre>{mergeResult.output_text || "svn merge 没有输出。"}</pre>
+            {/if}
+          </article>
 
-    {#if view.id === "changes"}
-      <section class="svn-switch-panel" aria-label="svn switch">
-        <div class="repository-layout-header">
-          <div>
-            <h3>svn switch</h3>
-            <p>高级入口，会在当前工作副本上切换 URL</p>
-          </div>
-          <button
-            type="button"
-            on:click={onRunSvnSwitch}
-            disabled={!workspace || svnSwitchRunning || !svnSwitchTargetUrl.trim()}
-          >
-            {svnSwitchRunning ? "Switch 中" : "执行 switch"}
-          </button>
-        </div>
-        <input
-          type="url"
-          value={svnSwitchTargetUrl}
-          placeholder="输入 switch 目标 URL"
-          on:input={(event) =>
-            onSvnSwitchTargetInput((event.currentTarget as HTMLInputElement).value)}
-        />
-        {#if svnSwitchError}
-          <p class="inline-error">{svnSwitchError}</p>
-        {/if}
-      </section>
-    {/if}
-
-    <section class="changes-toolbar">
-      <input
-        type="search"
-        value={searchText}
-        placeholder="搜索文件路径"
-        on:input={(event) =>
-          onSearchTextInput((event.currentTarget as HTMLInputElement).value)}
-      />
-      <button type="button" class:active={groupByStatus} on:click={onToggleGroupByStatus}>
-        分组
-      </button>
-      <button
-        type="button"
-        class:active={groupByStatus && groupMode === "status"}
-        on:click={() => onGroupModeChange("status")}
-      >
-        状态
-      </button>
-      <button
-        type="button"
-        class:active={groupByStatus && groupMode === "directory"}
-        on:click={() => onGroupModeChange("directory")}
-      >
-        目录
-      </button>
-      <button
-        type="button"
-        class:active={groupByStatus && groupMode === "extension"}
-        on:click={() => onGroupModeChange("extension")}
-      >
-        类型
-      </button>
-      <button
-        type="button"
-        class:active={groupByStatus && groupMode === "unity"}
-        on:click={() => onGroupModeChange("unity")}
-      >
-        Unity
-      </button>
-      <button type="button" on:click={onClearFilters}>清空过滤</button>
-      <button
-        type="button"
-        class:active={unreviewedOnly}
-        on:click={onToggleUnreviewedOnly}
-      >
-        未审
-      </button>
-      <button
-        type="button"
-        class:active={generatedOnly}
-        on:click={onToggleGeneratedOnly}
-      >
-        生成
-      </button>
-      <span>异常 {abnormalCount}</span>
-      <span>生成 {generatedFileCount}</span>
-      <span>Externals {externalFiles.length}</span>
-      <span>未审 {unreviewedCount}</span>
-      <span>显示 {filteredFiles.length}/{changedFiles.length}</span>
-    </section>
-
-    {#if externalFiles.length > 0}
-      <section class="externals-status" aria-label="svn:externals 状态提醒">
-        <div>
-          <strong>svn:externals</strong>
-          <span>{externalFiles.length} 项外部工作副本</span>
-        </div>
-        <p>
-          {externalAbnormalCount > 0
-            ? `${externalAbnormalCount} 项存在异常状态，请先确认外部定义是否需要更新或清理。`
-            : "外部定义已出现在当前状态扫描结果中，提交前请确认这些路径不属于主工作副本改动。"}
-        </p>
-      </section>
-    {/if}
-
-    <div
-      role="listbox"
-      aria-label="改动文件列表"
-      class="work-list"
-      class:virtual-work-list={workingCopyStatus && filteredFiles.length > 0}
-      bind:this={virtualListElement}
-      bind:clientHeight={virtualViewportHeight}
-      tabindex={workingCopyStatus && filteredFiles.length > 0 ? 0 : undefined}
-      on:scroll={(event) => {
-        virtualScrollTop = (event.currentTarget as HTMLDivElement).scrollTop;
-      }}
-      on:keydown={handleVirtualListKeydown}
-    >
-      {#if workingCopyStatus && filteredFiles.length > 0}
-        <div class="virtual-work-spacer" style={`height: ${totalVirtualHeight}px;`}>
-          {#each visibleVirtualItems as item (item.key)}
-            <div
-              class="virtual-list-item"
-              style={`transform: translateY(${item.top}px); height: ${item.height}px;`}
+          <article class="advanced-card">
+            <h2>Switch</h2>
+            <input
+              type="url"
+              value={svnSwitchTargetUrl}
+              placeholder="目标 URL"
+              on:input={(event) =>
+                onSvnSwitchTargetInput((event.currentTarget as HTMLInputElement).value)}
+            />
+            {#if svnSwitchError}
+              <p class="inline-error">{svnSwitchError}</p>
+            {/if}
+            <button
+              type="button"
+              class="primary"
+              on:click={onRunSvnSwitch}
+              disabled={!workspace || svnSwitchRunning || !svnSwitchTargetUrl.trim()}
             >
-              {#if item.kind === "section"}
-                <h3 class="stage-section-heading">{item.title}</h3>
-              {:else if item.kind === "status"}
+              {svnSwitchRunning ? "Switch 中" : "Switch"}
+            </button>
+          </article>
+
+          <article class="advanced-card">
+            <h2>任务工作区</h2>
+            <p>{taskWorkspaces.entries.length} 个任务，当前 {activeTaskWorkspaceId ? "已选择" : "未选择"}。</p>
+            <div class="task-list compact">
+              {#each taskWorkspaces.entries as entry (entry.id)}
+                <div>
+                  <strong>{entry.name}</strong>
+                  <span>{entry.local_path}</span>
+                </div>
+              {/each}
+            </div>
+          </article>
+        </section>
+      {:else if view.id === "settings"}
+        <section class="pane-header">
+          <div>
+            <h1>偏好</h1>
+            <p>只保留日常会用到的配置。</p>
+          </div>
+          <div class="pane-actions">
+            <button type="button" on:click={() => onSelectView("branches")}>高级</button>
+          </div>
+        </section>
+
+        <section class="settings-view">
+          <article>
+            <h2>SVN</h2>
+            <div class="button-row">
+              <button type="button" on:click={onDetectSvn} disabled={svnLoading}>
+                {svnLoading ? "检测中" : "自动检测"}
+              </button>
+              <span>{svnDetection?.version ?? "尚未检测"}</span>
+            </div>
+            <ErrorNotice error={svnError} />
+            <input
+              type="text"
+              value={svnExecutableInput}
+              placeholder="svn 或 svn.exe"
+              on:input={(event) =>
+                onSvnExecutableInput((event.currentTarget as HTMLInputElement).value)}
+            />
+            <button type="button" on:click={onDetectSvnWithInput} disabled={svnLoading}>
+              使用此路径
+            </button>
+            <input
+              type="text"
+              value={appSettings.svnExecutable}
+              placeholder="保存的 SVN 路径"
+              on:input={(event) =>
+                onAppSettingInput(
+                  "svnExecutable",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            {#if appSettings.validationErrors.svnExecutable}
+              <p class="inline-error">{appSettings.validationErrors.svnExecutable}</p>
+            {/if}
+          </article>
+
+          <article>
+            <h2>Diff 和提交</h2>
+            <label>
+              <span>默认 Diff</span>
+              <select
+                value={appSettings.diffMode}
+                on:change={(event) =>
+                  onAppSettingInput(
+                    "diffMode",
+                    (event.currentTarget as HTMLSelectElement).value as AppSettingsState["diffMode"],
+                  )}
+              >
+                <option value="side_by_side">双栏</option>
+                <option value="inline">行内</option>
+              </select>
+            </label>
+            <label class="checkbox-row">
+              <input
+                type="checkbox"
+                checked={appSettings.showWhitespace}
+                on:change={(event) =>
+                  onAppSettingInput(
+                    "showWhitespace",
+                    (event.currentTarget as HTMLInputElement).checked,
+                  )}
+              />
+              <span>显示空白字符</span>
+            </label>
+            <textarea
+              rows="4"
+              value={appSettings.commitTemplate}
+              placeholder="提交模板"
+              on:input={(event) =>
+                onAppSettingInput(
+                  "commitTemplate",
+                  (event.currentTarget as HTMLTextAreaElement).value,
+                )}
+            ></textarea>
+          </article>
+
+          <article>
+            <h2>工具</h2>
+            <input
+              type="text"
+              value={appSettings.externalDiffTool}
+              placeholder="外部 Diff 工具"
+              on:input={(event) =>
+                onAppSettingInput(
+                  "externalDiffTool",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            {#if appSettings.validationErrors.externalDiffTool}
+              <p class="inline-error">{appSettings.validationErrors.externalDiffTool}</p>
+            {/if}
+            <input
+              type="text"
+              value={appSettings.externalMergeTool}
+              placeholder="外部 Merge 工具"
+              on:input={(event) =>
+                onAppSettingInput(
+                  "externalMergeTool",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            {#if appSettings.validationErrors.externalMergeTool}
+              <p class="inline-error">{appSettings.validationErrors.externalMergeTool}</p>
+            {/if}
+            <input
+              type="number"
+              min="1"
+              max="2048"
+              value={appSettings.largeFileThresholdMb}
+              on:input={(event) =>
+                onAppSettingInput(
+                  "largeFileThresholdMb",
+                  (event.currentTarget as HTMLInputElement).valueAsNumber,
+                )}
+            />
+            <button type="button" on:click={onExportDiagnosticLog} disabled={appSettings.loading}>
+              {appSettings.loading ? "导出中" : "导出诊断日志"}
+            </button>
+            {#if appSettings.diagnosticExportPath}
+              <p>{appSettings.diagnosticExportPath}</p>
+            {:else if appSettings.diagnosticExportError}
+              <p class="inline-error">{appSettings.diagnosticExportError}</p>
+            {/if}
+          </article>
+        </section>
+      {:else}
+        <section class="pane-header">
+          <div>
+            <h1>工作副本</h1>
+            <p>{workspace?.working_copy_root ?? "打开 SVN 工作副本后开始浏览"}</p>
+          </div>
+          <div class="pane-actions">
+            {#if workingCopyStatus && workingCopyStatus.files.length < workingCopyStatus.total}
+              <button type="button" on:click={onLoadMoreStatus} disabled={statusLoading}>
+                更多改动
+              </button>
+            {/if}
+            <button type="button" class="primary" on:click={onCommit} disabled={commitDisabled}>
+              提交 {stagedCount > 0 ? stagedCount : ""}
+            </button>
+          </div>
+        </section>
+
+        <section class="summary-strip" aria-label="工作副本摘要">
+          <span><strong>{workingCopyStatus?.total ?? 0}</strong> 改动</span>
+          <span><strong>{stagedCount}</strong> 已暂存</span>
+          <span><strong>{unstagedCount}</strong> 未暂存</span>
+          <span><strong>{abnormalCount}</strong> 异常</span>
+          <span><strong>r{workingCopyStatus?.revision_range ?? workspace?.revision ?? "-"}</strong></span>
+        </section>
+
+        <section class="changes-toolbar" aria-label="改动过滤">
+          <input
+            type="search"
+            value={searchText}
+            placeholder="搜索文件"
+            on:input={(event) =>
+              onSearchTextInput((event.currentTarget as HTMLInputElement).value)}
+          />
+          <div class="segmented-control">
+            <button
+              type="button"
+              class:active={stageFilter === "all"}
+              on:click={() => onStageFilter("all")}
+            >
+              全部
+            </button>
+            <button
+              type="button"
+              class:active={stageFilter === "unstaged"}
+              on:click={() => onStageFilter("unstaged")}
+            >
+              未暂存
+            </button>
+            <button
+              type="button"
+              class:active={stageFilter === "staged"}
+              on:click={() => onStageFilter("staged")}
+            >
+              已暂存
+            </button>
+          </div>
+          <button type="button" on:click={onClearFilters}>清除</button>
+        </section>
+
+        <section class="work-copy-grid">
+          <div class="file-browser" aria-label="改动文件">
+            <div class="file-table-head">
+              <span>名称</span>
+              <span>状态</span>
+              <span>Revision</span>
+              <span>大小</span>
+            </div>
+            {#if workingCopyStatus && filteredFiles.length > 0}
+              {#each filteredFiles as file (file.path)}
                 <button
                   type="button"
-                  class="status-group-heading"
-                  on:click={() => toggleGroupCollapse(item.groupKey)}
+                  class="file-row"
+                  class:selected={isSelected(file)}
+                  class:abnormal={file.abnormal}
+                  on:click={() => onSelectFile(file.path)}
                 >
-                  <span>{item.collapsed ? "展开" : "折叠"}</span>
-                  <strong>{item.title}</strong>
-                </button>
-              {:else if item.kind === "empty"}
-                <p class="empty-stage virtual-empty">{item.title}</p>
-              {:else if item.kind === "file"}
-                <div
-                  role="option"
-                  aria-selected={selectedFilePath === item.file.path}
-                  tabindex="0"
-                  class:abnormal={item.file.abnormal}
-                  class:active={selectedFilePath === item.file.path}
-                  class="work-row"
-                  on:click={() => onSelectFile(item.file.path)}
-                  on:keydown={(event) => handleRowKeydown(event, item.file.path)}
-                >
-                  <div>
-                    <h3>{item.file.path}</h3>
-                    <p>{statusMeta(item.file)}</p>
-                  </div>
-                  <span>{labelStatus(item.file.status)}</span>
-                  <span class="review-badge" class:reviewed={isReviewed(item.file.path)}>
-                    {isReviewed(item.file.path) ? "已审" : "未审"}
+                  <span class="file-name">
+                    <strong>{basename(file.path)}</strong>
+                    <small>{dirname(file.path)}</small>
                   </span>
-                  {#if item.staged}
-                    <button
-                      type="button"
-                      class="stage-action"
-                      on:click|stopPropagation={() => onUnstageFile(item.file.path)}
+                  <span class="status-pill {statusClass(file.status)}">{labelStatus(file.status)}</span>
+                  <span>{file.revision ?? "-"}</span>
+                  <span>{formatBytes(file.file_size)}</span>
+                  <span class="inline-row-actions">
+                    {#if isStaged(file.path)}
+                      <em>已暂存</em>
+                      <span
+                        role="button"
+                        tabindex="0"
+                        on:click|stopPropagation={() => onUnstageFile(file.path)}
+                        on:keydown|stopPropagation={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            onUnstageFile(file.path);
+                          }
+                        }}
+                      >
+                        取消
+                      </span>
+                    {:else}
+                      <span
+                        role="button"
+                        tabindex="0"
+                        aria-disabled={!isStageable(file)}
+                        on:click|stopPropagation={() => isStageable(file) && onStageFile(file.path)}
+                        on:keydown|stopPropagation={(event) => {
+                          if ((event.key === "Enter" || event.key === " ") && isStageable(file)) {
+                            onStageFile(file.path);
+                          }
+                        }}
+                      >
+                        暂存
+                      </span>
+                    {/if}
+                    <span
+                      role="button"
+                      tabindex="0"
+                      on:click|stopPropagation={() => onRevertFile(file.path)}
+                      on:keydown|stopPropagation={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          onRevertFile(file.path);
+                        }
+                      }}
                     >
-                      取消暂存
+                      撤销
+                    </span>
+                  </span>
+                </button>
+              {/each}
+            {:else if workingCopyStatus}
+              <article class="empty-state">没有匹配的改动</article>
+            {:else if workspace}
+              <article class="empty-state">点击“刷新”扫描工作副本</article>
+            {:else}
+              <article class="empty-state">选择或输入 SVN 工作副本目录</article>
+            {/if}
+          </div>
+
+          <aside class="inspector" aria-label="详情和提交">
+            <section class="inspector-section">
+              <h2>文件</h2>
+              {#if selectedFile}
+                <div class="file-card">
+                  <strong>{basename(selectedFile.path)}</strong>
+                  <span>{dirname(selectedFile.path)}</span>
+                  <small>{labelStatus(selectedFile.status)} · {formatBytes(selectedFile.file_size)}</small>
+                </div>
+                <div class="button-row wrap">
+                  <button type="button" on:click={() => onOpenWorkspaceFile(selectedFile.path)}>
+                    打开
+                  </button>
+                  <button type="button" on:click={() => onOpenFileLocation(selectedFile.path)}>
+                    定位
+                  </button>
+                  <button type="button" on:click={() => onLaunchExternalTool("diff", selectedFile.path)}>
+                    外部 Diff
+                  </button>
+                  <button type="button" on:click={() => onRevertFile(selectedFile.path)}>
+                    撤销
+                  </button>
+                  {#if selectedFileReviewed}
+                    <button type="button" on:click={() => onMarkFileUnreviewed(selectedFile.path)}>
+                      标为未审
                     </button>
                   {:else}
-                    <button
-                      type="button"
-                      class="stage-action"
-                      disabled={!isStageable(item.file)}
-                      on:click|stopPropagation={() => onStageFile(item.file.path)}
-                    >
-                      {isStageable(item.file) ? "暂存" : "不可暂存"}
+                    <button type="button" on:click={() => onMarkFileReviewed(selectedFile.path)}>
+                      标为已审
+                    </button>
+                  {/if}
+                  {#if selectedFile.lock_state === "none" && !selectedFile.lock_owner}
+                    <button type="button" on:click={() => onLockFile(selectedFile.path)}>Lock</button>
+                  {:else}
+                    <button type="button" on:click={() => onUnlockFile(selectedFile.path)}>Unlock</button>
+                    <button type="button" on:click={() => onForceUnlockFile(selectedFile.path)}>
+                      Force Unlock
+                    </button>
+                  {/if}
+                </div>
+
+                {#if selectedFile.status === "conflicted" || selectedFile.conflict_kind}
+                  <div class="conflict-actions">
+                    <button type="button" on:click={() => onResolveWorking(selectedFile.path)}>
+                      使用工作副本
+                    </button>
+                    <button type="button" on:click={() => onResolveMineFull(selectedFile.path)}>
+                      Mine Full
+                    </button>
+                    <button type="button" on:click={() => onResolveTheirsFull(selectedFile.path)}>
+                      Theirs Full
+                    </button>
+                  </div>
+                {/if}
+              {:else}
+                <p class="muted">选择文件后显示操作。</p>
+              {/if}
+            </section>
+
+            <section class="inspector-section diff-section">
+              <div class="section-title">
+                <h2>比较</h2>
+                <div class="segmented-control compact">
+                  <button type="button" class:active={!diffInline} on:click={() => (diffInline = false)}>
+                    双栏
+                  </button>
+                  <button type="button" class:active={diffInline} on:click={() => (diffInline = true)}>
+                    行内
+                  </button>
+                </div>
+              </div>
+              {#if contentDiffLoading || diffLoading}
+                <p class="muted">Diff 加载中</p>
+              {:else if contentDiffError}
+                <ErrorNotice error={contentDiffError} />
+              {:else if diffError}
+                <ErrorNotice error={diffError} />
+              {:else if selectedFileContentDiff && !selectedFileContentDiff.binary}
+                <MonacoDiffViewer
+                  contentDiff={selectedFileContentDiff}
+                  inlineMode={diffInline}
+                  showWhitespace={showWhitespace}
+                />
+              {:else if selectedFileDiff}
+                <pre class="text-diff">{selectedFileDiff.text || "没有文本 diff"}</pre>
+              {:else}
+                <p class="muted">选择改动文件后显示 diff。</p>
+              {/if}
+            </section>
+
+            {#if selectedFileParsedDiff}
+              <section class="inspector-section">
+                <div class="section-title">
+                  <h2>Hunk</h2>
+                  <button type="button" on:click={onPreviewSelectedPatch} disabled={selectedPatchLoading}>
+                    {selectedPatchLoading ? "生成中" : "预览 Patch"}
+                  </button>
+                </div>
+                {#if parsedDiffError}
+                  <ErrorNotice error={parsedDiffError} />
+                {/if}
+                <div class="hunk-list">
+                  {#each selectedFileParsedDiff.hunks as hunk (hunk.id)}
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={selectedHunkIds.includes(hunk.id)}
+                        on:change={() =>
+                          onToggleHunkSelection(selectedFileParsedDiff.path, hunk.id)}
+                      />
+                      <span>{hunk.header}</span>
+                    </label>
+                  {/each}
+                </div>
+                {#if selectedPatchError}
+                  <ErrorNotice error={selectedPatchError} />
+                {:else if selectedPatch}
+                  <p class="muted">{selectedPatch.file_count} 文件 · {selectedPatch.hunk_count} hunk</p>
+                  <button type="button" on:click={onPartialCommit} disabled={partialCommitDisabled}>
+                    提交选中 Hunk
+                  </button>
+                {/if}
+              </section>
+            {/if}
+
+            <section class="inspector-section">
+              <div class="section-title">
+                <h2>属性</h2>
+                <button type="button" on:click={onRefreshSvnProperties} disabled={!workspace || svnPropertiesLoading}>
+                  {svnPropertiesLoading ? "读取中" : "读取"}
+                </button>
+              </div>
+              <ErrorNotice error={svnPropertiesError} />
+              {#if svnProperties}
+                <div class="property-list">
+                  {#each svnProperties.properties as property (property.name)}
+                    <button type="button" on:click={() => onUsePropertyForEdit(property.name, property.value)}>
+                      <strong>{property.name}</strong>
+                      <span>{property.value}</span>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+              <input
+                type="text"
+                value={propertyEditForm.name}
+                placeholder="svn:ignore"
+                on:input={(event) =>
+                  onPropertyEditInput("name", (event.currentTarget as HTMLInputElement).value)}
+              />
+              <textarea
+                rows="2"
+                value={propertyEditForm.value}
+                placeholder="属性值，留空保存为删除"
+                on:input={(event) =>
+                  onPropertyEditInput(
+                    "value",
+                    (event.currentTarget as HTMLTextAreaElement).value,
+                  )}
+              ></textarea>
+              <button type="button" on:click={onSaveSvnProperty} disabled={!workspace}>
+                保存属性
+              </button>
+            </section>
+
+            <section class="inspector-section commit-section">
+              <div class="section-title">
+                <h2>提交</h2>
+                <button type="button" on:click={onClearWorkspaceDraft}>清空草稿</button>
+              </div>
+              <p class="muted">{stagedFiles.length} 个文件已暂存</p>
+              <input
+                type="text"
+                value={commitTemplate}
+                placeholder="提交模板"
+                on:input={(event) =>
+                  onCommitTemplateInput((event.currentTarget as HTMLInputElement).value)}
+              />
+              {#if commitHistory.length > 0}
+                <select
+                  bind:value={selectedCommitHistoryMessage}
+                  on:change={applyCommitHistoryMessage}
+                  aria-label="最近提交信息"
+                >
+                  <option value="">最近提交信息</option>
+                  {#each commitHistory as message}
+                    <option value={message}>{message}</option>
+                  {/each}
+                </select>
+              {/if}
+              <textarea
+                rows="4"
+                value={commitMessage}
+                placeholder="提交信息"
+                on:input={(event) =>
+                  onCommitMessageInput((event.currentTarget as HTMLTextAreaElement).value)}
+              ></textarea>
+              {#if commitError}
+                <p class="inline-error">{commitError}</p>
+              {/if}
+              {#if safetyCheck.blockers.length > 0 || safetyCheck.warnings.length > 0}
+                <div class="safety-box">
+                  {#if safetyCheck.blockers.length > 0}
+                    <strong>{safetyCheck.blockers.length} 个阻塞</strong>
+                  {/if}
+                  {#if safetyCheck.warnings.length > 0}
+                    <span>{safetyCheck.warnings.length} 个警告</span>
+                  {/if}
+                  {#if unconfirmedWarningCount > 0 && safetyCheck.blockers.length === 0}
+                    <button type="button" on:click={onConfirmSafetyWarnings}>
+                      确认警告
                     </button>
                   {/if}
                 </div>
               {/if}
-            </div>
-          {/each}
-        </div>
-      {:else if workingCopyStatus && changedFiles.length > 0}
-        <article class="work-row">
-          <div>
-            <h3>没有匹配结果</h3>
-            <p>调整搜索内容后重试</p>
-          </div>
-          <span>过滤</span>
-        </article>
-      {:else if workspace}
-        <article class="work-row">
-          <div>
-            <h3>无本地改动</h3>
-            <p>状态扫描未发现改动文件</p>
-          </div>
-          <span>干净</span>
-        </article>
-      {:else}
-        {#each view.primaryItems as item}
-          <article class="work-row">
-            <div>
-              <h3>{item.title}</h3>
-              <p>{item.meta}</p>
-            </div>
-            <span>{item.status}</span>
-          </article>
-        {/each}
+              <button type="button" class="primary full" on:click={onCommit} disabled={commitDisabled}>
+                提交
+              </button>
+            </section>
+
+            <section class="inspector-section task-section">
+              <div class="section-title">
+                <h2>任务</h2>
+                <span>{tasks.length}</span>
+              </div>
+              <ErrorNotice error={taskError} />
+              {#if activeTask}
+                <div class="task-log">
+                  <strong>{activeTask.title}</strong>
+                  {#each activeTask.logs as log}
+                    <p><time>{formatTaskTime(log.created_at)}</time>{log.message}</p>
+                  {/each}
+                  {#if activeTask.error}
+                    <p class="inline-error">{activeTask.error}</p>
+                  {/if}
+                </div>
+              {:else}
+                <p class="muted">{backendMessage || "暂无后台任务"}</p>
+              {/if}
+              <div class="task-list">
+                {#each tasks.slice(0, 6) as task (task.task_id)}
+                  <button type="button" on:click={() => onSelectTask(task.task_id)}>
+                    <span>{task.title}</span>
+                    <em>{taskStatusLabels[task.status]}</em>
+                    {#if task.status === "pending" || task.status === "running"}
+                      <small
+                        role="button"
+                        tabindex="0"
+                        on:click|stopPropagation={() => onCancelTask(task.task_id)}
+                        on:keydown|stopPropagation={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            onCancelTask(task.task_id);
+                          }
+                        }}
+                      >
+                        取消
+                      </small>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            </section>
+          </aside>
+        </section>
       {/if}
-    </div>
-  {/if}
+    </main>
+  </div>
 </section>

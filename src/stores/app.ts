@@ -87,15 +87,6 @@ const initialAppSettings: AppSettingsState = {
   commitTemplate: "",
   branchPoolBasePath: "",
   largeFileThresholdMb: 20,
-  unityRulesEnabled: true,
-  unityGroupRules: {
-    addressables: true,
-    projectSettings: true,
-    packages: true,
-    scenes: true,
-    prefabs: true,
-    assets: true,
-  },
   externalDiffTool: "",
   externalMergeTool: "",
   diagnosticExportPath: "",
@@ -1476,9 +1467,6 @@ function createWorkspaceStore() {
         error: null,
       }));
       if (root) {
-        if (recent.workspace) {
-          enableUnityRulesForWorkspace(recent.workspace);
-        }
         await refreshStatus(null, root);
       }
     } catch (error) {
@@ -1556,7 +1544,6 @@ function createWorkspaceStore() {
         loading: false,
         error: null,
       }));
-      enableUnityRulesForWorkspace(current);
       await refreshStatus(svnExecutable, current.working_copy_root);
       return current;
     } catch (error) {
@@ -3289,9 +3276,6 @@ function loadAppSettings(): AppSettingsState {
         typeof parsed.largeFileThresholdMb === "number"
           ? normalizeLargeFileThreshold(parsed.largeFileThresholdMb)
           : 20,
-      unityRulesEnabled:
-        typeof parsed.unityRulesEnabled === "boolean" ? parsed.unityRulesEnabled : true,
-      unityGroupRules: normalizeUnityGroupRules(parsed.unityGroupRules),
       externalDiffTool:
         typeof parsed.externalDiffTool === "string" ? parsed.externalDiffTool : "",
       externalMergeTool:
@@ -3329,9 +3313,6 @@ function normalizeAppSettingValue<K extends keyof AppSettingsState>(
   if (field === "largeFileThresholdMb") {
     return normalizeLargeFileThreshold(value) as AppSettingsState[K];
   }
-  if (field === "unityGroupRules") {
-    return normalizeUnityGroupRules(value) as AppSettingsState[K];
-  }
 
   return value;
 }
@@ -3342,27 +3323,6 @@ function normalizeLargeFileThreshold(value: unknown) {
   }
 
   return Math.min(Math.max(Math.round(value), 1), 2048);
-}
-
-function normalizeUnityGroupRules(value: unknown) {
-  const defaults = initialAppSettings.unityGroupRules;
-  if (!value || typeof value !== "object") {
-    return defaults;
-  }
-
-  const parsed = value as Partial<AppSettingsState["unityGroupRules"]>;
-  return {
-    addressables:
-      typeof parsed.addressables === "boolean" ? parsed.addressables : defaults.addressables,
-    projectSettings:
-      typeof parsed.projectSettings === "boolean"
-        ? parsed.projectSettings
-        : defaults.projectSettings,
-    packages: typeof parsed.packages === "boolean" ? parsed.packages : defaults.packages,
-    scenes: typeof parsed.scenes === "boolean" ? parsed.scenes : defaults.scenes,
-    prefabs: typeof parsed.prefabs === "boolean" ? parsed.prefabs : defaults.prefabs,
-    assets: typeof parsed.assets === "boolean" ? parsed.assets : defaults.assets,
-  };
 }
 
 function validateAppSettingsField<K extends keyof AppSettingsState>(
@@ -3489,24 +3449,6 @@ function saveAppSettings(settings: AppSettingsState) {
   } catch {
     // 设置保存失败不应阻断当前操作。
   }
-}
-
-function enableUnityRulesForWorkspace(workspace: WorkspaceSummary) {
-  if (!workspace.unity.detected) {
-    return;
-  }
-
-  const settings = loadAppSettings();
-  if (settings.unityRulesEnabled) {
-    return;
-  }
-
-  const next = {
-    ...settings,
-    unityRulesEnabled: true,
-  };
-  saveAppSettings(next);
-  appSettingsStore.setField("unityRulesEnabled", true);
 }
 
 function emptyRepositoryLayoutResults() {
@@ -3772,8 +3714,8 @@ function buildSafetyCheck(
       warnings.push({
         id: `warning:binary:${file.path}:${file.content_digest}`,
         severity: "warning",
-        title: looksLikeUnityLargeAsset(file.path) ? "Unity 大资源文件" : "疑似大型二进制文件",
-        detail: `${file.path} 是常见二进制或 Unity 资源类型，提交前请确认体积和必要性。`,
+        title: "疑似大型二进制文件",
+        detail: `${file.path} 是常见二进制资源类型，提交前请确认体积和必要性。`,
         filePath: file.path,
       });
     }
@@ -3788,8 +3730,6 @@ function buildSafetyCheck(
       });
     }
   }
-
-  appendUnityMetaWarnings(files, warnings);
 
   if (stagedFiles.some((file) => !files.some((current) => current.path === file.path))) {
     blockers.push({
@@ -3848,86 +3788,6 @@ function buildSafetyCheck(
       return stagedDigestIds.has(id);
     }),
   };
-}
-
-function appendUnityMetaWarnings(files: ChangedFile[], warnings: SafetyCheckItem[]) {
-  if (!loadAppSettings().unityRulesEnabled) {
-    return;
-  }
-
-  const unityFiles = files.filter((file) => isUnityProjectPath(file.path));
-  if (unityFiles.length === 0) {
-    return;
-  }
-
-  const byPath = new Map(unityFiles.map((file) => [normalizeWorkspacePath(file.path), file]));
-  for (const file of unityFiles) {
-    const normalized = normalizeWorkspacePath(file.path);
-    if (isIgnoredUnityMetaPath(normalized)) {
-      continue;
-    }
-
-    if (normalized.endsWith(".meta")) {
-      const assetPath = normalized.slice(0, -5);
-      const asset = byPath.get(assetPath);
-      if (!asset || asset.status === "missing" || asset.status === "deleted") {
-        warnings.push({
-          id: `warning:unity-meta-orphan:${normalized}:${file.content_digest}`,
-          severity: "warning",
-          title: "Unity meta 缺少资源",
-          detail: `${file.path} 对应资源未出现在当前改动中，请确认资源和 .meta 是否同步。`,
-          filePath: file.path,
-        });
-      }
-      continue;
-    }
-
-    const meta = byPath.get(`${normalized}.meta`);
-    if (!meta) {
-      warnings.push({
-        id: `warning:unity-meta-missing:${normalized}:${file.content_digest}`,
-        severity: "warning",
-        title: "Unity 资源缺少 meta",
-        detail: `${file.path} 没有匹配的 .meta 改动，请确认 .meta 已加入版本控制。`,
-        filePath: file.path,
-      });
-      continue;
-    }
-
-    if (["added", "unversioned"].includes(file.status) && !["added", "unversioned"].includes(meta.status)) {
-      warnings.push({
-        id: `warning:unity-meta-add:${normalized}:${file.content_digest}`,
-        severity: "warning",
-        title: "Unity 新增资源 meta 未同步新增",
-        detail: `${file.path} 是新增资源，但对应 .meta 状态为 ${meta.status}。`,
-        filePath: file.path,
-      });
-    }
-
-    if (["deleted", "missing"].includes(file.status) && !["deleted", "missing"].includes(meta.status)) {
-      warnings.push({
-        id: `warning:unity-meta-delete:${normalized}:${file.content_digest}`,
-        severity: "warning",
-        title: "Unity 删除资源 meta 未同步删除",
-        detail: `${file.path} 是删除资源，但对应 .meta 状态为 ${meta.status}。`,
-        filePath: file.path,
-      });
-    }
-  }
-}
-
-function isUnityProjectPath(path: string) {
-  const normalized = normalizeWorkspacePath(path);
-  return (
-    normalized.startsWith("Assets/") ||
-    normalized === "Assets" ||
-    normalized.startsWith("ProjectSettings/") ||
-    normalized.startsWith("Packages/")
-  );
-}
-
-function isIgnoredUnityMetaPath(path: string) {
-  return path === "Assets" || path === "ProjectSettings" || path === "Packages";
 }
 
 function normalizeWorkspacePath(path: string) {
@@ -4030,23 +3890,6 @@ function looksLikeLargeBinary(path: string) {
     "rar",
     "webp",
     "zip",
-  ].includes(extension) || looksLikeUnityLargeAsset(path);
-}
-
-function looksLikeUnityLargeAsset(path: string) {
-  const extension = path.replaceAll("\\", "/").split(".").pop()?.toLowerCase() ?? "";
-  return [
-    "anim",
-    "asset",
-    "blend",
-    "controller",
-    "fbx",
-    "mat",
-    "prefab",
-    "scene",
-    "shadergraph",
-    "unity",
-    "wav",
   ].includes(extension);
 }
 

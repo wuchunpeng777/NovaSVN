@@ -3005,18 +3005,15 @@ mod tests {
             .create_svn_operation_task(CreateSvnOperationTaskRequest {
                 working_copy_root: dir.display().to_string(),
                 kind: SvnOperationKind::LockFile,
-                file_path: Some(" Assets\\Scenes\\Main.unity ".to_string()),
+                file_path: Some(" src\\main.rs ".to_string()),
                 svn_executable: None,
             })
             .expect("lock task should be created");
-        assert_eq!(lock_task.title, "锁定文件 Assets/Scenes/Main.unity");
+        assert_eq!(lock_task.title, "锁定文件 src/main.rs");
         match lock_task.payload {
             TaskPayload::SvnOperation(payload) => {
                 assert!(matches!(payload.kind, SvnOperationKind::LockFile));
-                assert_eq!(
-                    payload.file_path.as_deref(),
-                    Some("Assets/Scenes/Main.unity")
-                );
+                assert_eq!(payload.file_path.as_deref(), Some("src/main.rs"));
             }
             _ => panic!("expected svn operation payload"),
         }

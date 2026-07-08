@@ -329,14 +329,6 @@ export interface WorkspaceSummary {
   repository_url: string;
   repository_root: string;
   revision: string;
-  unity: UnityProjectInfo;
-}
-
-export interface UnityProjectInfo {
-  detected: boolean;
-  has_assets: boolean;
-  has_project_settings: boolean;
-  has_packages_manifest: boolean;
 }
 
 export interface OpenWorkspaceRequest {

@@ -24,16 +24,6 @@ pub struct WorkspaceSummary {
     pub repository_url: String,
     pub repository_root: String,
     pub revision: String,
-    #[serde(default)]
-    pub unity: UnityProjectInfo,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnityProjectInfo {
-    pub detected: bool,
-    pub has_assets: bool,
-    pub has_project_settings: bool,
-    pub has_packages_manifest: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -216,8 +206,7 @@ pub fn open_workspace(
     }
 
     let xml = String::from_utf8_lossy(&output.stdout);
-    let mut summary = parse_svn_info_xml(&xml, &path)?;
-    summary.unity = detect_unity_project(Path::new(&summary.working_copy_root));
+    let summary = parse_svn_info_xml(&xml, &path)?;
     save_recent_workspace(app, &summary)?;
     Ok(summary)
 }
@@ -1194,32 +1183,7 @@ fn parse_svn_info_xml(xml: &str, requested_path: &Path) -> Result<WorkspaceSumma
         repository_url,
         repository_root,
         revision,
-        unity: UnityProjectInfo::default(),
     })
-}
-
-impl Default for UnityProjectInfo {
-    fn default() -> Self {
-        Self {
-            detected: false,
-            has_assets: false,
-            has_project_settings: false,
-            has_packages_manifest: false,
-        }
-    }
-}
-
-fn detect_unity_project(root: &Path) -> UnityProjectInfo {
-    let has_assets = root.join("Assets").is_dir();
-    let has_project_settings = root.join("ProjectSettings").is_dir();
-    let has_packages_manifest = root.join("Packages").join("manifest.json").is_file();
-
-    UnityProjectInfo {
-        detected: has_assets && has_project_settings && has_packages_manifest,
-        has_assets,
-        has_project_settings,
-        has_packages_manifest,
-    }
 }
 
 fn parse_svn_log_xml(xml: &str, target: &str) -> Result<SvnLog, NovaError> {
@@ -1581,19 +1545,19 @@ mod tests {
         let xml = r#"
 <status>
   <target path="C:\wc">
-    <entry path="C:\wc\Assets\Player.prefab">
+    <entry path="C:\wc\src\main.ts">
       <wc-status item="modified" props="none">
         <lock><owner>alice</owner><comment>editing</comment></lock>
       </wc-status>
     </entry>
-    <entry path="C:\wc\Assets\Level.unity">
+    <entry path="C:\wc\src\feature.ts">
       <wc-status item="conflicted" props="none" />
       <tree-conflict operation="update" />
     </entry>
-    <entry path="C:\wc\Assets\Blocked.asset">
+    <entry path="C:\wc\src\blocked.ts">
       <wc-status item="obstructed" props="none" />
     </entry>
-    <entry path="C:\wc\Assets\LockedOnly.asset">
+    <entry path="C:\wc\docs\locked.txt">
       <wc-status item="normal" props="none" />
       <repos-status item="locked">
         <lock><owner>bob</owner><comment>remote lock</comment></lock>
@@ -1618,7 +1582,7 @@ mod tests {
         assert_eq!(status.modified, 1);
         assert_eq!(status.conflicted, 1);
         assert_eq!(status.obstructed, 1);
-        assert_eq!(status.files[0].path, "Assets/Player.prefab");
+        assert_eq!(status.files[0].path, "src/main.ts");
         assert_eq!(status.files[0].lock_owner.as_deref(), Some("alice"));
         assert_eq!(
             status.files[1].conflict_kind.as_deref(),
@@ -1812,7 +1776,6 @@ mod tests {
         assert!(normalize_svn_property_name(" ").is_err());
         assert!(normalize_svn_property_name("svn:ignore\nnext").is_err());
     }
-
     #[test]
     fn chooses_property_delete_for_blank_values() {
         assert_eq!(
@@ -1823,20 +1786,5 @@ mod tests {
             svn_property_write_operation(" \r\n\t "),
             SvnPropertyWriteOperation::Delete
         );
-    }
-
-    #[test]
-    fn detects_unity_project_from_required_paths() {
-        let root = std::env::temp_dir().join(format!("novasvn-unity-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("Assets")).unwrap();
-        fs::create_dir_all(root.join("ProjectSettings")).unwrap();
-        fs::create_dir_all(root.join("Packages")).unwrap();
-        fs::write(root.join("Packages").join("manifest.json"), "{}").unwrap();
-
-        let unity = detect_unity_project(&root);
-
-        assert!(unity.detected);
-        let _ = fs::remove_dir_all(&root);
     }
 }

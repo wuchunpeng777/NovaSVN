@@ -50,7 +50,6 @@ import type {
   WorkingCopyStatus,
   WorkspaceSummary,
 } from "../types/api";
-import type { AppSettingsState } from "../types/app";
 import {
   appSettingsStore,
   isSameRepositoryUrl,
@@ -236,32 +235,6 @@ describe("isSameRepositoryUrl", () => {
 });
 
 describe("appSettingsStore", () => {
-  it("normalizes partial Unity group rules before saving and loading", () => {
-    appSettingsStore.setField("unityGroupRules", {
-      addressables: false,
-    } as AppSettingsState["unityGroupRules"]);
-
-    expect(get(appSettingsStore).unityGroupRules).toEqual({
-      addressables: false,
-      projectSettings: true,
-      packages: true,
-      scenes: true,
-      prefabs: true,
-      assets: true,
-    });
-
-    appSettingsStore.load();
-
-    expect(get(appSettingsStore).unityGroupRules).toEqual({
-      addressables: false,
-      projectSettings: true,
-      packages: true,
-      scenes: true,
-      prefabs: true,
-      assets: true,
-    });
-  });
-
   it("saves external tool and branch pool settings and validates invalid paths", () => {
     appSettingsStore.setField("externalDiffTool", "code");
     appSettingsStore.setField("externalMergeTool", "C:\\Tools\\merge.exe");
@@ -466,120 +439,17 @@ describe("workspaceStore safety warnings", () => {
     );
   });
 
-  it("warns about Unity meta pairing issues and preserves confirmations in drafts", async () => {
-    const workspace = makeWorkspace({
-      unity: {
-        detected: true,
-        has_assets: true,
-        has_project_settings: true,
-        has_packages_manifest: true,
-      },
-    });
+  it("warns about large binary files and generated project directories", async () => {
+    const workspace = makeWorkspace();
     const status = makeStatus([
       makeFile({
-        path: "Assets/Textures/stone.png",
-        status: "added",
-        content_digest: "asset-digest",
-      }),
-      makeFile({
-        path: "Assets/Textures/orphan.png.meta",
-        status: "added",
-        content_digest: "meta-digest",
-      }),
-    ]);
-
-    openWorkspaceMock.mockResolvedValue(workspace);
-    scanWorkspaceStatusMock.mockResolvedValue(status);
-
-    workspaceStore.setPathInput("C:/repo/wc");
-    await workspaceStore.openPath();
-
-    expect(get(workspaceStore).safetyCheck.warnings.map((item) => item.title)).toEqual(
-      expect.arrayContaining([
-        "Unity 资源缺少 meta",
-        "Unity meta 缺少资源",
-      ]),
-    );
-
-    workspaceStore.confirmSafetyWarnings();
-    const confirmedWarningIds = get(workspaceStore).safetyCheck.confirmedWarningIds;
-
-    expect(confirmedWarningIds).toEqual(
-      expect.arrayContaining([
-        "warning:unity-meta-missing:Assets/Textures/stone.png:asset-digest",
-        "warning:unity-meta-orphan:Assets/Textures/orphan.png.meta:meta-digest",
-      ]),
-    );
-
-    await workspaceStore.refreshStatus();
-
-    expect(get(workspaceStore).safetyCheck.confirmedWarningIds).toEqual(confirmedWarningIds);
-  });
-
-  it("warns when Unity resource and meta statuses are not synchronized", async () => {
-    const workspace = makeWorkspace({
-      unity: {
-        detected: true,
-        has_assets: true,
-        has_project_settings: true,
-        has_packages_manifest: true,
-      },
-    });
-    const status = makeStatus([
-      makeFile({
-        path: "Assets/Textures/new.png",
-        status: "added",
-        content_digest: "new-asset",
-      }),
-      makeFile({
-        path: "Assets/Textures/new.png.meta",
-        status: "modified",
-        content_digest: "new-meta",
-      }),
-      makeFile({
-        path: "Assets/Textures/old.png",
-        status: "deleted",
-        content_digest: "old-asset",
-      }),
-      makeFile({
-        path: "Assets/Textures/old.png.meta",
-        status: "modified",
-        content_digest: "old-meta",
-      }),
-    ]);
-
-    openWorkspaceMock.mockResolvedValue(workspace);
-    scanWorkspaceStatusMock.mockResolvedValue(status);
-
-    workspaceStore.setPathInput("C:/repo/wc");
-    await workspaceStore.openPath();
-
-    expect(get(workspaceStore).safetyCheck.warnings.map((item) => item.title)).toEqual(
-      expect.arrayContaining([
-        "Unity 新增资源 meta 未同步新增",
-        "Unity 删除资源 meta 未同步删除",
-      ]),
-    );
-  });
-
-  it("warns about Unity large assets and generated project directories", async () => {
-    const workspace = makeWorkspace({
-      unity: {
-        detected: true,
-        has_assets: true,
-        has_project_settings: true,
-        has_packages_manifest: true,
-      },
-    });
-    const status = makeStatus([
-      makeFile({
-        path: "Assets/Scenes/Battle.unity",
+        path: "media/intro.mov",
         file_size: 30 * 1024 * 1024,
-        content_digest: "scene-digest",
+        content_digest: "movie-digest",
       }),
       makeFile({
-        path: "Library/ArtifactDB",
-        content_digest: "library-digest",
+        path: "dist/app.js",
+        content_digest: "dist-digest",
       }),
       makeFile({
         path: "Temp/build.tmp",
@@ -605,7 +475,7 @@ describe("workspaceStore safety warnings", () => {
     expect(warnings.map((item) => item.title)).toEqual(
       expect.arrayContaining([
         "大文件变更",
-        "Unity 大资源文件",
+        "疑似大型二进制文件",
         "疑似临时或生成文件",
       ]),
     );
@@ -614,7 +484,7 @@ describe("workspaceStore safety warnings", () => {
       .map((item) => item.filePath);
     expect(generatedWarningPaths).toEqual(
       expect.arrayContaining([
-        "Library/ArtifactDB",
+        "dist/app.js",
         "Temp/build.tmp",
         "Logs/Editor.log",
         "obj/Debug/generated.cs",
@@ -882,12 +752,6 @@ function makeWorkspace(workspace: Partial<WorkspaceSummary> = {}): WorkspaceSumm
     repository_url: "https://example.com/svn/trunk",
     repository_root: "https://example.com/svn",
     revision: "12",
-    unity: {
-      detected: false,
-      has_assets: false,
-      has_project_settings: false,
-      has_packages_manifest: false,
-    },
     ...workspace,
   };
 }

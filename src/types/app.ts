@@ -8,7 +8,7 @@ export type AppView =
 
 export type WorkspaceStageFilter = "all" | "staged" | "unstaged";
 
-export type WorkspaceGroupMode = "status" | "directory" | "extension" | "unity";
+export type WorkspaceGroupMode = "status" | "directory" | "extension";
 
 export type SafetyCheckSeverity = "blocker" | "warning" | "info";
 
@@ -79,8 +79,6 @@ export interface AppSettingsState {
   commitTemplate: string;
   branchPoolBasePath: string;
   largeFileThresholdMb: number;
-  unityRulesEnabled: boolean;
-  unityGroupRules: UnityGroupRules;
   externalDiffTool: string;
   externalMergeTool: string;
   diagnosticExportPath: string;
@@ -92,13 +90,4 @@ export interface AppSettingsState {
     externalMergeTool: string | null;
   };
   loading: boolean;
-}
-
-export interface UnityGroupRules {
-  addressables: boolean;
-  projectSettings: boolean;
-  packages: boolean;
-  scenes: boolean;
-  prefabs: boolean;
-  assets: boolean;
 }

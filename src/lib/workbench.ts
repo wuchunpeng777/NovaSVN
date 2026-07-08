@@ -88,16 +88,16 @@ export const workbenchViews: Record<string, WorkbenchView> = {
   settings: {
     id: "settings",
     title: "设置",
-    subtitle: "持久化 SVN、Diff、提交和 Unity 偏好。",
+    subtitle: "持久化 SVN、Diff、提交和工具偏好。",
     metrics: [
       { label: "SVN", value: "-" },
       { label: "Diff", value: "-" },
-      { label: "Unity", value: "-" },
+      { label: "工具", value: "-" },
     ],
     primaryItems: [
       { title: "SVN 路径", meta: "持久化命令行路径", status: "设置" },
       { title: "Diff 偏好", meta: "默认展示和外部工具", status: "设置" },
-      { title: "Unity 规则", meta: "大文件阈值和规则开关", status: "设置" },
+      { title: "安全检查", meta: "大文件阈值和提交前提示", status: "设置" },
     ],
   },
 };

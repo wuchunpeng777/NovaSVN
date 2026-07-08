@@ -33,14 +33,15 @@
 
 <aside class="sidebar" aria-label="主导航">
   <div class="brand">
-    <span class="brand-mark">N</span>
+    <span class="brand-mark" aria-hidden="true">N</span>
     <div>
       <h1>NovaSVN</h1>
-      <p>现代化 SVN 工作台</p>
+      <p>Subversion Client</p>
     </div>
   </div>
 
   <nav class="nav-list">
+    <div class="sidebar-section-title">视图</div>
     {#each items as item}
       <button
         class:active={currentView === item.id}
@@ -55,7 +56,7 @@
 
   <section class="sidebar-filter" aria-label="过滤器">
     <div class="sidebar-filter-heading">
-      <h2>过滤器</h2>
+      <h2>工作副本</h2>
       <button type="button" disabled={!hasActiveFilters} on:click={onClearFilters}>
         清空
       </button>

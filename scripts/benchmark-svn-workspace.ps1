@@ -41,7 +41,7 @@ if (!(Test-Path -LiteralPath $wcPath)) {
   & $SvnExe checkout "file:///$($repoPath.Replace('\', '/'))" $wcPath | Out-Null
 }
 
-$dataDir = Join-Path $wcPath "Assets\Benchmark"
+$dataDir = Join-Path $wcPath "benchmark"
 New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
 
 $existing = Get-ChildItem -LiteralPath $dataDir -Filter "*.txt" -ErrorAction SilentlyContinue
@@ -74,7 +74,7 @@ $results += Measure-Step "virtual list prepare 5000 changes" {
   $changes = @()
   for ($i = 0; $i -lt [Math]::Min($ChangedCount, $FileCount); $i++) {
     $changes += [pscustomobject]@{
-      path = "Assets/Benchmark/file-{0:D5}.txt" -f $i
+      path = "benchmark/file-{0:D5}.txt" -f $i
       status = "modified"
       top = $i * $rowHeight
       height = $rowHeight
