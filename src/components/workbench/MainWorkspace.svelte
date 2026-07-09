@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
   import type {
@@ -22,6 +23,8 @@
     TaskStatus,
     TaskSummary,
     TaskWorkspaceList,
+    WorkspaceFileNode,
+    WorkspaceFileTree,
     WorkingCopyStatus,
     WorkspaceSummary,
   } from "../../types/api";
@@ -31,7 +34,6 @@
     ReviewedFileState,
     SafetyCheckSummary,
     WorkbenchView,
-    WorkspaceStageFilter,
   } from "../../types/app";
 
   export let view: WorkbenchView;
@@ -40,8 +42,8 @@
   export let workspaceLoading = false;
   export let workspaceError: CommandError | null = null;
   export let workingCopyStatus: WorkingCopyStatus | null = null;
+  export let workspaceFileTree: WorkspaceFileTree | null = null;
   export let searchText = "";
-  export let stageFilter: WorkspaceStageFilter = "all";
   export let selectedFilePath: string | null = null;
   export let selectedFile: ChangedFile | null = null;
   export let selectedFileReviewed = false;
@@ -217,9 +219,9 @@
   export let onLoadMoreStatus: () => void = () => {};
   export let onWorkspacePathInput: (value: string) => void = () => {};
   export let onSearchTextInput: (value: string) => void = () => {};
-  export let onStageFilter: (value: WorkspaceStageFilter) => void = () => {};
   export let onClearFilters: () => void = () => {};
   export let onSelectFile: (path: string) => void = () => {};
+  export let onSelectWorkspacePath: (path: string) => void = () => {};
   export let onStageFile: (path: string) => void = () => {};
   export let onUnstageFile: (path: string) => void = () => {};
   export let onRevertFile: (path: string) => void = () => {};
@@ -320,14 +322,17 @@
   export let onExportDiagnosticLog: () => void = () => {};
 
   const statusLabels: Record<string, string> = {
-    modified: "修改",
-    added: "新增",
-    deleted: "删除",
-    missing: "缺失",
-    unversioned: "未版本控制",
+    modified: "modify",
+    added: "add",
+    deleted: "delete",
+    renamed: "rename",
+    missing: "missing",
+    unversioned: "unversioned",
     conflicted: "冲突",
     obstructed: "阻塞",
     external: "外部",
+    normal: "",
+    changed: "",
   };
 
   const taskStatusLabels: Record<TaskStatus, string> = {
@@ -338,9 +343,19 @@
     cancelled: "取消",
   };
 
+  type WorkingCopyTreeFilter = "all" | "changed" | "unversioned";
+  type WorkspaceTreeRow = WorkspaceFileNode & {
+    depth: number;
+  };
+
   let selectedCommitHistoryMessage = "";
   let diffInline = false;
   let showWhitespace = false;
+  let workingCopyTreeFilter: WorkingCopyTreeFilter = "changed";
+  let selectedLogRevision: string | null = null;
+  let collapsedTreePaths = new Set<string>();
+  let inspectorWidth = 430;
+  let resizingInspector = false;
 
   $: if (appSettings.diffMode) {
     diffInline = appSettings.diffMode === "inline";
@@ -427,19 +442,109 @@
     return selectedFilePath === file.path;
   }
 
-  function filterFiles(files: ChangedFile[]) {
+  function isSelectedPath(path: string) {
+    return selectedFilePath === path;
+  }
+
+  function changedFileForPath(path: string) {
+    return files.find((file) => file.path === path) ?? null;
+  }
+
+  function treeNodeForPath(path: string | null): WorkspaceFileNode | null {
+    if (!path) {
+      return null;
+    }
+    return findTreeNode(workspaceFileTree?.nodes ?? [], path);
+  }
+
+  function findTreeNode(nodes: WorkspaceFileNode[], path: string): WorkspaceFileNode | null {
+    for (const node of nodes) {
+      if (node.path === path) {
+        return node;
+      }
+      const child = findTreeNode(node.children, path);
+      if (child) {
+        return child;
+      }
+    }
+    return null;
+  }
+
+  function isChangedPath(path: string) {
+    return changedFileForPath(path) !== null;
+  }
+
+  function isStageablePath(path: string) {
+    const file = changedFileForPath(path);
+    return !!file && isStageable(file);
+  }
+
+  function isTreeNodeCollapsed(node: WorkspaceFileNode) {
+    return node.kind === "dir" && collapsedTreePaths.has(node.path);
+  }
+
+  function toggleTreeNode(node: WorkspaceFileNode) {
+    if (node.kind !== "dir") {
+      selectTreeNode(node);
+      return;
+    }
+
+    const next = new Set(collapsedTreePaths);
+    if (next.has(node.path)) {
+      next.delete(node.path);
+    } else {
+      next.add(node.path);
+    }
+    collapsedTreePaths = next;
+  }
+
+  function selectTreeNode(node: WorkspaceFileNode) {
+    if (node.kind !== "file") {
+      return;
+    }
+    if (isChangedPath(node.path)) {
+      onSelectFile(node.path);
+      return;
+    }
+    onSelectWorkspacePath(node.path);
+  }
+
+  function filterTreeNodes(nodes: WorkspaceFileNode[]): WorkspaceFileNode[] {
     const query = searchText.trim().toLowerCase();
-    return files.filter((file) => {
-      if (query && !file.path.toLowerCase().includes(query)) {
-        return false;
+    return nodes.flatMap((node) => {
+      const children = filterTreeNodes(node.children);
+      const selfMatchesSearch = !query || node.path.toLowerCase().includes(query);
+      const selfMatchesMode =
+        node.kind === "file" &&
+        (workingCopyTreeFilter === "all" ||
+          (workingCopyTreeFilter === "changed" && node.changed && node.status !== "unversioned") ||
+          (workingCopyTreeFilter === "unversioned" && node.status === "unversioned"));
+      const keepNode =
+        node.kind === "dir" ? children.length > 0 : selfMatchesSearch && selfMatchesMode;
+
+      if (!keepNode) {
+        return [];
       }
-      if (stageFilter === "staged" && !isStaged(file.path)) {
-        return false;
+
+      return [
+        {
+          ...node,
+          children,
+        },
+      ];
+    });
+  }
+
+  function flattenTreeNodes(nodes: WorkspaceFileNode[], depth = 0): WorkspaceTreeRow[] {
+    return nodes.flatMap((node) => {
+      const row = {
+        ...node,
+        depth,
+      };
+      if (isTreeNodeCollapsed(node)) {
+        return [row];
       }
-      if (stageFilter === "unstaged" && isStaged(file.path)) {
-        return false;
-      }
-      return true;
+      return [row, ...flattenTreeNodes(node.children, depth + 1)];
     });
   }
 
@@ -523,21 +628,6 @@
     return url.slice(url.lastIndexOf("/") + 1) || entry.branch_url;
   }
 
-  function repositoryName(url: string) {
-    const normalized = url.replace(/\/+$/, "");
-    const name = normalized.slice(normalized.lastIndexOf("/") + 1);
-    return name || normalized || "仓库";
-  }
-
-  function selectRepositoryProject(url: string) {
-    onSelectView("repository");
-    if (!url) {
-      return;
-    }
-    onRepositoryUrlInput(url);
-    onLoadRepositoryUrl(url);
-  }
-
   function chooseDefaultRepositoryUrl() {
     if (repositoryUrlInput.trim()) {
       onLoadRepositoryUrl();
@@ -556,8 +646,52 @@
     selectedCommitHistoryMessage = "";
   }
 
+  function selectLogEntry(revision: string) {
+    selectedLogRevision = revision;
+    onPrepareRevisionDiffFromLog(revision);
+  }
+
+  function clearWorkingCopyFilters() {
+    workingCopyTreeFilter = "changed";
+    onClearFilters();
+  }
+
+  function startInspectorResize(event: MouseEvent) {
+    if (!resizingInspector) {
+      window.addEventListener("mousemove", resizeInspector);
+      window.addEventListener("mouseup", stopInspectorResize);
+    }
+    resizingInspector = true;
+    event.preventDefault();
+  }
+
+  function stopInspectorResize() {
+    if (!resizingInspector) {
+      return;
+    }
+    resizingInspector = false;
+    window.removeEventListener("mousemove", resizeInspector);
+    window.removeEventListener("mouseup", stopInspectorResize);
+  }
+
+  function resizeInspector(event: MouseEvent) {
+    if (!resizingInspector) {
+      return;
+    }
+    inspectorWidth = Math.min(Math.max(window.innerWidth - event.clientX, 320), 760);
+  }
+
+  function adjustInspectorWidth(delta: number) {
+    inspectorWidth = Math.min(Math.max(inspectorWidth + delta, 320), 760);
+  }
+
+  onDestroy(() => {
+    stopInspectorResize();
+  });
+
   $: files = workingCopyStatus?.files ?? [];
-  $: filteredFiles = filterFiles(files);
+  $: filteredTreeNodes = filterTreeNodes(workspaceFileTree?.nodes ?? []);
+  $: treeRows = flattenTreeNodes(filteredTreeNodes);
   $: stagedCount = stagedFiles.length;
   $: unstagedCount = Math.max((workingCopyStatus?.total ?? files.length) - stagedCount, 0);
   $: abnormalCount =
@@ -566,14 +700,17 @@
     (workingCopyStatus?.obstructed ?? 0);
   $: repositoryEntries = repositoryList?.entries ?? [];
   $: repositoryCurrentUrl = repositoryList?.url ?? repositoryUrlInput.trim();
-  $: repositoryProjectUrl =
-    repositoryCurrentUrl || workspace?.repository_root || workspace?.repository_url || "";
   $: breadcrumbs = repositoryBreadcrumbs(repositoryCurrentUrl);
   $: branchEntries =
     repositoryLayoutResults.branches?.entries.filter((entry) => entry.kind === "dir") ?? [];
   $: tagEntries =
     repositoryLayoutResults.tags?.entries.filter((entry) => entry.kind === "dir") ?? [];
   $: filteredLogEntries = filterLogEntries(svnLog?.entries ?? []);
+  $: selectedLogEntry =
+    filteredLogEntries.find((entry) => entry.revision === selectedLogRevision) ??
+    filteredLogEntries[0] ??
+    null;
+  $: selectedTreeNode = treeNodeForPath(selectedFilePath);
   $: unconfirmedWarningCount = safetyCheck.warnings.filter(
     (item) => !safetyCheck.confirmedWarningIds.includes(item.id),
   ).length;
@@ -582,11 +719,6 @@
 
 <section class="versions-workbench" aria-label="NovaSVN 工作台">
   <header class="versions-titlebar">
-    <div class="traffic-lights" aria-hidden="true">
-      <span class="close"></span>
-      <span class="minimize"></span>
-      <span class="zoom"></span>
-    </div>
     <div class="window-identity">
       <strong>NovaSVN</strong>
       <span>{workspace ? basename(workspace.working_copy_root) : "Subversion Client"}</span>
@@ -690,39 +822,6 @@
         {/if}
       </section>
 
-      <section>
-        <h2>仓库</h2>
-        {#if repositoryProjectUrl}
-          <button
-            type="button"
-            class="source-item"
-            class:active={view.id === "repository"}
-            on:click={() => selectRepositoryProject(repositoryProjectUrl)}
-          >
-            <span class="source-icon">R</span>
-            <span>
-              <strong>{repositoryName(repositoryProjectUrl)}</strong>
-              <small>{repositoryProjectUrl}</small>
-            </span>
-            <em>{repositoryEntries.length}</em>
-          </button>
-        {:else}
-          <button
-            type="button"
-            class="source-item"
-            class:active={view.id === "repository"}
-            on:click={() => onSelectView("repository")}
-          >
-            <span class="source-icon">R</span>
-            <span>
-              <strong>添加仓库</strong>
-              <small>输入 SVN URL 后会显示在这里</small>
-            </span>
-            <em>0</em>
-          </button>
-        {/if}
-      </section>
-
       <section class="source-sidebar-meta">
         <h2>状态</h2>
         <p>{backendMessage}</p>
@@ -800,20 +899,16 @@
             {#if filteredLogEntries.length > 0}
               {#each filteredLogEntries as entry (entry.revision)}
                 <article class="timeline-entry">
-                  <button type="button" on:click={() => onPrepareRevisionDiffFromLog(entry.revision)}>
+                  <button
+                    type="button"
+                    class:active={selectedLogEntry?.revision === entry.revision}
+                    on:click={() => selectLogEntry(entry.revision)}
+                  >
                     <strong>r{entry.revision}</strong>
                     <span>{entry.author || "-"}</span>
                     <time>{formatDate(entry.date)}</time>
                   </button>
                   <p>{entry.message || "无提交信息"}</p>
-                  <div>
-                    {#each entry.changed_paths.slice(0, 5) as path (`${entry.revision}:${path.path}:${path.action}`)}
-                      <small>{path.action || "-"} {path.path}</small>
-                    {/each}
-                    {#if entry.changed_paths.length > 5}
-                      <small>另有 {entry.changed_paths.length - 5} 项</small>
-                    {/if}
-                  </div>
                 </article>
               {/each}
             {:else if svnLogLoading}
@@ -824,6 +919,31 @@
           </section>
 
           <aside class="revision-compare" aria-label="Revision 比较">
+            <section class="revision-files">
+              <div class="section-title">
+                <h2>修改文件</h2>
+                <span>{selectedLogEntry?.changed_paths.length ?? 0}</span>
+              </div>
+              {#if selectedLogEntry}
+                <strong>r{selectedLogEntry.revision}</strong>
+                <div class="revision-file-list">
+                  {#each selectedLogEntry.changed_paths as path (`${selectedLogEntry.revision}:${path.path}:${path.action}`)}
+                    <div>
+                      <span class="change-action">{path.action || "-"}</span>
+                      <span>
+                        <strong>{path.path}</strong>
+                        <small>{path.kind || "-"}</small>
+                      </span>
+                    </div>
+                  {/each}
+                  {#if selectedLogEntry.changed_paths.length === 0}
+                    <p class="muted">该日志没有返回修改路径。</p>
+                  {/if}
+                </div>
+              {:else}
+                <p class="muted">选择一条日志后显示修改文件。</p>
+              {/if}
+            </section>
             <h2>比较</h2>
             <div class="segmented-control">
               <button
@@ -1520,100 +1640,123 @@
           <div class="segmented-control">
             <button
               type="button"
-              class:active={stageFilter === "all"}
-              on:click={() => onStageFilter("all")}
+              class:active={workingCopyTreeFilter === "all"}
+              on:click={() => (workingCopyTreeFilter = "all")}
             >
-              全部
+              全部文件
             </button>
             <button
               type="button"
-              class:active={stageFilter === "unstaged"}
-              on:click={() => onStageFilter("unstaged")}
+              class:active={workingCopyTreeFilter === "changed"}
+              on:click={() => (workingCopyTreeFilter = "changed")}
             >
-              未暂存
+              变化文件
             </button>
             <button
               type="button"
-              class:active={stageFilter === "staged"}
-              on:click={() => onStageFilter("staged")}
+              class:active={workingCopyTreeFilter === "unversioned"}
+              on:click={() => (workingCopyTreeFilter = "unversioned")}
             >
-              已暂存
+              未管理文件
             </button>
           </div>
-          <button type="button" on:click={onClearFilters}>清除</button>
+          <button type="button" on:click={clearWorkingCopyFilters}>清除</button>
         </section>
 
-        <section class="work-copy-grid">
-          <div class="file-browser" aria-label="改动文件">
+        <section
+          class="work-copy-grid"
+          class:resizing={resizingInspector}
+          style={`--inspector-width: ${inspectorWidth}px`}
+        >
+          <div class="file-browser" aria-label="工作副本文件树">
             <div class="file-table-head">
               <span>名称</span>
               <span>状态</span>
               <span>Revision</span>
               <span>大小</span>
             </div>
-            {#if workingCopyStatus && filteredFiles.length > 0}
-              {#each filteredFiles as file (file.path)}
+            {#if treeRows.length > 0}
+              {#each treeRows as node (node.path)}
                 <button
                   type="button"
                   class="file-row"
-                  class:selected={isSelected(file)}
-                  class:abnormal={file.abnormal}
-                  on:click={() => onSelectFile(file.path)}
+                  class:directory={node.kind === "dir"}
+                  class:selected={node.kind === "file" && isSelectedPath(node.path)}
+                  class:abnormal={["missing", "conflicted", "obstructed"].includes(node.status)}
+                  aria-expanded={node.kind === "dir" ? !isTreeNodeCollapsed(node) : undefined}
+                  on:click={() => toggleTreeNode(node)}
                 >
-                  <span class="file-name">
-                    <strong>{basename(file.path)}</strong>
-                    <small>{dirname(file.path)}</small>
+                  <span class="file-name" style={`--tree-depth: ${node.depth}`}>
+                    <strong>
+                      <span
+                        class="tree-affordance"
+                        class:visible={node.kind === "dir"}
+                        class:collapsed={isTreeNodeCollapsed(node)}
+                        aria-hidden="true"
+                      ></span>
+                      <span
+                        class="tree-icon"
+                        class:folder-icon={node.kind === "dir"}
+                        class:file-icon={node.kind === "file"}
+                        aria-hidden="true"
+                      ></span>
+                      {node.name}
+                    </strong>
                   </span>
-                  <span class="status-pill {statusClass(file.status)}">{labelStatus(file.status)}</span>
-                  <span>{file.revision ?? "-"}</span>
-                  <span>{formatBytes(file.file_size)}</span>
+                  <span class="status-pill {statusClass(node.status)}">
+                    {node.kind === "file" ? labelStatus(node.status) : ""}
+                  </span>
+                  <span>{node.revision ?? "-"}</span>
+                  <span>{formatBytes(node.file_size)}</span>
                   <span class="inline-row-actions">
-                    {#if isStaged(file.path)}
+                    {#if isChangedPath(node.path) && isStaged(node.path)}
                       <em>已暂存</em>
                       <span
                         role="button"
                         tabindex="0"
-                        on:click|stopPropagation={() => onUnstageFile(file.path)}
+                        on:click|stopPropagation={() => onUnstageFile(node.path)}
                         on:keydown|stopPropagation={(event) => {
                           if (event.key === "Enter" || event.key === " ") {
-                            onUnstageFile(file.path);
+                            onUnstageFile(node.path);
                           }
                         }}
                       >
                         取消
                       </span>
-                    {:else}
+                    {:else if isChangedPath(node.path)}
                       <span
                         role="button"
                         tabindex="0"
-                        aria-disabled={!isStageable(file)}
-                        on:click|stopPropagation={() => isStageable(file) && onStageFile(file.path)}
+                        aria-disabled={!isStageablePath(node.path)}
+                        on:click|stopPropagation={() => isStageablePath(node.path) && onStageFile(node.path)}
                         on:keydown|stopPropagation={(event) => {
-                          if ((event.key === "Enter" || event.key === " ") && isStageable(file)) {
-                            onStageFile(file.path);
+                          if ((event.key === "Enter" || event.key === " ") && isStageablePath(node.path)) {
+                            onStageFile(node.path);
                           }
                         }}
                       >
                         暂存
                       </span>
                     {/if}
-                    <span
-                      role="button"
-                      tabindex="0"
-                      on:click|stopPropagation={() => onRevertFile(file.path)}
-                      on:keydown|stopPropagation={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          onRevertFile(file.path);
-                        }
-                      }}
-                    >
-                      撤销
-                    </span>
+                    {#if isChangedPath(node.path)}
+                      <span
+                        role="button"
+                        tabindex="0"
+                        on:click|stopPropagation={() => onRevertFile(node.path)}
+                        on:keydown|stopPropagation={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            onRevertFile(node.path);
+                          }
+                        }}
+                      >
+                        撤销
+                      </span>
+                    {/if}
                   </span>
                 </button>
               {/each}
-            {:else if workingCopyStatus}
-              <article class="empty-state">没有匹配的改动</article>
+            {:else if workspaceFileTree}
+              <article class="empty-state">没有匹配的文件</article>
             {:else if workspace}
               <article class="empty-state">点击“刷新”扫描工作副本</article>
             {:else}
@@ -1621,48 +1764,78 @@
             {/if}
           </div>
 
+          <button
+            type="button"
+            class="inspector-resizer"
+            aria-label="调整右侧面板宽度"
+            on:mousedown={startInspectorResize}
+            on:keydown={(event) => {
+              if (event.key === "ArrowLeft") {
+                adjustInspectorWidth(24);
+                event.preventDefault();
+              }
+              if (event.key === "ArrowRight") {
+                adjustInspectorWidth(-24);
+                event.preventDefault();
+              }
+            }}
+          ></button>
+
           <aside class="inspector" aria-label="详情和提交">
             <section class="inspector-section">
               <h2>文件</h2>
-              {#if selectedFile}
+              {#if selectedFile || selectedTreeNode}
                 <div class="file-card">
-                  <strong>{basename(selectedFile.path)}</strong>
-                  <span>{dirname(selectedFile.path)}</span>
-                  <small>{labelStatus(selectedFile.status)} · {formatBytes(selectedFile.file_size)}</small>
+                  <strong>{basename(selectedFile?.path ?? selectedTreeNode?.path ?? "")}</strong>
+                  <span>{dirname(selectedFile?.path ?? selectedTreeNode?.path ?? "")}</span>
+                  <small>
+                    {labelStatus(selectedFile?.status ?? selectedTreeNode?.status ?? "normal")} ·
+                    {formatBytes(selectedFile?.file_size ?? selectedTreeNode?.file_size ?? null)}
+                  </small>
                 </div>
                 <div class="button-row wrap">
-                  <button type="button" on:click={() => onOpenWorkspaceFile(selectedFile.path)}>
+                  <button
+                    type="button"
+                    on:click={() =>
+                      selectedFilePath && onOpenWorkspaceFile(selectedFilePath)}
+                  >
                     打开
                   </button>
-                  <button type="button" on:click={() => onOpenFileLocation(selectedFile.path)}>
+                  <button
+                    type="button"
+                    on:click={() =>
+                      selectedFilePath && onOpenFileLocation(selectedFilePath)}
+                  >
                     定位
                   </button>
-                  <button type="button" on:click={() => onLaunchExternalTool("diff", selectedFile.path)}>
-                    外部 Diff
-                  </button>
-                  <button type="button" on:click={() => onRevertFile(selectedFile.path)}>
-                    撤销
-                  </button>
-                  {#if selectedFileReviewed}
-                    <button type="button" on:click={() => onMarkFileUnreviewed(selectedFile.path)}>
-                      标为未审
+                  {#if selectedFile}
+                    <button type="button" on:click={() => onLaunchExternalTool("diff", selectedFile.path)}>
+                      外部 Diff
                     </button>
-                  {:else}
-                    <button type="button" on:click={() => onMarkFileReviewed(selectedFile.path)}>
-                      标为已审
+                    <button type="button" on:click={() => onRevertFile(selectedFile.path)}>
+                      撤销
                     </button>
-                  {/if}
-                  {#if selectedFile.lock_state === "none" && !selectedFile.lock_owner}
-                    <button type="button" on:click={() => onLockFile(selectedFile.path)}>Lock</button>
-                  {:else}
-                    <button type="button" on:click={() => onUnlockFile(selectedFile.path)}>Unlock</button>
-                    <button type="button" on:click={() => onForceUnlockFile(selectedFile.path)}>
-                      Force Unlock
-                    </button>
+                    {#if selectedFileReviewed}
+                      <button type="button" on:click={() => onMarkFileUnreviewed(selectedFile.path)}>
+                        标为未审
+                      </button>
+                    {:else}
+                      <button type="button" on:click={() => onMarkFileReviewed(selectedFile.path)}>
+                        标为已审
+                      </button>
+                    {/if}
+                    {#if selectedFile.lock_state === "none" && !selectedFile.lock_owner}
+                      <button type="button" on:click={() => onLockFile(selectedFile.path)}>Lock</button>
+                    {:else}
+                      <button type="button" on:click={() => onUnlockFile(selectedFile.path)}>Unlock</button>
+                      <button type="button" on:click={() => onForceUnlockFile(selectedFile.path)}>
+                        Force Unlock
+                      </button>
+                    {/if}
                   {/if}
                 </div>
 
-                {#if selectedFile.status === "conflicted" || selectedFile.conflict_kind}
+                {#if selectedFile && (selectedFile.status === "conflicted" || selectedFile.conflict_kind)}
                   <div class="conflict-actions">
                     <button type="button" on:click={() => onResolveWorking(selectedFile.path)}>
                       使用工作副本

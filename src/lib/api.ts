@@ -26,6 +26,7 @@ import type {
   GetSvnPropertiesRequest,
   ExternalToolLaunch,
   LaunchExternalToolRequest,
+  ListWorkspaceFilesRequest,
   OpenFileLocation,
   OpenFileLocationRequest,
   OpenGeneratedFileLocation,
@@ -52,6 +53,7 @@ import type {
   TaskSnapshot,
   TaskWorkspaceList,
   WorkingCopyStatus,
+  WorkspaceFileTree,
   WorkspaceSummary,
 } from "../types/api";
 
@@ -239,6 +241,12 @@ export function scanWorkspaceStatus(
   request: ScanWorkspaceStatusRequest,
 ): Promise<WorkingCopyStatus> {
   return callBackend<WorkingCopyStatus>("scan_workspace_status", { request });
+}
+
+export function listWorkspaceFiles(
+  request: ListWorkspaceFilesRequest,
+): Promise<WorkspaceFileTree> {
+  return callBackend<WorkspaceFileTree>("list_workspace_files", { request });
 }
 
 export function getFileDiff(request: GetFileDiffRequest): Promise<FileDiff> {

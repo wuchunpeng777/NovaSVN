@@ -33,12 +33,131 @@ use task::{
     Task, TaskQueue, TaskSnapshot,
 };
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use workspace::{
     FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, GetSvnLogRequest,
-    GetSvnPropertiesRequest, OpenWorkspaceRequest, RecentWorkspace, ScanWorkspaceStatusRequest,
-    SetSvnPropertyRequest, SvnLog, SvnProperties, WorkingCopyStatus, WorkspaceSummary,
+    GetSvnPropertiesRequest, ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace,
+    ScanWorkspaceStatusRequest, SetSvnPropertyRequest, SvnLog, SvnProperties, WorkingCopyStatus,
+    WorkspaceFileTree, WorkspaceSummary,
 };
+
+fn create_app_menu<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> tauri::Result<tauri::menu::Menu<R>> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+
+    let open_workspace = MenuItem::with_id(
+        app,
+        "open_workspace",
+        "打开工作副本(&O)...",
+        true,
+        Some("Ctrl+O"),
+    )?;
+    let refresh_status =
+        MenuItem::with_id(app, "refresh_status", "刷新状态(&R)", true, Some("Ctrl+R"))?;
+    let export_diagnostics = MenuItem::with_id(
+        app,
+        "export_diagnostics",
+        "导出诊断日志(&D)",
+        true,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(app, "quit", "退出(&X)", true, Some("Alt+F4"))?;
+    let file_separator_a = PredefinedMenuItem::separator(app)?;
+    let file_separator_b = PredefinedMenuItem::separator(app)?;
+    let file_menu = Submenu::with_items(
+        app,
+        "文件(&F)",
+        true,
+        &[
+            &open_workspace,
+            &refresh_status,
+            &file_separator_a,
+            &export_diagnostics,
+            &file_separator_b,
+            &quit,
+        ],
+    )?;
+
+    let undo = PredefinedMenuItem::undo(app, Some("撤销(&U)"))?;
+    let redo = PredefinedMenuItem::redo(app, Some("重做(&R)"))?;
+    let cut = PredefinedMenuItem::cut(app, Some("剪切(&T)"))?;
+    let copy = PredefinedMenuItem::copy(app, Some("复制(&C)"))?;
+    let paste = PredefinedMenuItem::paste(app, Some("粘贴(&P)"))?;
+    let select_all = PredefinedMenuItem::select_all(app, Some("全选(&A)"))?;
+    let edit_separator_a = PredefinedMenuItem::separator(app)?;
+    let edit_separator_b = PredefinedMenuItem::separator(app)?;
+    let edit_menu = Submenu::with_items(
+        app,
+        "编辑(&E)",
+        true,
+        &[
+            &undo,
+            &redo,
+            &edit_separator_a,
+            &cut,
+            &copy,
+            &paste,
+            &edit_separator_b,
+            &select_all,
+        ],
+    )?;
+
+    let view_changes =
+        MenuItem::with_id(app, "view_changes", "工作副本(&W)", true, Some("Ctrl+1"))?;
+    let view_history = MenuItem::with_id(app, "view_history", "时间线(&T)", true, Some("Ctrl+2"))?;
+    let view_repository =
+        MenuItem::with_id(app, "view_repository", "仓库(&R)", true, Some("Ctrl+3"))?;
+    let view_branches =
+        MenuItem::with_id(app, "view_branches", "分支池(&B)", true, Some("Ctrl+4"))?;
+    let view_settings = MenuItem::with_id(app, "view_settings", "设置(&S)", true, Some("Ctrl+,"))?;
+    let view_menu = Submenu::with_items(
+        app,
+        "视图(&V)",
+        true,
+        &[
+            &view_changes,
+            &view_history,
+            &view_repository,
+            &view_branches,
+            &view_settings,
+        ],
+    )?;
+
+    let update_workspace =
+        MenuItem::with_id(app, "update_workspace", "更新(&U)", true, Some("Ctrl+U"))?;
+    let cleanup_workspace =
+        MenuItem::with_id(app, "cleanup_workspace", "清理(&C)", true, None::<&str>)?;
+    let refresh_log = MenuItem::with_id(app, "refresh_log", "刷新日志(&L)", true, Some("Ctrl+L"))?;
+    let prepare_commit = MenuItem::with_id(app, "prepare_commit", "提交(&M)", true, None::<&str>)?;
+    let working_copy_separator = PredefinedMenuItem::separator(app)?;
+    let working_copy_menu = Submenu::with_items(
+        app,
+        "工作副本(&W)",
+        true,
+        &[
+            &update_workspace,
+            &cleanup_workspace,
+            &working_copy_separator,
+            &refresh_log,
+            &prepare_commit,
+        ],
+    )?;
+
+    let about = MenuItem::with_id(app, "about", "关于 NovaSVN(&A)", true, None::<&str>)?;
+    let help_menu = Submenu::with_items(app, "帮助(&H)", true, &[&about])?;
+
+    Menu::with_items(
+        app,
+        &[
+            &file_menu,
+            &edit_menu,
+            &view_menu,
+            &working_copy_menu,
+            &help_menu,
+        ],
+    )
+}
 
 #[tauri::command]
 fn ping() -> CommandResult<HealthPayload> {
@@ -334,6 +453,14 @@ fn scan_workspace_status(request: ScanWorkspaceStatusRequest) -> CommandResult<W
 }
 
 #[tauri::command]
+fn list_workspace_files(request: ListWorkspaceFilesRequest) -> CommandResult<WorkspaceFileTree> {
+    println!("[NovaSVN] list_workspace_files command received");
+    Ok(CommandResponse::success(workspace::list_workspace_files(
+        request,
+    )?))
+}
+
+#[tauri::command]
 fn get_file_diff(request: GetFileDiffRequest) -> CommandResult<FileDiff> {
     println!("[NovaSVN] get_file_diff command received");
     Ok(CommandResponse::success(workspace::get_file_diff(request)?))
@@ -409,6 +536,16 @@ fn export_diagnostics(
 
 pub fn run() {
     tauri::Builder::default()
+        .menu(create_app_menu)
+        .on_menu_event(|app, event| {
+            let id = event.id().as_ref();
+            if id == "quit" {
+                app.exit(0);
+                return;
+            }
+
+            let _ = app.emit("novasvn-menu", id.to_string());
+        })
         .manage(TaskQueue::new())
         .setup(|app| {
             diagnostics::install_panic_hook(app.path().app_data_dir()?);
@@ -451,6 +588,7 @@ pub fn run() {
             open_workspace,
             get_recent_workspace,
             scan_workspace_status,
+            list_workspace_files,
             get_file_diff,
             get_file_content_diff,
             get_svn_log,

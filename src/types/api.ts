@@ -347,6 +347,12 @@ export interface ScanWorkspaceStatusRequest {
   limit?: number;
 }
 
+export interface ListWorkspaceFilesRequest {
+  working_copy_root: string;
+  svn_executable?: string;
+  max_files?: number;
+}
+
 export interface ChangedFile {
   path: string;
   status: string;
@@ -379,6 +385,25 @@ export interface WorkingCopyStatus {
   obstructed: number;
   property_changed: number;
   files: ChangedFile[];
+}
+
+export interface WorkspaceFileTree {
+  working_copy_root: string;
+  total_files: number;
+  returned_files: number;
+  truncated: boolean;
+  nodes: WorkspaceFileNode[];
+}
+
+export interface WorkspaceFileNode {
+  path: string;
+  name: string;
+  kind: "dir" | "file" | string;
+  status: string;
+  revision: string | null;
+  file_size: number | null;
+  changed: boolean;
+  children: WorkspaceFileNode[];
 }
 
 export interface GetFileDiffRequest {

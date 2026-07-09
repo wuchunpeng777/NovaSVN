@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     io::{BufReader, Read},
     path::{Path, PathBuf},
@@ -39,6 +40,13 @@ pub struct ScanWorkspaceStatusRequest {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListWorkspaceFilesRequest {
+    pub working_copy_root: String,
+    pub svn_executable: Option<String>,
+    pub max_files: Option<usize>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkingCopyStatus {
     pub working_copy_root: String,
@@ -73,6 +81,27 @@ pub struct ChangedFile {
     pub conflict_kind: Option<String>,
     pub file_size: Option<u64>,
     pub content_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceFileTree {
+    pub working_copy_root: String,
+    pub total_files: usize,
+    pub returned_files: usize,
+    pub truncated: bool,
+    pub nodes: Vec<WorkspaceFileNode>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceFileNode {
+    pub path: String,
+    pub name: String,
+    pub kind: String,
+    pub status: String,
+    pub revision: Option<String>,
+    pub file_size: Option<u64>,
+    pub changed: bool,
+    pub children: Vec<WorkspaceFileNode>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -485,6 +514,48 @@ pub fn scan_workspace_status(
     )
 }
 
+pub fn list_workspace_files(
+    request: ListWorkspaceFilesRequest,
+) -> Result<WorkspaceFileTree, NovaError> {
+    let path = normalize_workspace_path(&request.working_copy_root)?;
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let status = scan_workspace_status(ScanWorkspaceStatusRequest {
+        working_copy_root: path.display().to_string(),
+        svn_executable: Some(executable),
+        offset: Some(0),
+        limit: Some(5000),
+    })?;
+    let status_by_path = status
+        .files
+        .iter()
+        .map(|file| (normalize_tree_path(&file.path), file))
+        .collect::<HashMap<_, _>>();
+    let max_files = request.max_files.unwrap_or(5000).clamp(1, 20000);
+    let mut returned_files = 0;
+    let mut total_files = 0;
+    let mut truncated = false;
+    let mut nodes = read_workspace_children(
+        &path,
+        &path,
+        &status_by_path,
+        max_files,
+        &mut returned_files,
+        &mut total_files,
+        &mut truncated,
+    )?;
+
+    add_missing_status_nodes(&mut nodes, &status_by_path);
+    sort_workspace_nodes(&mut nodes);
+
+    Ok(WorkspaceFileTree {
+        working_copy_root: path.display().to_string(),
+        total_files,
+        returned_files,
+        truncated,
+        nodes,
+    })
+}
+
 fn run_status_with_updates(
     executable: &str,
     path: &Path,
@@ -845,7 +916,7 @@ fn parse_svn_status_xml(
 
         files.push(ChangedFile {
             path: display_path,
-            status: normalize_status(&item),
+            status: normalize_status(&item, wc_status),
             revision: wc_status.attribute("revision").map(ToString::to_string),
             property_status: props,
             property_changed,
@@ -889,11 +960,17 @@ fn parse_svn_status_xml(
     })
 }
 
-fn normalize_status(status: &str) -> String {
+fn normalize_status<'a, 'input>(status: &str, wc_status: roxmltree::Node<'a, 'input>) -> String {
+    if status == "replaced"
+        || wc_status
+            .children()
+            .any(|node| node.has_tag_name("moved-from") || node.has_tag_name("moved-to"))
+    {
+        return "renamed".to_string();
+    }
+
     match status {
-        "external" | "ignored" | "incomplete" | "normal" | "none" | "replaced" => {
-            status.to_string()
-        }
+        "external" | "ignored" | "incomplete" | "normal" | "none" => status.to_string(),
         "modified" | "added" | "deleted" | "missing" | "unversioned" | "conflicted"
         | "obstructed" => status.to_string(),
         other => other.to_string(),
@@ -962,6 +1039,285 @@ fn parse_lock_info<'a, 'input>(
 
 fn count_status(files: &[ChangedFile], status: &str) -> usize {
     files.iter().filter(|file| file.status == status).count()
+}
+
+fn read_workspace_children(
+    root: &Path,
+    directory: &Path,
+    status_by_path: &HashMap<String, &ChangedFile>,
+    max_files: usize,
+    returned_files: &mut usize,
+    total_files: &mut usize,
+    truncated: &mut bool,
+) -> Result<Vec<WorkspaceFileNode>, NovaError> {
+    let entries = fs::read_dir(directory).map_err(|error| {
+        NovaError::command(
+            "WORKSPACE_FILE_TREE_FAILED",
+            "无法读取工作副本文件树",
+            Some(format!("路径：{}。错误：{error}", directory.display())),
+            true,
+        )
+    })?;
+
+    let mut nodes = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            NovaError::command(
+                "WORKSPACE_FILE_TREE_FAILED",
+                "无法读取工作副本文件树",
+                Some(format!("路径：{}。错误：{error}", directory.display())),
+                true,
+            )
+        })?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if should_skip_workspace_tree_entry(&name) {
+            continue;
+        }
+
+        let metadata = entry.metadata().map_err(|error| {
+            NovaError::command(
+                "WORKSPACE_FILE_TREE_FAILED",
+                "无法读取工作副本文件树",
+                Some(format!("路径：{}。错误：{error}", path.display())),
+                true,
+            )
+        })?;
+        let relative_path = workspace_tree_relative_path(root, &path);
+        let status_match = workspace_tree_status_for_path(&relative_path, status_by_path);
+        if metadata.is_dir() {
+            let children = read_workspace_children(
+                root,
+                &path,
+                status_by_path,
+                max_files,
+                returned_files,
+                total_files,
+                truncated,
+            )?;
+            if children.is_empty() {
+                continue;
+            }
+
+            let changed = status_match.changed || children.iter().any(|child| child.changed);
+            nodes.push(WorkspaceFileNode {
+                path: relative_path,
+                name,
+                kind: "dir".to_string(),
+                status: status_match.status.unwrap_or_else(|| {
+                    if changed {
+                        "changed".to_string()
+                    } else {
+                        "normal".to_string()
+                    }
+                }),
+                revision: status_match.revision,
+                file_size: None,
+                changed,
+                children,
+            });
+        } else if metadata.is_file() {
+            *total_files += 1;
+            if *returned_files >= max_files {
+                *truncated = true;
+                continue;
+            }
+
+            *returned_files += 1;
+            nodes.push(workspace_file_node(
+                relative_path,
+                name,
+                Some(metadata.len()),
+                status_by_path,
+            ));
+        }
+    }
+
+    Ok(nodes)
+}
+
+fn workspace_file_node(
+    path: String,
+    name: String,
+    file_size: Option<u64>,
+    status_by_path: &HashMap<String, &ChangedFile>,
+) -> WorkspaceFileNode {
+    let normalized_path = normalize_tree_path(&path);
+    let status_match = workspace_tree_status_for_path(&normalized_path, status_by_path);
+    WorkspaceFileNode {
+        path,
+        name,
+        kind: "file".to_string(),
+        status: status_match.status.unwrap_or_else(|| "normal".to_string()),
+        revision: status_match.revision,
+        file_size: status_match.file_size.or(file_size),
+        changed: status_match.changed,
+        children: Vec::new(),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct WorkspaceTreeStatusMatch {
+    status: Option<String>,
+    revision: Option<String>,
+    file_size: Option<u64>,
+    changed: bool,
+}
+
+fn workspace_tree_status_for_path(
+    path: &str,
+    status_by_path: &HashMap<String, &ChangedFile>,
+) -> WorkspaceTreeStatusMatch {
+    let normalized_path = normalize_tree_path(path);
+    if let Some(file) = status_by_path.get(&normalized_path) {
+        return WorkspaceTreeStatusMatch {
+            status: Some(file.status.clone()),
+            revision: file.revision.clone(),
+            file_size: file.file_size,
+            changed: true,
+        };
+    }
+
+    let inside_unversioned_dir = normalized_path
+        .split('/')
+        .scan(String::new(), |prefix, part| {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(part);
+            Some(prefix.clone())
+        })
+        .any(|prefix| {
+            status_by_path
+                .get(&prefix)
+                .is_some_and(|file| file.status == "unversioned")
+        });
+
+    WorkspaceTreeStatusMatch {
+        status: inside_unversioned_dir.then(|| "unversioned".to_string()),
+        revision: None,
+        file_size: None,
+        changed: inside_unversioned_dir,
+    }
+}
+
+fn add_missing_status_nodes(
+    nodes: &mut Vec<WorkspaceFileNode>,
+    status_by_path: &HashMap<String, &ChangedFile>,
+) {
+    for file in status_by_path.values() {
+        let normalized_path = normalize_tree_path(&file.path);
+        if normalized_path.is_empty() || tree_contains_path(nodes, &normalized_path) {
+            continue;
+        }
+
+        insert_status_node(nodes, &normalized_path, file);
+    }
+}
+
+fn tree_contains_path(nodes: &[WorkspaceFileNode], target: &str) -> bool {
+    nodes.iter().any(|node| {
+        normalize_tree_path(&node.path) == target || tree_contains_path(&node.children, target)
+    })
+}
+
+fn insert_status_node(nodes: &mut Vec<WorkspaceFileNode>, path: &str, file: &ChangedFile) {
+    let segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    insert_status_node_segments(nodes, path, &segments, "", file);
+}
+
+fn insert_status_node_segments(
+    nodes: &mut Vec<WorkspaceFileNode>,
+    full_path: &str,
+    segments: &[&str],
+    parent_path: &str,
+    file: &ChangedFile,
+) {
+    let Some((segment, remaining_segments)) = segments.split_first() else {
+        return;
+    };
+
+    if remaining_segments.is_empty() {
+        nodes.push(WorkspaceFileNode {
+            path: full_path.to_string(),
+            name: (*segment).to_string(),
+            kind: "file".to_string(),
+            status: file.status.clone(),
+            revision: file.revision.clone(),
+            file_size: file.file_size,
+            changed: true,
+            children: Vec::new(),
+        });
+        return;
+    }
+
+    let directory_path = if parent_path.is_empty() {
+        (*segment).to_string()
+    } else {
+        format!("{parent_path}/{segment}")
+    };
+    let index = nodes
+        .iter()
+        .position(|node| node.kind == "dir" && node.name == *segment)
+        .unwrap_or_else(|| {
+            nodes.push(WorkspaceFileNode {
+                path: directory_path.clone(),
+                name: (*segment).to_string(),
+                kind: "dir".to_string(),
+                status: "changed".to_string(),
+                revision: None,
+                file_size: None,
+                changed: true,
+                children: Vec::new(),
+            });
+            nodes.len() - 1
+        });
+    nodes[index].changed = true;
+    nodes[index].status = "changed".to_string();
+    insert_status_node_segments(
+        &mut nodes[index].children,
+        full_path,
+        remaining_segments,
+        &directory_path,
+        file,
+    );
+}
+
+fn sort_workspace_nodes(nodes: &mut [WorkspaceFileNode]) {
+    nodes.sort_by(|left, right| {
+        let left_is_file = left.kind == "file";
+        let right_is_file = right.kind == "file";
+        left_is_file
+            .cmp(&right_is_file)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    for node in nodes {
+        sort_workspace_nodes(&mut node.children);
+    }
+}
+
+fn workspace_tree_relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .ok()
+        .and_then(|relative| relative.to_str())
+        .map(path_utils::normalize_relative_separators)
+        .unwrap_or_else(|| path_utils::normalize_relative_separators(&path.display().to_string()))
+}
+
+fn normalize_tree_path(path: &str) -> String {
+    path_utils::normalize_relative_separators(path)
+        .trim_matches('/')
+        .to_string()
+}
+
+fn should_skip_workspace_tree_entry(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        ".svn" | ".git" | "node_modules" | "target" | "dist"
+    )
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1617,6 +1973,11 @@ mod tests {
     <entry path="C:\wc\src\props.rs">
       <wc-status item="normal" props="modified" />
     </entry>
+    <entry path="C:\wc\src\renamed.rs">
+      <wc-status item="replaced" props="none">
+        <moved-from>src/old.rs</moved-from>
+      </wc-status>
+    </entry>
   </target>
 </status>
 "#;
@@ -1630,7 +1991,7 @@ mod tests {
         )
         .expect("status parses");
 
-        assert_eq!(status.total, 6);
+        assert_eq!(status.total, 7);
         assert_eq!(status.modified, 1);
         assert_eq!(status.added, 1);
         assert_eq!(status.deleted, 1);
@@ -1648,8 +2009,81 @@ mod tests {
         assert!(status
             .files
             .iter()
+            .any(|file| file.path == "src/renamed.rs" && file.status == "renamed"));
+        assert!(status
+            .files
+            .iter()
             .find(|file| file.path == "src/missing.rs")
             .is_some_and(|file| file.abnormal));
+    }
+
+    #[test]
+    fn builds_workspace_file_tree_with_changed_statuses() {
+        let root =
+            std::env::temp_dir().join(format!("novasvn-file-tree-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join(".svn")).unwrap();
+        fs::write(root.join("src/main.rs"), "changed").unwrap();
+        fs::write(root.join("src/lib.rs"), "normal").unwrap();
+        fs::write(root.join(".svn/entries"), "internal").unwrap();
+
+        let xml = format!(
+            r#"
+<status>
+  <target path="{root}">
+    <entry path="{root}\src\main.rs">
+      <wc-status item="modified" props="none" />
+    </entry>
+    <entry path="{root}\docs\missing.md">
+      <wc-status item="missing" props="none" />
+    </entry>
+  </target>
+</status>
+"#,
+            root = root.display()
+        );
+        let status = parse_svn_status_xml(&xml, &root, 0, 100, parse_svnversion_output("42"))
+            .expect("status parses");
+        let status_by_path = status
+            .files
+            .iter()
+            .map(|file| (normalize_tree_path(&file.path), file))
+            .collect::<HashMap<_, _>>();
+        let mut returned_files = 0;
+        let mut total_files = 0;
+        let mut truncated = false;
+        let mut nodes = read_workspace_children(
+            &root,
+            &root,
+            &status_by_path,
+            100,
+            &mut returned_files,
+            &mut total_files,
+            &mut truncated,
+        )
+        .expect("tree reads");
+        add_missing_status_nodes(&mut nodes, &status_by_path);
+        sort_workspace_nodes(&mut nodes);
+
+        assert_eq!(total_files, 2);
+        assert!(!truncated);
+        assert!(nodes.iter().all(|node| node.name != ".svn"));
+        let src = nodes.iter().find(|node| node.name == "src").unwrap();
+        assert!(src.changed);
+        assert!(src.children.iter().any(|node| {
+            node.path == "src/main.rs" && node.status == "modified" && node.changed
+        }));
+        assert!(src
+            .children
+            .iter()
+            .any(|node| { node.path == "src/lib.rs" && node.status == "normal" && !node.changed }));
+        let docs = nodes.iter().find(|node| node.name == "docs").unwrap();
+        assert!(docs.children.iter().any(|node| {
+            node.path == "docs/missing.md" && node.status == "missing" && node.changed
+        }));
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

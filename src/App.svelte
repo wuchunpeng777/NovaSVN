@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
   import {
     callBackend,
@@ -31,6 +32,7 @@
 
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
+  let unlistenAppMenu: UnlistenFn | null = null;
   const repositoryLayoutTaskChecks = new Set<string>();
 
   $: activeView = workbenchViews[$currentView];
@@ -86,6 +88,10 @@
 
   function hasTauriRuntime() {
     return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  }
+
+  function preventNativeContextMenu(event: MouseEvent) {
+    event.preventDefault();
   }
 
   async function refreshStatusAndSyncBranchPool(
@@ -650,6 +656,52 @@
     }
   }
 
+  async function handleAppMenuCommand(command: string) {
+    switch (command) {
+      case "open_workspace":
+        await workspaceStore.chooseAndOpen(currentSvnExecutable());
+        await syncCurrentBranchPoolEntry();
+        break;
+      case "refresh_status":
+        await refreshStatusAndSyncBranchPool();
+        break;
+      case "view_changes":
+        setCurrentView("changes");
+        break;
+      case "view_history":
+        setCurrentView("history");
+        break;
+      case "view_repository":
+        setCurrentView("repository");
+        break;
+      case "view_branches":
+        setCurrentView("branches");
+        break;
+      case "view_settings":
+        setCurrentView("settings");
+        break;
+      case "update_workspace":
+        await runSvnOperation("update");
+        break;
+      case "cleanup_workspace":
+        await runSvnOperation("cleanup");
+        break;
+      case "refresh_log":
+        setCurrentView("history");
+        await workspaceStore.refreshSvnLog(currentSvnExecutable());
+        break;
+      case "prepare_commit":
+        setCurrentView("staging");
+        break;
+      case "export_diagnostics":
+        await appSettingsStore.exportDiagnosticLog();
+        break;
+      case "about":
+        backendMessage = "NovaSVN 0.1.0";
+        break;
+    }
+  }
+
   $: if (
     $workspaceStore.pendingCommitTaskId &&
     $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
@@ -886,6 +938,12 @@
   onMount(() => {
     appSettingsStore.load();
     if (hasTauriRuntime()) {
+      window.addEventListener("contextmenu", preventNativeContextMenu);
+      void listen<string>("novasvn-menu", (event) => {
+        void handleAppMenuCommand(event.payload);
+      }).then((unlisten) => {
+        unlistenAppMenu = unlisten;
+      });
       taskStore.startPolling();
       void svnStore.detectWithInputFallback();
       void workspaceStore.loadRecent().then(() => handleStartupIntent());
@@ -898,6 +956,8 @@
   });
 
   onDestroy(() => {
+    window.removeEventListener("contextmenu", preventNativeContextMenu);
+    unlistenAppMenu?.();
     taskStore.stopPolling();
   });
 </script>
@@ -909,8 +969,8 @@
   workspaceLoading={$workspaceStore.loading}
   workspaceError={$workspaceStore.error}
   workingCopyStatus={$workspaceStore.status}
+  workspaceFileTree={$workspaceStore.fileTree}
   searchText={$workspaceStore.searchText}
-  stageFilter={$workspaceStore.stageFilter}
   selectedFilePath={$workspaceStore.selectedFilePath}
   selectedFile={selectedFile}
   selectedFileReviewed={selectedFileReviewed}
@@ -1013,9 +1073,9 @@
   onLoadMoreStatus={() => workspaceStore.loadMoreStatus(currentSvnExecutable())}
   onWorkspacePathInput={workspaceStore.setPathInput}
   onSearchTextInput={workspaceStore.setSearchText}
-  onStageFilter={workspaceStore.setStageFilter}
   onClearFilters={workspaceStore.clearFilters}
   onSelectFile={(path) => workspaceStore.selectFile(path, currentSvnExecutable())}
+  onSelectWorkspacePath={workspaceStore.selectPathOnly}
   onStageFile={workspaceStore.stageFile}
   onUnstageFile={workspaceStore.unstageFile}
   onRevertFile={(path) => runSvnOperation("revert_file", path)}

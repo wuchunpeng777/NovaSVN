@@ -25,6 +25,7 @@ import {
   getShadowWorkspaceStatus,
   getRecentWorkspace,
   getTask,
+  listWorkspaceFiles,
   listTasks,
   openGeneratedFileLocation,
   openWorkspace,
@@ -71,6 +72,7 @@ import type {
   TaskWorkspaceEntry,
   TaskWorkspaceList,
   WorkingCopyStatus,
+  WorkspaceFileTree,
   WorkspaceSummary,
 } from "../types/api";
 
@@ -1163,6 +1165,7 @@ export const taskWorkspaceStore = createTaskWorkspaceStore();
 export interface WorkspaceStoreState {
   current: WorkspaceSummary | null;
   status: WorkingCopyStatus | null;
+  fileTree: WorkspaceFileTree | null;
   searchText: string;
   groupByStatus: boolean;
   stageFilter: WorkspaceStageFilter;
@@ -1291,6 +1294,7 @@ export interface WorkspaceStoreState {
 const initialWorkspaceState: WorkspaceStoreState = {
   current: null,
   status: null,
+  fileTree: null,
   searchText: "",
   groupByStatus: true,
   stageFilter: "all",
@@ -1420,6 +1424,7 @@ function createWorkspaceStore() {
         ...state,
         current: recent.workspace,
         status: null,
+        fileTree: null,
         selectedFilePath: null,
         selectedFileDiff: null,
         selectedFileContentDiff: null,
@@ -1498,6 +1503,7 @@ function createWorkspaceStore() {
         ...state,
         current,
         status: null,
+        fileTree: null,
         selectedFilePath: null,
         selectedFileDiff: null,
         selectedFileContentDiff: null,
@@ -2376,6 +2382,7 @@ function createWorkspaceStore() {
       });
       refreshedStatus = status;
       const selectedFilePath = applyStatusResult(status, previousSelectedFilePath);
+      await refreshFileTree(svnExecutable, root);
       if (selectedFilePath) {
         await Promise.all([
           refreshFileDiff(svnExecutable, root, selectedFilePath),
@@ -2391,6 +2398,37 @@ function createWorkspaceStore() {
         statusError: error as CommandError,
       }));
       return refreshedStatus;
+    }
+  }
+
+  async function refreshFileTree(svnExecutable?: string | null, workingCopyRoot?: string) {
+    let root = workingCopyRoot ?? "";
+    update((state) => {
+      root = root || state.current?.working_copy_root || "";
+      return state;
+    });
+
+    if (!root) {
+      return null;
+    }
+
+    try {
+      const fileTree = await listWorkspaceFiles({
+        working_copy_root: root,
+        svn_executable: svnExecutable || undefined,
+        max_files: 5000,
+      });
+      update((state) => ({
+        ...state,
+        fileTree,
+      }));
+      return fileTree;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        statusError: error as CommandError,
+      }));
+      return null;
     }
   }
 
@@ -3138,6 +3176,7 @@ function createWorkspaceStore() {
     setGroupMode,
     clearFilters,
     selectFile,
+    selectPathOnly,
     selectStartupTargetFile,
     stageFile,
     unstageFile,
@@ -3172,6 +3211,7 @@ function createWorkspaceStore() {
     clearCommittedFiles,
     clearWorkspaceDraft,
     refreshStatus,
+    refreshFileTree,
     loadMoreStatus,
     refreshFileDiff,
     refreshFileContentDiff,
