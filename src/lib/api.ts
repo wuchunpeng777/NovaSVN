@@ -22,6 +22,7 @@ import type {
   GenerateSelectedPatchRequest,
   GetFileContentDiffRequest,
   GetFileDiffRequest,
+  GetSvnBlameRequest,
   GetSvnLogRequest,
   GetSvnPropertiesRequest,
   ExternalToolLaunch,
@@ -43,6 +44,7 @@ import type {
   SaveTaskWorkspaceRequest,
   SetSvnPropertyRequest,
   SvnDetection,
+  SvnBlame,
   SvnLog,
   SvnProperties,
   StartupIntent,
@@ -261,6 +263,10 @@ export function getFileContentDiff(
 
 export function getSvnLog(request: GetSvnLogRequest): Promise<SvnLog> {
   return callBackend<SvnLog>("get_svn_log", { request });
+}
+
+export function getSvnBlame(request: GetSvnBlameRequest): Promise<SvnBlame> {
+  return callBackend<SvnBlame>("get_svn_blame", { request });
 }
 
 export function getSvnProperties(

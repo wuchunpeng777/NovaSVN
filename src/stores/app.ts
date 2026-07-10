@@ -18,6 +18,7 @@ import {
   getFileContentDiff,
   getFileDiff,
   getBranchPool,
+  getSvnBlame,
   getSvnLog,
   getSvnProperties,
   getTaskWorkspaces,
@@ -63,6 +64,7 @@ import type {
   SelectedPatch,
   ShadowWorkspaceOperationKind,
   ShadowWorkspaceStatus,
+  SvnBlame,
   SvnOperationKind,
   SvnDetection,
   SvnLog,
@@ -1178,6 +1180,9 @@ export interface WorkspaceStoreState {
   selectedFileDiff: FileDiff | null;
   selectedFileContentDiff: FileContentDiff | null;
   selectedFileParsedDiff: ParsedFileDiff | null;
+  svnBlame: SvnBlame | null;
+  svnBlameLoading: boolean;
+  svnBlameError: CommandError | null;
   selectedPatch: SelectedPatch | null;
   stagedFiles: Array<{
     path: string;
@@ -1307,6 +1312,9 @@ const initialWorkspaceState: WorkspaceStoreState = {
   selectedFileDiff: null,
   selectedFileContentDiff: null,
   selectedFileParsedDiff: null,
+  svnBlame: null,
+  svnBlameLoading: false,
+  svnBlameError: null,
   selectedPatch: null,
   stagedFiles: [],
   safetyCheck: emptySafetyCheck(),
@@ -1429,6 +1437,7 @@ function createWorkspaceStore() {
         selectedFileDiff: null,
         selectedFileContentDiff: null,
         selectedFileParsedDiff: null,
+        ...clearSvnBlameState(),
         stagedFiles: draft.stagedFiles,
         safetyCheck: {
           ...emptySafetyCheck(),
@@ -1508,6 +1517,7 @@ function createWorkspaceStore() {
         selectedFileDiff: null,
         selectedFileContentDiff: null,
         selectedFileParsedDiff: null,
+        ...clearSvnBlameState(),
         stagedFiles: draft.stagedFiles,
         safetyCheck: {
           ...emptySafetyCheck(),
@@ -1744,6 +1754,7 @@ function createWorkspaceStore() {
       selectedFileParsedDiff: null,
       selectedPatch: null,
       selectedFilePath: path,
+      ...clearSvnBlameState(),
       ...clearSvnPropertiesState(),
     }));
     update((state) => {
@@ -1768,8 +1779,75 @@ function createWorkspaceStore() {
       selectedFileParsedDiff: null,
       selectedPatch: null,
       selectedFilePath: path,
+      ...clearSvnBlameState(),
       ...clearSvnPropertiesState(),
     }));
+  }
+
+  async function refreshSvnBlame(svnExecutable?: string | null) {
+    const state = get({ subscribe });
+    const root = state.current?.working_copy_root ?? "";
+    const path = state.selectedFilePath ?? "";
+
+    if (!root || !path) {
+      update((current) => ({
+        ...current,
+        svnBlame: null,
+        svnBlameLoading: false,
+        svnBlameError: {
+          code: "SVN_BLAME_FILE_REQUIRED",
+          message: "请先选择要查看 Blame 的文件",
+          detail: null,
+          recoverable: true,
+        },
+      }));
+      return;
+    }
+
+    update((current) => ({
+      ...current,
+      svnBlame: null,
+      svnBlameLoading: true,
+      svnBlameError: null,
+    }));
+
+    try {
+      const svnBlame = await getSvnBlame({
+        working_copy_root: root,
+        file_path: path,
+        svn_executable: svnExecutable || undefined,
+        max_lines: 5000,
+      });
+      update((current) => {
+        if (
+          current.current?.working_copy_root !== root ||
+          current.selectedFilePath !== path
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          svnBlame,
+          svnBlameLoading: false,
+          svnBlameError: null,
+        };
+      });
+    } catch (error) {
+      update((current) => {
+        if (
+          current.current?.working_copy_root !== root ||
+          current.selectedFilePath !== path
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          svnBlame: null,
+          svnBlameLoading: false,
+          svnBlameError: error as CommandError,
+        };
+      });
+    }
   }
 
   function stageFile(path: string) {
@@ -2506,6 +2584,7 @@ function createWorkspaceStore() {
         reviewedFiles,
         statusLoading: false,
         statusError: null,
+        ...(selectedFileChanged ? clearSvnBlameState() : {}),
         ...(selectedFileChanged ? clearSvnPropertiesState() : {}),
       };
       saveWorkspaceDraftFromState(nextState);
@@ -3215,6 +3294,7 @@ function createWorkspaceStore() {
     loadMoreStatus,
     refreshFileDiff,
     refreshFileContentDiff,
+    refreshSvnBlame,
     refreshParsedDiff,
     toggleHunkSelection,
     previewSelectedPatch,
@@ -3521,6 +3601,14 @@ function emptyPropertyEditForm() {
   return {
     name: "",
     value: "",
+  };
+}
+
+function clearSvnBlameState() {
+  return {
+    svnBlame: null,
+    svnBlameLoading: false,
+    svnBlameError: null,
   };
 }
 

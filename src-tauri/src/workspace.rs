@@ -129,6 +129,14 @@ pub struct GetSvnLogRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct GetSvnBlameRequest {
+    pub working_copy_root: String,
+    pub file_path: String,
+    pub svn_executable: Option<String>,
+    pub max_lines: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct GetSvnPropertiesRequest {
     pub working_copy_root: String,
     pub file_path: Option<String>,
@@ -178,6 +186,23 @@ pub struct SvnLogEntry {
     pub date: String,
     pub message: String,
     pub changed_paths: Vec<SvnChangedPath>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SvnBlame {
+    pub target: String,
+    pub lines: Vec<SvnBlameLine>,
+    pub total_lines: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SvnBlameLine {
+    pub line_number: usize,
+    pub revision: String,
+    pub author: String,
+    pub date: String,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -295,6 +320,79 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
     )?;
     trim_svn_log_page(&mut log, limit);
     Ok(log)
+}
+
+pub fn get_svn_blame(request: GetSvnBlameRequest) -> Result<SvnBlame, NovaError> {
+    let root = normalize_workspace_path(&request.working_copy_root)?;
+    let file_path = normalize_relative_file_path(&request.file_path)?;
+    let target = root.join(&file_path);
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let max_lines = request.max_lines.unwrap_or(5000).clamp(1, 20000);
+
+    let blame_output = Command::new(&executable)
+        .args(["blame", "--xml"])
+        .arg(&target)
+        .current_dir(&root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_BLAME_FAILED",
+                "无法读取文件 Blame",
+                Some(format!("执行 `{executable} blame --xml` 失败：{error}")),
+                true,
+            )
+        })?;
+
+    if !blame_output.status.success() {
+        return Err(NovaError::command(
+            "SVN_BLAME_COMMAND_FAILED",
+            "文件 Blame 读取失败",
+            Some(command_error_detail(&executable, "blame", &blame_output)),
+            true,
+        ));
+    }
+
+    let content_output = Command::new(&executable)
+        .args(["cat", "-r", "BASE"])
+        .arg(&target)
+        .current_dir(&root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_BLAME_CAT_FAILED",
+                "无法读取 Blame 对应的文件内容",
+                Some(format!("执行 `{executable} cat -r BASE` 失败：{error}")),
+                true,
+            )
+        })?;
+
+    if !content_output.status.success() {
+        return Err(NovaError::command(
+            "SVN_BLAME_CAT_COMMAND_FAILED",
+            "Blame 文件内容读取失败",
+            Some(command_error_detail(&executable, "cat", &content_output)),
+            true,
+        ));
+    }
+
+    let xml = String::from_utf8(blame_output.stdout).map_err(|error| {
+        NovaError::command(
+            "SVN_BLAME_XML_ENCODING_INVALID",
+            "解析 SVN Blame 失败",
+            Some(format!("svn blame --xml 返回了无效 UTF-8：{error}")),
+            true,
+        )
+    })?;
+    let content = String::from_utf8(content_output.stdout).map_err(|_| {
+        NovaError::command(
+            "SVN_BLAME_BINARY_UNSUPPORTED",
+            "该文件不是可显示的 UTF-8 文本",
+            Some("Blame 目前仅支持 UTF-8 文本文件。".to_string()),
+            true,
+        )
+    })?;
+
+    parse_svn_blame_xml(&xml, &content, &file_path.replace('\\', "/"), max_lines)
 }
 
 pub fn get_svn_properties(request: GetSvnPropertiesRequest) -> Result<SvnProperties, NovaError> {
@@ -1590,6 +1688,97 @@ fn parse_svn_log_xml(xml: &str, target: &str) -> Result<SvnLog, NovaError> {
     })
 }
 
+fn parse_svn_blame_xml(
+    xml: &str,
+    content: &str,
+    target: &str,
+    max_lines: usize,
+) -> Result<SvnBlame, NovaError> {
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "SVN_BLAME_XML_PARSE_FAILED",
+            "解析 SVN Blame 失败",
+            Some(format!("svn blame --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+    let content_lines = content.lines().collect::<Vec<_>>();
+    let mut metadata = Vec::new();
+
+    for entry in document
+        .descendants()
+        .filter(|node| node.has_tag_name("entry"))
+    {
+        let line_number = entry
+            .attribute("line-number")
+            .ok_or_else(|| {
+                NovaError::command(
+                    "SVN_BLAME_LINE_NUMBER_MISSING",
+                    "解析 SVN Blame 失败",
+                    Some("Blame 条目缺少行号。".to_string()),
+                    true,
+                )
+            })?
+            .parse::<usize>()
+            .map_err(|error| {
+                NovaError::command(
+                    "SVN_BLAME_LINE_NUMBER_INVALID",
+                    "解析 SVN Blame 失败",
+                    Some(format!("Blame 条目行号无效：{error}")),
+                    true,
+                )
+            })?;
+        let commit = entry.children().find(|node| node.has_tag_name("commit"));
+        let revision = commit
+            .and_then(|node| node.attribute("revision"))
+            .unwrap_or("")
+            .to_string();
+        let author = commit
+            .and_then(|node| optional_text_child(node, "author"))
+            .unwrap_or_default();
+        let date = commit
+            .and_then(|node| optional_text_child(node, "date"))
+            .unwrap_or_default();
+        metadata.push((line_number, revision, author, date));
+    }
+
+    if metadata.len() != content_lines.len() {
+        return Err(NovaError::command(
+            "SVN_BLAME_CONTENT_MISMATCH",
+            "Blame 元数据与文件内容不一致",
+            Some(format!(
+                "Blame 返回 {} 行元数据，但 BASE 文件包含 {} 行。",
+                metadata.len(),
+                content_lines.len()
+            )),
+            true,
+        ));
+    }
+
+    let total_lines = metadata.len();
+    let lines = metadata
+        .into_iter()
+        .zip(content_lines)
+        .take(max_lines)
+        .map(
+            |((line_number, revision, author, date), content)| SvnBlameLine {
+                line_number,
+                revision,
+                author,
+                date,
+                content: content.to_string(),
+            },
+        )
+        .collect::<Vec<_>>();
+
+    Ok(SvnBlame {
+        target: target.to_string(),
+        truncated: lines.len() < total_lines,
+        total_lines,
+        lines,
+    })
+}
+
 fn parse_svn_property_names(xml: &str) -> Result<Vec<String>, NovaError> {
     let document = Document::parse(xml).map_err(|error| {
         NovaError::command(
@@ -1876,6 +2065,16 @@ fn svn_info_error_detail(executable: &str, path: &Path, output: &std::process::O
 mod tests {
     use super::*;
 
+    fn run_test_command(command: &mut Command) {
+        let output = command.output().expect("测试命令应能启动");
+        assert!(
+            output.status.success(),
+            "测试命令执行失败：{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     #[test]
     fn parses_workspace_info_xml() {
         let xml = r#"
@@ -2157,6 +2356,145 @@ mod tests {
         assert_eq!(log.entries.len(), 1);
         assert_eq!(log.entries[0].revision, "7");
         assert_eq!(log.entries[0].changed_paths[0].action, "M");
+    }
+
+    #[test]
+    fn parses_svn_blame_xml_and_aligns_file_content() {
+        let xml = r#"
+<blame>
+  <target path="src/main.rs">
+    <entry line-number="1">
+      <commit revision="7">
+        <author>alice</author>
+        <date>2026-01-01T00:00:00.000000Z</date>
+      </commit>
+    </entry>
+    <entry line-number="2">
+      <commit revision="9">
+        <author>bob</author>
+        <date>2026-01-02T00:00:00.000000Z</date>
+      </commit>
+    </entry>
+  </target>
+</blame>
+"#;
+
+        let blame = parse_svn_blame_xml(xml, "第一行\nsecond line\n", "src/main.rs", 100)
+            .expect("blame parses");
+
+        assert_eq!(blame.target, "src/main.rs");
+        assert_eq!(blame.total_lines, 2);
+        assert!(!blame.truncated);
+        assert_eq!(blame.lines[0].revision, "7");
+        assert_eq!(blame.lines[0].author, "alice");
+        assert_eq!(blame.lines[0].content, "第一行");
+        assert_eq!(blame.lines[1].line_number, 2);
+        assert_eq!(blame.lines[1].content, "second line");
+    }
+
+    #[test]
+    fn truncates_svn_blame_at_requested_line_limit() {
+        let xml = r#"
+<blame><target path="a.txt">
+  <entry line-number="1"><commit revision="1"/></entry>
+  <entry line-number="2"><commit revision="1"/></entry>
+</target></blame>
+"#;
+
+        let blame = parse_svn_blame_xml(xml, "one\ntwo\n", "a.txt", 1).expect("blame truncates");
+
+        assert_eq!(blame.lines.len(), 1);
+        assert_eq!(blame.total_lines, 2);
+        assert!(blame.truncated);
+    }
+
+    #[test]
+    fn rejects_svn_blame_content_line_mismatch() {
+        let xml = r#"
+<blame><target path="a.txt">
+  <entry line-number="1"><commit revision="1"/></entry>
+</target></blame>
+"#;
+
+        let error = parse_svn_blame_xml(xml, "one\ntwo\n", "a.txt", 100)
+            .expect_err("mismatched blame must fail");
+
+        match error {
+            NovaError::Command { code, .. } => {
+                assert_eq!(code, "SVN_BLAME_CONTENT_MISMATCH");
+            }
+        }
+    }
+
+    #[test]
+    fn reads_svn_blame_from_real_working_copy() {
+        if Command::new("svn")
+            .arg("--version")
+            .arg("--quiet")
+            .output()
+            .is_err()
+            || Command::new("svnadmin")
+                .arg("--version")
+                .arg("--quiet")
+                .output()
+                .is_err()
+        {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-blame-integration-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(&import_dir).expect("create import directory");
+        fs::write(import_dir.join("main.txt"), "first line\nsecond line\n")
+            .expect("write imported file");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial", "--username", "alice"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("main.txt"), "first line\nchanged line\n")
+            .expect("update working-copy file");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(working_copy.join("main.txt"))
+                .args(["-m", "change second line", "--username", "bob"]),
+        );
+
+        let blame = get_svn_blame(GetSvnBlameRequest {
+            working_copy_root: working_copy.display().to_string(),
+            file_path: "main.txt".to_string(),
+            svn_executable: None,
+            max_lines: Some(100),
+        })
+        .expect("real blame succeeds");
+
+        assert_eq!(blame.total_lines, 2);
+        assert_eq!(blame.lines[0].revision, "1");
+        assert_eq!(blame.lines[0].content, "first line");
+        assert_eq!(blame.lines[1].revision, "2");
+        assert_eq!(blame.lines[1].content, "changed line");
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

@@ -427,6 +427,13 @@ export interface GetSvnLogRequest {
   start_revision?: string;
 }
 
+export interface GetSvnBlameRequest {
+  working_copy_root: string;
+  file_path: string;
+  svn_executable?: string;
+  max_lines?: number;
+}
+
 export interface GetSvnPropertiesRequest {
   working_copy_root: string;
   file_path?: string;
@@ -471,6 +478,21 @@ export interface SvnLogEntry {
   date: string;
   message: string;
   changed_paths: SvnChangedPath[];
+}
+
+export interface SvnBlame {
+  target: string;
+  lines: SvnBlameLine[];
+  total_lines: number;
+  truncated: boolean;
+}
+
+export interface SvnBlameLine {
+  line_number: number;
+  revision: string;
+  author: string;
+  date: string;
+  content: string;
 }
 
 export interface SvnChangedPath {

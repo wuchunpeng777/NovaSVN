@@ -699,6 +699,61 @@ textarea {
   white-space: pre-wrap;
 }
 
+.blame-table {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid #d8dde3;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.blame-row {
+  display: grid;
+  grid-template-columns: 62px 92px 42px minmax(0, 1fr);
+  min-width: 520px;
+  border-bottom: 1px solid #edf0f3;
+  font-size: 11px;
+}
+
+.blame-row:last-child {
+  border-bottom: 0;
+}
+
+.blame-row > span {
+  min-width: 0;
+  overflow: hidden;
+  padding: 4px 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.blame-row > span + span {
+  border-left: 1px solid #edf0f3;
+}
+
+.blame-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f3f5f7;
+  color: #687482;
+  font-weight: 700;
+}
+
+.blame-line-number {
+  color: #7d8792;
+  text-align: right;
+}
+
+.blame-content code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  color: #26323d;
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
 .hunk-list,
 .property-list,
 .task-list,

@@ -6,6 +6,7 @@ vi.mock("../lib/api", () => ({
   detectSvn: vi.fn(),
   getFileContentDiff: vi.fn(),
   getFileDiff: vi.fn(),
+  getSvnBlame: vi.fn(),
   getSvnLog: vi.fn(),
   getSvnProperties: vi.fn(),
   getTaskWorkspaces: vi.fn(),
@@ -26,6 +27,7 @@ import {
   detectSvn,
   getFileContentDiff,
   getFileDiff,
+  getSvnBlame,
   getSvnLog,
   getSvnProperties,
   getTaskWorkspaces,
@@ -65,6 +67,7 @@ const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
 const detectSvnMock = vi.mocked(detectSvn);
 const getFileContentDiffMock = vi.mocked(getFileContentDiff);
 const getFileDiffMock = vi.mocked(getFileDiff);
+const getSvnBlameMock = vi.mocked(getSvnBlame);
 const getSvnLogMock = vi.mocked(getSvnLog);
 const getSvnPropertiesMock = vi.mocked(getSvnProperties);
 const getTaskWorkspacesMock = vi.mocked(getTaskWorkspaces);
@@ -82,6 +85,7 @@ beforeEach(() => {
   detectSvnMock.mockReset();
   getFileContentDiffMock.mockReset();
   getFileDiffMock.mockReset();
+  getSvnBlameMock.mockReset();
   getSvnLogMock.mockReset();
   getSvnPropertiesMock.mockReset();
   getTaskWorkspacesMock.mockReset();
@@ -526,6 +530,77 @@ describe("workspaceStore review state", () => {
     await workspaceStore.refreshStatus();
 
     expect(get(workspaceStore).reviewedFiles).toEqual([]);
+  });
+});
+
+describe("workspaceStore svn blame", () => {
+  it("loads blame for the selected file and clears it after selection changes", async () => {
+    const workspace = makeWorkspace();
+    const file = makeFile({ path: "src/main.ts", content_digest: "digest-main" });
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(makeStatus([file]));
+    getSvnBlameMock.mockResolvedValue({
+      target: "src/main.ts",
+      total_lines: 2,
+      truncated: false,
+      lines: [
+        {
+          line_number: 1,
+          revision: "7",
+          author: "alice",
+          date: "2026-07-03T00:00:00Z",
+          content: "const value = 1;",
+        },
+        {
+          line_number: 2,
+          revision: "8",
+          author: "bob",
+          date: "2026-07-04T00:00:00Z",
+          content: "export default value;",
+        },
+      ],
+    });
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    await workspaceStore.selectFile("src/main.ts");
+    await workspaceStore.refreshSvnBlame("C:/svn/svn.exe");
+
+    expect(getSvnBlameMock).toHaveBeenCalledWith({
+      working_copy_root: "C:/repo/wc",
+      file_path: "src/main.ts",
+      svn_executable: "C:/svn/svn.exe",
+      max_lines: 5000,
+    });
+    expect(get(workspaceStore).svnBlame?.lines[0]).toMatchObject({
+      revision: "7",
+      author: "alice",
+      content: "const value = 1;",
+    });
+
+    workspaceStore.selectPathOnly("src/other.ts");
+
+    expect(get(workspaceStore).svnBlame).toBeNull();
+    expect(get(workspaceStore).svnBlameError).toBeNull();
+  });
+
+  it("requires a selected file before loading blame", async () => {
+    const workspace = makeWorkspace();
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(makeStatus([]));
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    await workspaceStore.refreshSvnBlame();
+
+    expect(getSvnBlameMock).not.toHaveBeenCalled();
+    expect(get(workspaceStore).svnBlameError).toMatchObject({
+      code: "SVN_BLAME_FILE_REQUIRED",
+      message: "请先选择要查看 Blame 的文件",
+      recoverable: true,
+    });
   });
 });
 

@@ -16,6 +16,7 @@
     RepositoryListResult,
     RevisionDiffMode,
     RevisionDiffResult,
+    SvnBlame,
     SvnDetection,
     SvnLog,
     SvnProperties,
@@ -152,6 +153,9 @@
   export let selectedFileParsedDiff: ParsedFileDiff | null = null;
   export let selectedHunkIds: string[] = [];
   export let selectedPatch: { text: string; file_count: number; hunk_count: number } | null = null;
+  export let svnBlame: SvnBlame | null = null;
+  export let svnBlameLoading = false;
+  export let svnBlameError: CommandError | null = null;
   export let diffLoading = false;
   export let contentDiffLoading = false;
   export let selectedPatchLoading = false;
@@ -220,6 +224,7 @@
   export let onWorkspacePathInput: (value: string) => void = () => {};
   export let onSearchTextInput: (value: string) => void = () => {};
   export let onClearFilters: () => void = () => {};
+  export let onRefreshSvnBlame: () => void = () => {};
   export let onSelectFile: (path: string) => void = () => {};
   export let onSelectWorkspacePath: (path: string) => void = () => {};
   export let onStageFile: (path: string) => void = () => {};
@@ -1808,6 +1813,13 @@
                   >
                     定位
                   </button>
+                  <button
+                    type="button"
+                    title="查看逐行修改作者"
+                    on:click={onRefreshSvnBlame}
+                  >
+                    Blame
+                  </button>
                   {#if selectedFile}
                     <button type="button" on:click={() => onLaunchExternalTool("diff", selectedFile.path)}>
                       外部 Diff
@@ -1852,6 +1864,44 @@
                 <p class="muted">选择文件后显示操作。</p>
               {/if}
             </section>
+
+            {#if svnBlameLoading || svnBlameError || svnBlame}
+              <section class="inspector-section blame-section" aria-label="Blame 逐行历史">
+                <div class="section-title">
+                  <h2>逐行历史</h2>
+                  <button type="button" on:click={onRefreshSvnBlame} disabled={svnBlameLoading}>
+                    {svnBlameLoading ? "读取中" : "刷新"}
+                  </button>
+                </div>
+                <ErrorNotice error={svnBlameError} />
+                {#if svnBlame}
+                  <p class="muted">
+                    {svnBlame.target} · {svnBlame.total_lines} 行
+                  </p>
+                  <div class="blame-table" role="table" aria-label={`${svnBlame.target} Blame`}>
+                    <div class="blame-row blame-head" role="row">
+                      <span role="columnheader">Revision</span>
+                      <span role="columnheader">作者</span>
+                      <span role="columnheader">行</span>
+                      <span role="columnheader">内容</span>
+                    </div>
+                    {#each svnBlame.lines as line (line.line_number)}
+                      <div class="blame-row" role="row" title={formatDate(line.date)}>
+                        <span role="cell">{line.revision ? `r${line.revision}` : "-"}</span>
+                        <span role="cell">{line.author || "-"}</span>
+                        <span role="cell" class="blame-line-number">{line.line_number}</span>
+                        <span role="cell" class="blame-content">
+                          <code title={line.content}>{line.content || " "}</code>
+                        </span>
+                      </div>
+                    {/each}
+                  </div>
+                  {#if svnBlame.truncated}
+                    <p class="muted">仅显示前 {svnBlame.lines.length} 行。</p>
+                  {/if}
+                {/if}
+              </section>
+            {/if}
 
             <section class="inspector-section diff-section">
               <div class="section-title">

@@ -1020,6 +1020,9 @@
   selectedFileParsedDiff={$workspaceStore.selectedFileParsedDiff}
   selectedHunkIds={selectedHunkIds}
   selectedPatch={$workspaceStore.selectedPatch}
+  svnBlame={$workspaceStore.svnBlame}
+  svnBlameLoading={$workspaceStore.svnBlameLoading}
+  svnBlameError={$workspaceStore.svnBlameError}
   diffLoading={$workspaceStore.diffLoading}
   contentDiffLoading={$workspaceStore.contentDiffLoading}
   selectedPatchLoading={$workspaceStore.selectedPatchLoading}
@@ -1074,6 +1077,7 @@
   onWorkspacePathInput={workspaceStore.setPathInput}
   onSearchTextInput={workspaceStore.setSearchText}
   onClearFilters={workspaceStore.clearFilters}
+  onRefreshSvnBlame={() => workspaceStore.refreshSvnBlame(currentSvnExecutable())}
   onSelectFile={(path) => workspaceStore.selectFile(path, currentSvnExecutable())}
   onSelectWorkspacePath={workspaceStore.selectPathOnly}
   onStageFile={workspaceStore.stageFile}
