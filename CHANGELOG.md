@@ -9,6 +9,7 @@
 - 建立 Tauri + Svelte + TypeScript + Rust 桌面应用骨架。
 - 支持 SVN 命令行检测、工作副本打开、状态扫描、本地改动列表、文件 diff、提交目标选择和文件级提交。
 - 支持未版本控制文件执行 Add，并自动添加所需父目录。
+- 支持对当前工作副本内的版本控制文件和目录执行 Delete，删除前明确提示本地内容与未提交改动风险。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。

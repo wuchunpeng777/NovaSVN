@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::{BufReader, Read},
     path::{Path, PathBuf},
@@ -10,7 +10,7 @@ use roxmltree::Document;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::{error::NovaError, executable::normalize_executable_setting, path_utils};
+use crate::{error::NovaError, executable::normalize_executable_setting};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct OpenWorkspaceRequest {
@@ -101,6 +101,7 @@ pub struct WorkspaceFileNode {
     pub revision: Option<String>,
     pub file_size: Option<u64>,
     pub changed: bool,
+    pub versioned: bool,
     pub children: Vec<WorkspaceFileNode>,
 }
 
@@ -392,7 +393,7 @@ pub fn get_svn_blame(request: GetSvnBlameRequest) -> Result<SvnBlame, NovaError>
         )
     })?;
 
-    parse_svn_blame_xml(&xml, &content, &file_path.replace('\\', "/"), max_lines)
+    parse_svn_blame_xml(&xml, &content, &file_path, max_lines)
 }
 
 pub fn get_svn_properties(request: GetSvnPropertiesRequest) -> Result<SvnProperties, NovaError> {
@@ -544,7 +545,7 @@ pub fn get_file_diff(request: GetFileDiffRequest) -> Result<FileDiff, NovaError>
     let binary = is_binary_diff(&text);
 
     Ok(FileDiff {
-        path: file_path.replace('\\', "/"),
+        path: file_path,
         empty: text.trim().is_empty(),
         text,
         binary,
@@ -564,9 +565,10 @@ pub fn get_file_content_diff(
     let original = read_svn_base_text(&executable, &root, &target, max_bytes)?;
     let binary = working.binary || original.binary;
     let too_large = working.too_large || original.too_large;
+    let language = language_for_path(&file_path);
 
     Ok(FileContentDiff {
-        path: file_path.replace('\\', "/"),
+        path: file_path,
         original_text: if binary || too_large {
             String::new()
         } else {
@@ -577,7 +579,7 @@ pub fn get_file_content_diff(
         } else {
             working.text
         },
-        language: language_for_path(&file_path),
+        language,
         binary,
         too_large,
         max_bytes,
@@ -619,7 +621,7 @@ pub fn list_workspace_files(
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
     let status = scan_workspace_status(ScanWorkspaceStatusRequest {
         working_copy_root: path.display().to_string(),
-        svn_executable: Some(executable),
+        svn_executable: Some(executable.clone()),
         offset: Some(0),
         limit: Some(5000),
     })?;
@@ -628,6 +630,7 @@ pub fn list_workspace_files(
         .iter()
         .map(|file| (normalize_tree_path(&file.path), file))
         .collect::<HashMap<_, _>>();
+    let versioned_paths = read_versioned_workspace_paths(&executable, &path)?;
     let max_files = request.max_files.unwrap_or(5000).clamp(1, 20000);
     let mut returned_files = 0;
     let mut total_files = 0;
@@ -636,13 +639,14 @@ pub fn list_workspace_files(
         &path,
         &path,
         &status_by_path,
+        &versioned_paths,
         max_files,
         &mut returned_files,
         &mut total_files,
         &mut truncated,
     )?;
 
-    add_missing_status_nodes(&mut nodes, &status_by_path);
+    add_missing_status_nodes(&mut nodes, &status_by_path, &versioned_paths);
     sort_workspace_nodes(&mut nodes);
 
     Ok(WorkspaceFileTree {
@@ -695,9 +699,180 @@ fn run_status_with_updates(
         })
 }
 
+fn read_versioned_workspace_paths(
+    executable: &str,
+    working_copy_root: &Path,
+) -> Result<HashSet<String>, NovaError> {
+    let canonical_root = fs::canonicalize(working_copy_root).map_err(|error| {
+        NovaError::command(
+            "WORKSPACE_FILE_TREE_ROOT_FAILED",
+            "无法确认文件树的工作副本根目录",
+            Some(format!(
+                "路径：{}。错误：{error}",
+                working_copy_root.display()
+            )),
+            true,
+        )
+    })?;
+    let output = Command::new(executable)
+        .args(["info", "--xml", "--depth", "infinity"])
+        .arg(".")
+        .current_dir(&canonical_root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_FILE_TREE_INFO_FAILED",
+                "无法读取文件树的 SVN 版本控制信息",
+                Some(format!(
+                    "执行 `{executable} info --xml --depth infinity .` 失败（工作副本：{}）：{error}",
+                    working_copy_root.display()
+                )),
+                true,
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "SVN_FILE_TREE_INFO_FAILED",
+            "无法读取文件树的 SVN 版本控制信息",
+            Some(svn_file_tree_info_error_detail(
+                executable,
+                working_copy_root,
+                &output,
+            )),
+            true,
+        ));
+    }
+
+    let xml = std::str::from_utf8(&output.stdout).map_err(|error| {
+        NovaError::command(
+            "SVN_FILE_TREE_INFO_ENCODING_INVALID",
+            "文件树的 SVN 版本控制信息编码无效",
+            Some(format!(
+                "svn info --xml --depth infinity 未返回有效 UTF-8：{error}"
+            )),
+            true,
+        )
+    })?;
+    parse_versioned_workspace_paths(xml, &canonical_root)
+}
+
+fn parse_versioned_workspace_paths(
+    xml: &str,
+    canonical_root: &Path,
+) -> Result<HashSet<String>, NovaError> {
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "SVN_FILE_TREE_INFO_XML_PARSE_FAILED",
+            "解析文件树的 SVN 版本控制信息失败",
+            Some(format!(
+                "svn info --xml --depth infinity 返回了无法解析的 XML：{error}"
+            )),
+            true,
+        )
+    })?;
+    let root_entry = document
+        .descendants()
+        .filter(|node| node.has_tag_name("entry"))
+        .find(|entry| entry.attribute("path") == Some("."))
+        .ok_or_else(|| {
+            NovaError::command(
+                "SVN_FILE_TREE_INFO_ROOT_MISSING",
+                "SVN 文件树信息缺少工作副本根节点",
+                None,
+                true,
+            )
+        })?;
+    let reported_root = root_entry
+        .descendants()
+        .find(|node| node.has_tag_name("wcroot-abspath"))
+        .and_then(|node| node.text())
+        .map(str::trim)
+        .filter(|root| !root.is_empty())
+        .ok_or_else(|| {
+            NovaError::command(
+                "SVN_FILE_TREE_INFO_ROOT_MISSING",
+                "SVN 文件树信息缺少工作副本根路径",
+                None,
+                true,
+            )
+        })?;
+    let canonical_reported_root = fs::canonicalize(reported_root).map_err(|error| {
+        NovaError::command(
+            "SVN_FILE_TREE_INFO_ROOT_INVALID",
+            "无法确认 SVN 文件树信息的工作副本根目录",
+            Some(format!("SVN 返回的根路径：{reported_root}。错误：{error}")),
+            true,
+        )
+    })?;
+    if canonical_reported_root != canonical_root {
+        return Err(NovaError::command(
+            "SVN_FILE_TREE_INFO_ROOT_MISMATCH",
+            "SVN 文件树信息不属于当前工作副本",
+            Some(format!(
+                "当前工作副本：{}。SVN 返回：{}。",
+                canonical_root.display(),
+                canonical_reported_root.display()
+            )),
+            true,
+        ));
+    }
+
+    let mut paths = HashSet::new();
+    for entry in document
+        .descendants()
+        .filter(|node| node.has_tag_name("entry"))
+    {
+        let Some(raw_path) = entry.attribute("path") else {
+            continue;
+        };
+        let belongs_to_workspace = entry
+            .descendants()
+            .find(|node| node.has_tag_name("wcroot-abspath"))
+            .and_then(|node| node.text())
+            .is_some_and(|root| root.trim() == reported_root);
+        if !belongs_to_workspace {
+            continue;
+        }
+
+        if let Some(relative_path) = info_entry_relative_path(raw_path, canonical_root) {
+            paths.insert(relative_path);
+        }
+    }
+
+    Ok(paths)
+}
+
+fn info_entry_relative_path(raw_path: &str, working_copy_root: &Path) -> Option<String> {
+    let windows_separators = workspace_uses_windows_separators(working_copy_root);
+    let raw_path = normalize_workspace_separators(raw_path, windows_separators);
+    let raw_path = raw_path.trim_end_matches('/');
+    if raw_path == "." {
+        return None;
+    }
+    let path = PathBuf::from(raw_path);
+    if path.is_absolute()
+        || (windows_separators
+            && (is_explicit_windows_absolute_path(raw_path) || raw_path.starts_with('/')))
+    {
+        return None;
+    }
+
+    let relative_path = raw_path.strip_prefix("./").unwrap_or(raw_path);
+    if relative_path.is_empty()
+        || relative_path.chars().any(char::is_control)
+        || relative_path
+            .split('/')
+            .any(|segment| segment.is_empty() || matches!(segment, "." | ".."))
+    {
+        return None;
+    }
+
+    Some(relative_path.to_string())
+}
+
 fn normalize_relative_file_path(path: &str) -> Result<String, NovaError> {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
+    if path.is_empty() {
         return Err(NovaError::command(
             "DIFF_PATH_EMPTY",
             "请选择要查看 Diff 的文件",
@@ -706,7 +881,7 @@ fn normalize_relative_file_path(path: &str) -> Result<String, NovaError> {
         ));
     }
 
-    if trimmed.chars().any(char::is_control) {
+    if path.chars().any(char::is_control) {
         return Err(NovaError::command(
             "DIFF_PATH_INVALID",
             "Diff 文件路径无效",
@@ -715,9 +890,13 @@ fn normalize_relative_file_path(path: &str) -> Result<String, NovaError> {
         ));
     }
 
-    let path = PathBuf::from(trimmed);
-    if path_utils::is_absolute_or_windows_path(&path, trimmed)
-        || path_utils::has_parent_segment(trimmed)
+    let target = PathBuf::from(path);
+    if target.is_absolute()
+        || (cfg!(windows)
+            && (is_explicit_windows_absolute_path(path)
+                || path.starts_with('\\')
+                || path.starts_with('/')))
+        || has_runtime_parent_segment(path)
     {
         return Err(NovaError::command(
             "DIFF_PATH_INVALID",
@@ -727,7 +906,7 @@ fn normalize_relative_file_path(path: &str) -> Result<String, NovaError> {
         ));
     }
 
-    Ok(path_utils::normalize_relative_separators(trimmed))
+    Ok(normalize_runtime_separators(path))
 }
 
 fn normalize_log_revision_value(revision: &str) -> Result<String, NovaError> {
@@ -981,7 +1160,7 @@ fn parse_svn_status_xml(
         .descendants()
         .filter(|node| node.has_tag_name("entry"))
     {
-        let raw_path = entry.attribute("path").unwrap_or("").trim();
+        let raw_path = entry.attribute("path").unwrap_or("");
         if raw_path.is_empty() {
             continue;
         }
@@ -1143,6 +1322,7 @@ fn read_workspace_children(
     root: &Path,
     directory: &Path,
     status_by_path: &HashMap<String, &ChangedFile>,
+    versioned_paths: &HashSet<String>,
     max_files: usize,
     returned_files: &mut usize,
     total_files: &mut usize,
@@ -1173,7 +1353,7 @@ fn read_workspace_children(
             continue;
         }
 
-        let metadata = entry.metadata().map_err(|error| {
+        let metadata = fs::symlink_metadata(&path).map_err(|error| {
             NovaError::command(
                 "WORKSPACE_FILE_TREE_FAILED",
                 "无法读取工作副本文件树",
@@ -1183,17 +1363,20 @@ fn read_workspace_children(
         })?;
         let relative_path = workspace_tree_relative_path(root, &path);
         let status_match = workspace_tree_status_for_path(&relative_path, status_by_path);
-        if metadata.is_dir() {
+        let reparse_point = is_workspace_tree_reparse_point(&metadata);
+        if metadata.is_dir() && !reparse_point {
+            let versioned = versioned_paths.contains(&normalize_tree_path(&relative_path));
             let children = read_workspace_children(
                 root,
                 &path,
                 status_by_path,
+                versioned_paths,
                 max_files,
                 returned_files,
                 total_files,
                 truncated,
             )?;
-            if children.is_empty() {
+            if children.is_empty() && !versioned {
                 continue;
             }
 
@@ -1212,9 +1395,10 @@ fn read_workspace_children(
                 revision: status_match.revision,
                 file_size: None,
                 changed,
+                versioned,
                 children,
             });
-        } else if metadata.is_file() {
+        } else if metadata.is_file() || metadata.file_type().is_symlink() || reparse_point {
             *total_files += 1;
             if *returned_files >= max_files {
                 *truncated = true;
@@ -1227,6 +1411,7 @@ fn read_workspace_children(
                 name,
                 Some(metadata.len()),
                 status_by_path,
+                versioned_paths,
             ));
         }
     }
@@ -1239,6 +1424,7 @@ fn workspace_file_node(
     name: String,
     file_size: Option<u64>,
     status_by_path: &HashMap<String, &ChangedFile>,
+    versioned_paths: &HashSet<String>,
 ) -> WorkspaceFileNode {
     let normalized_path = normalize_tree_path(&path);
     let status_match = workspace_tree_status_for_path(&normalized_path, status_by_path);
@@ -1250,6 +1436,7 @@ fn workspace_file_node(
         revision: status_match.revision,
         file_size: status_match.file_size.or(file_size),
         changed: status_match.changed,
+        versioned: versioned_paths.contains(&normalized_path),
         children: Vec::new(),
     }
 }
@@ -1302,6 +1489,7 @@ fn workspace_tree_status_for_path(
 fn add_missing_status_nodes(
     nodes: &mut Vec<WorkspaceFileNode>,
     status_by_path: &HashMap<String, &ChangedFile>,
+    versioned_paths: &HashSet<String>,
 ) {
     for file in status_by_path.values() {
         let normalized_path = normalize_tree_path(&file.path);
@@ -1309,7 +1497,7 @@ fn add_missing_status_nodes(
             continue;
         }
 
-        insert_status_node(nodes, &normalized_path, file);
+        insert_status_node(nodes, &normalized_path, file, versioned_paths);
     }
 }
 
@@ -1319,12 +1507,17 @@ fn tree_contains_path(nodes: &[WorkspaceFileNode], target: &str) -> bool {
     })
 }
 
-fn insert_status_node(nodes: &mut Vec<WorkspaceFileNode>, path: &str, file: &ChangedFile) {
+fn insert_status_node(
+    nodes: &mut Vec<WorkspaceFileNode>,
+    path: &str,
+    file: &ChangedFile,
+    versioned_paths: &HashSet<String>,
+) {
     let segments = path
         .split('/')
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>();
-    insert_status_node_segments(nodes, path, &segments, "", file);
+    insert_status_node_segments(nodes, path, &segments, "", file, versioned_paths);
 }
 
 fn insert_status_node_segments(
@@ -1333,6 +1526,7 @@ fn insert_status_node_segments(
     segments: &[&str],
     parent_path: &str,
     file: &ChangedFile,
+    versioned_paths: &HashSet<String>,
 ) {
     let Some((segment, remaining_segments)) = segments.split_first() else {
         return;
@@ -1347,6 +1541,7 @@ fn insert_status_node_segments(
             revision: file.revision.clone(),
             file_size: file.file_size,
             changed: true,
+            versioned: versioned_paths.contains(full_path),
             children: Vec::new(),
         });
         return;
@@ -1369,6 +1564,7 @@ fn insert_status_node_segments(
                 revision: None,
                 file_size: None,
                 changed: true,
+                versioned: versioned_paths.contains(&directory_path),
                 children: Vec::new(),
             });
             nodes.len() - 1
@@ -1381,6 +1577,7 @@ fn insert_status_node_segments(
         remaining_segments,
         &directory_path,
         file,
+        versioned_paths,
     );
 }
 
@@ -1401,14 +1598,61 @@ fn workspace_tree_relative_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .ok()
         .and_then(|relative| relative.to_str())
-        .map(path_utils::normalize_relative_separators)
-        .unwrap_or_else(|| path_utils::normalize_relative_separators(&path.display().to_string()))
+        .map(normalize_runtime_separators)
+        .unwrap_or_else(|| normalize_runtime_separators(&path.display().to_string()))
 }
 
 fn normalize_tree_path(path: &str) -> String {
-    path_utils::normalize_relative_separators(path)
+    normalize_runtime_separators(path)
         .trim_matches('/')
         .to_string()
+}
+
+fn normalize_runtime_separators(path: &str) -> String {
+    normalize_workspace_separators(path, cfg!(windows))
+}
+
+fn normalize_workspace_separators(path: &str, windows_separators: bool) -> String {
+    if windows_separators {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    }
+}
+
+fn workspace_uses_windows_separators(working_copy_root: &Path) -> bool {
+    cfg!(windows) || is_explicit_windows_absolute_path(&working_copy_root.display().to_string())
+}
+
+fn is_explicit_windows_absolute_path(path: &str) -> bool {
+    let value = path.trim();
+    let bytes = value.as_bytes();
+    (bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/'))
+        || value.starts_with("\\\\")
+}
+
+fn has_runtime_parent_segment(path: &str) -> bool {
+    if cfg!(windows) {
+        path.split(['/', '\\']).any(|segment| segment == "..")
+    } else {
+        path.split('/').any(|segment| segment == "..")
+    }
+}
+
+#[cfg(windows)]
+fn is_workspace_tree_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_workspace_tree_reparse_point(_metadata: &fs::Metadata) -> bool {
+    false
 }
 
 fn should_skip_workspace_tree_entry(name: &str) -> bool {
@@ -1482,13 +1726,42 @@ fn svnversion_executable(svn_executable: &str) -> String {
 }
 
 fn display_status_path(raw_path: &str, working_copy_root: &Path) -> String {
-    path_utils::strip_working_copy_prefix(raw_path, working_copy_root)
-        .unwrap_or_else(|| path_utils::normalize_relative_separators(raw_path))
+    let windows_separators = workspace_uses_windows_separators(working_copy_root);
+    let raw_native_path = Path::new(raw_path);
+    if let Ok(relative_path) = raw_native_path.strip_prefix(working_copy_root) {
+        if !relative_path.as_os_str().is_empty() {
+            return normalize_workspace_separators(
+                &relative_path.display().to_string(),
+                windows_separators,
+            );
+        }
+    }
+
+    let raw_path = normalize_workspace_separators(raw_path, windows_separators);
+    let root = normalize_workspace_separators(
+        &working_copy_root.display().to_string(),
+        windows_separators,
+    );
+    let root = root.trim_end_matches('/');
+    let root_prefix = if root.is_empty() {
+        "/".to_string()
+    } else {
+        format!("{root}/")
+    };
+
+    raw_path
+        .strip_prefix(&root_prefix)
+        .unwrap_or(&raw_path)
+        .to_string()
 }
 
 fn status_target_path(raw_path: &str, working_copy_root: &Path) -> PathBuf {
     let path = PathBuf::from(raw_path);
-    if path_utils::is_absolute_or_windows_path(&path, raw_path) {
+    let windows_separators = workspace_uses_windows_separators(working_copy_root);
+    if path.is_absolute()
+        || (windows_separators && is_explicit_windows_absolute_path(raw_path))
+        || (windows_separators && (raw_path.starts_with('\\') || raw_path.starts_with('/')))
+    {
         path
     } else {
         working_copy_root.join(path)
@@ -1995,6 +2268,35 @@ fn svn_status_error_detail(executable: &str, path: &Path, output: &std::process:
     )
 }
 
+fn svn_file_tree_info_error_detail(
+    executable: &str,
+    path: &Path,
+    output: &std::process::Output,
+) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if !stderr.is_empty() {
+        return format!(
+            "`{executable} info --xml --depth infinity .` 返回失败（工作副本：{}）：{stderr}",
+            path.display()
+        );
+    }
+
+    if !stdout.is_empty() {
+        return format!(
+            "`{executable} info --xml --depth infinity .` 返回失败（工作副本：{}）：{stdout}",
+            path.display()
+        );
+    }
+
+    format!(
+        "`{executable} info --xml --depth infinity .` 返回退出码 {:?}，但没有输出（工作副本：{}）。",
+        output.status.code(),
+        path.display(),
+    )
+}
+
 fn command_error_detail(
     executable: &str,
     subcommand: &str,
@@ -2075,6 +2377,17 @@ mod tests {
         );
     }
 
+    fn find_workspace_node<'a>(
+        nodes: &'a [WorkspaceFileNode],
+        path: &str,
+    ) -> Option<&'a WorkspaceFileNode> {
+        nodes.iter().find_map(|node| {
+            (node.path == path)
+                .then_some(node)
+                .or_else(|| find_workspace_node(&node.children, path))
+        })
+    }
+
     #[test]
     fn parses_workspace_info_xml() {
         let xml = r#"
@@ -2093,6 +2406,101 @@ mod tests {
         assert_eq!(summary.repository_url, "https://example.com/svn/trunk");
         assert_eq!(summary.repository_root, "https://example.com/svn");
         assert_eq!(summary.working_copy_root, "C:\\wc");
+    }
+
+    #[test]
+    fn parses_only_versioned_paths_from_current_working_copy() {
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-versioned-paths-test-{}",
+            std::process::id()
+        ));
+        let foreign_root = std::env::temp_dir().join(format!(
+            "novasvn-versioned-paths-foreign-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&foreign_root);
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&foreign_root).unwrap();
+        let canonical_root = fs::canonicalize(&root).unwrap();
+        let xml = format!(
+            r#"
+<info>
+  <entry path="."><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
+  <entry path="tracked.txt"><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
+  <entry path="src\windows.txt"><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
+  <entry path=".env"><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
+  <entry path="../outside.txt"><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
+  <entry path="/absolute.txt"><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
+  <entry path="C:\absolute.txt"><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
+  <entry path="external/nested.txt"><wc-info><wcroot-abspath>{foreign_root}</wcroot-abspath></wc-info></entry>
+</info>
+"#,
+            root = canonical_root.display(),
+            foreign_root = foreign_root.display()
+        );
+
+        let paths =
+            parse_versioned_workspace_paths(&xml, &canonical_root).expect("versioned paths parse");
+
+        assert!(paths.contains("tracked.txt"));
+        if cfg!(windows) {
+            assert!(paths.contains("src/windows.txt"));
+        } else {
+            assert!(paths.contains("src\\windows.txt"));
+            assert!(paths.contains("C:\\absolute.txt"));
+        }
+        assert!(paths.contains(".env"));
+        assert!(!paths.contains("outside.txt"));
+        assert!(!paths.contains("absolute.txt"));
+        assert!(!paths.contains("external/nested.txt"));
+        assert!(!paths.contains("unmanaged.txt"));
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&foreign_root);
+    }
+
+    #[test]
+    fn rejects_versioned_path_info_without_matching_root() {
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-versioned-paths-root-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let canonical_root = fs::canonicalize(&root).unwrap();
+
+        let error = parse_versioned_workspace_paths(
+            "<info><entry path=\"tracked.txt\" /></info>",
+            &canonical_root,
+        )
+        .expect_err("missing root must fail");
+
+        match error {
+            NovaError::Command { code, .. } => {
+                assert_eq!(code, "SVN_FILE_TREE_INFO_ROOT_MISSING");
+            }
+        }
+
+        let foreign_root = std::env::temp_dir().join(format!(
+            "novasvn-versioned-paths-mismatch-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&foreign_root);
+        fs::create_dir_all(&foreign_root).unwrap();
+        let mismatch_xml = format!(
+            "<info><entry path=\".\"><wc-info><wcroot-abspath>{}</wcroot-abspath></wc-info></entry></info>",
+            foreign_root.display()
+        );
+        let error = parse_versioned_workspace_paths(&mismatch_xml, &canonical_root)
+            .expect_err("mismatched root must fail");
+        match error {
+            NovaError::Command { code, .. } => {
+                assert_eq!(code, "SVN_FILE_TREE_INFO_ROOT_MISMATCH");
+            }
+        }
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&foreign_root);
     }
 
     #[test]
@@ -2222,19 +2630,21 @@ mod tests {
             std::env::temp_dir().join(format!("novasvn-file-tree-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("empty")).unwrap();
         fs::create_dir_all(root.join(".svn")).unwrap();
         fs::write(root.join("src/main.rs"), "changed").unwrap();
         fs::write(root.join("src/lib.rs"), "normal").unwrap();
+        fs::write(root.join("ignored.txt"), "ignored").unwrap();
         fs::write(root.join(".svn/entries"), "internal").unwrap();
 
         let xml = format!(
             r#"
 <status>
   <target path="{root}">
-    <entry path="{root}\src\main.rs">
+    <entry path="{root}/src/main.rs">
       <wc-status item="modified" props="none" />
     </entry>
-    <entry path="{root}\docs\missing.md">
+    <entry path="{root}/docs/missing.md">
       <wc-status item="missing" props="none" />
     </entry>
   </target>
@@ -2249,6 +2659,17 @@ mod tests {
             .iter()
             .map(|file| (normalize_tree_path(&file.path), file))
             .collect::<HashMap<_, _>>();
+        let versioned_paths = [
+            "src",
+            "src/main.rs",
+            "src/lib.rs",
+            "empty",
+            "docs",
+            "docs/missing.md",
+        ]
+        .into_iter()
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
         let mut returned_files = 0;
         let mut total_files = 0;
         let mut truncated = false;
@@ -2256,33 +2677,288 @@ mod tests {
             &root,
             &root,
             &status_by_path,
+            &versioned_paths,
             100,
             &mut returned_files,
             &mut total_files,
             &mut truncated,
         )
         .expect("tree reads");
-        add_missing_status_nodes(&mut nodes, &status_by_path);
+        add_missing_status_nodes(&mut nodes, &status_by_path, &versioned_paths);
         sort_workspace_nodes(&mut nodes);
 
-        assert_eq!(total_files, 2);
+        assert_eq!(total_files, 3);
         assert!(!truncated);
         assert!(nodes.iter().all(|node| node.name != ".svn"));
         let src = nodes.iter().find(|node| node.name == "src").unwrap();
         assert!(src.changed);
+        assert!(src.versioned);
         assert!(src.children.iter().any(|node| {
-            node.path == "src/main.rs" && node.status == "modified" && node.changed
+            node.path == "src/main.rs"
+                && node.status == "modified"
+                && node.changed
+                && node.versioned
         }));
-        assert!(src
-            .children
+        assert!(src.children.iter().any(|node| {
+            node.path == "src/lib.rs" && node.status == "normal" && !node.changed && node.versioned
+        }));
+        assert!(nodes
             .iter()
-            .any(|node| { node.path == "src/lib.rs" && node.status == "normal" && !node.changed }));
+            .find(|node| node.path == "ignored.txt")
+            .is_some_and(|node| node.status == "normal" && !node.versioned));
+        assert!(nodes
+            .iter()
+            .find(|node| node.path == "empty")
+            .is_some_and(|node| node.kind == "dir" && node.versioned && node.children.is_empty()));
         let docs = nodes.iter().find(|node| node.name == "docs").unwrap();
         assert!(docs.children.iter().any(|node| {
-            node.path == "docs/missing.md" && node.status == "missing" && node.changed
+            node.path == "docs/missing.md"
+                && node.status == "missing"
+                && node.changed
+                && node.versioned
         }));
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn treats_directory_symlinks_as_leaf_nodes() {
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-file-tree-symlink-test-{}",
+            std::process::id()
+        ));
+        let target = std::env::temp_dir().join(format!(
+            "novasvn-file-tree-symlink-target-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&target);
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("nested.txt"), "outside").unwrap();
+        let link = root.join("linked");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        #[cfg(windows)]
+        if std::os::windows::fs::symlink_dir(&target, &link).is_err() {
+            let _ = fs::remove_dir_all(&root);
+            let _ = fs::remove_dir_all(&target);
+            return;
+        }
+
+        let status_by_path: HashMap<String, &ChangedFile> = HashMap::new();
+        let versioned_paths = HashSet::from(["linked".to_string()]);
+        let mut returned_files = 0;
+        let mut total_files = 0;
+        let mut truncated = false;
+        let nodes = read_workspace_children(
+            &root,
+            &root,
+            &status_by_path,
+            &versioned_paths,
+            100,
+            &mut returned_files,
+            &mut total_files,
+            &mut truncated,
+        )
+        .expect("symlink tree reads");
+
+        assert_eq!(total_files, 1);
+        assert_eq!(returned_files, 1);
+        assert!(!truncated);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].path, "linked");
+        assert_eq!(nodes[0].kind, "file");
+        assert!(nodes[0].versioned);
+        assert!(nodes[0].children.is_empty());
+        assert!(nodes.iter().all(|node| node.path != "linked/nested.txt"));
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&target);
+    }
+
+    #[test]
+    fn marks_ignored_and_external_entries_unversioned_in_real_working_copy() {
+        if Command::new("svn")
+            .arg("--version")
+            .arg("--quiet")
+            .output()
+            .is_err()
+            || Command::new("svnadmin")
+                .arg("--version")
+                .arg("--quiet")
+                .output()
+                .is_err()
+        {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-file-tree-integration-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(import_dir.join("main/empty")).expect("create main import tree");
+        fs::create_dir_all(import_dir.join("external")).expect("create external import tree");
+        fs::write(import_dir.join("main/tracked.txt"), "tracked").expect("write tracked file");
+        fs::write(import_dir.join("external/nested.txt"), "external").expect("write external file");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(format!("{repository_url}/main"))
+                .arg(&working_copy),
+        );
+        run_test_command(
+            Command::new("svn")
+                .args(["propset", "svn:ignore", "ignored.txt"])
+                .arg(&working_copy),
+        );
+        run_test_command(
+            Command::new("svn")
+                .args(["propset", "svn:externals", "^/external external"])
+                .arg(&working_copy),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "configure tree"]),
+        );
+        run_test_command(Command::new("svn").arg("update").arg(&working_copy));
+        fs::write(working_copy.join("ignored.txt"), "ignored").expect("write ignored file");
+
+        let tree = list_workspace_files(ListWorkspaceFilesRequest {
+            working_copy_root: working_copy.display().to_string(),
+            svn_executable: None,
+            max_files: Some(100),
+        })
+        .expect("real file tree reads");
+
+        assert!(find_workspace_node(&tree.nodes, "tracked.txt")
+            .is_some_and(|node| node.status == "normal" && node.versioned));
+        assert!(find_workspace_node(&tree.nodes, "empty")
+            .is_some_and(|node| node.kind == "dir" && node.versioned));
+        assert!(find_workspace_node(&tree.nodes, "ignored.txt")
+            .is_some_and(|node| node.status == "normal" && !node.versioned));
+        assert!(find_workspace_node(&tree.nodes, "external")
+            .is_some_and(|node| node.status == "external" && !node.versioned));
+        assert!(find_workspace_node(&tree.nodes, "external/nested.txt")
+            .is_some_and(|node| node.status == "normal" && !node.versioned));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preserves_distinct_backslash_and_nested_paths_in_real_working_copy() {
+        if Command::new("svn")
+            .arg("--version")
+            .arg("--quiet")
+            .output()
+            .is_err()
+            || Command::new("svnadmin")
+                .arg("--version")
+                .arg("--quiet")
+                .output()
+                .is_err()
+        {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-backslash-path-integration-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(import_dir.join("literal")).expect("create nested import tree");
+        fs::write(import_dir.join("literal\\name.txt"), "flat baseline")
+            .expect("write backslash file");
+        fs::write(import_dir.join("literal/name.txt"), "nested baseline")
+            .expect("write nested file");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("literal\\name.txt"), "flat changed")
+            .expect("change backslash file");
+        fs::write(working_copy.join("literal/name.txt"), "nested changed")
+            .expect("change nested file");
+
+        let status = scan_workspace_status(ScanWorkspaceStatusRequest {
+            working_copy_root: working_copy.display().to_string(),
+            svn_executable: None,
+            offset: Some(0),
+            limit: Some(100),
+        })
+        .expect("real status reads");
+        assert!(status
+            .files
+            .iter()
+            .any(|file| file.path == "literal\\name.txt"));
+        assert!(status
+            .files
+            .iter()
+            .any(|file| file.path == "literal/name.txt"));
+
+        let tree = list_workspace_files(ListWorkspaceFilesRequest {
+            working_copy_root: working_copy.display().to_string(),
+            svn_executable: None,
+            max_files: Some(100),
+        })
+        .expect("real file tree reads");
+        assert!(find_workspace_node(&tree.nodes, "literal\\name.txt")
+            .is_some_and(|node| node.name == "literal\\name.txt" && node.versioned));
+        assert!(find_workspace_node(&tree.nodes, "literal/name.txt")
+            .is_some_and(|node| node.name == "name.txt" && node.versioned));
+
+        let content_diff = get_file_content_diff(GetFileContentDiffRequest {
+            working_copy_root: working_copy.display().to_string(),
+            file_path: "literal\\name.txt".to_string(),
+            svn_executable: None,
+            max_bytes: Some(1024),
+        })
+        .expect("backslash file content diff reads");
+        assert_eq!(content_diff.path, "literal\\name.txt");
+        assert_eq!(content_diff.original_text, "flat baseline");
+        assert_eq!(content_diff.modified_text, "flat changed");
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -2336,6 +3012,37 @@ mod tests {
                 assert_eq!(code, "DIFF_PATH_INVALID");
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preserves_backslashes_in_unix_relative_paths() {
+        assert_eq!(
+            normalize_relative_file_path("\\name.txt").unwrap(),
+            "\\name.txt"
+        );
+        assert_eq!(
+            normalize_relative_file_path("literal\\..\\name.txt").unwrap(),
+            "literal\\..\\name.txt"
+        );
+        assert_eq!(
+            normalize_relative_file_path(" leading.txt").unwrap(),
+            " leading.txt"
+        );
+        assert_eq!(
+            normalize_relative_file_path("trailing.txt ").unwrap(),
+            "trailing.txt "
+        );
+
+        let root = Path::new("/tmp/novasvn-backslash-root");
+        assert_eq!(
+            status_target_path("\\name.txt", root),
+            root.join("\\name.txt")
+        );
+        assert_eq!(
+            display_status_path("/tmp/novasvn-backslash-root/\\name.txt", root),
+            "\\name.txt"
+        );
     }
 
     #[test]

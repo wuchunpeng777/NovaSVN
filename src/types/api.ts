@@ -76,6 +76,7 @@ export type SvnOperationKind =
   | "update"
   | "cleanup"
   | "add_file"
+  | "delete_path"
   | "revert_file"
   | "lock_file"
   | "unlock_file"
@@ -424,6 +425,7 @@ export interface WorkspaceFileNode {
   revision: string | null;
   file_size: number | null;
   changed: boolean;
+  versioned: boolean;
   children: WorkspaceFileNode[];
 }
 

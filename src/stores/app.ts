@@ -3845,8 +3845,9 @@ function resolveStartupTargetFilePath(
   workspace: WorkspaceSummary,
   files: ChangedFile[],
 ) {
-  const normalizedTarget = normalizeSystemPath(targetPath);
-  const normalizedRoot = normalizeSystemPath(workspace.working_copy_root);
+  const windowsSeparators = isWindowsAbsoluteSystemPath(workspace.working_copy_root);
+  const normalizedTarget = normalizeSystemPath(targetPath, windowsSeparators);
+  const normalizedRoot = normalizeSystemPath(workspace.working_copy_root, windowsSeparators);
   if (!normalizedTarget || !normalizedRoot || normalizedTarget === normalizedRoot) {
     return null;
   }
@@ -3860,8 +3861,13 @@ function resolveStartupTargetFilePath(
   return files.find((file) => normalizeWorkspacePath(file.path) === relativePath)?.path ?? relativePath;
 }
 
-function normalizeSystemPath(path: string) {
-  return path.trim().replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/, "");
+function normalizeSystemPath(path: string, windowsSeparators: boolean) {
+  const normalized = windowsSeparators ? path.replace(/\\/g, "/") : path;
+  return normalized.replace(/\/+/g, "/").replace(/\/$/, "");
+}
+
+function isWindowsAbsoluteSystemPath(path: string) {
+  return /^[a-z]:[\\/]/i.test(path) || path.startsWith("\\\\");
 }
 
 function isCommittable(file: ChangedFile) {
@@ -4081,7 +4087,7 @@ function buildSafetyCheck(
 }
 
 function normalizeWorkspacePath(path: string) {
-  return path.replaceAll("\\", "/").replace(/^\/+/, "");
+  return path.replace(/^\/+/, "");
 }
 
 function reconcileSafetyWarningConfirmations(
@@ -4132,7 +4138,7 @@ function labelSafetyStatus(status: string) {
 }
 
 function looksLikeGeneratedOrTemporary(path: string) {
-  const normalized = path.replaceAll("\\", "/").toLowerCase();
+  const normalized = path.toLowerCase();
   const segments = normalized.split("/");
   const fileName = segments.at(-1) ?? normalized;
 
@@ -4161,7 +4167,7 @@ function looksLikeGeneratedOrTemporary(path: string) {
 }
 
 function looksLikeLargeBinary(path: string) {
-  const extension = path.replaceAll("\\", "/").split(".").pop()?.toLowerCase() ?? "";
+  const extension = path.split(".").pop()?.toLowerCase() ?? "";
   return [
     "7z",
     "avi",

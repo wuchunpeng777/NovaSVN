@@ -138,7 +138,12 @@
   }
 
   function normalizeLocalPath(path: string) {
-    return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+    const windowsPath = /^[a-z]:[\\/]/i.test(path) || path.startsWith("\\\\");
+    const normalized = windowsPath
+      ? path.replaceAll("\\", "/")
+      : path;
+    const withoutTrailingSeparator = normalized.replace(/\/+$/, "");
+    return windowsPath ? withoutTrailingSeparator.toLowerCase() : withoutTrailingSeparator;
   }
 
   async function openExternalTool(kind: ExternalToolKind, filePath: string) {
@@ -319,6 +324,15 @@
 
     if (kind === "revert_file") {
       const confirmed = window.confirm(`确定要撤销文件改动吗？\n${filePath ?? ""}`);
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    if (kind === "delete_path") {
+      const confirmed = window.confirm(
+        `确定要从工作副本删除此路径吗？\n${filePath ?? ""}\n\n这会删除本地内容并安排 SVN 删除。\n未提交改动和目录内未版本控制内容可能丢失。`,
+      );
       if (!confirmed) {
         return;
       }
@@ -1254,6 +1268,7 @@
   onSelectAllCommitFiles={workspaceStore.selectAllCommitFiles}
   onClearCommitFiles={workspaceStore.clearCommitFiles}
   onAddFile={(path) => runSvnOperation("add_file", path)}
+  onDeletePath={(path) => runSvnOperation("delete_path", path)}
   onRevertFile={(path) => runSvnOperation("revert_file", path)}
   onLockFile={(path) => runSvnOperation("lock_file", path)}
   onUnlockFile={(path) => runSvnOperation("unlock_file", path)}

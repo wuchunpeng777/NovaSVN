@@ -4,6 +4,7 @@ vi.mock("../lib/api", () => ({
   createApplyPatchTask: vi.fn(),
   createMergeTask: vi.fn(),
   createRevisionDiffTask: vi.fn(),
+  createSvnOperationTask: vi.fn(),
   detectSvn: vi.fn(),
   getFileContentDiff: vi.fn(),
   getFileDiff: vi.fn(),
@@ -26,6 +27,7 @@ import {
   createApplyPatchTask,
   createMergeTask,
   createRevisionDiffTask,
+  createSvnOperationTask,
   detectSvn,
   getFileContentDiff,
   getFileDiff,
@@ -67,6 +69,7 @@ import {
 const createApplyPatchTaskMock = vi.mocked(createApplyPatchTask);
 const createMergeTaskMock = vi.mocked(createMergeTask);
 const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
+const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
 const detectSvnMock = vi.mocked(detectSvn);
 const getFileContentDiffMock = vi.mocked(getFileContentDiff);
 const getFileDiffMock = vi.mocked(getFileDiff);
@@ -86,6 +89,7 @@ beforeEach(() => {
   createApplyPatchTaskMock.mockReset();
   createMergeTaskMock.mockReset();
   createRevisionDiffTaskMock.mockReset();
+  createSvnOperationTaskMock.mockReset();
   detectSvnMock.mockReset();
   getFileContentDiffMock.mockReset();
   getFileDiffMock.mockReset();
@@ -664,6 +668,30 @@ describe("workspaceStore svn log", () => {
     expect(parseUnifiedDiffMock).not.toHaveBeenCalled();
   });
 
+  it("keeps Unix backslashes distinct when resolving a startup target", async () => {
+    const workspace = {
+      ...makeWorkspace(),
+      local_path: "/repo/wc",
+      working_copy_root: "/repo/wc",
+    };
+    const status = makeStatus([
+      makeFile({ path: "literal\\name.txt", content_digest: "flat-digest" }),
+      makeFile({ path: "literal/name.txt", content_digest: "nested-digest" }),
+    ]);
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(status);
+    workspaceStore.setPathInput("/repo/wc");
+    await workspaceStore.openPath();
+
+    const selected = await workspaceStore.selectStartupTargetFile(
+      "/repo/wc/literal\\name.txt",
+    );
+
+    expect(selected).toBe(true);
+    expect(get(workspaceStore).selectedFilePath).toBe("literal\\name.txt");
+  });
+
   it("requires a selected file before loading file-only history", async () => {
     const workspace = makeWorkspace();
 
@@ -736,6 +764,27 @@ describe("taskStore merge tasks", () => {
       start_revision: "10",
       end_revision: "12",
       dry_run: true,
+      svn_executable: "C:/svn/svn.exe",
+    });
+  });
+});
+
+describe("taskStore SVN operation tasks", () => {
+  it("maps a working-copy delete request to delete_path", async () => {
+    createSvnOperationTaskMock.mockResolvedValue(makeTask({ task_id: "delete-1" }));
+
+    const task = await taskStore.createSvnOperation({
+      workingCopyRoot: "C:/repo/wc",
+      kind: "delete_path",
+      filePath: "src/legacy",
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(task?.task_id).toBe("delete-1");
+    expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+      working_copy_root: "C:/repo/wc",
+      kind: "delete_path",
+      file_path: "src/legacy",
       svn_executable: "C:/svn/svn.exe",
     });
   });

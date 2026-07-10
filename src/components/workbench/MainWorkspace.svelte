@@ -241,6 +241,7 @@
   export let onSelectAllCommitFiles: () => void = () => {};
   export let onClearCommitFiles: () => void = () => {};
   export let onAddFile: (path: string) => void = () => {};
+  export let onDeletePath: (path: string) => void = () => {};
   export let onRevertFile: (path: string) => void = () => {};
   export let onLockFile: (path: string) => void = () => {};
   export let onUnlockFile: (path: string) => void = () => {};
@@ -387,18 +388,13 @@
     return `status-${status.replace(/[^a-z0-9_-]/gi, "-").toLowerCase()}`;
   }
 
-  function normalizePath(path: string) {
-    return path.replaceAll("\\", "/");
-  }
-
   function basename(path: string) {
-    return normalizePath(path).split("/").pop() || path;
+    return path.split("/").pop() || path;
   }
 
   function dirname(path: string) {
-    const normalized = normalizePath(path);
-    const index = normalized.lastIndexOf("/");
-    return index > 0 ? normalized.slice(0, index) : "根目录";
+    const index = path.lastIndexOf("/");
+    return index > 0 ? path.slice(0, index) : "根目录";
   }
 
   function formatBytes(bytes: number | null) {
@@ -507,6 +503,15 @@
     return changedFileForPath(path)?.status === "unversioned";
   }
 
+  function canDeletePath(node: WorkspaceFileNode | null) {
+    return (
+      !!node &&
+      node.versioned &&
+      ["file", "dir"].includes(node.kind) &&
+      !["deleted", "missing", "external", "unversioned"].includes(node.status)
+    );
+  }
+
   function isTreeNodeCollapsed(node: WorkspaceFileNode) {
     return node.kind === "dir" && collapsedTreePaths.has(node.path);
   }
@@ -547,12 +552,11 @@
       const children = filterTreeNodes(node.children, filter, queryText);
       const selfMatchesSearch = !query || node.path.toLowerCase().includes(query);
       const selfMatchesMode =
-        node.kind === "file" &&
-        (filter === "all" ||
-          (filter === "changed" && node.changed && node.status !== "unversioned") ||
-          (filter === "unversioned" && node.status === "unversioned"));
+        filter === "all" ||
+        (filter === "changed" && node.changed && node.status !== "unversioned") ||
+        (filter === "unversioned" && node.status === "unversioned");
       const keepNode =
-        node.kind === "dir" ? children.length > 0 : selfMatchesSearch && selfMatchesMode;
+        children.length > 0 || (selfMatchesSearch && selfMatchesMode);
 
       if (!keepNode) {
         return [];
@@ -1829,6 +1833,21 @@
                         撤销
                       </span>
                     {/if}
+                    {#if canDeletePath(node)}
+                      <span
+                        role="button"
+                        tabindex="0"
+                        aria-label={`删除${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
+                        on:click|stopPropagation={() => onDeletePath(node.path)}
+                        on:keydown|stopPropagation={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            onDeletePath(node.path);
+                          }
+                        }}
+                      >
+                        删除
+                      </span>
+                    {/if}
                   </span>
                 </button>
               {/each}
@@ -1920,6 +1939,15 @@
                         Force Unlock
                       </button>
                     {/if}
+                  {/if}
+                  {#if canDeletePath(selectedTreeNode)}
+                    <button
+                      type="button"
+                      aria-label={`从工作副本删除 ${selectedTreeNode?.path ?? ""}`}
+                      on:click={() => selectedTreeNode && onDeletePath(selectedTreeNode.path)}
+                    >
+                      删除
+                    </button>
                   {/if}
                 </div>
 

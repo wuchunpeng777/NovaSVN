@@ -64,6 +64,73 @@ describe("MainWorkspace", () => {
 
     await fireEvent.click(screen.getByText("Add", { exact: true }));
     expect(onAddFile).toHaveBeenCalledWith("notes/new.txt");
+    expect(
+      screen.queryByRole("button", { name: "删除文件 notes/new.txt" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("deletes versioned files and directories from the working copy", async () => {
+    const onDeletePath = vi.fn();
+    const modified = makeFile("src/main.ts", "modified", "main-digest");
+
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([modified]),
+        workspaceFileTree: makeFileTree(),
+        selectedFilePath: modified.path,
+        selectedFile: modified,
+        onDeletePath,
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "删除目录 src" }));
+    await fireEvent.click(screen.getByRole("button", { name: "删除文件 src/main.ts" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "从工作副本删除 src/main.ts" }),
+    );
+
+    expect(onDeletePath).toHaveBeenNthCalledWith(1, "src");
+    expect(onDeletePath).toHaveBeenNthCalledWith(2, "src/main.ts");
+    expect(onDeletePath).toHaveBeenNthCalledWith(3, "src/main.ts");
+
+    await fireEvent.click(screen.getByRole("button", { name: "全部文件" }));
+    expect(screen.getByText("ignored.log", { exact: true })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "删除文件 ignored.log" }),
+    ).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "删除目录 empty" }));
+    expect(onDeletePath).toHaveBeenNthCalledWith(4, "empty");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "删除文件 literal\\name.txt" }),
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "删除文件 literal/name.txt" }),
+    );
+    expect(onDeletePath).toHaveBeenNthCalledWith(5, "literal\\name.txt");
+    expect(onDeletePath).toHaveBeenNthCalledWith(6, "literal/name.txt");
+  });
+
+  it("keeps a Unix backslash filename intact in the inspector", () => {
+    const file = makeFile("literal\\name.txt", "modified", "literal-digest");
+
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([file]),
+        workspaceFileTree: makeFileTree(),
+        selectedFilePath: file.path,
+        selectedFile: file,
+      },
+    });
+
+    expect(
+      within(screen.getByLabelText("详情和提交")).getByText("literal\\name.txt", {
+        exact: true,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("shows patch preflight output and confirms a safe patch", async () => {
@@ -183,8 +250,8 @@ function makeStatus(files: ChangedFile[]): WorkingCopyStatus {
 function makeFileTree(): WorkspaceFileTree {
   return {
     working_copy_root: "C:/repo/wc",
-    total_files: 2,
-    returned_files: 2,
+    total_files: 5,
+    returned_files: 5,
     truncated: false,
     nodes: [
       {
@@ -195,6 +262,7 @@ function makeFileTree(): WorkspaceFileTree {
         revision: "12",
         file_size: null,
         changed: true,
+        versioned: true,
         children: [
           {
             path: "src/main.ts",
@@ -204,6 +272,7 @@ function makeFileTree(): WorkspaceFileTree {
             revision: "12",
             file_size: 128,
             changed: true,
+            versioned: true,
             children: [],
           },
         ],
@@ -216,7 +285,64 @@ function makeFileTree(): WorkspaceFileTree {
         revision: null,
         file_size: 128,
         changed: true,
+        versioned: false,
         children: [],
+      },
+      {
+        path: "ignored.log",
+        name: "ignored.log",
+        kind: "file",
+        status: "normal",
+        revision: null,
+        file_size: 64,
+        changed: false,
+        versioned: false,
+        children: [],
+      },
+      {
+        path: "empty",
+        name: "empty",
+        kind: "dir",
+        status: "normal",
+        revision: "12",
+        file_size: null,
+        changed: false,
+        versioned: true,
+        children: [],
+      },
+      {
+        path: "literal\\name.txt",
+        name: "literal\\name.txt",
+        kind: "file",
+        status: "normal",
+        revision: "12",
+        file_size: 64,
+        changed: false,
+        versioned: true,
+        children: [],
+      },
+      {
+        path: "literal",
+        name: "literal",
+        kind: "dir",
+        status: "normal",
+        revision: "12",
+        file_size: null,
+        changed: false,
+        versioned: true,
+        children: [
+          {
+            path: "literal/name.txt",
+            name: "name.txt",
+            kind: "file",
+            status: "normal",
+            revision: "12",
+            file_size: 64,
+            changed: false,
+            versioned: true,
+            children: [],
+          },
+        ],
       },
     ],
   };

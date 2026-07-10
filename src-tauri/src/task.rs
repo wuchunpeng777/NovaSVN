@@ -103,6 +103,7 @@ pub enum SvnOperationKind {
     Update,
     Cleanup,
     AddFile,
+    DeletePath,
     RevertFile,
     LockFile,
     UnlockFile,
@@ -313,6 +314,33 @@ struct SvnOperationTaskPayload {
     kind: SvnOperationKind,
     file_path: Option<String>,
     svn_executable: String,
+    delete_target_identity: Option<DeleteTargetIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeleteTargetIdentity {
+    entry_kind: String,
+    entry_revision: Option<String>,
+    url: String,
+    relative_url: Option<String>,
+    repository_uuid: Option<String>,
+    schedule: String,
+    depth: Option<String>,
+    copy_from_url: Option<String>,
+    copy_from_revision: Option<String>,
+    filesystem_kind: DeleteFilesystemNodeKind,
+    final_node_is_symlink: bool,
+    final_node_is_reparse_point: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DeleteFilesystemNodeKind {
+    Missing,
+    File,
+    Directory,
+    Symlink,
+    ReparsePoint,
+    Other,
 }
 
 #[derive(Debug, Clone)]
@@ -489,12 +517,15 @@ impl TaskQueue {
         &self,
         request: CreateSvnOperationTaskRequest,
     ) -> Result<Task, NovaError> {
-        let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
+        let mut working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
         let file_path = match request.kind {
             SvnOperationKind::AddFile => Some(normalize_relative_file_path(
                 request.file_path.as_deref().unwrap_or_default(),
                 "ADD_FILE_PATH_INVALID",
                 "Add 文件路径无效",
+            )?),
+            SvnOperationKind::DeletePath => Some(normalize_delete_path(
+                request.file_path.as_deref().unwrap_or_default(),
             )?),
             SvnOperationKind::RevertFile => Some(normalize_relative_file_path(
                 request.file_path.as_deref().unwrap_or_default(),
@@ -523,6 +554,16 @@ impl TaskQueue {
             SvnOperationKind::Update | SvnOperationKind::Cleanup => None,
         };
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        let delete_target_identity = if matches!(&request.kind, SvnOperationKind::DeletePath) {
+            working_copy_root = canonicalize_delete_working_copy_root(&working_copy_root)?;
+            Some(validate_delete_target(
+                &svn_executable,
+                &working_copy_root,
+                file_path.as_deref().unwrap_or_default(),
+            )?)
+        } else {
+            None
+        };
         let title = operation_title(&request.kind, file_path.as_deref());
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
@@ -543,6 +584,7 @@ impl TaskQueue {
                 kind: request.kind,
                 file_path,
                 svn_executable,
+                delete_target_identity,
             }),
         };
 
@@ -1287,6 +1329,89 @@ fn run_svn_operation_task(
                 .arg("--parents")
                 .arg(root.join(file_path));
             append_task_log(state, task_id, &format!("执行 svn add：{file_path}"));
+        }
+        SvnOperationKind::DeletePath => {
+            let Some(file_path) = payload.file_path.as_deref() else {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "删除参数缺失",
+                    Some("缺少要删除的文件或目录路径。".to_string()),
+                );
+                return;
+            };
+
+            let canonical_root = match canonicalize_delete_working_copy_root(&root) {
+                Ok(canonical_root) if canonical_root == root => canonical_root,
+                Ok(canonical_root) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "删除安全校验失败",
+                        Some(format!(
+                            "工作副本根目录在任务排队后发生变化：{}",
+                            canonical_root.display()
+                        )),
+                    );
+                    return;
+                }
+                Err(error) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "删除安全校验失败",
+                        Some(nova_error_text(&error)),
+                    );
+                    return;
+                }
+            };
+            let Some(expected_identity) = payload.delete_target_identity.as_ref() else {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "删除安全校验失败",
+                    Some("删除任务缺少目标身份快照。".to_string()),
+                );
+                return;
+            };
+            let current_identity =
+                match validate_delete_target(&payload.svn_executable, &canonical_root, file_path) {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        update_task(
+                            state,
+                            task_id,
+                            TaskStatus::Failed,
+                            "删除安全校验失败",
+                            Some(nova_error_text(&error)),
+                        );
+                        return;
+                    }
+                };
+            if &current_identity != expected_identity {
+                let error = delete_target_changed_error(expected_identity, &current_identity);
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "删除目标已发生变化",
+                    Some(nova_error_text(&error)),
+                );
+                return;
+            }
+            command
+                .arg("delete")
+                .arg("--force")
+                .arg(canonical_root.join(file_path));
+            append_task_log(
+                state,
+                task_id,
+                &format!("执行 svn delete --force：{file_path}"),
+            );
         }
         SvnOperationKind::RevertFile => {
             let Some(file_path) = payload.file_path.as_deref() else {
@@ -3261,11 +3386,11 @@ fn normalize_relative_file_path(
     code: &'static str,
     message: &'static str,
 ) -> Result<String, NovaError> {
-    let trimmed = file.trim();
-    let path = Path::new(trimmed);
-    if trimmed.is_empty()
-        || path_utils::is_absolute_or_windows_path(path, trimmed)
-        || path_utils::has_parent_segment(trimmed)
+    let path = Path::new(file);
+    if file.is_empty()
+        || task_file_path_is_absolute(path, file)
+        || task_file_path_has_parent_segment(file)
+        || task_file_path_has_unsafe_platform_alias(file)
     {
         return Err(NovaError::command(
             code,
@@ -3275,7 +3400,7 @@ fn normalize_relative_file_path(
         ));
     }
 
-    if trimmed.chars().any(char::is_control) {
+    if file.chars().any(char::is_control) {
         return Err(NovaError::command(
             code,
             message,
@@ -3284,7 +3409,446 @@ fn normalize_relative_file_path(
         ));
     }
 
-    Ok(path_utils::normalize_relative_separators(trimmed))
+    Ok(normalize_task_file_path_separators(file))
+}
+
+#[cfg(windows)]
+fn task_file_path_is_absolute(path: &Path, raw: &str) -> bool {
+    path_utils::is_absolute_or_windows_path(path, raw)
+}
+
+#[cfg(not(windows))]
+fn task_file_path_is_absolute(path: &Path, _raw: &str) -> bool {
+    path.is_absolute()
+}
+
+#[cfg(windows)]
+fn task_file_path_has_parent_segment(raw: &str) -> bool {
+    raw.split(['/', '\\']).any(|segment| segment == "..")
+}
+
+#[cfg(not(windows))]
+fn task_file_path_has_parent_segment(raw: &str) -> bool {
+    raw.split('/').any(|segment| segment == "..")
+}
+
+#[cfg(windows)]
+fn task_file_path_has_unsafe_platform_alias(raw: &str) -> bool {
+    raw.split(['/', '\\'])
+        .any(delete_path_segment_has_windows_alias)
+}
+
+#[cfg(not(windows))]
+fn task_file_path_has_unsafe_platform_alias(_raw: &str) -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn normalize_task_file_path_separators(raw: &str) -> String {
+    raw.replace('\\', "/")
+}
+
+#[cfg(not(windows))]
+fn normalize_task_file_path_separators(raw: &str) -> String {
+    raw.to_string()
+}
+
+fn normalize_delete_path(file: &str) -> Result<String, NovaError> {
+    const CODE: &str = "DELETE_PATH_INVALID";
+    const MESSAGE: &str = "删除路径无效";
+
+    let path = Path::new(file);
+    if file.is_empty()
+        || delete_path_has_unsafe_platform_syntax(path, file)
+        || file.chars().any(char::is_control)
+    {
+        return Err(NovaError::command(
+            CODE,
+            MESSAGE,
+            Some("路径必须使用 `/` 分隔，并且是工作副本内不含控制字符的严格相对路径。".to_string()),
+            true,
+        ));
+    }
+
+    let segments = file.split('/').collect::<Vec<_>>();
+    if segments.iter().any(|segment| {
+        segment.is_empty() || matches!(*segment, "." | "..") || segment.eq_ignore_ascii_case(".svn")
+    }) || segments
+        .iter()
+        .any(|segment| delete_path_segment_has_windows_alias(segment))
+    {
+        return Err(NovaError::command(
+            CODE,
+            MESSAGE,
+            Some("路径不能包含空路径段、`.`、`..`、`.svn` 元数据目录或系统路径别名。".to_string()),
+            true,
+        ));
+    }
+
+    Ok(file.to_string())
+}
+
+#[cfg(windows)]
+fn delete_path_has_unsafe_platform_syntax(path: &Path, file: &str) -> bool {
+    let bytes = file.as_bytes();
+    let has_windows_prefix = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    path_utils::is_absolute_or_windows_path(path, file)
+        || file.starts_with('/')
+        || file.contains('\\')
+        || has_windows_prefix
+}
+
+#[cfg(not(windows))]
+fn delete_path_has_unsafe_platform_syntax(path: &Path, _file: &str) -> bool {
+    path.is_absolute()
+}
+
+#[cfg(windows)]
+fn delete_path_segment_has_windows_alias(segment: &str) -> bool {
+    segment.ends_with(' ') || segment.ends_with('.') || segment.contains(':')
+}
+
+#[cfg(not(windows))]
+fn delete_path_segment_has_windows_alias(_segment: &str) -> bool {
+    false
+}
+
+fn canonicalize_delete_working_copy_root(root: &Path) -> Result<PathBuf, NovaError> {
+    let canonical_root = fs::canonicalize(root).map_err(|error| {
+        NovaError::command(
+            "DELETE_TARGET_UNSAFE",
+            "无法安全解析删除目标工作副本",
+            Some(format!("路径：{}；错误：{error}", root.display())),
+            true,
+        )
+    })?;
+    if !canonical_root.is_absolute() {
+        return Err(NovaError::command(
+            "DELETE_TARGET_UNSAFE",
+            "删除目标工作副本不是绝对路径",
+            Some(format!("路径：{}", canonical_root.display())),
+            true,
+        ));
+    }
+
+    Ok(canonical_root)
+}
+
+fn validate_delete_target(
+    svn_executable: &str,
+    working_copy_root: &Path,
+    relative_path: &str,
+) -> Result<DeleteTargetIdentity, NovaError> {
+    validate_delete_target_ancestors(working_copy_root, relative_path)?;
+
+    let target = working_copy_root.join(relative_path);
+    let output = Command::new(svn_executable)
+        .args(["info", "--xml"])
+        .arg(&target)
+        .current_dir(working_copy_root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "DELETE_TARGET_NOT_VERSIONED",
+                "无法验证删除目标的 SVN 工作副本",
+                Some(format!("无法执行 `{svn_executable} info --xml`：{error}")),
+                true,
+            )
+        })?;
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "DELETE_TARGET_NOT_VERSIONED",
+            "删除目标不是版本控制项目",
+            Some(command_output_error_detail(
+                svn_executable,
+                "info --xml",
+                &output,
+            )),
+            true,
+        ));
+    }
+
+    let xml = std::str::from_utf8(&output.stdout).map_err(|error| {
+        NovaError::command(
+            "DELETE_TARGET_NOT_VERSIONED",
+            "删除目标的 SVN 信息不是有效 UTF-8",
+            Some(error.to_string()),
+            true,
+        )
+    })?;
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "DELETE_TARGET_NOT_VERSIONED",
+            "无法解析删除目标的 SVN 信息",
+            Some(format!("svn info --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+    let mut entries = document
+        .descendants()
+        .filter(|node| node.has_tag_name("entry"));
+    let entry = entries.next().ok_or_else(|| {
+        NovaError::command(
+            "DELETE_TARGET_NOT_VERSIONED",
+            "删除目标缺少 SVN 节点信息",
+            None,
+            true,
+        )
+    })?;
+    if entries.next().is_some() {
+        return Err(NovaError::command(
+            "DELETE_TARGET_NOT_VERSIONED",
+            "删除目标返回了多个 SVN 节点",
+            None,
+            true,
+        ));
+    }
+
+    let entry_kind = required_delete_info_attribute(entry, "kind")?;
+    if !matches!(entry_kind.as_str(), "file" | "dir") {
+        return Err(NovaError::command(
+            "DELETE_TARGET_NOT_VERSIONED",
+            "删除目标的 SVN 节点类型无效",
+            Some(format!("类型：{entry_kind}")),
+            true,
+        ));
+    }
+    let url = required_delete_info_text(entry, "url")?;
+    let relative_url = text_child(entry, "relative-url");
+    let repository_uuid = entry
+        .children()
+        .find(|node| node.has_tag_name("repository"))
+        .and_then(|repository| text_child(repository, "uuid"));
+    let wc_info = entry
+        .children()
+        .find(|node| node.has_tag_name("wc-info"))
+        .ok_or_else(|| {
+            NovaError::command(
+                "DELETE_TARGET_NOT_VERSIONED",
+                "删除目标缺少 SVN 工作副本信息",
+                None,
+                true,
+            )
+        })?;
+    let reported_root = required_delete_info_text(wc_info, "wcroot-abspath")?;
+    let reported_root = fs::canonicalize(&reported_root).map_err(|error| {
+        NovaError::command(
+            "DELETE_TARGET_NOT_VERSIONED",
+            "无法解析删除目标所属的 SVN 工作副本",
+            Some(format!("路径：{reported_root}；错误：{error}")),
+            true,
+        )
+    })?;
+    if reported_root != working_copy_root {
+        return Err(NovaError::command(
+            "DELETE_TARGET_NOT_VERSIONED",
+            "删除目标不属于当前 SVN 工作副本",
+            Some(format!(
+                "当前工作副本：{}；目标工作副本：{}",
+                working_copy_root.display(),
+                reported_root.display()
+            )),
+            true,
+        ));
+    }
+
+    validate_delete_target_ancestors(working_copy_root, relative_path)?;
+
+    let (filesystem_kind, final_node_is_symlink, final_node_is_reparse_point) =
+        read_delete_target_filesystem_identity(&target)?;
+    let filesystem_kind_matches_svn = matches!(
+        (entry_kind.as_str(), &filesystem_kind),
+        (
+            "file",
+            DeleteFilesystemNodeKind::File
+                | DeleteFilesystemNodeKind::Symlink
+                | DeleteFilesystemNodeKind::Missing
+        ) | (
+            "dir",
+            DeleteFilesystemNodeKind::Directory | DeleteFilesystemNodeKind::Missing
+        )
+    );
+    if !filesystem_kind_matches_svn {
+        return Err(NovaError::command(
+            "DELETE_TARGET_UNSAFE",
+            "删除目标的文件系统类型与 SVN 节点类型不一致",
+            Some(format!(
+                "SVN 类型：{entry_kind}；文件系统类型：{filesystem_kind:?}"
+            )),
+            true,
+        ));
+    }
+
+    Ok(DeleteTargetIdentity {
+        entry_kind,
+        entry_revision: entry.attribute("revision").map(ToString::to_string),
+        url,
+        relative_url,
+        repository_uuid,
+        schedule: required_delete_info_text(wc_info, "schedule")?,
+        depth: text_child(wc_info, "depth"),
+        copy_from_url: text_child(wc_info, "copy-from-url"),
+        copy_from_revision: text_child(wc_info, "copy-from-rev"),
+        filesystem_kind,
+        final_node_is_symlink,
+        final_node_is_reparse_point,
+    })
+}
+
+fn required_delete_info_attribute(
+    node: roxmltree::Node<'_, '_>,
+    attribute: &str,
+) -> Result<String, NovaError> {
+    node.attribute(attribute)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| {
+            NovaError::command(
+                "DELETE_TARGET_NOT_VERSIONED",
+                "删除目标的 SVN 信息不完整",
+                Some(format!("缺少属性：{attribute}")),
+                true,
+            )
+        })
+}
+
+fn required_delete_info_text(
+    node: roxmltree::Node<'_, '_>,
+    tag_name: &str,
+) -> Result<String, NovaError> {
+    text_child(node, tag_name).ok_or_else(|| {
+        NovaError::command(
+            "DELETE_TARGET_NOT_VERSIONED",
+            "删除目标的 SVN 信息不完整",
+            Some(format!("缺少字段：{tag_name}")),
+            true,
+        )
+    })
+}
+
+fn read_delete_target_filesystem_identity(
+    target: &Path,
+) -> Result<(DeleteFilesystemNodeKind, bool, bool), NovaError> {
+    let metadata = match fs::symlink_metadata(target) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((DeleteFilesystemNodeKind::Missing, false, false));
+        }
+        Err(error) => {
+            return Err(NovaError::command(
+                "DELETE_TARGET_UNSAFE",
+                "无法读取删除目标的文件系统身份",
+                Some(format!("路径：{}；错误：{error}", target.display())),
+                true,
+            ));
+        }
+    };
+    let is_symlink = metadata.file_type().is_symlink();
+    let is_reparse_point = metadata_is_reparse_point(&metadata);
+    let kind = if is_symlink {
+        DeleteFilesystemNodeKind::Symlink
+    } else if is_reparse_point {
+        DeleteFilesystemNodeKind::ReparsePoint
+    } else if metadata.is_file() {
+        DeleteFilesystemNodeKind::File
+    } else if metadata.is_dir() {
+        DeleteFilesystemNodeKind::Directory
+    } else {
+        DeleteFilesystemNodeKind::Other
+    };
+
+    Ok((kind, is_symlink, is_reparse_point))
+}
+
+fn delete_target_changed_error(
+    expected: &DeleteTargetIdentity,
+    current: &DeleteTargetIdentity,
+) -> NovaError {
+    NovaError::command(
+        "DELETE_TARGET_CHANGED",
+        "删除目标在任务排队后发生变化",
+        Some(format!(
+            "排队时：SVN {} / {}，文件系统 {:?}；当前：SVN {} / {}，文件系统 {:?}",
+            expected.entry_kind,
+            expected.schedule,
+            expected.filesystem_kind,
+            current.entry_kind,
+            current.schedule,
+            current.filesystem_kind
+        )),
+        true,
+    )
+}
+
+fn validate_delete_target_ancestors(
+    working_copy_root: &Path,
+    relative_path: &str,
+) -> Result<(), NovaError> {
+    let mut current = working_copy_root.to_path_buf();
+    let mut segments = relative_path.split('/').peekable();
+    while let Some(segment) = segments.next() {
+        let is_target = segments.peek().is_none();
+        current.push(segment);
+        let metadata = match fs::symlink_metadata(&current) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => {
+                return Err(NovaError::command(
+                    "DELETE_TARGET_UNSAFE",
+                    "无法检查删除目标路径",
+                    Some(format!("路径：{}；错误：{error}", current.display())),
+                    true,
+                ));
+            }
+        };
+        let is_symlink = metadata.file_type().is_symlink();
+        if (!is_target && is_symlink)
+            || (metadata_is_reparse_point(&metadata) && !(is_target && is_symlink))
+        {
+            return Err(NovaError::command(
+                "DELETE_TARGET_UNSAFE",
+                "删除目标的中间路径包含符号链接或重解析点",
+                Some(format!("路径：{}", current.display())),
+                true,
+            ));
+        }
+        if is_target && is_symlink {
+            continue;
+        }
+
+        let canonical_current = fs::canonicalize(&current).map_err(|error| {
+            NovaError::command(
+                "DELETE_TARGET_UNSAFE",
+                "无法安全解析删除目标路径",
+                Some(format!("路径：{}；错误：{error}", current.display())),
+                true,
+            )
+        })?;
+        if !canonical_current.starts_with(working_copy_root) {
+            return Err(NovaError::command(
+                "DELETE_TARGET_UNSAFE",
+                "删除目标路径逃逸出当前工作副本",
+                Some(format!("路径：{}", canonical_current.display())),
+                true,
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(windows)]
+fn metadata_is_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn metadata_is_reparse_point(_metadata: &fs::Metadata) -> bool {
+    false
 }
 
 fn operation_title(kind: &SvnOperationKind, file_path: Option<&str>) -> String {
@@ -3293,6 +3857,9 @@ fn operation_title(kind: &SvnOperationKind, file_path: Option<&str>) -> String {
         SvnOperationKind::Cleanup => "清理工作副本".to_string(),
         SvnOperationKind::AddFile => {
             format!("添加文件 {}", file_path.unwrap_or_default())
+        }
+        SvnOperationKind::DeletePath => {
+            format!("删除 {}", file_path.unwrap_or_default())
         }
         SvnOperationKind::RevertFile => {
             format!("撤销文件 {}", file_path.unwrap_or(""))
@@ -4056,7 +4623,53 @@ mod tests {
     #[test]
     fn rejects_absolute_or_parent_paths() {
         assert!(normalize_relative_file_path("../secret.txt", "INVALID", "invalid",).is_err());
+        #[cfg(windows)]
         assert!(normalize_relative_file_path("C:\\secret.txt", "INVALID", "invalid",).is_err());
+        #[cfg(not(windows))]
+        assert_eq!(
+            normalize_relative_file_path("C:\\secret.txt", "INVALID", "invalid")
+                .expect("Unix Windows 风格文本是普通文件名"),
+            "C:\\secret.txt"
+        );
+    }
+
+    #[test]
+    fn preserves_platform_specific_relative_file_paths() {
+        assert_eq!(
+            normalize_relative_file_path(" leading.txt", "INVALID", "invalid")
+                .expect("文件路径前导空格应保持原样"),
+            " leading.txt"
+        );
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                normalize_relative_file_path("trailing.txt ", "INVALID", "invalid")
+                    .expect("Unix 文件路径末尾空格应保持原样"),
+                "trailing.txt "
+            );
+            assert_eq!(
+                normalize_relative_file_path("literal\\name.txt", "INVALID", "invalid")
+                    .expect("Unix 反斜杠文件名应保持原样"),
+                "literal\\name.txt"
+            );
+            assert_eq!(
+                normalize_relative_file_path("literal\\..\\name.txt", "INVALID", "invalid")
+                    .expect("Unix 反斜杠不是父级分隔符"),
+                "literal\\..\\name.txt"
+            );
+        }
+        #[cfg(windows)]
+        {
+            assert!(normalize_relative_file_path("trailing.txt ", "INVALID", "invalid").is_err());
+            assert_eq!(
+                normalize_relative_file_path("src\\main.rs", "INVALID", "invalid")
+                    .expect("Windows 反斜杠应规范化"),
+                "src/main.rs"
+            );
+            assert!(
+                normalize_relative_file_path("src\\..\\secret.txt", "INVALID", "invalid").is_err()
+            );
+        }
     }
 
     #[test]
@@ -4068,6 +4681,75 @@ mod tests {
             NovaError::Command { code, .. } => {
                 assert_eq!(code, "INVALID");
             }
+        }
+    }
+
+    #[test]
+    fn validates_strict_delete_paths() {
+        assert_eq!(
+            normalize_delete_path(" src/nested/file.txt").expect("相对路径应通过校验"),
+            " src/nested/file.txt"
+        );
+        #[cfg(not(windows))]
+        assert_eq!(
+            normalize_delete_path("leading.txt ").expect("末尾空格必须原样保留"),
+            "leading.txt "
+        );
+
+        for invalid_path in [
+            "",
+            ".svn/wc.db",
+            "src/.svn/entries",
+            "../outside.txt",
+            "src/../outside.txt",
+            "src/./file.txt",
+            "src//file.txt",
+            "/tmp/outside.txt",
+            "src/file.txt\nnext",
+        ] {
+            let error =
+                normalize_delete_path(invalid_path).expect_err("不安全的删除路径必须被拒绝");
+            assert!(matches!(
+                error,
+                NovaError::Command { ref code, .. } if code == "DELETE_PATH_INVALID"
+            ));
+        }
+
+        #[cfg(not(windows))]
+        for valid_path in [
+            "src\\.SVN\\wc.db",
+            "src\\nested\\file.txt",
+            "\\tmp\\outside.txt",
+            "C:\\outside.txt",
+            "C:outside.txt",
+        ] {
+            assert_eq!(
+                normalize_delete_path(valid_path).expect("Unix 反斜杠文件名应通过校验"),
+                valid_path
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_windows_delete_path_aliases() {
+        for invalid_path in [
+            "src\\nested\\file.txt",
+            "\\tmp\\outside.txt",
+            "C:\\outside.txt",
+            "C:outside.txt",
+            "file.txt ",
+            "directory./file.txt",
+            ".svn./wc.db",
+            ".svn /wc.db",
+            "file.txt:alternate-stream",
+        ] {
+            let error =
+                normalize_delete_path(invalid_path).expect_err("Windows 路径别名必须被拒绝");
+            assert!(matches!(
+                error,
+                NovaError::Command { ref code, .. } if code == "DELETE_PATH_INVALID"
+            ));
         }
     }
 
@@ -4123,7 +4805,7 @@ mod tests {
             .create_svn_operation_task(CreateSvnOperationTaskRequest {
                 working_copy_root: dir.display().to_string(),
                 kind: SvnOperationKind::LockFile,
-                file_path: Some(" src\\main.rs ".to_string()),
+                file_path: Some("src/main.rs".to_string()),
                 svn_executable: None,
             })
             .expect("lock task should be created");
@@ -4140,7 +4822,7 @@ mod tests {
             .create_svn_operation_task(CreateSvnOperationTaskRequest {
                 working_copy_root: dir.display().to_string(),
                 kind: SvnOperationKind::ResolveTheirsFull,
-                file_path: Some("src\\conflict.txt".to_string()),
+                file_path: Some("src/conflict.txt".to_string()),
                 svn_executable: None,
             })
             .expect("resolve task should be created");
@@ -4163,6 +4845,7 @@ mod tests {
 
         for (kind, expected_code) in [
             (SvnOperationKind::AddFile, "ADD_FILE_PATH_INVALID"),
+            (SvnOperationKind::DeletePath, "DELETE_PATH_INVALID"),
             (SvnOperationKind::LockFile, "LOCK_FILE_PATH_INVALID"),
             (SvnOperationKind::UnlockFile, "UNLOCK_FILE_PATH_INVALID"),
             (
@@ -4257,6 +4940,610 @@ mod tests {
         assert!(added_paths
             .iter()
             .any(|path| path.ends_with("nested/new.txt")));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn deletes_versioned_file_and_directory_in_real_working_copy() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-delete-integration");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+
+        fs::write(working_copy.join("tracked.txt"), "tracked file\n").expect("write tracked file");
+        fs::write(working_copy.join(" tracked.txt"), "spaced tracked file\n")
+            .expect("write spaced tracked file");
+        fs::create_dir_all(working_copy.join("versioned-dir/nested"))
+            .expect("create versioned directory");
+        fs::write(
+            working_copy.join("versioned-dir/nested/child.txt"),
+            "versioned child\n",
+        )
+        .expect("write versioned child");
+        #[cfg(unix)]
+        {
+            fs::write(
+                working_copy.join("literal\\name.txt"),
+                "literal backslash file\n",
+            )
+            .expect("write literal backslash file");
+            fs::create_dir_all(working_copy.join("literal")).expect("create literal directory");
+            fs::write(working_copy.join("literal/name.txt"), "nested slash file\n")
+                .expect("write nested slash file");
+        }
+        run_test_command(
+            Command::new("svn")
+                .arg("add")
+                .arg(working_copy.join("tracked.txt"))
+                .arg(working_copy.join(" tracked.txt"))
+                .arg(working_copy.join("versioned-dir")),
+        );
+        #[cfg(unix)]
+        run_test_command(
+            Command::new("svn")
+                .arg("add")
+                .arg(working_copy.join("literal\\name.txt"))
+                .arg(working_copy.join("literal")),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .args(["-m", "初始化删除测试"])
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("unversioned.txt"), "unversioned\n")
+            .expect("write unversioned file");
+        run_test_command(
+            Command::new("svn")
+                .args(["propset", "svn:ignore", "ignored.tmp"])
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("ignored.tmp"), "ignored\n").expect("write ignored file");
+
+        let queue = TaskQueue::new();
+        for target in ["unversioned.txt", "ignored.tmp"] {
+            let error = queue
+                .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                    working_copy_root: working_copy.display().to_string(),
+                    kind: SvnOperationKind::DeletePath,
+                    file_path: Some(target.to_string()),
+                    svn_executable: None,
+                })
+                .expect_err("未版本控制或忽略文件不得创建 Delete 任务");
+            assert!(matches!(
+                error,
+                NovaError::Command { ref code, .. } if code == "DELETE_TARGET_NOT_VERSIONED"
+            ));
+            assert!(
+                working_copy.join(target).is_file(),
+                "被拒绝的 Delete 目标必须保持存在：{target}"
+            );
+        }
+
+        #[cfg(unix)]
+        {
+            let literal_backslash_task = queue
+                .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                    working_copy_root: working_copy.display().to_string(),
+                    kind: SvnOperationKind::DeletePath,
+                    file_path: Some("literal\\name.txt".to_string()),
+                    svn_executable: None,
+                })
+                .expect("Unix 反斜杠文件应允许创建 Delete 任务");
+            let literal_backslash_task =
+                wait_for_test_task(&queue, &literal_backslash_task.task_id);
+            assert!(
+                matches!(literal_backslash_task.status, TaskStatus::Success),
+                "Unix 反斜杠文件删除任务失败：{:?}",
+                literal_backslash_task.error
+            );
+            assert!(!working_copy.join("literal\\name.txt").exists());
+            assert_eq!(
+                fs::read_to_string(working_copy.join("literal/name.txt"))
+                    .expect("nested slash target remains readable"),
+                "nested slash file\n"
+            );
+        }
+
+        let spaced_file_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::DeletePath,
+                file_path: Some(" tracked.txt".to_string()),
+                svn_executable: None,
+            })
+            .expect("delete exact spaced file task should be created");
+        let spaced_file_task = wait_for_test_task(&queue, &spaced_file_task.task_id);
+        assert!(
+            matches!(spaced_file_task.status, TaskStatus::Success),
+            "带空格文件删除任务失败：{:?}",
+            spaced_file_task.error
+        );
+        assert!(!working_copy.join(" tracked.txt").exists());
+        assert!(
+            working_copy.join("tracked.txt").exists(),
+            "删除带空格目标不得误删近似文件"
+        );
+
+        let file_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::DeletePath,
+                file_path: Some("tracked.txt".to_string()),
+                svn_executable: None,
+            })
+            .expect("delete file task should be created");
+        assert_eq!(file_task.title, "删除 tracked.txt");
+        let file_task = wait_for_test_task(&queue, &file_task.task_id);
+        assert!(
+            matches!(file_task.status, TaskStatus::Success),
+            "文件删除任务失败：{:?}",
+            file_task.error
+        );
+        assert!(file_task
+            .logs
+            .iter()
+            .any(|log| log.message == "执行 svn delete --force：tracked.txt"));
+
+        let directory_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::DeletePath,
+                file_path: Some("versioned-dir".to_string()),
+                svn_executable: None,
+            })
+            .expect("delete directory task should be created");
+        let directory_task = wait_for_test_task(&queue, &directory_task.task_id);
+        assert!(
+            matches!(directory_task.status, TaskStatus::Success),
+            "目录删除任务失败：{:?}",
+            directory_task.error
+        );
+
+        assert!(!working_copy.join("tracked.txt").exists());
+        assert!(!working_copy.join("versioned-dir").exists());
+
+        let output = run_test_command(
+            Command::new("svn")
+                .args(["status", "--xml"])
+                .arg(&working_copy),
+        );
+        let xml = String::from_utf8_lossy(&output.stdout);
+        let document = Document::parse(&xml).expect("status xml parses");
+        let deleted_paths = document
+            .descendants()
+            .filter(|node| node.has_tag_name("entry"))
+            .filter(|node| {
+                node.children()
+                    .find(|child| child.has_tag_name("wc-status"))
+                    .and_then(|status| status.attribute("item"))
+                    == Some("deleted")
+            })
+            .filter_map(|node| node.attribute("path"))
+            .collect::<Vec<_>>();
+        assert!(deleted_paths
+            .iter()
+            .any(|path| path.ends_with("tracked.txt")));
+        assert!(deleted_paths
+            .iter()
+            .any(|path| path.ends_with(" tracked.txt")));
+        assert!(deleted_paths
+            .iter()
+            .any(|path| path.ends_with("versioned-dir")));
+
+        for invalid_path in [
+            ".svn/wc.db".to_string(),
+            "versioned-dir/.svn/entries".to_string(),
+            root.join("outside.txt").display().to_string(),
+            "../outside.txt".to_string(),
+        ] {
+            let error = queue
+                .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                    working_copy_root: working_copy.display().to_string(),
+                    kind: SvnOperationKind::DeletePath,
+                    file_path: Some(invalid_path),
+                    svn_executable: None,
+                })
+                .expect_err("不安全的 Delete 目标必须被拒绝");
+            assert!(matches!(
+                error,
+                NovaError::Command { ref code, .. } if code == "DELETE_PATH_INVALID"
+            ));
+        }
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_queued_delete_after_target_identity_replacement() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-delete-identity-replacement");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("victim.txt"), "original victim\n")
+            .expect("write copied replacement victim");
+        fs::write(
+            working_copy.join("obstructed.txt"),
+            "original obstruction victim\n",
+        )
+        .expect("write obstruction victim");
+        fs::write(
+            working_copy.join("mutable.txt"),
+            "original mutable content\n",
+        )
+        .expect("write mutable victim");
+        fs::create_dir_all(working_copy.join("source-dir")).expect("create copy source");
+        fs::write(
+            working_copy.join("source-dir/tracked.txt"),
+            "tracked copied child\n",
+        )
+        .expect("write tracked copied child");
+        run_test_command(
+            Command::new("svn")
+                .arg("add")
+                .arg(working_copy.join("victim.txt"))
+                .arg(working_copy.join("obstructed.txt"))
+                .arg(working_copy.join("mutable.txt"))
+                .arg(working_copy.join("source-dir")),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .args(["-m", "初始化删除身份替换测试"])
+                .arg(&working_copy),
+        );
+
+        let queue = TaskQueue::new();
+        queue.create_mock_task(CreateMockTaskRequest {
+            title: Some("阻塞 Delete 身份替换测试队列".to_string()),
+            outcome: MockTaskOutcome::Success,
+        });
+        let copied_replacement_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::DeletePath,
+                file_path: Some("victim.txt".to_string()),
+                svn_executable: None,
+            })
+            .expect("初始文件 Delete 任务应创建成功");
+        let obstructed_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::DeletePath,
+                file_path: Some("obstructed.txt".to_string()),
+                svn_executable: None,
+            })
+            .expect("初始 obstruction 文件 Delete 任务应创建成功");
+        let mutable_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::DeletePath,
+                file_path: Some("mutable.txt".to_string()),
+                svn_executable: None,
+            })
+            .expect("初始可修改文件 Delete 任务应创建成功");
+
+        run_test_command(
+            Command::new("svn")
+                .arg("delete")
+                .arg("--force")
+                .arg(working_copy.join("victim.txt")),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("copy")
+                .arg(working_copy.join("source-dir"))
+                .arg(working_copy.join("victim.txt")),
+        );
+        fs::write(
+            working_copy.join("victim.txt/unversioned.txt"),
+            "unversioned copied child\n",
+        )
+        .expect("write unversioned copied child");
+
+        fs::remove_file(working_copy.join("obstructed.txt"))
+            .expect("remove original obstruction victim");
+        fs::create_dir(working_copy.join("obstructed.txt"))
+            .expect("replace file with obstructing directory");
+        fs::write(
+            working_copy.join("obstructed.txt/unversioned.txt"),
+            "unversioned obstructing child\n",
+        )
+        .expect("write obstructing child");
+        fs::write(working_copy.join("mutable.txt"), "modified after enqueue\n")
+            .expect("modify file content after enqueue");
+
+        let copied_replacement_task = wait_for_test_task(&queue, &copied_replacement_task.task_id);
+        let obstructed_task = wait_for_test_task(&queue, &obstructed_task.task_id);
+        let mutable_task = wait_for_test_task(&queue, &mutable_task.task_id);
+        assert!(
+            matches!(copied_replacement_task.status, TaskStatus::Failed),
+            "文件替换为 copied directory 后 Delete 必须失败"
+        );
+        assert!(copied_replacement_task
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("排队后发生变化")));
+        assert!(
+            matches!(obstructed_task.status, TaskStatus::Failed),
+            "文件替换为 obstructing directory 后 Delete 必须失败"
+        );
+        assert!(obstructed_task
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("文件系统类型与 SVN 节点类型不一致")));
+        assert!(
+            matches!(mutable_task.status, TaskStatus::Success),
+            "仅修改普通文件内容不得改变 Delete 目标身份：{:?}",
+            mutable_task.error
+        );
+        assert_eq!(
+            fs::read_to_string(working_copy.join("victim.txt/tracked.txt"))
+                .expect("tracked copied child remains"),
+            "tracked copied child\n"
+        );
+        assert_eq!(
+            fs::read_to_string(working_copy.join("victim.txt/unversioned.txt"))
+                .expect("unversioned copied child remains"),
+            "unversioned copied child\n"
+        );
+        assert_eq!(
+            fs::read_to_string(working_copy.join("obstructed.txt/unversioned.txt"))
+                .expect("obstructing child remains"),
+            "unversioned obstructing child\n"
+        );
+        assert!(!working_copy.join("mutable.txt").exists());
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deletes_versioned_symlink_without_touching_external_target() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-delete-versioned-symlink");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        let external_target = root.join("external-target");
+        fs::create_dir_all(&external_target).expect("create external target");
+        fs::write(external_target.join("protected.txt"), "must remain\n")
+            .expect("write external protected file");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        std::os::unix::fs::symlink(&external_target, working_copy.join("versioned-link"))
+            .expect("create versioned symlink");
+        run_test_command(
+            Command::new("svn")
+                .arg("add")
+                .arg(working_copy.join("versioned-link")),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .args(["-m", "初始化版本控制符号链接测试"])
+                .arg(&working_copy),
+        );
+
+        let queue = TaskQueue::new();
+        let task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::DeletePath,
+                file_path: Some("versioned-link".to_string()),
+                svn_executable: None,
+            })
+            .expect("已版本控制符号链接应允许创建 Delete 任务");
+        let task = wait_for_test_task(&queue, &task.task_id);
+        assert!(
+            matches!(task.status, TaskStatus::Success),
+            "符号链接删除任务失败：{:?}",
+            task.error
+        );
+        assert!(fs::symlink_metadata(working_copy.join("versioned-link")).is_err());
+        assert_eq!(
+            fs::read_to_string(external_target.join("protected.txt"))
+                .expect("external protected file remains readable"),
+            "must remain\n"
+        );
+
+        let output = run_test_command(
+            Command::new("svn")
+                .args(["status", "--xml"])
+                .arg(&working_copy),
+        );
+        let xml = String::from_utf8_lossy(&output.stdout);
+        let document = Document::parse(&xml).expect("status xml parses");
+        assert!(document
+            .descendants()
+            .filter(|node| node.has_tag_name("entry"))
+            .any(|node| {
+                node.attribute("path")
+                    .is_some_and(|path| path.ends_with("versioned-link"))
+                    && node
+                        .children()
+                        .find(|child| child.has_tag_name("wc-status"))
+                        .and_then(|status| status.attribute("item"))
+                        == Some("deleted")
+            }));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_delete_through_symlink_to_another_working_copy() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-delete-symlink");
+        let repository = root.join("repository");
+        let working_copy_a = root.join("working-copy-a");
+        let working_copy_b = working_copy_a.join("nested-working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy_a),
+        );
+        fs::write(working_copy_a.join("protected.txt"), "must remain\n")
+            .expect("write protected file");
+        fs::create_dir_all(working_copy_a.join("replaceable"))
+            .expect("create replaceable directory");
+        fs::write(
+            working_copy_a.join("replaceable/protected.txt"),
+            "must remain in directory\n",
+        )
+        .expect("write protected directory file");
+        run_test_command(
+            Command::new("svn")
+                .arg("add")
+                .arg(working_copy_a.join("protected.txt"))
+                .arg(working_copy_a.join("replaceable")),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .args(["-m", "初始化符号链接删除测试"])
+                .arg(&working_copy_a),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy_b),
+        );
+
+        let queue = TaskQueue::new();
+        queue.create_mock_task(CreateMockTaskRequest {
+            title: Some("阻塞 Delete 测试队列".to_string()),
+            outcome: MockTaskOutcome::Success,
+        });
+        let queued_delete = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy_a.display().to_string(),
+                kind: SvnOperationKind::DeletePath,
+                file_path: Some("replaceable/protected.txt".to_string()),
+                svn_executable: None,
+            })
+            .expect("入队时安全的 Delete 任务应创建成功");
+        fs::rename(
+            working_copy_a.join("replaceable"),
+            working_copy_a.join("replaceable-original"),
+        )
+        .expect("move original directory before queued delete runs");
+        std::os::unix::fs::symlink(
+            working_copy_b.join("replaceable"),
+            working_copy_a.join("replaceable"),
+        )
+        .expect("replace queued delete ancestor with symlink");
+        let queued_delete = wait_for_test_task(&queue, &queued_delete.task_id);
+        assert!(
+            matches!(queued_delete.status, TaskStatus::Failed),
+            "执行前被替换为符号链接的 Delete 必须失败"
+        );
+        assert_eq!(
+            fs::read_to_string(working_copy_b.join("replaceable/protected.txt"))
+                .expect("protected nested file remains readable"),
+            "must remain in directory\n"
+        );
+        fs::remove_file(working_copy_a.join("replaceable")).expect("remove replacement symlink");
+        fs::rename(
+            working_copy_a.join("replaceable-original"),
+            working_copy_a.join("replaceable"),
+        )
+        .expect("restore original directory");
+
+        let error = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy_a.display().to_string(),
+                kind: SvnOperationKind::DeletePath,
+                file_path: Some("nested-working-copy/protected.txt".to_string()),
+                svn_executable: None,
+            })
+            .expect_err("属于嵌套工作副本的 Delete 目标必须被拒绝");
+        assert!(matches!(
+            error,
+            NovaError::Command { ref code, .. } if code == "DELETE_TARGET_NOT_VERSIONED"
+        ));
+
+        std::os::unix::fs::symlink(&working_copy_b, working_copy_a.join("linked-working-copy"))
+            .expect("create working copy symlink");
+
+        let error = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy_a.display().to_string(),
+                kind: SvnOperationKind::DeletePath,
+                file_path: Some("linked-working-copy".to_string()),
+                svn_executable: None,
+            })
+            .expect_err("指向另一工作副本的未版本控制符号链接必须被拒绝");
+        assert!(matches!(
+            error,
+            NovaError::Command { ref code, .. } if code == "DELETE_TARGET_NOT_VERSIONED"
+        ));
+
+        let error = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy_a.display().to_string(),
+                kind: SvnOperationKind::DeletePath,
+                file_path: Some("linked-working-copy/protected.txt".to_string()),
+                svn_executable: None,
+            })
+            .expect_err("穿过符号链接的 Delete 必须在入队前被拒绝");
+        assert!(matches!(
+            error,
+            NovaError::Command { ref code, .. } if code == "DELETE_TARGET_UNSAFE"
+        ));
+        assert_eq!(
+            fs::read_to_string(working_copy_b.join("protected.txt"))
+                .expect("protected file remains readable"),
+            "must remain\n"
+        );
+        let output = run_test_command(
+            Command::new("svn")
+                .args(["status", "--xml"])
+                .arg(&working_copy_b),
+        );
+        assert!(
+            !status_xml_has_entries(&String::from_utf8_lossy(&output.stdout))
+                .expect("status xml parses"),
+            "第二个工作副本不得出现删除状态"
+        );
+
         fs::remove_dir_all(root).ok();
     }
 
