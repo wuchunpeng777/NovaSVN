@@ -25,6 +25,7 @@ describe("MainWorkspace", () => {
     const onUnselectCommitFile = vi.fn();
     const onSelectAllCommitFiles = vi.fn();
     const onClearCommitFiles = vi.fn();
+    const onAddFile = vi.fn();
     const modified = makeFile("src/main.ts", "modified", "main-digest");
     const unversioned = makeFile("notes/new.txt", "unversioned", "new-digest");
 
@@ -43,6 +44,7 @@ describe("MainWorkspace", () => {
         onUnselectCommitFile,
         onSelectAllCommitFiles,
         onClearCommitFiles,
+        onAddFile,
       },
     });
 
@@ -60,7 +62,8 @@ describe("MainWorkspace", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "未管理文件" }));
 
-    expect(screen.getByText("需先处理", { exact: true })).toBeInTheDocument();
+    await fireEvent.click(screen.getByText("Add", { exact: true }));
+    expect(onAddFile).toHaveBeenCalledWith("notes/new.txt");
   });
 });
 

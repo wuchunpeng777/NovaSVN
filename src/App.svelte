@@ -1084,6 +1084,7 @@
   onUnselectCommitFile={workspaceStore.unselectCommitFile}
   onSelectAllCommitFiles={workspaceStore.selectAllCommitFiles}
   onClearCommitFiles={workspaceStore.clearCommitFiles}
+  onAddFile={(path) => runSvnOperation("add_file", path)}
   onRevertFile={(path) => runSvnOperation("revert_file", path)}
   onLockFile={(path) => runSvnOperation("lock_file", path)}
   onUnlockFile={(path) => runSvnOperation("unlock_file", path)}

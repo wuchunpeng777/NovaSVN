@@ -96,6 +96,7 @@ pub struct CreateCommitTaskRequest {
 pub enum SvnOperationKind {
     Update,
     Cleanup,
+    AddFile,
     RevertFile,
     LockFile,
     UnlockFile,
@@ -451,6 +452,11 @@ impl TaskQueue {
     ) -> Result<Task, NovaError> {
         let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
         let file_path = match request.kind {
+            SvnOperationKind::AddFile => Some(normalize_relative_file_path(
+                request.file_path.as_deref().unwrap_or_default(),
+                "ADD_FILE_PATH_INVALID",
+                "Add 文件路径无效",
+            )?),
             SvnOperationKind::RevertFile => Some(normalize_relative_file_path(
                 request.file_path.as_deref().unwrap_or_default(),
                 "REVERT_FILE_PATH_INVALID",
@@ -1164,6 +1170,23 @@ fn run_svn_operation_task(
         SvnOperationKind::Cleanup => {
             command.arg("cleanup").arg(&root);
             append_task_log(state, task_id, "执行 svn cleanup");
+        }
+        SvnOperationKind::AddFile => {
+            let Some(file_path) = payload.file_path.as_deref() else {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "Add 执行失败",
+                    Some("缺少要 add 的文件路径。".to_string()),
+                );
+                return;
+            };
+            command
+                .arg("add")
+                .arg("--parents")
+                .arg(root.join(file_path));
+            append_task_log(state, task_id, &format!("执行 svn add：{file_path}"));
         }
         SvnOperationKind::RevertFile => {
             let Some(file_path) = payload.file_path.as_deref() else {
@@ -2453,6 +2476,9 @@ fn operation_title(kind: &SvnOperationKind, file_path: Option<&str>) -> String {
     match kind {
         SvnOperationKind::Update => "更新工作副本".to_string(),
         SvnOperationKind::Cleanup => "清理工作副本".to_string(),
+        SvnOperationKind::AddFile => {
+            format!("添加文件 {}", file_path.unwrap_or_default())
+        }
         SvnOperationKind::RevertFile => {
             format!("撤销文件 {}", file_path.unwrap_or(""))
         }
@@ -2876,6 +2902,42 @@ mod tests {
         dir
     }
 
+    fn svn_tools_available() -> bool {
+        Command::new("svn")
+            .args(["--version", "--quiet"])
+            .output()
+            .is_ok_and(|output| output.status.success())
+            && Command::new("svnadmin")
+                .args(["--version", "--quiet"])
+                .output()
+                .is_ok_and(|output| output.status.success())
+    }
+
+    fn run_test_command(command: &mut Command) -> std::process::Output {
+        let output = command.output().expect("测试命令应能启动");
+        assert!(
+            output.status.success(),
+            "测试命令执行失败：{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    fn wait_for_test_task(queue: &TaskQueue, task_id: &str) -> Task {
+        for _ in 0..100 {
+            let task = queue.get_task(task_id).expect("task exists");
+            if matches!(
+                task.status,
+                TaskStatus::Success | TaskStatus::Failed | TaskStatus::Cancelled
+            ) {
+                return task;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        panic!("任务未在测试超时前结束");
+    }
+
     #[cfg(windows)]
     fn write_svn_status_stub(dir: &Path, status_xml: &str) -> PathBuf {
         let path = dir.join("svn-status-stub.cmd");
@@ -3044,6 +3106,7 @@ mod tests {
         let dir = test_temp_dir("svn-operation-missing-path");
 
         for (kind, expected_code) in [
+            (SvnOperationKind::AddFile, "ADD_FILE_PATH_INVALID"),
             (SvnOperationKind::LockFile, "LOCK_FILE_PATH_INVALID"),
             (SvnOperationKind::UnlockFile, "UNLOCK_FILE_PATH_INVALID"),
             (
@@ -3078,6 +3141,67 @@ mod tests {
         }
 
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn adds_nested_unversioned_file_in_real_working_copy() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-add-integration");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::create_dir_all(working_copy.join("nested")).expect("create nested directory");
+        fs::write(working_copy.join("nested/new.txt"), "new file\n").expect("write new file");
+
+        let queue = TaskQueue::new();
+        let task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::AddFile,
+                file_path: Some("nested/new.txt".to_string()),
+                svn_executable: None,
+            })
+            .expect("add task should be created");
+        let task = wait_for_test_task(&queue, &task.task_id);
+
+        assert!(
+            matches!(task.status, TaskStatus::Success),
+            "Add 任务失败：{:?}",
+            task.error
+        );
+        let output = run_test_command(
+            Command::new("svn")
+                .args(["status", "--xml"])
+                .arg(&working_copy),
+        );
+        let xml = String::from_utf8_lossy(&output.stdout);
+        let document = Document::parse(&xml).expect("status xml parses");
+        let added_paths = document
+            .descendants()
+            .filter(|node| node.has_tag_name("entry"))
+            .filter(|node| {
+                node.children()
+                    .find(|child| child.has_tag_name("wc-status"))
+                    .and_then(|status| status.attribute("item"))
+                    == Some("added")
+            })
+            .filter_map(|node| node.attribute("path"))
+            .collect::<Vec<_>>();
+        assert!(added_paths.iter().any(|path| path.ends_with("nested")));
+        assert!(added_paths
+            .iter()
+            .any(|path| path.ends_with("nested/new.txt")));
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

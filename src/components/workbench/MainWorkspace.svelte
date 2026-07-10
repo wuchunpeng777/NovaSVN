@@ -231,6 +231,7 @@
   export let onUnselectCommitFile: (path: string) => void = () => {};
   export let onSelectAllCommitFiles: () => void = () => {};
   export let onClearCommitFiles: () => void = () => {};
+  export let onAddFile: (path: string) => void = () => {};
   export let onRevertFile: (path: string) => void = () => {};
   export let onLockFile: (path: string) => void = () => {};
   export let onUnlockFile: (path: string) => void = () => {};
@@ -491,6 +492,10 @@
   function isCommittablePath(path: string) {
     const file = changedFileForPath(path);
     return !!file && isCommittable(file);
+  }
+
+  function isUnversionedPath(path: string) {
+    return changedFileForPath(path)?.status === "unversioned";
   }
 
   function isTreeNodeCollapsed(node: WorkspaceFileNode) {
@@ -1729,7 +1734,20 @@
                   <span>{node.revision ?? "-"}</span>
                   <span>{formatBytes(node.file_size)}</span>
                   <span class="inline-row-actions">
-                    {#if isChangedPath(node.path) && isCommitSelected(node.path)}
+                    {#if isUnversionedPath(node.path)}
+                      <span
+                        role="button"
+                        tabindex="0"
+                        on:click|stopPropagation={() => onAddFile(node.path)}
+                        on:keydown|stopPropagation={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            onAddFile(node.path);
+                          }
+                        }}
+                      >
+                        Add
+                      </span>
+                    {:else if isChangedPath(node.path) && isCommitSelected(node.path)}
                       <em>已选提交</em>
                       <span
                         role="button"
@@ -1758,7 +1776,7 @@
                         {isCommittablePath(node.path) ? "选择提交" : "需先处理"}
                       </span>
                     {/if}
-                    {#if isChangedPath(node.path)}
+                    {#if isChangedPath(node.path) && !isUnversionedPath(node.path)}
                       <span
                         role="button"
                         tabindex="0"
@@ -1828,14 +1846,18 @@
                   >
                     定位
                   </button>
-                  <button
-                    type="button"
-                    title="查看逐行修改作者"
-                    on:click={onRefreshSvnBlame}
-                  >
-                    Blame
-                  </button>
-                  {#if selectedFile}
+                  {#if selectedFile?.status === "unversioned"}
+                    <button type="button" on:click={() => onAddFile(selectedFile.path)}>Add</button>
+                  {:else}
+                    <button
+                      type="button"
+                      title="查看逐行修改作者"
+                      on:click={onRefreshSvnBlame}
+                    >
+                      Blame
+                    </button>
+                  {/if}
+                  {#if selectedFile && selectedFile.status !== "unversioned"}
                     <button type="button" on:click={() => onLaunchExternalTool("diff", selectedFile.path)}>
                       外部 Diff
                     </button>
