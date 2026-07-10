@@ -1,6 +1,9 @@
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     fs,
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
     sync::{
@@ -13,6 +16,7 @@ use std::{
 
 use roxmltree::Document;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
 use crate::{
@@ -23,6 +27,8 @@ use crate::{
 };
 
 const REVISION_DIFF_PREVIEW_MAX_BYTES: usize = 2 * 1024 * 1024;
+const APPLY_PATCH_MAX_BYTES: u64 = 32 * 1024 * 1024;
+static APPLY_PATCH_SNAPSHOT_NONCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -209,11 +215,21 @@ pub struct CreateMergeTaskRequest {
     pub svn_executable: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateApplyPatchTaskRequest {
+    pub working_copy_root: String,
+    pub patch_file_path: String,
+    pub dry_run: bool,
+    pub expected_patch_digest: Option<String>,
+    pub svn_executable: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskResult {
     pub repository_list: Option<RepositoryListResult>,
     pub revision_diff: Option<RevisionDiffResult>,
     pub merge_result: Option<MergeResult>,
+    pub apply_patch_result: Option<ApplyPatchResult>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -255,6 +271,18 @@ pub struct MergeResult {
     pub line_count: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ApplyPatchResult {
+    pub dry_run: bool,
+    pub patch_file_path: String,
+    pub patch_digest: String,
+    pub output_text: String,
+    pub applied: usize,
+    pub rejected: usize,
+    pub skipped: usize,
+    pub conflicted: usize,
+}
+
 #[derive(Debug, Clone)]
 enum TaskPayload {
     Mock(MockTaskOutcome),
@@ -268,6 +296,7 @@ enum TaskPayload {
     SvnSwitch(SvnSwitchTaskPayload),
     RevisionDiff(RevisionDiffTaskPayload),
     Merge(MergeTaskPayload),
+    ApplyPatch(ApplyPatchTaskPayload),
 }
 
 #[derive(Debug, Clone)]
@@ -351,6 +380,16 @@ struct MergeTaskPayload {
     source_url: String,
     start_revision: Option<String>,
     end_revision: Option<String>,
+    dry_run: bool,
+    svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct ApplyPatchTaskPayload {
+    working_copy_root: String,
+    patch_file_path: String,
+    patch_digest: String,
+    patch_snapshot: Arc<[u8]>,
     dry_run: bool,
     svn_executable: String,
 }
@@ -896,6 +935,55 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_apply_patch_task(
+        &self,
+        request: CreateApplyPatchTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        let (working_copy_root, patch_file_path) =
+            normalize_apply_patch_paths(&request.working_copy_root, &request.patch_file_path)?;
+        let patch_snapshot = read_apply_patch_snapshot(&patch_file_path)?;
+        let patch_digest = apply_patch_digest(&patch_snapshot);
+        validate_expected_patch_digest(
+            request.dry_run,
+            request.expected_patch_digest.as_deref(),
+            &patch_digest,
+        )?;
+        validate_apply_patch_working_copy_root(&svn_executable, &working_copy_root)?;
+        validate_apply_patch_targets(&working_copy_root, &patch_snapshot)?;
+
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: if request.dry_run {
+                "预检 Patch".to_string()
+            } else {
+                "应用 Patch".to_string()
+            },
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "Apply Patch 任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::ApplyPatch(ApplyPatchTaskPayload {
+                working_copy_root: working_copy_root.display().to_string(),
+                patch_file_path: patch_file_path.display().to_string(),
+                patch_digest,
+                patch_snapshot: Arc::from(patch_snapshot),
+                dry_run: request.dry_run,
+                svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn list_tasks(&self) -> TaskSnapshot {
         let state = self.state.lock().expect("任务队列锁已损坏");
         TaskSnapshot {
@@ -949,6 +1037,7 @@ impl TaskQueue {
         match task.status {
             TaskStatus::Pending => {
                 task.status = TaskStatus::Cancelled;
+                release_apply_patch_snapshot(&mut task.payload);
                 task.updated_at = timestamp_millis();
                 task.logs.push(TaskLog {
                     message: "任务已取消".to_string(),
@@ -1023,9 +1112,13 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             next.and_then(|task_id| {
                 state
                     .tasks
-                    .iter()
+                    .iter_mut()
                     .find(|task| task.task_id == task_id)
-                    .map(|task| (task_id, task.payload.clone()))
+                    .map(|task| {
+                        let payload = task.payload.clone();
+                        release_apply_patch_snapshot(&mut task.payload);
+                        (task_id, payload)
+                    })
             })
         };
 
@@ -1065,7 +1158,14 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             TaskPayload::SvnSwitch(payload) => run_svn_switch_task(&state, &task_id, payload),
             TaskPayload::RevisionDiff(payload) => run_revision_diff_task(&state, &task_id, payload),
             TaskPayload::Merge(payload) => run_merge_task(&state, &task_id, payload),
+            TaskPayload::ApplyPatch(payload) => run_apply_patch_task(&state, &task_id, payload),
         }
+    }
+}
+
+fn release_apply_patch_snapshot(payload: &mut TaskPayload) {
+    if let TaskPayload::ApplyPatch(payload) = payload {
+        payload.patch_snapshot = Arc::<[u8]>::from([]);
     }
 }
 
@@ -1547,11 +1647,7 @@ fn run_partial_commit_task(
     }
 
     append_task_log(state, task_id, "应用 selected patch 到影子工作副本");
-    let patch_output = Command::new(&executable)
-        .arg("patch")
-        .arg(&patch_path)
-        .current_dir(&shadow_path)
-        .output();
+    let patch_output = svn_patch_command(&executable, false, &patch_path, &shadow_path).output();
     let _ = std::fs::remove_file(&patch_path);
     match patch_output {
         Ok(output) if output.status.success() => append_command_output(state, task_id, &output),
@@ -1659,6 +1755,7 @@ fn run_repository_list_task(
                             repository_list: Some(result),
                             revision_diff: None,
                             merge_result: None,
+                            apply_patch_result: None,
                         },
                     );
                     update_task(
@@ -1879,6 +1976,7 @@ fn run_revision_diff_task(
                     repository_list: None,
                     revision_diff: Some(result),
                     merge_result: None,
+                    apply_patch_result: None,
                 },
             );
             update_task(
@@ -1973,6 +2071,7 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
                     repository_list: None,
                     revision_diff: None,
                     merge_result: Some(result),
+                    apply_patch_result: None,
                 },
             );
             update_task(
@@ -2011,6 +2110,232 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
             );
         }
     }
+}
+
+fn run_apply_patch_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: ApplyPatchTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        if payload.dry_run {
+            "Patch dry-run 开始执行"
+        } else {
+            "Patch 开始应用"
+        },
+        None,
+    );
+
+    let validated = normalize_workspace_root(&payload.working_copy_root).and_then(|root| {
+        let working_copy_root = fs::canonicalize(&root).map_err(|error| {
+            NovaError::command(
+                "APPLY_PATCH_WORKSPACE_INVALID",
+                "无法解析工作副本根目录",
+                Some(format!("路径：{}；错误：{error}", root.display())),
+                true,
+            )
+        })?;
+        validate_apply_patch_working_copy_root(&payload.svn_executable, &working_copy_root)?;
+        validate_apply_patch_targets(&working_copy_root, &payload.patch_snapshot)?;
+        Ok(working_copy_root)
+    });
+    let working_copy_root = match validated {
+        Ok(root) => root,
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "Patch 安全校验失败",
+                Some(nova_error_text(&error)),
+            );
+            return;
+        }
+    };
+
+    let snapshot_file = match ApplyPatchSnapshotFile::create(
+        &working_copy_root,
+        task_id,
+        &payload.patch_snapshot,
+    ) {
+        Ok(snapshot_file) => snapshot_file,
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "创建 Patch 快照失败",
+                Some(nova_error_text(&error)),
+            );
+            return;
+        }
+    };
+
+    if !payload.dry_run {
+        append_task_log(state, task_id, "使用不可变 Patch 快照执行应用前 dry-run");
+        let preflight_output = svn_patch_command(
+            &payload.svn_executable,
+            true,
+            snapshot_file.path(),
+            &working_copy_root,
+        )
+        .output();
+        let preflight_output = match preflight_output {
+            Ok(output) => output,
+            Err(error) => {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "SVN patch 预检启动失败",
+                    Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+                );
+                return;
+            }
+        };
+        append_command_output(state, task_id, &preflight_output);
+        let preflight_text = apply_patch_output_from_command(&preflight_output);
+        let preflight_stats = parse_apply_patch_stats(&preflight_text);
+        if !preflight_output.status.success() || !preflight_stats.allows_apply() {
+            set_apply_patch_result(
+                state,
+                task_id,
+                &payload,
+                true,
+                preflight_text,
+                &preflight_stats,
+            );
+            let detail = if preflight_output.status.success() {
+                format_apply_patch_guard_error(&preflight_stats)
+            } else {
+                apply_patch_command_error_detail(&payload.svn_executable, &preflight_output)
+            };
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "Patch 应用前预检未通过",
+                Some(detail),
+            );
+            return;
+        }
+        append_task_log(state, task_id, "Patch 应用前预检通过");
+    }
+
+    append_task_log(
+        state,
+        task_id,
+        &format!(
+            "使用不可变快照执行 svn patch{}：{}",
+            if payload.dry_run { " --dry-run" } else { "" },
+            payload.patch_file_path
+        ),
+    );
+
+    match svn_patch_command(
+        &payload.svn_executable,
+        payload.dry_run,
+        snapshot_file.path(),
+        &working_copy_root,
+    )
+    .output()
+    {
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            let output_text = apply_patch_output_from_command(&output);
+            let stats = parse_apply_patch_stats(&output_text);
+            set_apply_patch_result(
+                state,
+                task_id,
+                &payload,
+                payload.dry_run,
+                output_text,
+                &stats,
+            );
+
+            if output.status.success() && (payload.dry_run || stats.allows_apply()) {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Success,
+                    &format!(
+                        "Patch {}完成：应用 {}，拒绝 {}，跳过 {}，冲突 {}",
+                        if payload.dry_run { "预检" } else { "执行" },
+                        stats.applied,
+                        stats.rejected,
+                        stats.skipped,
+                        stats.conflicted
+                    ),
+                    None,
+                );
+            } else {
+                let detail = if output.status.success() {
+                    format_apply_patch_guard_error(&stats)
+                } else {
+                    apply_patch_command_error_detail(&payload.svn_executable, &output)
+                };
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    if payload.dry_run {
+                        "Patch dry-run 失败"
+                    } else {
+                        "Patch 应用失败"
+                    },
+                    Some(detail),
+                );
+            }
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN patch 启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn set_apply_patch_result(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: &ApplyPatchTaskPayload,
+    result_dry_run: bool,
+    output_text: String,
+    stats: &ApplyPatchStats,
+) {
+    set_task_result(
+        state,
+        task_id,
+        TaskResult {
+            repository_list: None,
+            revision_diff: None,
+            merge_result: None,
+            apply_patch_result: Some(ApplyPatchResult {
+                dry_run: result_dry_run,
+                patch_file_path: payload.patch_file_path.clone(),
+                patch_digest: payload.patch_digest.clone(),
+                output_text,
+                applied: stats.applied,
+                rejected: stats.rejected,
+                skipped: stats.skipped,
+                conflicted: stats.conflicted,
+            }),
+        },
+    );
+}
+
+fn format_apply_patch_guard_error(stats: &ApplyPatchStats) -> String {
+    format!(
+        "Patch 快照未满足安全应用条件：应用 {}，拒绝 {}，跳过 {}，冲突 {}。",
+        stats.applied, stats.rejected, stats.skipped, stats.conflicted
+    )
 }
 
 fn run_branch_checkout_task(
@@ -2232,6 +2557,43 @@ fn command_error_detail(executable: &str, output: &std::process::Output) -> Stri
     )
 }
 
+fn apply_patch_command_error_detail(executable: &str, output: &std::process::Output) -> String {
+    command_output_error_detail(executable, "patch", output)
+}
+
+fn command_output_error_detail(
+    executable: &str,
+    subcommand: &str,
+    output: &std::process::Output,
+) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if !stderr.is_empty() {
+        return stderr;
+    }
+
+    if !stdout.is_empty() {
+        return stdout;
+    }
+
+    format!(
+        "`{executable} {subcommand}` 返回退出码 {:?}，但没有输出。",
+        output.status.code()
+    )
+}
+
+fn nova_error_text(error: &NovaError) -> String {
+    match error {
+        NovaError::Command {
+            message, detail, ..
+        } => detail
+            .as_deref()
+            .map(|detail| format!("{message}：{detail}"))
+            .unwrap_or_else(|| message.clone()),
+    }
+}
+
 fn update_task(
     state: &Arc<Mutex<TaskQueueState>>,
     task_id: &str,
@@ -2395,6 +2757,459 @@ fn normalize_workspace_root(path: &str) -> Result<PathBuf, NovaError> {
     }
 
     Ok(path)
+}
+
+fn normalize_apply_patch_paths(
+    working_copy_root: &str,
+    patch_file_path: &str,
+) -> Result<(PathBuf, PathBuf), NovaError> {
+    let working_copy_root = normalize_workspace_root(working_copy_root)?;
+    let working_copy_root = fs::canonicalize(&working_copy_root).map_err(|error| {
+        NovaError::command(
+            "APPLY_PATCH_WORKSPACE_INVALID",
+            "无法解析工作副本根目录",
+            Some(format!(
+                "路径：{}；错误：{error}",
+                working_copy_root.display()
+            )),
+            true,
+        )
+    })?;
+
+    let raw_patch_path = patch_file_path.trim();
+    if raw_patch_path.is_empty() {
+        return Err(NovaError::command(
+            "APPLY_PATCH_FILE_REQUIRED",
+            "请选择 Patch 文件",
+            None,
+            true,
+        ));
+    }
+    if raw_patch_path.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "APPLY_PATCH_FILE_PATH_INVALID",
+            "Patch 文件路径无效",
+            Some("Patch 文件路径不能包含控制字符。".to_string()),
+            true,
+        ));
+    }
+
+    let patch_file_path = PathBuf::from(raw_patch_path);
+    if !patch_file_path.is_absolute() {
+        return Err(NovaError::command(
+            "APPLY_PATCH_FILE_PATH_INVALID",
+            "Patch 文件路径无效",
+            Some("请选择具有绝对路径的 Patch 文件。".to_string()),
+            true,
+        ));
+    }
+    let extension = patch_file_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    if !matches!(extension.as_deref(), Some("patch" | "diff")) {
+        return Err(NovaError::command(
+            "APPLY_PATCH_FILE_EXTENSION_INVALID",
+            "Patch 文件扩展名无效",
+            Some("仅支持 .patch 或 .diff 文件。".to_string()),
+            true,
+        ));
+    }
+
+    let metadata = fs::symlink_metadata(&patch_file_path).map_err(|error| {
+        NovaError::command(
+            "APPLY_PATCH_FILE_NOT_FOUND",
+            "Patch 文件不存在或无法读取",
+            Some(format!(
+                "路径：{}；错误：{error}",
+                patch_file_path.display()
+            )),
+            true,
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(NovaError::command(
+            "APPLY_PATCH_FILE_TYPE_INVALID",
+            "Patch 路径不是普通文件",
+            Some(format!("路径：{}", patch_file_path.display())),
+            true,
+        ));
+    }
+    if metadata.len() == 0 {
+        return Err(NovaError::command(
+            "APPLY_PATCH_FILE_EMPTY",
+            "Patch 文件为空",
+            Some(format!("路径：{}", patch_file_path.display())),
+            true,
+        ));
+    }
+    if metadata.len() > APPLY_PATCH_MAX_BYTES {
+        return Err(NovaError::command(
+            "APPLY_PATCH_FILE_TOO_LARGE",
+            "Patch 文件过大",
+            Some(format!(
+                "文件大小为 {} 字节，最大允许 {} 字节。",
+                metadata.len(),
+                APPLY_PATCH_MAX_BYTES
+            )),
+            true,
+        ));
+    }
+
+    let patch_file_path = fs::canonicalize(&patch_file_path).map_err(|error| {
+        NovaError::command(
+            "APPLY_PATCH_FILE_PATH_INVALID",
+            "无法解析 Patch 文件路径",
+            Some(format!(
+                "路径：{}；错误：{error}",
+                patch_file_path.display()
+            )),
+            true,
+        )
+    })?;
+    if patch_file_path.starts_with(&working_copy_root) {
+        return Err(NovaError::command(
+            "APPLY_PATCH_FILE_INSIDE_WORKSPACE",
+            "Patch 文件不能位于目标工作副本内",
+            Some("请将 Patch 文件移到工作副本外，避免应用过程中修改 Patch 自身。".to_string()),
+            true,
+        ));
+    }
+
+    Ok((working_copy_root, patch_file_path))
+}
+
+fn read_apply_patch_snapshot(patch_file_path: &Path) -> Result<Vec<u8>, NovaError> {
+    let snapshot = fs::read(patch_file_path).map_err(|error| {
+        NovaError::command(
+            "APPLY_PATCH_FILE_READ_FAILED",
+            "无法读取 Patch 文件",
+            Some(format!(
+                "路径：{}；错误：{error}",
+                patch_file_path.display()
+            )),
+            true,
+        )
+    })?;
+    if snapshot.is_empty() {
+        return Err(NovaError::command(
+            "APPLY_PATCH_FILE_EMPTY",
+            "Patch 文件为空",
+            Some(format!("路径：{}", patch_file_path.display())),
+            true,
+        ));
+    }
+    if snapshot.len() as u64 > APPLY_PATCH_MAX_BYTES {
+        return Err(NovaError::command(
+            "APPLY_PATCH_FILE_TOO_LARGE",
+            "Patch 文件过大",
+            Some(format!(
+                "文件大小为 {} 字节，最大允许 {} 字节。",
+                snapshot.len(),
+                APPLY_PATCH_MAX_BYTES
+            )),
+            true,
+        ));
+    }
+
+    Ok(snapshot)
+}
+
+fn apply_patch_digest(snapshot: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(snapshot))
+}
+
+fn validate_expected_patch_digest(
+    dry_run: bool,
+    expected_patch_digest: Option<&str>,
+    patch_digest: &str,
+) -> Result<(), NovaError> {
+    if dry_run {
+        if expected_patch_digest.is_some() {
+            return Err(NovaError::command(
+                "APPLY_PATCH_DIGEST_NOT_ALLOWED",
+                "Patch dry-run 不应提供预期摘要",
+                None,
+                true,
+            ));
+        }
+        return Ok(());
+    }
+
+    let expected = expected_patch_digest.ok_or_else(|| {
+        NovaError::command(
+            "APPLY_PATCH_DIGEST_REQUIRED",
+            "应用 Patch 前必须提供预期摘要",
+            Some("请先执行 dry-run，并使用其返回的 Patch 摘要确认实际应用。".to_string()),
+            true,
+        )
+    })?;
+    let expected = expected.trim();
+    if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(NovaError::command(
+            "APPLY_PATCH_DIGEST_INVALID",
+            "预期 Patch 摘要无效",
+            Some("摘要必须是 64 位 SHA-256 十六进制字符串。".to_string()),
+            true,
+        ));
+    }
+    if !expected.eq_ignore_ascii_case(patch_digest) {
+        return Err(NovaError::command(
+            "APPLY_PATCH_DIGEST_MISMATCH",
+            "Patch 内容已发生变化",
+            Some(format!(
+                "预期摘要：{}；当前摘要：{patch_digest}",
+                expected.to_ascii_lowercase()
+            )),
+            true,
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_apply_patch_working_copy_root(
+    svn_executable: &str,
+    working_copy_root: &Path,
+) -> Result<(), NovaError> {
+    let output = Command::new(svn_executable)
+        .args(["info", "--xml"])
+        .arg(working_copy_root)
+        .current_dir(working_copy_root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "APPLY_PATCH_WORKSPACE_INVALID",
+                "无法验证 SVN 工作副本根目录",
+                Some(format!("无法执行 `{svn_executable} info`：{error}")),
+                true,
+            )
+        })?;
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "APPLY_PATCH_WORKSPACE_INVALID",
+            "目标目录不是可用的 SVN 工作副本根目录",
+            Some(command_output_error_detail(
+                svn_executable,
+                "info --xml",
+                &output,
+            )),
+            true,
+        ));
+    }
+
+    let xml = String::from_utf8_lossy(&output.stdout);
+    let document = Document::parse(&xml).map_err(|error| {
+        NovaError::command(
+            "APPLY_PATCH_WORKSPACE_INFO_PARSE_FAILED",
+            "无法解析 SVN 工作副本信息",
+            Some(format!("svn info --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+    let reported_root = document
+        .descendants()
+        .find(|node| node.has_tag_name("wcroot-abspath"))
+        .and_then(|node| node.text())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            NovaError::command(
+                "APPLY_PATCH_WORKSPACE_INVALID",
+                "SVN 工作副本信息缺少根目录",
+                None,
+                true,
+            )
+        })?;
+    let reported_root = fs::canonicalize(reported_root).map_err(|error| {
+        NovaError::command(
+            "APPLY_PATCH_WORKSPACE_INVALID",
+            "SVN 返回了无法解析的工作副本根目录",
+            Some(format!("路径：{reported_root}；错误：{error}")),
+            true,
+        )
+    })?;
+    if reported_root != working_copy_root {
+        return Err(NovaError::command(
+            "APPLY_PATCH_WORKSPACE_ROOT_REQUIRED",
+            "必须选择 SVN 工作副本根目录",
+            Some(format!("实际工作副本根目录：{}", reported_root.display())),
+            true,
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_apply_patch_targets(
+    working_copy_root: &Path,
+    patch_snapshot: &[u8],
+) -> Result<(), NovaError> {
+    let patch_text = String::from_utf8_lossy(patch_snapshot);
+    let mut lines = patch_text.lines().peekable();
+    let mut target_count = 0usize;
+
+    while let Some(line) = lines.next() {
+        if let Some(target) = line.strip_prefix("Index: ") {
+            target_count +=
+                validate_apply_patch_target_path(working_copy_root, target, "Index")? as usize;
+            continue;
+        }
+        if let Some(target) = line.strip_prefix("Property changes on: ") {
+            target_count +=
+                validate_apply_patch_target_path(working_copy_root, target, "属性变更")? as usize;
+            continue;
+        }
+        if let Some(targets) = line.strip_prefix("diff --git ") {
+            let mut targets = targets.split_whitespace();
+            let old_target = targets.next().unwrap_or_default();
+            let new_target = targets.next().unwrap_or_default();
+            if old_target.is_empty() || new_target.is_empty() {
+                return Err(invalid_apply_patch_target("diff --git 目标不完整"));
+            }
+            target_count +=
+                validate_apply_patch_target_path(working_copy_root, old_target, "diff --git")?
+                    as usize;
+            target_count +=
+                validate_apply_patch_target_path(working_copy_root, new_target, "diff --git")?
+                    as usize;
+            continue;
+        }
+        if let Some(old_target) = line.strip_prefix("--- ") {
+            let Some(next_line) = lines.peek() else {
+                continue;
+            };
+            let Some(new_target) = next_line.strip_prefix("+++ ") else {
+                continue;
+            };
+            let old_target = old_target.split('\t').next().unwrap_or(old_target);
+            let new_target = new_target.split('\t').next().unwrap_or(new_target);
+            target_count +=
+                validate_apply_patch_target_path(working_copy_root, old_target, "旧文件")? as usize;
+            target_count +=
+                validate_apply_patch_target_path(working_copy_root, new_target, "新文件")? as usize;
+        }
+    }
+
+    if target_count == 0 {
+        return Err(NovaError::command(
+            "APPLY_PATCH_TARGET_MISSING",
+            "Patch 中没有可应用的文件目标",
+            Some("请选择包含标准 unified diff 文件头的 Patch。".to_string()),
+            true,
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_apply_patch_target_path(
+    working_copy_root: &Path,
+    target: &str,
+    label: &str,
+) -> Result<bool, NovaError> {
+    let target = target.trim();
+    if target == "/dev/null" {
+        return Ok(false);
+    }
+    validate_apply_patch_target_syntax(target, label)?;
+    validate_apply_patch_target_ancestor(working_copy_root, target, label)?;
+
+    if let Some(stripped) = target
+        .strip_prefix("a/")
+        .or_else(|| target.strip_prefix("b/"))
+    {
+        validate_apply_patch_target_syntax(stripped, label)?;
+        validate_apply_patch_target_ancestor(working_copy_root, stripped, label)?;
+    }
+
+    Ok(true)
+}
+
+fn validate_apply_patch_target_syntax(target: &str, label: &str) -> Result<(), NovaError> {
+    if target.is_empty()
+        || target.starts_with('"')
+        || target.ends_with('"')
+        || target.contains('\u{fffd}')
+        || target.chars().any(char::is_control)
+        || path_utils::is_absolute_or_windows_path(Path::new(target), target)
+        || is_windows_drive_relative_path(target)
+        || path_utils::has_parent_segment(target)
+        || target
+            .split(['/', '\\'])
+            .any(|segment| segment.eq_ignore_ascii_case(".svn"))
+    {
+        return Err(invalid_apply_patch_target(&format!("{label}：{target}")));
+    }
+
+    Ok(())
+}
+
+fn is_windows_drive_relative_path(target: &str) -> bool {
+    let bytes = target.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+fn validate_apply_patch_target_ancestor(
+    working_copy_root: &Path,
+    target: &str,
+    label: &str,
+) -> Result<(), NovaError> {
+    let working_copy_root = fs::canonicalize(working_copy_root).map_err(|error| {
+        NovaError::command(
+            "APPLY_PATCH_WORKSPACE_INVALID",
+            "无法解析 Patch 目标工作副本",
+            Some(format!(
+                "路径：{}；错误：{error}",
+                working_copy_root.display()
+            )),
+            true,
+        )
+    })?;
+    let mut ancestor = working_copy_root.join(target);
+    loop {
+        match fs::symlink_metadata(&ancestor) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if !ancestor.pop() || !ancestor.starts_with(&working_copy_root) {
+                    return Err(invalid_apply_patch_target(&format!("{label}：{target}")));
+                }
+            }
+            Err(error) => {
+                return Err(NovaError::command(
+                    "APPLY_PATCH_TARGET_CHECK_FAILED",
+                    "无法验证 Patch 文件目标",
+                    Some(format!("{label}：{target}；错误：{error}")),
+                    true,
+                ));
+            }
+        }
+    }
+
+    let ancestor = fs::canonicalize(&ancestor).map_err(|error| {
+        NovaError::command(
+            "APPLY_PATCH_TARGET_CHECK_FAILED",
+            "无法解析 Patch 文件目标",
+            Some(format!("{label}：{target}；错误：{error}")),
+            true,
+        )
+    })?;
+    if !ancestor.starts_with(&working_copy_root) {
+        return Err(invalid_apply_patch_target(&format!("{label}：{target}")));
+    }
+
+    Ok(())
+}
+
+fn invalid_apply_patch_target(detail: &str) -> NovaError {
+    NovaError::command(
+        "APPLY_PATCH_TARGET_INVALID",
+        "Patch 包含不安全的文件目标",
+        Some(format!(
+            "{detail}。Patch 目标必须是工作副本内不含 `..` 的相对路径。"
+        )),
+        true,
+    )
 }
 
 fn normalize_commit_files(files: &[String]) -> Result<Vec<String>, NovaError> {
@@ -2777,6 +3592,247 @@ fn count_merge_output_files(output: &str) -> usize {
             ) && trimmed.chars().nth(1).is_some_and(char::is_whitespace)
         })
         .count()
+}
+
+struct ApplyPatchSnapshotFile {
+    path: PathBuf,
+}
+
+impl ApplyPatchSnapshotFile {
+    fn create(working_copy_root: &Path, task_id: &str, snapshot: &[u8]) -> Result<Self, NovaError> {
+        let directory = apply_patch_snapshot_directory(working_copy_root)?;
+        for _ in 0..128 {
+            let nonce = APPLY_PATCH_SNAPSHOT_NONCE.fetch_add(1, Ordering::Relaxed);
+            let name = format!(
+                ".novasvn-apply-patch-{}-{}-{nonce}.patch",
+                std::process::id(),
+                sanitize_patch_file_part(task_id)
+            );
+            let path = directory.join(name);
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            let file = options.open(&path);
+            let mut file = match file {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(NovaError::command(
+                        "APPLY_PATCH_SNAPSHOT_CREATE_FAILED",
+                        "无法创建 Patch 临时快照",
+                        Some(format!("目录：{}；错误：{error}", directory.display())),
+                        true,
+                    ));
+                }
+            };
+            if let Err(error) = file.write_all(snapshot) {
+                drop(file);
+                let _ = fs::remove_file(&path);
+                return Err(NovaError::command(
+                    "APPLY_PATCH_SNAPSHOT_WRITE_FAILED",
+                    "无法写入 Patch 临时快照",
+                    Some(format!("路径：{}；错误：{error}", path.display())),
+                    true,
+                ));
+            }
+            drop(file);
+            return Ok(Self { path });
+        }
+
+        Err(NovaError::command(
+            "APPLY_PATCH_SNAPSHOT_CREATE_FAILED",
+            "无法创建唯一的 Patch 临时快照",
+            Some(format!("目录：{}", directory.display())),
+            true,
+        ))
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for ApplyPatchSnapshotFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn apply_patch_snapshot_directory(working_copy_root: &Path) -> Result<PathBuf, NovaError> {
+    let temp_directory = fs::canonicalize(std::env::temp_dir()).map_err(|error| {
+        NovaError::command(
+            "APPLY_PATCH_TEMP_DIR_INVALID",
+            "无法解析系统临时目录",
+            Some(error.to_string()),
+            true,
+        )
+    })?;
+    if !temp_directory.starts_with(working_copy_root) {
+        return Ok(temp_directory);
+    }
+
+    let parent = working_copy_root.parent().ok_or_else(|| {
+        NovaError::command(
+            "APPLY_PATCH_TEMP_DIR_INVALID",
+            "无法在工作副本外创建 Patch 快照",
+            Some("工作副本根目录不能覆盖整个文件系统。".to_string()),
+            true,
+        )
+    })?;
+    let parent = fs::canonicalize(parent).map_err(|error| {
+        NovaError::command(
+            "APPLY_PATCH_TEMP_DIR_INVALID",
+            "无法解析工作副本父目录",
+            Some(error.to_string()),
+            true,
+        )
+    })?;
+    if parent.starts_with(working_copy_root) {
+        return Err(NovaError::command(
+            "APPLY_PATCH_TEMP_DIR_INVALID",
+            "无法在工作副本外创建 Patch 快照",
+            None,
+            true,
+        ));
+    }
+
+    Ok(parent)
+}
+
+fn svn_patch_command(
+    executable: &str,
+    dry_run: bool,
+    patch_file: &Path,
+    working_copy_root: &Path,
+) -> Command {
+    let mut command = Command::new(executable);
+    configure_svn_patch_command(&mut command, dry_run, patch_file, working_copy_root);
+    command
+}
+
+fn configure_svn_patch_command(
+    command: &mut Command,
+    dry_run: bool,
+    patch_file: &Path,
+    working_copy_root: &Path,
+) {
+    command
+        .env_remove("LC_ALL")
+        .env("LC_MESSAGES", "C")
+        .env("LANGUAGE", "C")
+        .arg("patch");
+    if dry_run {
+        command.arg("--dry-run");
+    }
+    command
+        .arg(patch_file)
+        .arg(working_copy_root)
+        .current_dir(working_copy_root);
+}
+
+fn apply_patch_output_text(stdout: &str, stderr: &str) -> String {
+    let stdout = stdout.trim();
+    let stderr = stderr.trim();
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (false, false) => format!("{stdout}\n{stderr}"),
+        (false, true) => stdout.to_string(),
+        (true, false) => stderr.to_string(),
+        (true, true) => "svn patch 没有输出。".to_string(),
+    }
+}
+
+fn apply_patch_output_from_command(output: &std::process::Output) -> String {
+    apply_patch_output_text(
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    )
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ApplyPatchStats {
+    applied: usize,
+    rejected: usize,
+    skipped: usize,
+    conflicted: usize,
+}
+
+impl ApplyPatchStats {
+    fn allows_apply(&self) -> bool {
+        self.applied > 0 && self.rejected == 0 && self.skipped == 0 && self.conflicted == 0
+    }
+}
+
+fn parse_apply_patch_stats(output: &str) -> ApplyPatchStats {
+    let mut stats = ApplyPatchStats::default();
+    let mut applied_paths = HashSet::new();
+    let mut conflicted_paths = HashSet::new();
+    let mut conflict_summary = 0usize;
+    let mut skipped_summary = 0usize;
+
+    for line in output.lines() {
+        let trimmed = line.trim_start();
+        if let Some((actions, path)) = parse_apply_patch_action_line(trimmed) {
+            if actions.contains('C') {
+                conflicted_paths.insert(path.to_string());
+            } else if actions
+                .chars()
+                .any(|action| matches!(action, 'A' | 'D' | 'U' | 'G'))
+            {
+                applied_paths.insert(path.to_string());
+            }
+        }
+
+        let lowercase = trimmed.to_ascii_lowercase();
+        if lowercase.contains("rejected hunk") {
+            stats.rejected += 1;
+        }
+        if lowercase.starts_with("skipped ") && !lowercase.starts_with("skipped paths:") {
+            stats.skipped += 1;
+        }
+
+        for prefix in ["text conflicts:", "property conflicts:", "tree conflicts:"] {
+            if let Some(count) = parse_apply_patch_summary_count(&lowercase, prefix) {
+                conflict_summary += count;
+            }
+        }
+        if let Some(count) = parse_apply_patch_summary_count(&lowercase, "skipped paths:") {
+            skipped_summary += count;
+        }
+    }
+
+    stats.applied = applied_paths.difference(&conflicted_paths).count();
+    stats.conflicted = conflicted_paths.len().max(conflict_summary);
+    stats.skipped = stats.skipped.max(skipped_summary);
+    stats
+}
+
+fn parse_apply_patch_action_line(line: &str) -> Option<(&str, &str)> {
+    let bytes = line.as_bytes();
+    let is_action = |byte: u8| matches!(byte, b'A' | b'D' | b'U' | b'C' | b'G');
+
+    if bytes.len() >= 3
+        && is_action(bytes[0])
+        && is_action(bytes[1])
+        && bytes[2].is_ascii_whitespace()
+    {
+        let path = line[2..].trim();
+        return (!path.is_empty()).then_some((&line[..2], path));
+    }
+    if bytes.len() >= 2 && is_action(bytes[0]) && bytes[1].is_ascii_whitespace() {
+        let path = line[1..].trim();
+        return (!path.is_empty()).then_some((&line[..1], path));
+    }
+
+    None
+}
+
+fn parse_apply_patch_summary_count(line: &str, prefix: &str) -> Option<usize> {
+    line.trim()
+        .strip_prefix(prefix)?
+        .trim()
+        .parse::<usize>()
+        .ok()
 }
 
 fn revision_diff_mode_label(mode: &RevisionDiffMode) -> &'static str {
@@ -3201,6 +4257,426 @@ mod tests {
         assert!(added_paths
             .iter()
             .any(|path| path.ends_with("nested/new.txt")));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn validates_apply_patch_file_paths_and_extension() {
+        let root = test_temp_dir("apply-patch-paths");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(&working_copy).expect("create working copy directory");
+
+        let external_patch = root.join("change.PATCH");
+        fs::write(
+            &external_patch,
+            "Index: file.txt\n--- file.txt\n+++ file.txt\n",
+        )
+        .expect("write external patch");
+        let (_, normalized_patch) = normalize_apply_patch_paths(
+            &working_copy.display().to_string(),
+            &external_patch.display().to_string(),
+        )
+        .expect("external patch path should be valid");
+        assert_eq!(normalized_patch, fs::canonicalize(&external_patch).unwrap());
+
+        let invalid_extension = root.join("change.txt");
+        fs::write(&invalid_extension, "not a patch\n").expect("write invalid extension file");
+        let error = normalize_apply_patch_paths(
+            &working_copy.display().to_string(),
+            &invalid_extension.display().to_string(),
+        )
+        .expect_err("invalid extension must be rejected");
+        assert!(matches!(
+            error,
+            NovaError::Command { ref code, .. }
+                if code == "APPLY_PATCH_FILE_EXTENSION_INVALID"
+        ));
+
+        let directory_patch = root.join("directory.patch");
+        fs::create_dir(&directory_patch).expect("create patch directory");
+        let error = normalize_apply_patch_paths(
+            &working_copy.display().to_string(),
+            &directory_patch.display().to_string(),
+        )
+        .expect_err("directory must not be accepted as a patch file");
+        assert!(matches!(
+            error,
+            NovaError::Command { ref code, .. } if code == "APPLY_PATCH_FILE_TYPE_INVALID"
+        ));
+
+        let internal_patch = working_copy.join("self.patch");
+        fs::write(&internal_patch, "Index: self.patch\n").expect("write internal patch");
+        let error = normalize_apply_patch_paths(
+            &working_copy.display().to_string(),
+            &internal_patch.display().to_string(),
+        )
+        .expect_err("patch inside working copy must be rejected");
+        assert!(matches!(
+            error,
+            NovaError::Command { ref code, .. }
+                if code == "APPLY_PATCH_FILE_INSIDE_WORKSPACE"
+        ));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn validates_apply_patch_sha256_confirmation() {
+        let digest = apply_patch_digest(b"abc");
+        assert_eq!(
+            digest,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert!(validate_expected_patch_digest(true, None, &digest).is_ok());
+        assert!(validate_expected_patch_digest(true, Some(&digest), &digest).is_err());
+        assert!(validate_expected_patch_digest(false, None, &digest).is_err());
+        assert!(
+            validate_expected_patch_digest(false, Some(&digest.to_ascii_uppercase()), &digest)
+                .is_ok()
+        );
+        assert!(validate_expected_patch_digest(false, Some(&"0".repeat(64)), &digest).is_err());
+    }
+
+    #[test]
+    fn forces_parseable_locale_for_svn_patch_commands() {
+        let root = test_temp_dir("apply-patch-locale");
+        let patch = root.join("change.patch");
+        let mut command = Command::new("svn");
+        command
+            .env("LC_ALL", "zh_CN.UTF-8")
+            .env("LANG", "fr_FR.UTF-8")
+            .env("LC_MESSAGES", "fr_FR.UTF-8")
+            .env("LANGUAGE", "de_DE");
+        configure_svn_patch_command(&mut command, true, &patch, &root);
+
+        for name in ["LC_MESSAGES", "LANGUAGE"] {
+            let value = command
+                .get_envs()
+                .find(|(key, _)| key.to_string_lossy() == name)
+                .and_then(|(_, value)| value)
+                .map(|value| value.to_string_lossy().into_owned());
+            assert_eq!(value.as_deref(), Some("C"));
+        }
+        let lang = command
+            .get_envs()
+            .find(|(key, _)| key.to_string_lossy() == "LANG")
+            .and_then(|(_, value)| value)
+            .map(|value| value.to_string_lossy().into_owned());
+        assert_eq!(lang.as_deref(), Some("fr_FR.UTF-8"));
+        let lc_all = command
+            .get_envs()
+            .find(|(key, _)| key.to_string_lossy() == "LC_ALL")
+            .map(|(_, value)| value);
+        assert_eq!(lc_all, Some(None));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creates_private_and_self_cleaning_apply_patch_snapshot() {
+        let root = test_temp_dir("apply-patch-snapshot");
+        let working_copy = root.join("working-copy");
+        fs::create_dir(&working_copy).expect("create working copy directory");
+        let snapshot = ApplyPatchSnapshotFile::create(&working_copy, "task-42", b"patch\n")
+            .expect("create snapshot");
+        let path = snapshot.path().to_path_buf();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert!(!path.starts_with(fs::canonicalize(&working_copy).unwrap()));
+        drop(snapshot);
+        assert!(!path.exists());
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_oversized_apply_patch_file() {
+        let root = test_temp_dir("apply-patch-size");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(&working_copy).expect("create working copy directory");
+        let patch = root.join("large.diff");
+        let file = fs::File::create(&patch).expect("create sparse patch");
+        file.set_len(APPLY_PATCH_MAX_BYTES + 1)
+            .expect("resize sparse patch");
+
+        let error = normalize_apply_patch_paths(
+            &working_copy.display().to_string(),
+            &patch.display().to_string(),
+        )
+        .expect_err("oversized patch must be rejected");
+        assert!(matches!(
+            error,
+            NovaError::Command { ref code, .. } if code == "APPLY_PATCH_FILE_TOO_LARGE"
+        ));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_unsafe_apply_patch_targets() {
+        let root = test_temp_dir("apply-patch-targets");
+        let working_copy = root.join("working-copy");
+        fs::create_dir(&working_copy).expect("create working copy directory");
+        let safe_patch = root.join("safe.patch");
+        fs::write(
+            &safe_patch,
+            "Index: src/main.rs\n--- src/main.rs\t(revision 1)\n+++ src/main.rs\t(working copy)\n",
+        )
+        .expect("write safe patch");
+        validate_apply_patch_targets(&working_copy, &fs::read(&safe_patch).unwrap())
+            .expect("safe targets should pass");
+
+        let mut non_utf8_hunk =
+            b"Index: src/main.rs\n--- src/main.rs\n+++ src/main.rs\n@@ -1 +1 @@\n-old\n+".to_vec();
+        non_utf8_hunk.push(0xff);
+        non_utf8_hunk.push(b'\n');
+        validate_apply_patch_targets(&working_copy, &non_utf8_hunk)
+            .expect("non-UTF-8 hunk content should not affect ASCII target validation");
+
+        let drive_relative_patch = b"Index: C:outside.txt\n--- C:outside.txt\n+++ C:outside.txt\n";
+        assert!(validate_apply_patch_targets(&working_copy, drive_relative_patch).is_err());
+
+        let traversal_patch = root.join("traversal.patch");
+        fs::write(
+            &traversal_patch,
+            "Index: ../outside.txt\n--- ../outside.txt\n+++ ../outside.txt\n",
+        )
+        .expect("write traversal patch");
+        let error =
+            validate_apply_patch_targets(&working_copy, &fs::read(&traversal_patch).unwrap())
+                .expect_err("parent path target must be rejected");
+        assert!(matches!(
+            error,
+            NovaError::Command { ref code, .. } if code == "APPLY_PATCH_TARGET_INVALID"
+        ));
+
+        let metadata_patch = root.join("metadata.patch");
+        fs::write(
+            &metadata_patch,
+            "Index: src/.SVN/entries\n--- src/.SVN/entries\n+++ src/.SVN/entries\n",
+        )
+        .expect("write metadata target patch");
+        assert!(
+            validate_apply_patch_targets(&working_copy, &fs::read(&metadata_patch).unwrap())
+                .is_err()
+        );
+
+        let absolute_patch = root.join("absolute.diff");
+        fs::write(
+            &absolute_patch,
+            "--- /tmp/outside.txt\n+++ /tmp/outside.txt\n@@ -1 +1 @@\n-old\n+new\n",
+        )
+        .expect("write absolute target patch");
+        assert!(
+            validate_apply_patch_targets(&working_copy, &fs::read(&absolute_patch).unwrap())
+                .is_err()
+        );
+
+        #[cfg(not(windows))]
+        {
+            let outside = root.join("outside");
+            fs::create_dir(&outside).expect("create outside directory");
+            std::os::unix::fs::symlink(&outside, working_copy.join("link"))
+                .expect("create target symlink");
+            let symlink_patch = root.join("symlink.diff");
+            fs::write(
+                &symlink_patch,
+                "Index: link/outside.txt\n--- link/outside.txt\n+++ link/outside.txt\n",
+            )
+            .expect("write symlink target patch");
+            assert!(validate_apply_patch_targets(
+                &working_copy,
+                &fs::read(&symlink_patch).unwrap()
+            )
+            .is_err());
+
+            let git_patch = b"diff --git a/link/outside.txt b/link/outside.txt\n--- a/link/outside.txt\n+++ b/link/outside.txt\n";
+            assert!(validate_apply_patch_targets(&working_copy, git_patch).is_err());
+        }
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn parses_apply_patch_output_statistics() {
+        let output = "UU        /tmp/wc/applied.txt\n U        /tmp/wc/applied.txt\nC         /tmp/wc/conflict.txt\nCC        /tmp/wc/conflict.txt\n>         rejected hunk @@ -1,1 +1,1 @@\nSkipped missing target: '/tmp/wc/missing.txt'\nSummary of conflicts:\n  Text conflicts: 1\n  Skipped paths: 1\n";
+
+        let stats = parse_apply_patch_stats(output);
+        assert_eq!(
+            stats,
+            ApplyPatchStats {
+                applied: 1,
+                rejected: 1,
+                skipped: 1,
+                conflicted: 1,
+            }
+        );
+        assert!(!stats.allows_apply());
+    }
+
+    #[test]
+    fn dry_runs_and_applies_patch_in_real_working_copy() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("apply-patch-integration");
+        let repository = root.join("repository");
+        let import_source = root.join("import-source");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(&import_source).expect("create import source");
+        fs::write(import_source.join("中文.txt"), "before\n").expect("write initial file");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_source)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+
+        let patch_file = root.join("change.patch");
+        fs::write(
+            &patch_file,
+            "Index: 中文.txt\n===================================================================\n--- 中文.txt\t(revision 1)\n+++ 中文.txt\t(working copy)\n@@ -1 +1 @@\n-before\n+after\n",
+        )
+        .expect("write patch");
+        let queue = TaskQueue::new();
+        let dry_run = queue
+            .create_apply_patch_task(CreateApplyPatchTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                patch_file_path: patch_file.display().to_string(),
+                dry_run: true,
+                expected_patch_digest: None,
+                svn_executable: None,
+            })
+            .expect("create dry-run task");
+        let dry_run = wait_for_test_task(&queue, &dry_run.task_id);
+        assert!(
+            matches!(dry_run.status, TaskStatus::Success),
+            "Patch dry-run 失败：{:?}",
+            dry_run.error
+        );
+        assert_eq!(
+            fs::read_to_string(working_copy.join("中文.txt")).unwrap(),
+            "before\n"
+        );
+        let dry_run_result = dry_run
+            .result
+            .and_then(|result| result.apply_patch_result)
+            .expect("dry-run result exists");
+        assert!(dry_run_result.dry_run);
+        assert_eq!(dry_run_result.applied, 1);
+        assert_eq!(dry_run_result.rejected, 0);
+        assert_eq!(dry_run_result.conflicted, 0);
+
+        let rejected_patch_file = root.join("rejected.patch");
+        fs::write(
+            &rejected_patch_file,
+            "Index: 中文.txt\n===================================================================\n--- 中文.txt\t(revision 1)\n+++ 中文.txt\t(working copy)\n@@ -1 +1 @@\n-not-present\n+after\n",
+        )
+        .expect("write rejected patch");
+        let rejected_dry_run = queue
+            .create_apply_patch_task(CreateApplyPatchTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                patch_file_path: rejected_patch_file.display().to_string(),
+                dry_run: true,
+                expected_patch_digest: None,
+                svn_executable: None,
+            })
+            .expect("create rejected dry-run task");
+        let rejected_dry_run = wait_for_test_task(&queue, &rejected_dry_run.task_id);
+        assert!(
+            matches!(rejected_dry_run.status, TaskStatus::Success),
+            "Rejected Patch dry-run 应保持成功退出：{:?}",
+            rejected_dry_run.error
+        );
+        let rejected_result = rejected_dry_run
+            .result
+            .and_then(|result| result.apply_patch_result)
+            .expect("rejected dry-run result exists");
+        assert!(rejected_result.rejected > 0);
+        assert!(rejected_result.conflicted > 0);
+        assert_eq!(
+            fs::read_to_string(working_copy.join("中文.txt")).unwrap(),
+            "before\n"
+        );
+        assert!(!working_copy.join("中文.txt.svnpatch.rej").exists());
+
+        let rejected_apply = queue
+            .create_apply_patch_task(CreateApplyPatchTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                patch_file_path: rejected_patch_file.display().to_string(),
+                dry_run: false,
+                expected_patch_digest: Some(rejected_result.patch_digest.clone()),
+                svn_executable: None,
+            })
+            .expect("create rejected apply task");
+        let rejected_apply = wait_for_test_task(&queue, &rejected_apply.task_id);
+        assert!(matches!(rejected_apply.status, TaskStatus::Failed));
+        let rejected_apply_result = rejected_apply
+            .result
+            .and_then(|result| result.apply_patch_result)
+            .expect("rejected apply preflight result exists");
+        assert!(rejected_apply_result.dry_run);
+        assert!(rejected_apply_result.rejected > 0);
+        assert!(rejected_apply_result.conflicted > 0);
+        assert_eq!(
+            fs::read_to_string(working_copy.join("中文.txt")).unwrap(),
+            "before\n"
+        );
+        assert!(!working_copy.join("中文.txt.svnpatch.rej").exists());
+
+        queue.create_mock_task(CreateMockTaskRequest {
+            title: Some("阻塞 Apply Patch 测试队列".to_string()),
+            outcome: MockTaskOutcome::Success,
+        });
+        let apply = queue
+            .create_apply_patch_task(CreateApplyPatchTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                patch_file_path: patch_file.display().to_string(),
+                dry_run: false,
+                expected_patch_digest: Some(dry_run_result.patch_digest.clone()),
+                svn_executable: None,
+            })
+            .expect("create apply task");
+        fs::write(
+            &patch_file,
+            "Index: 中文.txt\n--- 中文.txt\n+++ 中文.txt\n@@ -1 +1 @@\n-before\n+changed-after-enqueue\n",
+        )
+        .expect("replace original patch after enqueue");
+        let apply = wait_for_test_task(&queue, &apply.task_id);
+        assert!(
+            matches!(apply.status, TaskStatus::Success),
+            "Patch 应用失败：{:?}",
+            apply.error
+        );
+        assert_eq!(
+            fs::read_to_string(working_copy.join("中文.txt")).unwrap(),
+            "after\n"
+        );
+        assert!(matches!(
+            &apply.payload,
+            TaskPayload::ApplyPatch(payload) if payload.patch_snapshot.is_empty()
+        ));
+        let apply_result = apply
+            .result
+            .and_then(|result| result.apply_patch_result)
+            .expect("apply result exists");
+        assert!(!apply_result.dry_run);
+        assert_eq!(apply_result.applied, 1);
+        assert_eq!(apply_result.rejected, 0);
+        assert_eq!(apply_result.skipped, 0);
+        assert_eq!(apply_result.conflicted, 0);
+
         fs::remove_dir_all(root).ok();
     }
 

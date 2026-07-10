@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
+  createApplyPatchTask: vi.fn(),
   createMergeTask: vi.fn(),
   createRevisionDiffTask: vi.fn(),
   detectSvn: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("../lib/api", () => ({
 import { get } from "svelte/store";
 
 import {
+  createApplyPatchTask,
   createMergeTask,
   createRevisionDiffTask,
   detectSvn,
@@ -62,6 +64,7 @@ import {
   workspaceStore,
 } from "./app";
 
+const createApplyPatchTaskMock = vi.mocked(createApplyPatchTask);
 const createMergeTaskMock = vi.mocked(createMergeTask);
 const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
 const detectSvnMock = vi.mocked(detectSvn);
@@ -80,6 +83,7 @@ const saveTaskWorkspaceMock = vi.mocked(saveTaskWorkspace);
 const setSvnPropertyMock = vi.mocked(setSvnProperty);
 
 beforeEach(() => {
+  createApplyPatchTaskMock.mockReset();
   createMergeTaskMock.mockReset();
   createRevisionDiffTaskMock.mockReset();
   detectSvnMock.mockReset();
@@ -734,6 +738,44 @@ describe("taskStore merge tasks", () => {
       dry_run: true,
       svn_executable: "C:/svn/svn.exe",
     });
+  });
+});
+
+describe("taskStore apply patch tasks", () => {
+  it("binds a real patch task to the preflight digest", async () => {
+    createApplyPatchTaskMock.mockResolvedValue(makeTask({ task_id: "patch-1" }));
+
+    const task = await taskStore.createApplyPatch({
+      workingCopyRoot: "C:/repo/wc",
+      patchFilePath: "C:/patches/change.diff",
+      dryRun: false,
+      expectedPatchDigest: "a".repeat(64),
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(task?.task_id).toBe("patch-1");
+    expect(createApplyPatchTaskMock).toHaveBeenCalledWith({
+      working_copy_root: "C:/repo/wc",
+      patch_file_path: "C:/patches/change.diff",
+      dry_run: false,
+      expected_patch_digest: "a".repeat(64),
+      svn_executable: "C:/svn/svn.exe",
+    });
+  });
+});
+
+describe("workspaceStore apply patch state", () => {
+  it("locks task creation synchronously to prevent duplicate apply requests", () => {
+    workspaceStore.closeApplyPatchDialog();
+    workspaceStore.openApplyPatchDialog("C:/patches/change.patch", "C:/repo/wc");
+
+    expect(workspaceStore.beginApplyPatchTask(false)).toBe(true);
+    expect(workspaceStore.beginApplyPatchTask(false)).toBe(false);
+    expect(get(workspaceStore).applyPatchCreating).toBe(true);
+
+    workspaceStore.failApplyPatchTask("test failure");
+    expect(get(workspaceStore).applyPatchCreating).toBe(false);
+    workspaceStore.closeApplyPatchDialog();
   });
 });
 

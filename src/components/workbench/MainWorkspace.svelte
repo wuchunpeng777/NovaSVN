@@ -3,6 +3,7 @@
   import ErrorNotice from "../ErrorNotice.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
   import type {
+    ApplyPatchResult,
     BranchPool,
     BranchPoolEntry,
     ChangedFile,
@@ -145,6 +146,11 @@
   export let mergeRunning = false;
   export let mergeError: string | null = null;
   export let mergeResult: MergeResult | null = null;
+  export let applyPatchDialogOpen = false;
+  export let applyPatchFilePath = "";
+  export let applyPatchRunning = false;
+  export let applyPatchResult: ApplyPatchResult | null = null;
+  export let applyPatchError: string | null = null;
   export let taskWorkspaces: TaskWorkspaceList = { entries: [] };
   export let activeTaskWorkspaceId: string | null = null;
 
@@ -220,6 +226,9 @@
   export let onRefreshStatus: () => void = () => {};
   export let onUpdateWorkspace: () => void = () => {};
   export let onCleanupWorkspace: () => void = () => {};
+  export let onChooseApplyPatch: () => void = () => {};
+  export let onRunApplyPatch: (dryRun: boolean) => void = () => {};
+  export let onCloseApplyPatch: () => void = () => {};
   export let onLoadMoreStatus: () => void = () => {};
   export let onWorkspacePathInput: (value: string) => void = () => {};
   export let onSearchTextInput: (value: string) => void = () => {};
@@ -708,6 +717,18 @@
     inspectorWidth = Math.min(Math.max(inspectorWidth + delta, 320), 760);
   }
 
+  function focusPatchDialog(node: HTMLElement) {
+    node.focus();
+  }
+
+  function handlePatchDialogKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape" && !applyPatchRunning) {
+      event.preventDefault();
+      event.stopPropagation();
+      onCloseApplyPatch();
+    }
+  }
+
   onDestroy(() => {
     stopInspectorResize();
   });
@@ -741,10 +762,21 @@
     (item) => !safetyCheck.confirmedWarningIds.includes(item.id),
   ).length;
   $: activeTask = selectedTask ?? null;
+  $: applyPatchHasIssues =
+    !!applyPatchError ||
+    (!!applyPatchResult &&
+      (applyPatchResult.rejected > 0 ||
+        applyPatchResult.skipped > 0 ||
+        applyPatchResult.conflicted > 0));
+  $: applyPatchCanProceed =
+    !!applyPatchResult &&
+    applyPatchResult.dry_run &&
+    applyPatchResult.applied > 0 &&
+    !applyPatchHasIssues;
 </script>
 
 <section class="versions-workbench" aria-label="NovaSVN 工作台">
-  <header class="versions-titlebar">
+  <header class="versions-titlebar" inert={applyPatchDialogOpen}>
     <div class="window-identity">
       <strong>NovaSVN</strong>
       <span>{workspace ? basename(workspace.working_copy_root) : "Subversion Client"}</span>
@@ -786,13 +818,20 @@
       <button type="button" on:click={onUpdateWorkspace} disabled={!workspace || runningTaskId !== null}>
         更新
       </button>
+      <button
+        type="button"
+        on:click={onChooseApplyPatch}
+        disabled={!workspace || runningTaskId !== null}
+      >
+        应用 Patch
+      </button>
       <button type="button" on:click={onCleanupWorkspace} disabled={!workspace || runningTaskId !== null}>
         清理
       </button>
     </div>
   </header>
 
-  <div class="workspace-location">
+  <div class="workspace-location" inert={applyPatchDialogOpen}>
     <input
       type="text"
       value={workspacePathInput}
@@ -813,7 +852,7 @@
     </button>
   </div>
 
-  <div class="versions-layout">
+  <div class="versions-layout" inert={applyPatchDialogOpen}>
     <aside class="source-list" aria-label="项目列表">
       <section>
         <h2>项目</h2>
@@ -2152,4 +2191,88 @@
       {/if}
     </main>
   </div>
+
+  {#if applyPatchDialogOpen}
+    <div class="patch-dialog-backdrop">
+      <div
+        class="patch-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="apply-patch-title"
+        tabindex="-1"
+        use:focusPatchDialog
+        on:keydown={handlePatchDialogKeydown}
+      >
+        <header>
+          <div>
+            <h2 id="apply-patch-title">应用 Patch</h2>
+            <p title={applyPatchFilePath}>{basename(applyPatchFilePath)}</p>
+          </div>
+          <button
+            type="button"
+            class="dialog-close"
+            aria-label="关闭 Patch 对话框"
+            title="关闭"
+            disabled={applyPatchRunning}
+            on:click={onCloseApplyPatch}
+          >
+            ×
+          </button>
+        </header>
+
+        {#if applyPatchRunning}
+          <p class="patch-dialog-status">
+            {applyPatchResult?.dry_run ? "正在应用 Patch" : "正在预检 Patch"}
+          </p>
+        {:else if applyPatchResult}
+          <p class:patch-warning={applyPatchHasIssues} class="patch-dialog-status">
+            {applyPatchResult.dry_run
+              ? applyPatchCanProceed
+                ? "预检通过"
+                : "预检发现问题"
+              : applyPatchHasIssues
+                ? "Patch 已部分应用"
+                : "Patch 已应用"}
+          </p>
+        {/if}
+
+        {#if applyPatchError}
+          <p class="inline-error">{applyPatchError}</p>
+        {/if}
+
+        {#if applyPatchResult}
+          <div class="patch-summary" aria-label="Patch 结果统计">
+            <span><strong>{applyPatchResult.applied}</strong>应用</span>
+            <span><strong>{applyPatchResult.rejected}</strong>拒绝</span>
+            <span><strong>{applyPatchResult.skipped}</strong>跳过</span>
+            <span><strong>{applyPatchResult.conflicted}</strong>冲突</span>
+          </div>
+          <pre class="patch-output">{applyPatchResult.output_text || "SVN 未返回输出"}</pre>
+        {/if}
+
+        <footer>
+          <button type="button" on:click={onCloseApplyPatch} disabled={applyPatchRunning}>
+            {applyPatchResult && !applyPatchResult.dry_run && !applyPatchError ? "完成" : "关闭"}
+          </button>
+          {#if !applyPatchRunning && applyPatchError && !applyPatchResult}
+            <button type="button" on:click={() => onRunApplyPatch(true)}>重新预检</button>
+          {/if}
+          {#if applyPatchResult?.dry_run}
+            {#if applyPatchError}
+              <button type="button" on:click={() => onRunApplyPatch(true)}>重新预检</button>
+            {:else}
+              <button
+                type="button"
+                class="primary"
+                on:click={() => onRunApplyPatch(false)}
+                disabled={applyPatchRunning || !applyPatchCanProceed}
+              >
+                应用 Patch
+              </button>
+            {/if}
+          {/if}
+        </footer>
+      </div>
+    </div>
+  {/if}
 </section>

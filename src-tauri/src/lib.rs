@@ -25,11 +25,11 @@ use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
 use system_integration::StartupIntent;
 use task::{
-    CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest, CreateMergeTaskRequest,
-    CreateMockTaskRequest, CreatePartialCommitTaskRequest, CreateRepositoryCopyTaskRequest,
-    CreateRepositoryListTaskRequest, CreateRevisionDiffTaskRequest,
-    CreateShadowWorkspaceTaskRequest, CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest,
-    Task, TaskQueue, TaskSnapshot,
+    CreateApplyPatchTaskRequest, CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest,
+    CreateMergeTaskRequest, CreateMockTaskRequest, CreatePartialCommitTaskRequest,
+    CreateRepositoryCopyTaskRequest, CreateRepositoryListTaskRequest,
+    CreateRevisionDiffTaskRequest, CreateShadowWorkspaceTaskRequest, CreateSvnOperationTaskRequest,
+    CreateSvnSwitchTaskRequest, Task, TaskQueue, TaskSnapshot,
 };
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use tauri::{Emitter, Manager};
@@ -351,6 +351,17 @@ fn create_merge_task(
 }
 
 #[tauri::command]
+fn create_apply_patch_task(
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateApplyPatchTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_apply_patch_task command received");
+    Ok(CommandResponse::success(
+        queue.create_apply_patch_task(request)?,
+    ))
+}
+
+#[tauri::command]
 fn get_branch_pool(app: tauri::AppHandle) -> CommandResult<BranchPool> {
     Ok(CommandResponse::success(branch_pool::read_branch_pool(
         &app,
@@ -580,6 +591,7 @@ pub fn run() {
             create_svn_switch_task,
             create_revision_diff_task,
             create_merge_task,
+            create_apply_patch_task,
             get_branch_pool,
             save_branch_pool_entry,
             remove_branch_pool_entry,

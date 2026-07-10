@@ -4,6 +4,7 @@ import type {
   CommandError,
   CommandResponse,
   BranchPool,
+  CreateApplyPatchTaskRequest,
   CreateMergeTaskRequest,
   CreateCommitTaskRequest,
   CreateBranchCheckoutTaskRequest,
@@ -181,6 +182,12 @@ export function createMergeTask(request: CreateMergeTaskRequest): Promise<Task> 
   return callBackend<Task>("create_merge_task", { request });
 }
 
+export function createApplyPatchTask(
+  request: CreateApplyPatchTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_apply_patch_task", { request });
+}
+
 export function getBranchPool(): Promise<BranchPool> {
   return callBackend<BranchPool>("get_branch_pool");
 }
@@ -302,6 +309,22 @@ export async function chooseWorkspaceDirectory(): Promise<string | null> {
     directory: true,
     multiple: false,
     title: "选择 SVN 工作副本",
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function choosePatchFile(): Promise<string | null> {
+  const selected = await open({
+    directory: false,
+    multiple: false,
+    title: "选择要应用的 Patch",
+    filters: [
+      {
+        name: "Patch 文件",
+        extensions: ["patch", "diff"],
+      },
+    ],
   });
 
   return typeof selected === "string" ? selected : null;

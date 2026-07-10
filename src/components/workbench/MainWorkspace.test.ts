@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./MonacoDiffViewer.svelte", () => ({
@@ -64,6 +64,71 @@ describe("MainWorkspace", () => {
 
     await fireEvent.click(screen.getByText("Add", { exact: true }));
     expect(onAddFile).toHaveBeenCalledWith("notes/new.txt");
+  });
+
+  it("shows patch preflight output and confirms a safe patch", async () => {
+    const onRunApplyPatch = vi.fn();
+    const onCloseApplyPatch = vi.fn();
+
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        applyPatchDialogOpen: true,
+        applyPatchFilePath: "C:/patches/change.patch",
+        applyPatchResult: {
+          dry_run: true,
+          patch_file_path: "C:/patches/change.patch",
+          patch_digest: "a".repeat(64),
+          output_text: "U         C:/repo/wc/src/main.ts",
+          applied: 1,
+          rejected: 0,
+          skipped: 0,
+          conflicted: 0,
+        },
+        onRunApplyPatch,
+        onCloseApplyPatch,
+      },
+    });
+
+    const dialog = screen.getByRole("dialog", { name: "应用 Patch" });
+    expect(dialog).toHaveFocus();
+    expect(within(dialog).getByText("预检通过")).toBeInTheDocument();
+    expect(dialog.querySelector(".patch-output")).toHaveTextContent(
+      "U C:/repo/wc/src/main.ts",
+    );
+    expect(within(dialog).getByText("1").closest("span")).toHaveTextContent("1应用");
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "应用 Patch" }));
+    expect(onRunApplyPatch).toHaveBeenCalledWith(false);
+
+    await fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(onCloseApplyPatch).toHaveBeenCalledOnce();
+  });
+
+  it("blocks patch confirmation when preflight skips a target", () => {
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        applyPatchDialogOpen: true,
+        applyPatchFilePath: "C:/patches/change.patch",
+        applyPatchResult: {
+          dry_run: true,
+          patch_file_path: "C:/patches/change.patch",
+          patch_digest: "b".repeat(64),
+          output_text: "Skipped missing target: '../outside.txt'",
+          applied: 0,
+          rejected: 0,
+          skipped: 1,
+          conflicted: 0,
+        },
+      },
+    });
+
+    const dialog = screen.getByRole("dialog", { name: "应用 Patch" });
+    expect(within(dialog).getByText("预检发现问题")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "应用 Patch" })).toBeDisabled();
   });
 });
 

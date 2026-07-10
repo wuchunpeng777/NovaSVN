@@ -2,6 +2,7 @@ import { get, writable } from "svelte/store";
 import {
   cancelTask,
   chooseWorkspaceDirectory,
+  createApplyPatchTask,
   createBranchCheckoutTask,
   createCommitTask,
   createMergeTask,
@@ -47,6 +48,7 @@ import type {
   WorkspaceGroupMode,
 } from "../types/app";
 import type {
+  ApplyPatchResult,
   ChangedFile,
   BranchPool,
   BranchPoolEntry,
@@ -541,6 +543,38 @@ function createTaskStore() {
     }
   }
 
+  async function createApplyPatch(request: {
+    workingCopyRoot: string;
+    patchFilePath: string;
+    dryRun: boolean;
+    expectedPatchDigest?: string | null;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createApplyPatchTask({
+        working_copy_root: request.workingCopyRoot,
+        patch_file_path: request.patchFilePath,
+        dry_run: request.dryRun,
+        ...(request.expectedPatchDigest
+          ? { expected_patch_digest: request.expectedPatchDigest }
+          : {}),
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function select(taskId: string) {
     selectedTaskId = taskId;
     await refresh();
@@ -603,6 +637,7 @@ function createTaskStore() {
     createSvnSwitch,
     createRevisionDiff,
     createMerge,
+    createApplyPatch,
     select,
     cancel,
     getTaskById,
@@ -1285,6 +1320,13 @@ export interface WorkspaceStoreState {
   pendingMergeTaskId: string | null;
   mergeError: string | null;
   mergeResult: MergeResult | null;
+  applyPatchDialogOpen: boolean;
+  applyPatchFilePath: string;
+  applyPatchWorkingCopyRoot: string;
+  applyPatchCreating: boolean;
+  pendingApplyPatchTaskId: string | null;
+  applyPatchResult: ApplyPatchResult | null;
+  applyPatchError: string | null;
   svnProperties: SvnProperties | null;
   svnPropertiesLoading: boolean;
   svnPropertiesError: CommandError | null;
@@ -1408,6 +1450,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   pendingMergeTaskId: null,
   mergeError: null,
   mergeResult: null,
+  ...emptyApplyPatchState(),
   svnProperties: null,
   svnPropertiesLoading: false,
   svnPropertiesError: null,
@@ -1450,6 +1493,7 @@ function createWorkspaceStore() {
         pendingPartialCommitTaskId: null,
         pendingSvnOperationTaskId: null,
         pendingSvnOperationKind: null,
+        ...emptyApplyPatchState(),
         repositoryUrlInput: recent.workspace?.repository_root ?? state.repositoryUrlInput,
         repositoryCurrentUrl: "",
         repositoryList: null,
@@ -1530,6 +1574,7 @@ function createWorkspaceStore() {
         pendingPartialCommitTaskId: null,
         pendingSvnOperationTaskId: null,
         pendingSvnOperationKind: null,
+        ...emptyApplyPatchState(),
         repositoryUrlInput: current.repository_root,
         repositoryCurrentUrl: "",
         repositoryList: null,
@@ -3244,6 +3289,77 @@ function createWorkspaceStore() {
     }));
   }
 
+  function openApplyPatchDialog(filePath: string, workingCopyRoot: string) {
+    update((state) => ({
+      ...state,
+      applyPatchDialogOpen: true,
+      applyPatchFilePath: filePath,
+      applyPatchWorkingCopyRoot: workingCopyRoot,
+      applyPatchCreating: false,
+      pendingApplyPatchTaskId: null,
+      applyPatchResult: null,
+      applyPatchError: null,
+    }));
+  }
+
+  function closeApplyPatchDialog() {
+    update((state) =>
+      state.applyPatchCreating || state.pendingApplyPatchTaskId
+        ? state
+        : {
+            ...state,
+            ...emptyApplyPatchState(),
+          },
+    );
+  }
+
+  function beginApplyPatchTask(dryRun: boolean) {
+    let started = false;
+    update((state) => {
+      if (state.applyPatchCreating || state.pendingApplyPatchTaskId) {
+        return state;
+      }
+
+      started = true;
+      return {
+        ...state,
+        applyPatchCreating: true,
+        applyPatchResult: dryRun ? null : state.applyPatchResult,
+        applyPatchError: null,
+      };
+    });
+    return started;
+  }
+
+  function markApplyPatchTask(taskId: string | null, dryRun: boolean) {
+    update((state) => ({
+      ...state,
+      applyPatchCreating: false,
+      pendingApplyPatchTaskId: taskId,
+      applyPatchResult: dryRun ? null : state.applyPatchResult,
+      applyPatchError: null,
+    }));
+  }
+
+  function completeApplyPatchTask(result: ApplyPatchResult) {
+    update((state) => ({
+      ...state,
+      applyPatchCreating: false,
+      pendingApplyPatchTaskId: null,
+      applyPatchResult: result,
+      applyPatchError: null,
+    }));
+  }
+
+  function failApplyPatchTask(message: string | null) {
+    update((state) => ({
+      ...state,
+      applyPatchCreating: false,
+      pendingApplyPatchTaskId: null,
+      applyPatchError: message ?? "Patch 执行失败",
+    }));
+  }
+
   return {
     subscribe,
     loadRecent,
@@ -3329,6 +3445,12 @@ function createWorkspaceStore() {
     markMergeTask,
     completeMergeTask,
     failMergeTask,
+    openApplyPatchDialog,
+    closeApplyPatchDialog,
+    beginApplyPatchTask,
+    markApplyPatchTask,
+    completeApplyPatchTask,
+    failApplyPatchTask,
   };
 }
 
@@ -3611,6 +3733,18 @@ function emptyPropertyEditForm() {
   return {
     name: "",
     value: "",
+  };
+}
+
+function emptyApplyPatchState() {
+  return {
+    applyPatchDialogOpen: false,
+    applyPatchFilePath: "",
+    applyPatchWorkingCopyRoot: "",
+    applyPatchCreating: false,
+    pendingApplyPatchTaskId: null,
+    applyPatchResult: null,
+    applyPatchError: null,
   };
 }
 

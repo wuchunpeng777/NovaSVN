@@ -4,6 +4,7 @@
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
   import {
     callBackend,
+    choosePatchFile,
     getStartupIntent,
     launchExternalTool,
     openFileLocation,
@@ -34,6 +35,7 @@
   let commandError: CommandError | null = null;
   let unlistenAppMenu: UnlistenFn | null = null;
   const repositoryLayoutTaskChecks = new Set<string>();
+  const applyPatchTaskChecks = new Set<string>();
 
   $: activeView = workbenchViews[$currentView];
   $: selectedFile =
@@ -601,6 +603,87 @@
     workspaceStore.markMergeTask(task.task_id);
   }
 
+  async function chooseAndPreflightPatch() {
+    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+    if (!workingCopyRoot) {
+      return;
+    }
+
+    commandError = null;
+    try {
+      const patchFilePath = await choosePatchFile();
+      if (!patchFilePath) {
+        return;
+      }
+      if ($workspaceStore.current?.working_copy_root !== workingCopyRoot) {
+        commandError = {
+          code: "PATCH_WORKSPACE_CHANGED",
+          message: "工作副本已发生切换，请重新选择 Patch",
+          detail: null,
+          recoverable: true,
+        };
+        return;
+      }
+      workspaceStore.openApplyPatchDialog(patchFilePath, workingCopyRoot);
+      await runApplyPatch(true);
+    } catch (error) {
+      commandError = {
+        code: "PATCH_FILE_PICKER_FAILED",
+        message: error instanceof Error ? error.message : "无法选择 Patch 文件",
+        detail: null,
+        recoverable: true,
+      };
+    }
+  }
+
+  async function runApplyPatch(dryRun: boolean) {
+    const current = $workspaceStore.current;
+    const patchFilePath = $workspaceStore.applyPatchFilePath;
+    const workingCopyRoot = $workspaceStore.applyPatchWorkingCopyRoot;
+    if (
+      !current ||
+      !patchFilePath ||
+      !workingCopyRoot ||
+      current.working_copy_root !== workingCopyRoot
+    ) {
+      workspaceStore.failApplyPatchTask("请先选择 Patch 文件和 SVN 工作副本");
+      return;
+    }
+
+    const preflightResult = $workspaceStore.applyPatchResult;
+    if (
+      !dryRun &&
+      (!preflightResult?.dry_run ||
+        !preflightResult.patch_digest ||
+        preflightResult.applied === 0 ||
+        preflightResult.rejected > 0 ||
+        preflightResult.skipped > 0 ||
+        preflightResult.conflicted > 0 ||
+        $workspaceStore.applyPatchError)
+    ) {
+      workspaceStore.failApplyPatchTask("Patch 预检结果已失效，请重新预检");
+      return;
+    }
+
+    if (!workspaceStore.beginApplyPatchTask(dryRun)) {
+      return;
+    }
+
+    const task = await taskStore.createApplyPatch({
+      workingCopyRoot,
+      patchFilePath,
+      dryRun,
+      expectedPatchDigest: dryRun ? undefined : preflightResult?.patch_digest,
+      svnExecutable: currentSvnExecutable(),
+    });
+    if (!task) {
+      workspaceStore.failApplyPatchTask($taskStore.error?.message ?? "Patch 任务创建失败");
+      return;
+    }
+
+    workspaceStore.markApplyPatchTask(task.task_id, dryRun);
+  }
+
   async function handleStartupIntent() {
     const intent = await getStartupIntent();
     const targetPath = intent.path?.trim();
@@ -657,6 +740,16 @@
   }
 
   async function handleAppMenuCommand(command: string) {
+    const patchBusy =
+      $workspaceStore.applyPatchCreating || $workspaceStore.pendingApplyPatchTaskId !== null;
+    if (
+      patchBusy &&
+      ["open_workspace", "update_workspace", "cleanup_workspace"].includes(command)
+    ) {
+      backendMessage = "Patch 任务运行中，完成后才能切换或修改工作副本";
+      return;
+    }
+
     switch (command) {
       case "open_workspace":
         await workspaceStore.chooseAndOpen(currentSvnExecutable());
@@ -898,6 +991,72 @@
     workspaceStore.failMergeTask($taskStore.selectedTask.error ?? "Merge 执行失败");
   }
 
+  async function checkApplyPatchTask(taskId: string) {
+    if (applyPatchTaskChecks.has(taskId)) {
+      return;
+    }
+
+    applyPatchTaskChecks.add(taskId);
+    try {
+      const task = await taskStore.getTaskById(taskId);
+      if (!task) {
+        return;
+      }
+
+      if (task.status === "success") {
+        const result = task.result?.apply_patch_result;
+        if (!result) {
+          workspaceStore.failApplyPatchTask("Patch 任务没有返回结果");
+          return;
+        }
+
+        workspaceStore.completeApplyPatchTask(result);
+        if (!result.dry_run) {
+          const workingCopyRoot = $workspaceStore.applyPatchWorkingCopyRoot;
+          if (workingCopyRoot) {
+            void refreshStatusAndSyncBranchPool(workingCopyRoot).then((status) => {
+              if ((status?.conflicted ?? 0) > 0 || result.conflicted > 0) {
+                setCurrentView("changes");
+                workspaceStore.focusConflictFilter();
+              }
+            });
+          }
+        }
+        return;
+      }
+
+      if (task.status === "failed" || task.status === "cancelled") {
+        const result = task.result?.apply_patch_result;
+        if (result) {
+          workspaceStore.completeApplyPatchTask(result);
+        }
+        workspaceStore.failApplyPatchTask(task.error ?? "Patch 执行失败");
+        if (result && !result.dry_run) {
+          const workingCopyRoot = $workspaceStore.applyPatchWorkingCopyRoot;
+          if (workingCopyRoot) {
+            void refreshStatusAndSyncBranchPool(workingCopyRoot);
+          }
+        }
+      }
+    } finally {
+      applyPatchTaskChecks.delete(taskId);
+    }
+  }
+
+  $: if ($workspaceStore.pendingApplyPatchTaskId) {
+    const patchTask = $taskStore.snapshot.tasks.find(
+      (task) => task.task_id === $workspaceStore.pendingApplyPatchTaskId,
+    );
+    if (
+      patchTask &&
+      (patchTask.status === "success" ||
+        patchTask.status === "failed" ||
+        patchTask.status === "cancelled")
+    ) {
+      void checkApplyPatchTask(patchTask.task_id);
+    }
+  }
+
   async function checkRepositoryLayoutTask(
     kind: "trunk" | "branches" | "tags",
     taskId: string,
@@ -1013,6 +1172,13 @@
   mergeRunning={$workspaceStore.pendingMergeTaskId !== null}
   mergeError={$workspaceStore.mergeError}
   mergeResult={$workspaceStore.mergeResult}
+  applyPatchDialogOpen={$workspaceStore.applyPatchDialogOpen}
+  applyPatchFilePath={$workspaceStore.applyPatchFilePath}
+  applyPatchRunning={
+    $workspaceStore.applyPatchCreating || $workspaceStore.pendingApplyPatchTaskId !== null
+  }
+  applyPatchResult={$workspaceStore.applyPatchResult}
+  applyPatchError={$workspaceStore.applyPatchError}
   taskWorkspaces={$taskWorkspaceStore.list}
   activeTaskWorkspaceId={$taskWorkspaceStore.activeTaskId}
   selectedFileDiff={$workspaceStore.selectedFileDiff}
@@ -1073,6 +1239,9 @@
   onRefreshStatus={() => refreshStatusAndSyncBranchPool()}
   onUpdateWorkspace={() => runSvnOperation("update")}
   onCleanupWorkspace={() => runSvnOperation("cleanup")}
+  onChooseApplyPatch={chooseAndPreflightPatch}
+  onRunApplyPatch={runApplyPatch}
+  onCloseApplyPatch={workspaceStore.closeApplyPatchDialog}
   onLoadMoreStatus={() => workspaceStore.loadMoreStatus(currentSvnExecutable())}
   onWorkspacePathInput={workspaceStore.setPathInput}
   onSearchTextInput={workspaceStore.setSearchText}

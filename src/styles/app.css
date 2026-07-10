@@ -1061,6 +1061,140 @@ textarea {
   padding: 7px 9px;
 }
 
+.patch-dialog-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #626a73;
+  padding: 24px;
+}
+
+.patch-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(720px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid #aeb8c2;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 16px;
+}
+
+.patch-dialog > header,
+.patch-dialog > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.patch-dialog > header h2,
+.patch-dialog > header p,
+.patch-dialog-status {
+  margin: 0;
+}
+
+.patch-dialog > header h2 {
+  font-size: 16px;
+}
+
+.patch-dialog > header p {
+  overflow: hidden;
+  max-width: 600px;
+  color: #687482;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.patch-dialog button {
+  min-height: 30px;
+  border: 1px solid #b8c2cc;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.patch-dialog button.primary {
+  border-color: #2f6fab;
+  background: #2f7dca;
+  color: #ffffff;
+}
+
+.patch-dialog button:disabled {
+  border-color: #d7dde4;
+  background: #eef1f4;
+  color: #8b96a2;
+  cursor: default;
+}
+
+.patch-dialog .dialog-close {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.patch-dialog > footer {
+  justify-content: flex-end;
+}
+
+.patch-dialog-status {
+  font-weight: 700;
+}
+
+.patch-dialog-status.patch-warning {
+  color: #8a4b10;
+}
+
+.patch-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid #d8dde3;
+  border-bottom: 1px solid #d8dde3;
+}
+
+.patch-summary span {
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  color: #687482;
+  font-size: 12px;
+  text-align: center;
+}
+
+.patch-summary span + span {
+  border-left: 1px solid #d8dde3;
+}
+
+.patch-summary strong {
+  color: #26323d;
+  font-size: 16px;
+}
+
+.patch-output {
+  min-height: 100px;
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid #d8dde3;
+  border-radius: 6px;
+  background: #f7f8f9;
+  padding: 10px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 .error-notice strong,
 .error-notice p {
   margin: 0;

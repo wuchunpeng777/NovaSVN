@@ -203,6 +203,14 @@ export interface CreateMergeTaskRequest {
   svn_executable?: string;
 }
 
+export interface CreateApplyPatchTaskRequest {
+  working_copy_root: string;
+  patch_file_path: string;
+  dry_run: boolean;
+  expected_patch_digest?: string;
+  svn_executable?: string;
+}
+
 export interface BranchPoolEntry {
   id: string;
   branch_url: string;
@@ -261,6 +269,7 @@ export interface TaskResult {
   repository_list: RepositoryListResult | null;
   revision_diff: RevisionDiffResult | null;
   merge_result: MergeResult | null;
+  apply_patch_result: ApplyPatchResult | null;
 }
 
 export interface RepositoryListResult {
@@ -296,6 +305,17 @@ export interface MergeResult {
   output_text: string;
   file_count: number;
   line_count: number;
+}
+
+export interface ApplyPatchResult {
+  dry_run: boolean;
+  patch_file_path: string;
+  patch_digest: string;
+  output_text: string;
+  applied: number;
+  rejected: number;
+  skipped: number;
+  conflicted: number;
 }
 
 export interface ShadowWorkspaceRequest {
