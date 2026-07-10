@@ -85,11 +85,11 @@ const requiredBundleTargets = ["nsis", "dmg"];
 const benchmarkScripts = ["benchmark:svn", "benchmark:svn:reset"];
 const e2eSmokeAssertions = [
   "NovaSVN",
-  "连接后端",
-  "提交区",
-  "任务队列",
-  "提交选中 Hunk",
-  "影子工作副本",
+  "工作副本",
+  "时间线",
+  "仓库",
+  "提交目标",
+  "未管理文件",
 ];
 const systemIntegrationActions = [
   "open",
@@ -102,7 +102,7 @@ const systemIntegrationActions = [
   "branch-workspace",
 ];
 const startupActionViewChecks = [
-  { action: "commit", view: "staging" },
+  { action: "commit", view: "changes" },
   { action: "update", view: "changes", operation: "update" },
   { action: "cleanup", view: "changes", operation: "cleanup" },
   { action: "diff", view: "changes" },

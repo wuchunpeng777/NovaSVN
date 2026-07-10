@@ -7,7 +7,7 @@
 ### 新增
 
 - 建立 Tauri + Svelte + TypeScript + Rust 桌面应用骨架。
-- 支持 SVN 命令行检测、工作副本打开、状态扫描、本地改动列表、文件 diff、文件级虚拟暂存和文件级提交。
+- 支持 SVN 命令行检测、工作副本打开、状态扫描、本地改动列表、文件 diff、提交目标选择和文件级提交。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。
@@ -15,7 +15,7 @@
 - 支持 `svn:externals` 配置展示和 externals 状态提醒。
 - 支持设置持久化、SVN 路径、工作副本池默认路径、Diff 偏好、提交模板、大文件阈值和外部 diff/merge 工具路径。
 - 增加 Rust 自动化测试、SVN 流程测试、部分提交流程测试、性能基准脚本、Windows NSIS 安装包配置、macOS DMG 安装包配置和版本同步脚本。
-- 性能基准记录状态扫描、diff、虚拟列表准备和提交准备耗时。
+- 性能基准记录状态扫描、diff、虚拟列表准备和提交目标准备耗时。
 
 ### 发布
 

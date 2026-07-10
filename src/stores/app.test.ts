@@ -316,6 +316,43 @@ describe("workspaceStore svn properties", () => {
 });
 
 describe("workspaceStore safety warnings", () => {
+  it("selects versioned changes without persisting commit targets", async () => {
+    const workspace = makeWorkspace();
+    const status = makeStatus([
+      makeFile({
+        path: "src/main.ts",
+        status: "modified",
+        content_digest: "main-digest",
+      }),
+      makeFile({
+        path: "notes/new.txt",
+        status: "unversioned",
+        content_digest: "new-digest",
+      }),
+      makeFile({
+        path: "src/conflict.ts",
+        status: "conflicted",
+        content_digest: "conflict-digest",
+      }),
+    ]);
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(status);
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+
+    expect(get(workspaceStore).commitFiles.map((file) => file.path)).toEqual(["src/main.ts"]);
+
+    workspaceStore.clearCommitFiles();
+    workspaceStore.selectCommitFile("notes/new.txt");
+    expect(get(workspaceStore).commitFiles).toEqual([]);
+
+    workspaceStore.selectAllCommitFiles();
+    expect(get(workspaceStore).commitFiles.map((file) => file.path)).toEqual(["src/main.ts"]);
+    expect(workspaceStore.exportTaskWorkspaceDraft()).not.toHaveProperty("commitFiles");
+  });
+
   it("returns the refreshed status for callers that need the latest counts", async () => {
     const workspace = makeWorkspace();
     const initialStatus = makeStatus([
@@ -349,7 +386,7 @@ describe("workspaceStore safety warnings", () => {
     expect(get(workspaceStore).status).toBe(conflictedStatus);
   });
 
-  it("drops confirmed warnings when staged file content changes", async () => {
+  it("drops confirmed warnings when selected commit content changes", async () => {
     const workspace = makeWorkspace();
     const firstStatus = makeStatus([
       makeFile({
@@ -369,7 +406,7 @@ describe("workspaceStore safety warnings", () => {
 
     workspaceStore.setPathInput("C:/repo/wc");
     await workspaceStore.openPath();
-    workspaceStore.stageFile("build/output.tmp");
+    workspaceStore.selectCommitFile("build/output.tmp");
     workspaceStore.confirmSafetyWarnings();
 
     expect(get(workspaceStore).safetyCheck.confirmedWarningIds).toHaveLength(1);
@@ -377,7 +414,7 @@ describe("workspaceStore safety warnings", () => {
     await workspaceStore.refreshStatus();
 
     const state = get(workspaceStore);
-    expect(state.stagedFiles).toEqual([
+    expect(state.commitFiles).toEqual([
       {
         path: "build/output.tmp",
         status: "modified",
@@ -701,7 +738,7 @@ describe("taskStore merge tasks", () => {
 });
 
 describe("taskWorkspaceStore drafts", () => {
-  it("restores staged files, commit message, review state, and warning confirmations per task", async () => {
+  it("restores task metadata without persisting commit target selection", async () => {
     const workspace = makeWorkspace();
     const status = makeStatus([
       makeFile({
@@ -729,14 +766,14 @@ describe("taskWorkspaceStore drafts", () => {
 
     workspaceStore.setPathInput("C:/repo/wc");
     await workspaceStore.openPath();
-    workspaceStore.stageFile("build/output.tmp");
+    workspaceStore.selectCommitFile("build/output.tmp");
     workspaceStore.setCommitMessage("提交任务 A");
     workspaceStore.markFileReviewed("src/main.ts");
     workspaceStore.confirmSafetyWarnings();
     taskWorkspaceStore.saveDraft(taskA, workspaceStore.exportTaskWorkspaceDraft());
 
-    workspaceStore.unstageFile("build/output.tmp");
-    workspaceStore.stageFile("src/main.ts");
+    workspaceStore.unselectCommitFile("build/output.tmp");
+    workspaceStore.selectCommitFile("src/main.ts");
     workspaceStore.setCommitMessage("提交任务 B");
     workspaceStore.markFileUnreviewed("src/main.ts");
     taskWorkspaceStore.saveDraft(taskB, workspaceStore.exportTaskWorkspaceDraft());
@@ -745,13 +782,7 @@ describe("taskWorkspaceStore drafts", () => {
     expect(get(taskWorkspaceStore).activeTaskId).toBe("task-a");
     expect(get(workspaceStore)).toMatchObject({
       commitMessage: "提交任务 A",
-      stagedFiles: [
-        {
-          path: "build/output.tmp",
-          status: "modified",
-          contentDigest: "tmp-digest",
-        },
-      ],
+      commitFiles: [],
       reviewedFiles: [
         {
           path: "src/main.ts",
@@ -759,21 +790,13 @@ describe("taskWorkspaceStore drafts", () => {
         },
       ],
     });
-    expect(get(workspaceStore).safetyCheck.confirmedWarningIds).toEqual([
-      "warning:generated:build/output.tmp:tmp-digest",
-    ]);
+    expect(get(workspaceStore).safetyCheck.confirmedWarningIds).toEqual([]);
 
     workspaceStore.importTaskWorkspaceDraft(taskWorkspaceStore.loadDraft(taskB));
     expect(get(taskWorkspaceStore).activeTaskId).toBe("task-b");
     expect(get(workspaceStore)).toMatchObject({
       commitMessage: "提交任务 B",
-      stagedFiles: [
-        {
-          path: "src/main.ts",
-          status: "modified",
-          contentDigest: "main-digest",
-        },
-      ],
+      commitFiles: [],
       reviewedFiles: [],
     });
     expect(get(workspaceStore).safetyCheck.confirmedWarningIds).toEqual([]);
@@ -801,7 +824,7 @@ describe("taskWorkspaceStore drafts", () => {
 
     workspaceStore.setPathInput("C:/repo/wc");
     await workspaceStore.openPath();
-    workspaceStore.stageFile("src/main.ts");
+    workspaceStore.selectCommitFile("src/main.ts");
     workspaceStore.setCommitMessage("工作副本草稿");
     taskWorkspaceStore.saveDraft(taskA, workspaceStore.exportTaskWorkspaceDraft());
     taskWorkspaceStore.saveDraft(taskB, workspaceStore.exportTaskWorkspaceDraft());

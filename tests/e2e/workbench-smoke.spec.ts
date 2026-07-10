@@ -1,22 +1,24 @@
 import { expect, test } from "@playwright/test";
 
-test("loads the NovaSVN workbench shell", async ({ page }) => {
+test("loads the current NovaSVN workbench shell", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "NovaSVN" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /工作区/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /设置/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: "连接后端" })).toBeVisible();
-  await expect(page.getByText("提交区")).toBeVisible();
-  await expect(page.getByText("任务队列")).toBeVisible();
+  await expect(page.getByText("NovaSVN", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "工作副本" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "时间线" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "仓库" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "更多" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "更新" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "清理" })).toBeVisible();
 });
 
-test("exposes partial commit and shadow workspace workflow", async ({ page }) => {
+test("uses SVN commit targets without a staging view", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("button", { name: "提交选中 Hunk" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "影子工作副本" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "检查" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "准备" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "重建" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "全部文件" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "变化文件" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "未管理文件" })).toBeVisible();
+  await expect(page.getByText("提交目标", { exact: true })).toBeVisible();
+  await expect(page.getByText("本次将提交 0 个文件", { exact: true })).toBeVisible();
+  await expect(page.getByText("暂存", { exact: false })).toHaveCount(0);
 });

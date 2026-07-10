@@ -1,12 +1,9 @@
 export type AppView =
   | "changes"
-  | "staging"
   | "history"
   | "branches"
   | "repository"
   | "settings";
-
-export type WorkspaceStageFilter = "all" | "staged" | "unstaged";
 
 export type WorkspaceGroupMode = "status" | "directory" | "extension";
 
@@ -27,17 +24,6 @@ export interface SafetyCheckSummary {
   confirmedWarningIds: string[];
 }
 
-export interface NavigationItem {
-  id: AppView;
-  label: string;
-  description: string;
-}
-
-export interface DetailSection {
-  title: string;
-  description: string;
-}
-
 export interface WorkbenchView {
   id: AppView;
   title: string;
@@ -50,19 +36,6 @@ export interface WorkbenchView {
     title: string;
     meta: string;
     status: string;
-  }>;
-}
-
-export interface SidebarFilterStats {
-  total: number;
-  staged: number;
-  unstaged: number;
-  abnormal: number;
-  unreviewed: number;
-  statuses: Array<{
-    status: string;
-    label: string;
-    count: number;
   }>;
 }
 

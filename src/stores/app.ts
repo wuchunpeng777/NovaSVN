@@ -45,7 +45,6 @@ import type {
   SafetyCheckItem,
   SafetyCheckSummary,
   WorkspaceGroupMode,
-  WorkspaceStageFilter,
 } from "../types/app";
 import type {
   ChangedFile,
@@ -1170,7 +1169,6 @@ export interface WorkspaceStoreState {
   fileTree: WorkspaceFileTree | null;
   searchText: string;
   groupByStatus: boolean;
-  stageFilter: WorkspaceStageFilter;
   abnormalOnly: boolean;
   unreviewedOnly: boolean;
   generatedOnly: boolean;
@@ -1184,7 +1182,7 @@ export interface WorkspaceStoreState {
   svnBlameLoading: boolean;
   svnBlameError: CommandError | null;
   selectedPatch: SelectedPatch | null;
-  stagedFiles: Array<{
+  commitFiles: Array<{
     path: string;
     status: string;
     contentDigest: string;
@@ -1302,7 +1300,6 @@ const initialWorkspaceState: WorkspaceStoreState = {
   fileTree: null,
   searchText: "",
   groupByStatus: true,
-  stageFilter: "all",
   abnormalOnly: false,
   unreviewedOnly: false,
   generatedOnly: false,
@@ -1316,7 +1313,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   svnBlameLoading: false,
   svnBlameError: null,
   selectedPatch: null,
-  stagedFiles: [],
+  commitFiles: [],
   safetyCheck: emptySafetyCheck(),
   selectedHunks: [],
   reviewedFiles: [],
@@ -1438,7 +1435,7 @@ function createWorkspaceStore() {
         selectedFileContentDiff: null,
         selectedFileParsedDiff: null,
         ...clearSvnBlameState(),
-        stagedFiles: draft.stagedFiles,
+        commitFiles: [],
         safetyCheck: {
           ...emptySafetyCheck(),
           confirmedWarningIds: draft.confirmedWarningIds,
@@ -1518,7 +1515,7 @@ function createWorkspaceStore() {
         selectedFileContentDiff: null,
         selectedFileParsedDiff: null,
         ...clearSvnBlameState(),
-        stagedFiles: draft.stagedFiles,
+        commitFiles: [],
         safetyCheck: {
           ...emptySafetyCheck(),
           confirmedWarningIds: draft.confirmedWarningIds,
@@ -1667,13 +1664,6 @@ function createWorkspaceStore() {
     }));
   }
 
-  function setStageFilter(value: WorkspaceStageFilter) {
-    update((state) => ({
-      ...state,
-      stageFilter: state.stageFilter === value ? "all" : value,
-    }));
-  }
-
   function toggleAbnormalOnly() {
     update((state) => ({
       ...state,
@@ -1715,7 +1705,6 @@ function createWorkspaceStore() {
     update((state) => ({
       ...state,
       searchText: "",
-      stageFilter: "all",
       abnormalOnly: false,
       unreviewedOnly: false,
       generatedOnly: false,
@@ -1737,7 +1726,6 @@ function createWorkspaceStore() {
     update((state) => ({
       ...state,
       searchText: "",
-      stageFilter: "all",
       abnormalOnly: false,
       unreviewedOnly: false,
       generatedOnly: false,
@@ -1850,51 +1838,75 @@ function createWorkspaceStore() {
     }
   }
 
-  function stageFile(path: string) {
+  function selectCommitFile(path: string) {
     update((state) => {
       const file = state.status?.files.find((item) => item.path === path);
-      if (!file || !isStageable(file) || state.stagedFiles.some((item) => item.path === path)) {
+      if (!file || !isCommittable(file) || state.commitFiles.some((item) => item.path === path)) {
         return state;
       }
-      const stagedFiles = [
-        ...state.stagedFiles,
+      const commitFiles = [
+        ...state.commitFiles,
         { path: file.path, status: file.status, contentDigest: file.content_digest },
       ];
       const safetyCheck = buildSafetyCheck(
         state.status?.files ?? [],
-        stagedFiles,
+        commitFiles,
         state.safetyCheck.confirmedWarningIds,
         state.status,
       );
-      saveWorkspaceDraftFromState({ ...state, stagedFiles, safetyCheck });
 
       return {
         ...state,
-        stagedFiles,
+        commitFiles,
         safetyCheck,
         commitError: null,
       };
     });
   }
 
-  function unstageFile(path: string) {
+  function unselectCommitFile(path: string) {
     update((state) => {
-      const stagedFiles = state.stagedFiles.filter((file) => file.path !== path);
+      const commitFiles = state.commitFiles.filter((file) => file.path !== path);
       const safetyCheck = buildSafetyCheck(
         state.status?.files ?? [],
-        stagedFiles,
-        reconcileSafetyWarningConfirmations(state.safetyCheck, stagedFiles).confirmedWarningIds,
+        commitFiles,
+        reconcileSafetyWarningConfirmations(state.safetyCheck, commitFiles).confirmedWarningIds,
         state.status,
       );
-      saveWorkspaceDraftFromState({ ...state, stagedFiles, safetyCheck });
 
       return {
         ...state,
-        stagedFiles,
+        commitFiles,
         safetyCheck,
         commitError: null,
       };
     });
+  }
+
+  function selectAllCommitFiles() {
+    update((state) => {
+      const commitFiles = buildCommitFileSelection(state.status?.files ?? []);
+      return {
+        ...state,
+        commitFiles,
+        safetyCheck: buildSafetyCheck(
+          state.status?.files ?? [],
+          commitFiles,
+          state.safetyCheck.confirmedWarningIds,
+          state.status,
+        ),
+        commitError: null,
+      };
+    });
+  }
+
+  function clearCommitFiles() {
+    update((state) => ({
+      ...state,
+      commitFiles: [],
+      safetyCheck: buildSafetyCheck(state.status?.files ?? [], [], [], state.status),
+      commitError: null,
+    }));
   }
 
   function markFileReviewed(path: string) {
@@ -1934,10 +1946,10 @@ function createWorkspaceStore() {
     });
   }
 
-  function validateStagedFilesForCommit() {
+  function validateCommitFiles() {
     let valid = false;
     update((state) => {
-      const reconciled = reconcileStagedFiles(state.stagedFiles, state.status?.files ?? []);
+      const reconciled = reconcileCommitFiles(state.commitFiles, state.status?.files ?? []);
       const safetyCheck = buildSafetyCheck(
         state.status?.files ?? [],
         reconciled,
@@ -1950,7 +1962,7 @@ function createWorkspaceStore() {
       if (!state.current) {
         commitError = "请先打开 SVN 工作副本";
       } else if (reconciled.length === 0) {
-        commitError = "请先暂存要提交的文件";
+        commitError = "请选择要提交的文件";
       } else if (!message) {
         commitError = "请输入提交信息";
       } else if (safetyCheck.blockers.length > 0) {
@@ -1960,15 +1972,9 @@ function createWorkspaceStore() {
       }
 
       valid = commitError === null;
-      saveWorkspaceDraftFromState({
-        ...state,
-        stagedFiles: reconciled,
-        safetyCheck,
-      });
-
       return {
         ...state,
-        stagedFiles: reconciled,
+        commitFiles: reconciled,
         safetyCheck,
         commitError,
       };
@@ -2050,7 +2056,7 @@ function createWorkspaceStore() {
 
   function confirmSafetyWarnings() {
     update((state) => {
-      const reconciled = reconcileStagedFiles(state.stagedFiles, state.status?.files ?? []);
+      const reconciled = reconcileCommitFiles(state.commitFiles, state.status?.files ?? []);
       const safetyCheck = buildSafetyCheck(
         state.status?.files ?? [],
         reconciled,
@@ -2063,13 +2069,12 @@ function createWorkspaceStore() {
       };
       saveWorkspaceDraftFromState({
         ...state,
-        stagedFiles: reconciled,
         safetyCheck: nextSafetyCheck,
       });
 
       return {
         ...state,
-        stagedFiles: reconciled,
+        commitFiles: reconciled,
         safetyCheck: nextSafetyCheck,
         commitError: null,
       };
@@ -2354,10 +2359,6 @@ function createWorkspaceStore() {
     update((state) => {
       const draftState = normalizeWorkspaceDraftInput(draft, state.commitTemplate);
       const currentFiles = state.status?.files ?? [];
-      const stagedFiles =
-        currentFiles.length > 0
-          ? reconcileStagedFiles(draftState.stagedFiles, currentFiles)
-          : draftState.stagedFiles;
       const selectedHunks =
         currentFiles.length > 0
           ? reconcileSelectedHunks(draftState.selectedHunks, currentFiles)
@@ -2368,12 +2369,12 @@ function createWorkspaceStore() {
           : draftState.reviewedFiles;
       const nextState = {
         ...state,
-        stagedFiles,
+        commitFiles: [],
         selectedHunks,
         reviewedFiles,
         safetyCheck: buildSafetyCheck(
           currentFiles,
-          stagedFiles,
+          [],
           draftState.confirmedWarningIds,
           state.status,
         ),
@@ -2389,7 +2390,7 @@ function createWorkspaceStore() {
   function clearCommittedFiles(paths: string[]) {
     const committed = new Set(paths);
     update((state) => {
-      const stagedFiles = state.stagedFiles.filter((file) => !committed.has(file.path));
+      const commitFiles = state.commitFiles.filter((file) => !committed.has(file.path));
       const commitHistory = recordCommitHistory(
         state.commitMessage,
         state.commitHistory,
@@ -2397,8 +2398,8 @@ function createWorkspaceStore() {
       );
       const nextState = {
         ...state,
-        stagedFiles,
-        safetyCheck: buildSafetyCheck(state.status?.files ?? [], stagedFiles, [], state.status),
+        commitFiles,
+        safetyCheck: buildSafetyCheck(state.status?.files ?? [], commitFiles, [], state.status),
         commitHistory,
         commitMessage: state.commitTemplate,
       };
@@ -2406,7 +2407,7 @@ function createWorkspaceStore() {
 
       return {
         ...state,
-        stagedFiles,
+        commitFiles,
         safetyCheck: nextState.safetyCheck,
         commitHistory,
         commitMessage: state.commitTemplate,
@@ -2559,12 +2560,20 @@ function createWorkspaceStore() {
   ) {
     const selectedFilePath = resolveSelectedFilePath(status.files, previousSelectedFilePath);
     update((state) => {
-      const stagedFiles = reconcileStagedFiles(state.stagedFiles, status.files);
+      const previousCommittableFiles = state.status?.files.filter(isCommittable) ?? [];
+      const hadEveryFileSelected =
+        state.status === null ||
+        previousCommittableFiles.every((file) =>
+          state.commitFiles.some((selected) => selected.path === file.path),
+        );
+      const commitFiles = hadEveryFileSelected
+        ? buildCommitFileSelection(status.files)
+        : reconcileCommitFiles(state.commitFiles, status.files);
       const reviewedFiles = reconcileReviewedFiles(state.reviewedFiles, status.files);
       const selectedHunks = reconcileSelectedHunks(state.selectedHunks, status.files);
       const safetyCheck = buildSafetyCheck(
         status.files,
-        stagedFiles,
+        commitFiles,
         state.safetyCheck.confirmedWarningIds,
         status,
       );
@@ -2577,7 +2586,7 @@ function createWorkspaceStore() {
           selectedFilePath === state.selectedFilePath ? state.selectedFileDiff : null,
         selectedFileContentDiff:
           selectedFilePath === state.selectedFilePath ? state.selectedFileContentDiff : null,
-        stagedFiles,
+        commitFiles,
         safetyCheck,
         selectedHunks,
         selectedPatch: null,
@@ -2601,7 +2610,7 @@ function createWorkspaceStore() {
 
       return {
         ...state,
-        stagedFiles: [],
+        commitFiles: [],
         reviewedFiles: [],
         safetyCheck: emptySafetyCheck(),
         commitMessage: state.commitTemplate,
@@ -3246,7 +3255,6 @@ function createWorkspaceStore() {
     setCommitTemplate,
     useCommitHistoryMessage,
     toggleGroupByStatus,
-    setStageFilter,
     toggleAbnormalOnly,
     toggleUnreviewedOnly,
     toggleGeneratedOnly,
@@ -3257,11 +3265,13 @@ function createWorkspaceStore() {
     selectFile,
     selectPathOnly,
     selectStartupTargetFile,
-    stageFile,
-    unstageFile,
+    selectCommitFile,
+    unselectCommitFile,
+    selectAllCommitFiles,
+    clearCommitFiles,
     markFileReviewed,
     markFileUnreviewed,
-    validateStagedFilesForCommit,
+    validateCommitFiles,
     validateSelectedHunksForPartialCommit,
     confirmSafetyWarnings,
     markCommitTask,
@@ -3640,7 +3650,6 @@ function branchNameFromUrl(url: string) {
 
 function buildTaskWorkspaceDraftSnapshot(state: WorkspaceStoreState) {
   return {
-    stagedFiles: state.stagedFiles,
     selectedHunks: state.selectedHunks,
     reviewedFiles: state.reviewedFiles,
     confirmedWarningIds: state.safetyCheck.confirmedWarningIds,
@@ -3721,17 +3730,32 @@ function normalizeSystemPath(path: string) {
   return path.trim().replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/, "");
 }
 
-function isStageable(file: ChangedFile) {
-  return !["missing", "conflicted", "obstructed"].includes(file.status);
+function isCommittable(file: ChangedFile) {
+  return ![
+    "normal",
+    "missing",
+    "conflicted",
+    "obstructed",
+    "unversioned",
+    "external",
+  ].includes(file.status);
 }
 
-function reconcileStagedFiles(
-  stagedFiles: Array<{ path: string; status: string; contentDigest: string }>,
+function buildCommitFileSelection(files: ChangedFile[]) {
+  return files.filter(isCommittable).map((file) => ({
+    path: file.path,
+    status: file.status,
+    contentDigest: file.content_digest,
+  }));
+}
+
+function reconcileCommitFiles(
+  commitFiles: Array<{ path: string; status: string; contentDigest: string }>,
   currentFiles: ChangedFile[],
 ) {
-  return stagedFiles.flatMap((stagedFile) => {
-    const current = currentFiles.find((file) => file.path === stagedFile.path);
-    if (!current || current.status !== stagedFile.status || !isStageable(current)) {
+  return commitFiles.flatMap((commitFile) => {
+    const current = currentFiles.find((file) => file.path === commitFile.path);
+    if (!current || current.status !== commitFile.status || !isCommittable(current)) {
       return [];
     }
 
@@ -3759,7 +3783,7 @@ function selectedHunkFilesForSafety(
       (item) => item.filePath === file.path && item.fileDigest === file.content_digest,
     );
 
-    if (!hasCurrentHunk || !isStageable(file)) {
+    if (!hasCurrentHunk || !isCommittable(file)) {
       return [];
     }
 
@@ -3784,11 +3808,11 @@ function emptySafetyCheck(): SafetyCheckSummary {
 
 function buildSafetyCheck(
   files: ChangedFile[],
-  stagedFiles: Array<{ path: string; status: string; contentDigest: string }>,
+  commitFiles: Array<{ path: string; status: string; contentDigest: string }>,
   confirmedWarningIds: string[] = [],
   status: WorkingCopyStatus | null = null,
 ): SafetyCheckSummary {
-  const stagedPaths = new Set(stagedFiles.map((file) => file.path));
+  const commitPaths = new Set(commitFiles.map((file) => file.path));
   const settings = loadAppSettings();
   const largeFileThresholdBytes = settings.largeFileThresholdMb * 1024 * 1024;
   const blockers: SafetyCheckItem[] = [];
@@ -3796,6 +3820,10 @@ function buildSafetyCheck(
   const infos: SafetyCheckItem[] = [];
 
   for (const file of files) {
+    if (!commitPaths.has(file.path)) {
+      continue;
+    }
+
     if (["conflicted", "missing", "obstructed"].includes(file.status)) {
       blockers.push({
         id: `blocker:${file.status}:${file.path}:${file.content_digest}`,
@@ -3859,12 +3887,12 @@ function buildSafetyCheck(
     }
   }
 
-  if (stagedFiles.some((file) => !files.some((current) => current.path === file.path))) {
+  if (commitFiles.some((file) => !files.some((current) => current.path === file.path))) {
     blockers.push({
-      id: "blocker:staged-missing",
+      id: "blocker:commit-target-missing",
       severity: "blocker",
-      title: "暂存项已失效",
-      detail: "部分已暂存文件不在当前状态扫描结果中，请刷新状态后重新暂存。",
+      title: "提交目标已失效",
+      detail: "部分已选文件不在当前状态扫描结果中，请刷新后重新选择提交目标。",
       filePath: null,
     });
   }
@@ -3900,8 +3928,8 @@ function buildSafetyCheck(
   }
 
   const warningIds = new Set(warnings.map((item) => item.id));
-  const stagedDigestIds = new Set(
-    stagedFiles.map((file) => `${file.path}:${file.contentDigest}`),
+  const commitDigestIds = new Set(
+    commitFiles.map((file) => `${file.path}:${file.contentDigest}`),
   );
 
   return {
@@ -3913,7 +3941,7 @@ function buildSafetyCheck(
         return true;
       }
 
-      return stagedDigestIds.has(id);
+      return commitDigestIds.has(id);
     }),
   };
 }
@@ -3924,14 +3952,14 @@ function normalizeWorkspacePath(path: string) {
 
 function reconcileSafetyWarningConfirmations(
   safetyCheck: SafetyCheckSummary,
-  stagedFiles: Array<{ path: string; status: string; contentDigest: string }>,
+  commitFiles: Array<{ path: string; status: string; contentDigest: string }>,
 ) {
-  const stagedPaths = new Set(stagedFiles.map((file) => file.path));
+  const commitPaths = new Set(commitFiles.map((file) => file.path));
   return {
     ...safetyCheck,
     confirmedWarningIds: safetyCheck.confirmedWarningIds.filter((id) => {
       const item = safetyCheck.warnings.find((warning) => warning.id === id);
-      return !item?.filePath || stagedPaths.has(item.filePath);
+      return !item?.filePath || commitPaths.has(item.filePath);
     }),
   };
 }
@@ -4069,11 +4097,6 @@ function reconcileSelectedHunks(
 
 interface WorkspaceDraft {
   version: number;
-  stagedFiles: Array<{
-    path: string;
-    status: string;
-    contentDigest: string;
-  }>;
   selectedHunks: Array<{
     filePath: string;
     fileDigest: string;
@@ -4088,7 +4111,6 @@ interface WorkspaceDraft {
 function emptyWorkspaceDraft(): WorkspaceDraft {
   return {
     version: 1,
-    stagedFiles: [],
     selectedHunks: [],
     reviewedFiles: [],
     confirmedWarningIds: [],
@@ -4103,9 +4125,6 @@ function normalizeWorkspaceDraftInput(
 ): WorkspaceDraft {
   return {
     version: 1,
-    stagedFiles: Array.isArray(draft.stagedFiles)
-      ? draft.stagedFiles.filter(isStagedFileDraft)
-      : [],
     selectedHunks: Array.isArray(draft.selectedHunks)
       ? draft.selectedHunks.filter(isSelectedHunkDraft)
       : [],
@@ -4146,9 +4165,6 @@ function loadWorkspaceDraft(workspace: WorkspaceSummary): WorkspaceDraft {
     const parsed = JSON.parse(raw) as Partial<WorkspaceDraft>;
     return {
       version: 1,
-      stagedFiles: Array.isArray(parsed.stagedFiles)
-        ? parsed.stagedFiles.filter(isStagedFileDraft)
-        : [],
       selectedHunks: Array.isArray(parsed.selectedHunks)
         ? parsed.selectedHunks.filter(isSelectedHunkDraft)
         : [],
@@ -4172,7 +4188,6 @@ function loadWorkspaceDraft(workspace: WorkspaceSummary): WorkspaceDraft {
 function saveWorkspaceDraftFromState(state: Pick<
   WorkspaceStoreState,
   | "current"
-  | "stagedFiles"
   | "selectedHunks"
   | "reviewedFiles"
   | "safetyCheck"
@@ -4184,7 +4199,6 @@ function saveWorkspaceDraftFromState(state: Pick<
 
   saveWorkspaceDraft(state.current, {
     version: 1,
-    stagedFiles: state.stagedFiles,
     selectedHunks: state.selectedHunks,
     reviewedFiles: state.reviewedFiles,
     confirmedWarningIds: state.safetyCheck.confirmedWarningIds,
@@ -4246,28 +4260,6 @@ function isReviewedFileState(value: unknown): value is ReviewedFileState {
     typeof candidate.path === "string" &&
     typeof candidate.contentDigest === "string" &&
     typeof candidate.reviewedAt === "number"
-  );
-}
-
-function isStagedFileDraft(value: unknown): value is {
-  path: string;
-  status: string;
-  contentDigest: string;
-} {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  const candidate = value as {
-    path?: unknown;
-    status?: unknown;
-    contentDigest?: unknown;
-  };
-
-  return (
-    typeof candidate.path === "string" &&
-    typeof candidate.status === "string" &&
-    typeof candidate.contentDigest === "string"
   );
 }
 

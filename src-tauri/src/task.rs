@@ -854,7 +854,7 @@ impl TaskQueue {
             return Err(NovaError::command(
                 "SVN_MERGE_LOCAL_CHANGES",
                 "当前工作副本有本地改动",
-                Some("执行真实 merge 前请先提交、暂存外处理或清理当前工作副本改动；dry-run 仍可用于预览预计变更。".to_string()),
+                Some("执行真实 merge 前请先提交或清理当前工作副本改动；dry-run 仍可用于预览预计变更。".to_string()),
                 true,
             ));
         }
@@ -2378,7 +2378,7 @@ fn normalize_commit_files(files: &[String]) -> Result<Vec<String>, NovaError> {
     if files.is_empty() {
         return Err(NovaError::command(
             "COMMIT_FILES_REQUIRED",
-            "请先暂存要提交的文件",
+            "请选择要提交的文件",
             None,
             true,
         ));

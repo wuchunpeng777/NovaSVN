@@ -1,43 +1,19 @@
-import type { DetailSection, NavigationItem, WorkbenchView } from "../types/app";
-
-export const navigationItems: NavigationItem[] = [
-  { id: "changes", label: "工作区", description: "本地改动和暂存" },
-  { id: "staging", label: "草稿", description: "提交计划" },
-  { id: "history", label: "日志", description: "历史和审查" },
-  { id: "branches", label: "分支池", description: "多工作副本" },
-  { id: "repository", label: "仓库", description: "远端浏览" },
-  { id: "settings", label: "设置", description: "偏好和工具" },
-];
+import type { WorkbenchView } from "../types/app";
 
 export const workbenchViews: Record<string, WorkbenchView> = {
   changes: {
     id: "changes",
     title: "本地改动",
-    subtitle: "扫描工作副本、过滤改动并管理文件级暂存。",
+    subtitle: "扫描工作副本、过滤改动并选择本次提交目标。",
     metrics: [
-      { label: "未暂存", value: "0" },
-      { label: "已暂存", value: "0" },
+      { label: "改动", value: "0" },
+      { label: "提交目标", value: "0" },
       { label: "异常", value: "0" },
     ],
     primaryItems: [
-      { title: "未暂存", meta: "等待工作副本扫描", status: "空" },
-      { title: "已暂存", meta: "等待虚拟暂存区", status: "空" },
+      { title: "本地改动", meta: "等待工作副本扫描", status: "空" },
+      { title: "提交目标", meta: "默认选择可提交的版本控制文件", status: "空" },
       { title: "未版本控制", meta: "状态扫描后显示 unversioned 文件", status: "空" },
-    ],
-  },
-  staging: {
-    id: "staging",
-    title: "提交草稿",
-    subtitle: "保存暂存选择、提交信息、审查状态和警告确认。",
-    metrics: [
-      { label: "草稿", value: "0" },
-      { label: "已审", value: "0" },
-      { label: "警告", value: "0" },
-    ],
-    primaryItems: [
-      { title: "提交信息", meta: "底部提交区编辑并保存草稿", status: "可用" },
-      { title: "审查状态", meta: "按文件摘要保存已审状态", status: "可用" },
-      { title: "警告确认", meta: "安全检查警告可确认后继续", status: "可用" },
     ],
   },
   history: {
@@ -101,9 +77,3 @@ export const workbenchViews: Record<string, WorkbenchView> = {
     ],
   },
 };
-
-export const detailSections: DetailSection[] = [
-  { title: "属性", description: "显示和编辑 SVN properties。" },
-  { title: "锁状态", description: "显示 lock / unlock 信息并提供操作。" },
-  { title: "检查结果", description: "显示阻塞、警告和提示。" },
-];

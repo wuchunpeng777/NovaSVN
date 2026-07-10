@@ -247,12 +247,12 @@
     await workspaceStore.saveSvnProperty(currentSvnExecutable());
   }
 
-  async function submitStagedFiles() {
-    if (!workspaceStore.validateStagedFilesForCommit() || !$workspaceStore.current) {
+  async function submitCommitFiles() {
+    if (!workspaceStore.validateCommitFiles() || !$workspaceStore.current) {
       return;
     }
 
-    const files = $workspaceStore.stagedFiles.map((file) => file.path);
+    const files = $workspaceStore.commitFiles.map((file) => file.path);
     const task = await taskStore.createCommit({
       workingCopyRoot: $workspaceStore.current.working_copy_root,
       message: $workspaceStore.commitMessage,
@@ -618,7 +618,7 @@
 
     switch (intent.action) {
       case "commit":
-        setCurrentView("staging");
+        setCurrentView("changes");
         break;
       case "update":
         setCurrentView("changes");
@@ -691,7 +691,7 @@
         await workspaceStore.refreshSvnLog(currentSvnExecutable());
         break;
       case "prepare_commit":
-        setCurrentView("staging");
+        setCurrentView("changes");
         break;
       case "export_diagnostics":
         await appSettingsStore.exportDiagnosticLog();
@@ -707,7 +707,7 @@
     $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
     $taskStore.selectedTask.status === "success"
   ) {
-    const committedPaths = $workspaceStore.stagedFiles.map((file) => file.path);
+    const committedPaths = $workspaceStore.commitFiles.map((file) => file.path);
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
     workspaceStore.clearCommittedFiles(committedPaths);
     if (workingCopyRoot) {
@@ -974,7 +974,7 @@
   selectedFilePath={$workspaceStore.selectedFilePath}
   selectedFile={selectedFile}
   selectedFileReviewed={selectedFileReviewed}
-  stagedFiles={$workspaceStore.stagedFiles}
+  commitFiles={$workspaceStore.commitFiles}
   reviewedFiles={$workspaceStore.reviewedFiles}
   statusLoading={$workspaceStore.statusLoading}
   statusError={$workspaceStore.statusError}
@@ -1040,7 +1040,7 @@
   commitMessage={$workspaceStore.commitMessage}
   commitError={$workspaceStore.commitError}
   commitDisabled={
-    $workspaceStore.stagedFiles.length === 0 ||
+    $workspaceStore.commitFiles.length === 0 ||
     commitSafetyBlocked ||
     $taskStore.snapshot.running_task_id !== null
   }
@@ -1080,8 +1080,10 @@
   onRefreshSvnBlame={() => workspaceStore.refreshSvnBlame(currentSvnExecutable())}
   onSelectFile={(path) => workspaceStore.selectFile(path, currentSvnExecutable())}
   onSelectWorkspacePath={workspaceStore.selectPathOnly}
-  onStageFile={workspaceStore.stageFile}
-  onUnstageFile={workspaceStore.unstageFile}
+  onSelectCommitFile={workspaceStore.selectCommitFile}
+  onUnselectCommitFile={workspaceStore.unselectCommitFile}
+  onSelectAllCommitFiles={workspaceStore.selectAllCommitFiles}
+  onClearCommitFiles={workspaceStore.clearCommitFiles}
   onRevertFile={(path) => runSvnOperation("revert_file", path)}
   onLockFile={(path) => runSvnOperation("lock_file", path)}
   onUnlockFile={(path) => runSvnOperation("unlock_file", path)}
@@ -1122,7 +1124,7 @@
   onUseCommitHistoryMessage={workspaceStore.useCommitHistoryMessage}
   onConfirmSafetyWarnings={workspaceStore.confirmSafetyWarnings}
   onClearWorkspaceDraft={workspaceStore.clearWorkspaceDraft}
-  onCommit={submitStagedFiles}
+  onCommit={submitCommitFiles}
   onPartialCommit={submitSelectedPatch}
   onSelectTask={taskStore.select}
   onCancelTask={taskStore.cancel}

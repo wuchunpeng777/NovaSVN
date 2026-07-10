@@ -97,14 +97,14 @@ $results += Measure-Step "virtual list prepare 5000 changes" {
     overscan_px = $overscanPx
   } | ConvertTo-Json -Compress | Out-Null
 }
-$results += Measure-Step "commit prepare staged files" {
-  $stagedFiles = @()
+$results += Measure-Step "commit prepare selected targets" {
+  $commitFiles = @()
   for ($i = 0; $i -lt [Math]::Min($ChangedCount, $FileCount); $i++) {
-    $stagedFiles += Join-Path $dataDir ("file-{0:D5}.txt" -f $i)
+    $commitFiles += Join-Path $dataDir ("file-{0:D5}.txt" -f $i)
   }
-  $commitArgs = @("commit") + $stagedFiles + @("-m", "benchmark commit prepare")
+  $commitArgs = @("commit") + $commitFiles + @("-m", "benchmark commit prepare")
   $commitSummary = [pscustomobject]@{
-    file_count = $stagedFiles.Count
+    file_count = $commitFiles.Count
     argv_count = $commitArgs.Count
     message_length = "benchmark commit prepare".Length
   }

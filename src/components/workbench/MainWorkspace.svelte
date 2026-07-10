@@ -48,7 +48,7 @@
   export let selectedFilePath: string | null = null;
   export let selectedFile: ChangedFile | null = null;
   export let selectedFileReviewed = false;
-  export let stagedFiles: Array<{ path: string; status: string }> = [];
+  export let commitFiles: Array<{ path: string; status: string }> = [];
   export let reviewedFiles: ReviewedFileState[] = [];
   export let statusLoading = false;
   export let statusError: CommandError | null = null;
@@ -227,8 +227,10 @@
   export let onRefreshSvnBlame: () => void = () => {};
   export let onSelectFile: (path: string) => void = () => {};
   export let onSelectWorkspacePath: (path: string) => void = () => {};
-  export let onStageFile: (path: string) => void = () => {};
-  export let onUnstageFile: (path: string) => void = () => {};
+  export let onSelectCommitFile: (path: string) => void = () => {};
+  export let onUnselectCommitFile: (path: string) => void = () => {};
+  export let onSelectAllCommitFiles: () => void = () => {};
+  export let onClearCommitFiles: () => void = () => {};
   export let onRevertFile: (path: string) => void = () => {};
   export let onLockFile: (path: string) => void = () => {};
   export let onUnlockFile: (path: string) => void = () => {};
@@ -431,16 +433,23 @@
     });
   }
 
-  function isStaged(path: string) {
-    return stagedFiles.some((file) => file.path === path);
+  function isCommitSelected(path: string) {
+    return commitFiles.some((file) => file.path === path);
   }
 
   function isReviewed(path: string) {
     return reviewedFiles.some((file) => file.path === path);
   }
 
-  function isStageable(file: ChangedFile) {
-    return !["missing", "conflicted", "obstructed", "external"].includes(file.status);
+  function isCommittable(file: ChangedFile) {
+    return ![
+      "normal",
+      "missing",
+      "conflicted",
+      "obstructed",
+      "unversioned",
+      "external",
+    ].includes(file.status);
   }
 
   function isSelected(file: ChangedFile) {
@@ -479,9 +488,9 @@
     return changedFileForPath(path) !== null;
   }
 
-  function isStageablePath(path: string) {
+  function isCommittablePath(path: string) {
     const file = changedFileForPath(path);
-    return !!file && isStageable(file);
+    return !!file && isCommittable(file);
   }
 
   function isTreeNodeCollapsed(node: WorkspaceFileNode) {
@@ -514,16 +523,20 @@
     onSelectWorkspacePath(node.path);
   }
 
-  function filterTreeNodes(nodes: WorkspaceFileNode[]): WorkspaceFileNode[] {
-    const query = searchText.trim().toLowerCase();
+  function filterTreeNodes(
+    nodes: WorkspaceFileNode[],
+    filter: WorkingCopyTreeFilter,
+    queryText: string,
+  ): WorkspaceFileNode[] {
+    const query = queryText.trim().toLowerCase();
     return nodes.flatMap((node) => {
-      const children = filterTreeNodes(node.children);
+      const children = filterTreeNodes(node.children, filter, queryText);
       const selfMatchesSearch = !query || node.path.toLowerCase().includes(query);
       const selfMatchesMode =
         node.kind === "file" &&
-        (workingCopyTreeFilter === "all" ||
-          (workingCopyTreeFilter === "changed" && node.changed && node.status !== "unversioned") ||
-          (workingCopyTreeFilter === "unversioned" && node.status === "unversioned"));
+        (filter === "all" ||
+          (filter === "changed" && node.changed && node.status !== "unversioned") ||
+          (filter === "unversioned" && node.status === "unversioned"));
       const keepNode =
         node.kind === "dir" ? children.length > 0 : selfMatchesSearch && selfMatchesMode;
 
@@ -695,10 +708,13 @@
   });
 
   $: files = workingCopyStatus?.files ?? [];
-  $: filteredTreeNodes = filterTreeNodes(workspaceFileTree?.nodes ?? []);
+  $: filteredTreeNodes = filterTreeNodes(
+    workspaceFileTree?.nodes ?? [],
+    workingCopyTreeFilter,
+    searchText,
+  );
   $: treeRows = flattenTreeNodes(filteredTreeNodes);
-  $: stagedCount = stagedFiles.length;
-  $: unstagedCount = Math.max((workingCopyStatus?.total ?? files.length) - stagedCount, 0);
+  $: commitFileCount = commitFiles.length;
   $: abnormalCount =
     (workingCopyStatus?.missing ?? 0) +
     (workingCopyStatus?.conflicted ?? 0) +
@@ -731,7 +747,7 @@
     <nav class="mode-switcher" aria-label="主视图">
       <button
         type="button"
-        class:active={view.id === "changes" || view.id === "staging"}
+        class:active={view.id === "changes"}
         on:click={() => onSelectView("changes")}
       >
         工作副本
@@ -799,7 +815,7 @@
         <button
           type="button"
           class="source-item"
-          class:active={view.id === "changes" || view.id === "staging"}
+          class:active={view.id === "changes"}
           on:click={() => onSelectView("changes")}
         >
           <span class="source-icon">W</span>
@@ -1621,15 +1637,14 @@
               </button>
             {/if}
             <button type="button" class="primary" on:click={onCommit} disabled={commitDisabled}>
-              提交 {stagedCount > 0 ? stagedCount : ""}
+              提交 {commitFileCount > 0 ? commitFileCount : ""}
             </button>
           </div>
         </section>
 
         <section class="summary-strip" aria-label="工作副本摘要">
           <span><strong>{workingCopyStatus?.total ?? 0}</strong> 改动</span>
-          <span><strong>{stagedCount}</strong> 已暂存</span>
-          <span><strong>{unstagedCount}</strong> 未暂存</span>
+          <span><strong>{commitFileCount}</strong> 提交目标</span>
           <span><strong>{abnormalCount}</strong> 异常</span>
           <span><strong>r{workingCopyStatus?.revision_range ?? workspace?.revision ?? "-"}</strong></span>
         </section>
@@ -1714,33 +1729,33 @@
                   <span>{node.revision ?? "-"}</span>
                   <span>{formatBytes(node.file_size)}</span>
                   <span class="inline-row-actions">
-                    {#if isChangedPath(node.path) && isStaged(node.path)}
-                      <em>已暂存</em>
+                    {#if isChangedPath(node.path) && isCommitSelected(node.path)}
+                      <em>已选提交</em>
                       <span
                         role="button"
                         tabindex="0"
-                        on:click|stopPropagation={() => onUnstageFile(node.path)}
+                        on:click|stopPropagation={() => onUnselectCommitFile(node.path)}
                         on:keydown|stopPropagation={(event) => {
                           if (event.key === "Enter" || event.key === " ") {
-                            onUnstageFile(node.path);
+                            onUnselectCommitFile(node.path);
                           }
                         }}
                       >
-                        取消
+                        取消选择
                       </span>
                     {:else if isChangedPath(node.path)}
                       <span
                         role="button"
                         tabindex="0"
-                        aria-disabled={!isStageablePath(node.path)}
-                        on:click|stopPropagation={() => isStageablePath(node.path) && onStageFile(node.path)}
+                        aria-disabled={!isCommittablePath(node.path)}
+                        on:click|stopPropagation={() => isCommittablePath(node.path) && onSelectCommitFile(node.path)}
                         on:keydown|stopPropagation={(event) => {
-                          if ((event.key === "Enter" || event.key === " ") && isStageablePath(node.path)) {
-                            onStageFile(node.path);
+                          if ((event.key === "Enter" || event.key === " ") && isCommittablePath(node.path)) {
+                            onSelectCommitFile(node.path);
                           }
                         }}
                       >
-                        暂存
+                        {isCommittablePath(node.path) ? "选择提交" : "需先处理"}
                       </span>
                     {/if}
                     {#if isChangedPath(node.path)}
@@ -2012,9 +2027,13 @@
             <section class="inspector-section commit-section">
               <div class="section-title">
                 <h2>提交</h2>
-                <button type="button" on:click={onClearWorkspaceDraft}>清空草稿</button>
+                <div class="button-row">
+                  <button type="button" on:click={onSelectAllCommitFiles}>全选改动</button>
+                  <button type="button" on:click={onClearCommitFiles}>清除选择</button>
+                  <button type="button" on:click={onClearWorkspaceDraft}>清空草稿</button>
+                </div>
               </div>
-              <p class="muted">{stagedFiles.length} 个文件已暂存</p>
+              <p class="muted">本次将提交 {commitFiles.length} 个文件</p>
               <input
                 type="text"
                 value={commitTemplate}
