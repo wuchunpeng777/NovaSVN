@@ -478,17 +478,18 @@ textarea {
 .tree-affordance.visible::before {
   content: "";
   position: absolute;
-  top: 5px;
+  top: 3px;
   left: 2px;
-  border-style: solid;
-  border-width: 4px 0 4px 6px;
-  border-color: transparent transparent transparent #5b6672;
-  transform: rotate(90deg);
-  transform-origin: 3px 4px;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid #5b6672;
+  border-bottom: 2px solid #5b6672;
+  transform: rotate(45deg);
+  transform-origin: 4px 4px;
 }
 
 .tree-affordance.visible.collapsed::before {
-  transform: rotate(0deg);
+  transform: rotate(-45deg);
 }
 
 .folder-icon::before,
@@ -536,7 +537,9 @@ textarea {
   right: 3px;
   width: 4px;
   height: 4px;
-  background: linear-gradient(135deg, #d7e1ec 50%, transparent 50%);
+  border-bottom: 1px solid #9eb0c2;
+  border-left: 1px solid #9eb0c2;
+  background: #d7e1ec;
 }
 
 .file-name small {
