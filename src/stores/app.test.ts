@@ -110,6 +110,7 @@ beforeEach(() => {
   workspaceStore.clearWorkspaceDraft();
   workspaceStore.setCommitMessage("");
   workspaceStore.setSvnLogFileOnly(false);
+  workspaceStore.markSvnOperationTask(null, null, null);
   getFileDiffMock.mockResolvedValue({
     path: "src/main.ts",
     text: "",
@@ -787,6 +788,43 @@ describe("taskStore SVN operation tasks", () => {
       file_path: "src/legacy",
       svn_executable: "C:/svn/svn.exe",
     });
+  });
+});
+
+describe("workspaceStore SVN operation state", () => {
+  it("将 pending 任务与创建时工作副本根成对记录和清理", () => {
+    workspaceStore.markSvnOperationTask("svn-1", "update", "C:/repo/original");
+
+    expect(get(workspaceStore)).toMatchObject({
+      pendingSvnOperationTaskId: "svn-1",
+      pendingSvnOperationKind: "update",
+      pendingSvnOperationWorkingCopyRoot: "C:/repo/original",
+    });
+
+    workspaceStore.markSvnOperationTask(null, "cleanup", "C:/repo/other");
+    expect(get(workspaceStore)).toMatchObject({
+      pendingSvnOperationTaskId: null,
+      pendingSvnOperationKind: null,
+      pendingSvnOperationWorkingCopyRoot: null,
+    });
+  });
+
+  it("显式打开绑定根时不读取后来修改的路径输入", async () => {
+    const workspace = makeWorkspace({ working_copy_root: "C:/repo/original" });
+    openWorkspaceMock.mockResolvedValueOnce(workspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(
+      makeStatus([], { working_copy_root: "C:/repo/original" }),
+    );
+    workspaceStore.setPathInput("C:/repo/later-input");
+
+    await workspaceStore.openPath("C:/svn/svn.exe", "C:/repo/original");
+
+    expect(openWorkspaceMock).toHaveBeenCalledWith({
+      path: "C:/repo/original",
+      svn_executable: "C:/svn/svn.exe",
+    });
+    expect(get(workspaceStore).current?.working_copy_root).toBe("C:/repo/original");
+    expect(get(workspaceStore).pathInput).toBe("C:/repo/original");
   });
 });
 

@@ -10,6 +10,10 @@
     openFileLocation,
     openWorkspaceFile,
   } from "./lib/api";
+  import {
+    consumePendingSvnOperationCompletion,
+    createSvnOperationCreationCoordinator,
+  } from "./lib/svn-operation-completion";
   import { workbenchViews } from "./lib/workbench";
   import {
     appSettingsStore,
@@ -36,6 +40,7 @@
   let unlistenAppMenu: UnlistenFn | null = null;
   const repositoryLayoutTaskChecks = new Set<string>();
   const applyPatchTaskChecks = new Set<string>();
+  const svnOperationCreationCoordinator = createSvnOperationCreationCoordinator();
 
   $: activeView = workbenchViews[$currentView];
   $: selectedFile =
@@ -318,7 +323,12 @@
   }
 
   async function runSvnOperation(kind: SvnOperationKind, filePath?: string) {
-    if (!$workspaceStore.current) {
+    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+    if (
+      !workingCopyRoot ||
+      svnOperationCreationCoordinator.isCreating() ||
+      $workspaceStore.pendingSvnOperationTaskId !== null
+    ) {
       return;
     }
 
@@ -345,18 +355,17 @@
       }
     }
 
-    const task = await taskStore.createSvnOperation({
-      workingCopyRoot: $workspaceStore.current.working_copy_root,
-      kind,
-      filePath,
-      svnExecutable: currentSvnExecutable(),
-    });
-
-    if (!task) {
-      return;
-    }
-
-    workspaceStore.markSvnOperationTask(task.task_id, kind);
+    await svnOperationCreationCoordinator.create(
+      () => $workspaceStore.pendingSvnOperationTaskId !== null,
+      () =>
+        taskStore.createSvnOperation({
+          workingCopyRoot,
+          kind,
+          filePath,
+          svnExecutable: currentSvnExecutable(),
+        }),
+      (task) => workspaceStore.markSvnOperationTask(task.task_id, kind, workingCopyRoot),
+    );
   }
 
   async function loadRepositoryUrl(url?: string) {
@@ -852,31 +861,24 @@
     workspaceStore.markPartialCommitTask(null);
   }
 
-  $: if (
-    $workspaceStore.pendingSvnOperationTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingSvnOperationTaskId &&
-    $taskStore.selectedTask.status === "success"
-  ) {
-    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
-    const operationKind = $workspaceStore.pendingSvnOperationKind;
-    workspaceStore.markSvnOperationTask(null, null);
-    if (workingCopyRoot) {
-      if (operationKind === "update") {
-        void workspaceStore.openPath(currentSvnExecutable()).then(() => syncCurrentBranchPoolEntry());
-      } else {
+  $: consumePendingSvnOperationCompletion(
+    $workspaceStore.pendingSvnOperationTaskId,
+    $workspaceStore.pendingSvnOperationKind,
+    $workspaceStore.pendingSvnOperationWorkingCopyRoot,
+    $workspaceStore.current?.working_copy_root ?? null,
+    $taskStore,
+    {
+      clearPending: () => workspaceStore.markSvnOperationTask(null, null, null),
+      refreshWorkspace: (workingCopyRoot) => {
+        void workspaceStore
+          .openPath(currentSvnExecutable(), workingCopyRoot)
+          .then(() => syncCurrentBranchPoolEntry());
+      },
+      refreshStatus: (workingCopyRoot) => {
         void refreshStatusAndSyncBranchPool(workingCopyRoot);
-      }
-    }
-  }
-
-  $: if (
-    $workspaceStore.pendingSvnOperationTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingSvnOperationTaskId &&
-    ($taskStore.selectedTask.status === "failed" ||
-      $taskStore.selectedTask.status === "cancelled")
-  ) {
-    workspaceStore.markSvnOperationTask(null, null);
-  }
+      },
+    },
+  );
 
   $: if (
     $workspaceStore.pendingRepositoryListTaskId &&

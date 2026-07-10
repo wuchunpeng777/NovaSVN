@@ -1237,6 +1237,7 @@ export interface WorkspaceStoreState {
   pendingPartialCommitTaskId: string | null;
   pendingSvnOperationTaskId: string | null;
   pendingSvnOperationKind: SvnOperationKind | null;
+  pendingSvnOperationWorkingCopyRoot: string | null;
   repositoryUrlInput: string;
   repositoryCurrentUrl: string;
   repositoryList: RepositoryListResult | null;
@@ -1367,6 +1368,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   pendingPartialCommitTaskId: null,
   pendingSvnOperationTaskId: null,
   pendingSvnOperationKind: null,
+  pendingSvnOperationWorkingCopyRoot: null,
   repositoryUrlInput: "",
   repositoryCurrentUrl: "",
   repositoryList: null,
@@ -1493,6 +1495,7 @@ function createWorkspaceStore() {
         pendingPartialCommitTaskId: null,
         pendingSvnOperationTaskId: null,
         pendingSvnOperationKind: null,
+        pendingSvnOperationWorkingCopyRoot: null,
         ...emptyApplyPatchState(),
         repositoryUrlInput: recent.workspace?.repository_root ?? state.repositoryUrlInput,
         repositoryCurrentUrl: "",
@@ -1533,14 +1536,19 @@ function createWorkspaceStore() {
     }
   }
 
-  async function openPath(svnExecutable?: string | null): Promise<WorkspaceSummary | null> {
+  async function openPath(
+    svnExecutable?: string | null,
+    explicitPath?: string | null,
+  ): Promise<WorkspaceSummary | null> {
     update((state) => ({ ...state, loading: true, error: null }));
 
-    let path = "";
-    update((state) => {
-      path = state.pathInput.trim();
-      return state;
-    });
+    let path = explicitPath?.trim() ?? "";
+    if (explicitPath === undefined || explicitPath === null) {
+      update((state) => {
+        path = state.pathInput.trim();
+        return state;
+      });
+    }
 
     try {
       const current = await openWorkspace({
@@ -1574,6 +1582,7 @@ function createWorkspaceStore() {
         pendingPartialCommitTaskId: null,
         pendingSvnOperationTaskId: null,
         pendingSvnOperationKind: null,
+        pendingSvnOperationWorkingCopyRoot: null,
         ...emptyApplyPatchState(),
         repositoryUrlInput: current.repository_root,
         repositoryCurrentUrl: "",
@@ -2165,11 +2174,16 @@ function createWorkspaceStore() {
     });
   }
 
-  function markSvnOperationTask(taskId: string | null, kind: SvnOperationKind | null) {
+  function markSvnOperationTask(
+    taskId: string | null,
+    kind: SvnOperationKind | null,
+    workingCopyRoot: string | null,
+  ) {
     update((state) => ({
       ...state,
       pendingSvnOperationTaskId: taskId,
-      pendingSvnOperationKind: kind,
+      pendingSvnOperationKind: taskId ? kind : null,
+      pendingSvnOperationWorkingCopyRoot: taskId ? workingCopyRoot : null,
     }));
   }
 
