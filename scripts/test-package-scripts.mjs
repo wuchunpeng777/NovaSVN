@@ -286,10 +286,19 @@ if (!benchmarkScript.includes('Measure-Step "svn info --xml --depth infinity"'))
 if (
   !workspaceRs.includes("parse_versioned_workspace_paths_reader") ||
   !workspaceRs.includes("MAX_VERSIONED_WORKSPACE_PATHS") ||
+  !workspaceRs.includes("MAX_SVN_INFO_METADATA_POOL_BYTES") ||
+  !workspaceRs.includes("CompactWorkspaceMetadata") ||
   !workspaceRs.includes(".stdout(Stdio::piped())")
 ) {
-  console.error("工作副本文件树必须流式读取 svn info 并限制版本控制路径数量");
+  console.error("工作副本文件树必须流式读取 svn info，并限制路径与元数据内存");
   failed = true;
+}
+
+for (const column of ["Name", "Base", "Last", "Date", "Author", "Status", "Size"]) {
+  if (!mainWorkspace.includes(`<span>${column}</span>`)) {
+    console.error(`Versions 工作副本表格缺少栏位：${column}`);
+    failed = true;
+  }
 }
 
 if (packageJson.scripts?.["test:e2e"] !== "playwright test") {

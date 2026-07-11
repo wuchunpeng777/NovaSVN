@@ -273,6 +273,14 @@ describe("MainWorkspace", () => {
     expect(screen.getByText("提交目标", { exact: true })).toBeInTheDocument();
     expect(screen.getByText("已选提交", { exact: true })).toBeInTheDocument();
     expect(screen.queryByText("暂存", { exact: false })).not.toBeInTheDocument();
+    for (const heading of ["Name", "Base", "Last", "Date", "Author", "Status", "Size"]) {
+      expect(screen.getByText(heading, { exact: true })).toBeInTheDocument();
+    }
+    const mainFileRow = screen.getByText("main.ts", { exact: true }).closest(".file-row");
+    expect(mainFileRow).toHaveTextContent("12");
+    expect(mainFileRow).toHaveTextContent("11");
+    expect(mainFileRow).toHaveTextContent("2026-07-11 01:02");
+    expect(mainFileRow).toHaveTextContent("alice");
 
     await fireEvent.click(screen.getByText("取消选择", { exact: true }));
     await fireEvent.click(screen.getByRole("button", { name: "全选改动" }));
@@ -386,6 +394,7 @@ describe("MainWorkspace", () => {
         kind: "dir",
         status: "unversioned",
         revision: null,
+        ...makeNodeMetadata(null),
         file_size: null,
         changed: true,
         versioned: false,
@@ -583,6 +592,7 @@ function makeFileTree(): WorkspaceFileTree {
         kind: "dir",
         status: "normal",
         revision: "12",
+        ...makeNodeMetadata("12"),
         file_size: null,
         changed: true,
         versioned: true,
@@ -593,6 +603,7 @@ function makeFileTree(): WorkspaceFileTree {
             kind: "file",
             status: "modified",
             revision: "12",
+            ...makeNodeMetadata("12", "11", "alice"),
             file_size: 128,
             changed: true,
             versioned: true,
@@ -606,6 +617,7 @@ function makeFileTree(): WorkspaceFileTree {
         kind: "file",
         status: "unversioned",
         revision: null,
+        ...makeNodeMetadata(null),
         file_size: 128,
         changed: true,
         versioned: false,
@@ -617,6 +629,7 @@ function makeFileTree(): WorkspaceFileTree {
         kind: "file",
         status: "normal",
         revision: null,
+        ...makeNodeMetadata(null),
         file_size: 64,
         changed: false,
         versioned: false,
@@ -628,6 +641,7 @@ function makeFileTree(): WorkspaceFileTree {
         kind: "dir",
         status: "external",
         revision: null,
+        ...makeNodeMetadata(null),
         file_size: null,
         changed: false,
         versioned: false,
@@ -638,6 +652,7 @@ function makeFileTree(): WorkspaceFileTree {
             kind: "file",
             status: "normal",
             revision: null,
+            ...makeNodeMetadata(null),
             file_size: 64,
             changed: false,
             versioned: false,
@@ -651,6 +666,7 @@ function makeFileTree(): WorkspaceFileTree {
         kind: "dir",
         status: "normal",
         revision: "12",
+        ...makeNodeMetadata("12"),
         file_size: null,
         changed: false,
         versioned: true,
@@ -662,6 +678,7 @@ function makeFileTree(): WorkspaceFileTree {
         kind: "file",
         status: "normal",
         revision: "12",
+        ...makeNodeMetadata("12"),
         file_size: 64,
         changed: false,
         versioned: true,
@@ -673,6 +690,7 @@ function makeFileTree(): WorkspaceFileTree {
         kind: "dir",
         status: "normal",
         revision: "12",
+        ...makeNodeMetadata("12"),
         file_size: null,
         changed: false,
         versioned: true,
@@ -683,6 +701,7 @@ function makeFileTree(): WorkspaceFileTree {
             kind: "file",
             status: "normal",
             revision: "12",
+            ...makeNodeMetadata("12"),
             file_size: 64,
             changed: false,
             versioned: true,
@@ -691,5 +710,18 @@ function makeFileTree(): WorkspaceFileTree {
         ],
       },
     ],
+  };
+}
+
+function makeNodeMetadata(
+  baseRevision: string | null,
+  lastRevision = baseRevision,
+  author = "dev",
+) {
+  return {
+    base_revision: baseRevision,
+    last_revision: lastRevision,
+    last_changed_date: baseRevision ? "2026-07-11T01:02:03Z" : null,
+    last_changed_author: baseRevision ? author : null,
   };
 }

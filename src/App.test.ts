@@ -374,6 +374,7 @@ async function showMoveableSource() {
       kind: "file",
       status: "modified",
       revision: "12",
+      ...makeNodeMetadata("12"),
       file_size: 10,
       changed: true,
       versioned: true,
@@ -415,6 +416,7 @@ async function showIgnorableSource() {
       kind: "file",
       status: "unversioned",
       revision: null,
+      ...makeNodeMetadata(null),
       file_size: 10,
       changed: true,
       versioned: false,
@@ -464,6 +466,15 @@ function makeFileTree(): WorkspaceFileTree {
     returned_files: 0,
     truncated: false,
     nodes: [],
+  };
+}
+
+function makeNodeMetadata(revision: string | null) {
+  return {
+    base_revision: revision,
+    last_revision: revision,
+    last_changed_date: revision ? "2026-07-11T01:02:03Z" : null,
+    last_changed_author: revision ? "dev" : null,
   };
 }
 

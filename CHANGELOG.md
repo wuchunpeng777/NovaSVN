@@ -17,6 +17,7 @@
 - Versions 布局统一标题栏、侧栏、主表和检查器尺寸，最小窗口宽度与 Tauri 的 960px 配置保持一致。
 - 支持独立显示或隐藏项目侧栏和工作副本检查器，并持久化界面可见性偏好。
 - 支持浅色、深色和跟随系统主题，包含状态色、Patch 对话框与 Monaco Diff 同步切换。
+- 工作副本表格新增 Name、Base、Last、Date、Author、Status 和 Size 栏位，元数据来自流式 `svn info`。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。

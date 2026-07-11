@@ -549,6 +549,13 @@
     );
   }
 
+  function formatSvnDate(value: string | null) {
+    if (!value) {
+      return "-";
+    }
+    return value.replace("T", " ").replace(/\.\d+Z$/, "Z").slice(0, 16);
+  }
+
   function canMovePath(node: WorkspaceFileNode | null) {
     return canDeletePath(node);
   }
@@ -1983,10 +1990,14 @@
         >
           <div class="file-browser" aria-label="工作副本文件树">
             <div class="file-table-head">
-              <span>名称</span>
-              <span>状态</span>
-              <span>Revision</span>
-              <span>大小</span>
+              <span>Name</span>
+              <span>Base</span>
+              <span>Last</span>
+              <span>Date</span>
+              <span>Author</span>
+              <span>Status</span>
+              <span>Size</span>
+              <span aria-hidden="true"></span>
             </div>
             {#if treeRows.length > 0}
               {#each treeRows as node (node.path)}
@@ -2016,10 +2027,17 @@
                       {node.name}
                     </strong>
                   </span>
+                  <span class="metadata-cell">{node.base_revision ?? node.revision ?? "-"}</span>
+                  <span class="metadata-cell">{node.last_revision ?? "-"}</span>
+                  <span class="metadata-cell" title={node.last_changed_date ?? undefined}>
+                    {formatSvnDate(node.last_changed_date)}
+                  </span>
+                  <span class="metadata-cell" title={node.last_changed_author ?? undefined}>
+                    {node.last_changed_author ?? "-"}
+                  </span>
                   <span class="status-pill {statusClass(node.status)}">
                     {node.kind === "file" ? labelStatus(node.status) : ""}
                   </span>
-                  <span>{node.revision ?? "-"}</span>
                   <span>{formatBytes(node.file_size)}</span>
                   <span class="inline-row-actions">
                     {#if isUnversionedPath(node.path)}

@@ -458,7 +458,8 @@ textarea {
 
 .file-table-head,
 .file-row {
-  grid-template-columns: minmax(220px, 1fr) 86px 78px 66px 146px;
+  grid-template-columns: minmax(220px, 1fr) 58px 58px 116px 92px 78px 58px 140px;
+  min-width: 860px;
 }
 
 .file-table-head,
@@ -1110,6 +1111,15 @@ textarea {
   padding: 12px;
 }
 
+.metadata-cell {
+  min-width: 0;
+  overflow: hidden;
+  color: #536070;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .theme-control {
   width: 100%;
 }
@@ -1468,6 +1478,7 @@ textarea {
 .versions-workbench[data-theme="dark"] .task-list small,
 .versions-workbench[data-theme="dark"] .revision-result,
 .versions-workbench[data-theme="dark"] .revision-file-list small,
+.versions-workbench[data-theme="dark"] .metadata-cell,
 .versions-workbench[data-theme="dark"] .patch-dialog > header p,
 .versions-workbench[data-theme="dark"] .patch-summary span,
 .versions-workbench[data-theme="dark"] .empty-state {
@@ -1589,6 +1600,7 @@ textarea {
 @media (max-width: 1180px) {
   .file-table-head,
   .file-row {
-    grid-template-columns: minmax(190px, 1fr) 78px 66px 58px 120px;
+    grid-template-columns: minmax(190px, 1fr) 52px 52px 108px 84px 72px 54px 120px;
+    min-width: 780px;
   }
 }

@@ -426,6 +426,10 @@ export interface WorkspaceFileNode {
   kind: "dir" | "file" | string;
   status: string;
   revision: string | null;
+  base_revision: string | null;
+  last_revision: string | null;
+  last_changed_date: string | null;
+  last_changed_author: string | null;
   file_size: number | null;
   changed: boolean;
   versioned: boolean;

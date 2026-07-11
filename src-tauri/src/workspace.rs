@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs,
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
@@ -7,7 +7,12 @@ use std::{
     thread,
 };
 
-use quick_xml::{escape::unescape, events::Event, Reader as XmlReader};
+use quick_xml::{
+    encoding::Decoder,
+    escape::unescape,
+    events::{attributes::Attribute, Event},
+    Reader as XmlReader,
+};
 use roxmltree::Document;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -101,6 +106,10 @@ pub struct WorkspaceFileNode {
     pub kind: String,
     pub status: String,
     pub revision: Option<String>,
+    pub base_revision: Option<String>,
+    pub last_revision: Option<String>,
+    pub last_changed_date: Option<String>,
+    pub last_changed_author: Option<String>,
     pub file_size: Option<u64>,
     pub changed: bool,
     pub versioned: bool,
@@ -893,7 +902,7 @@ fn run_status_with_updates(
 fn read_versioned_workspace_paths(
     executable: &str,
     working_copy_root: &Path,
-) -> Result<HashSet<String>, NovaError> {
+) -> Result<VersionedWorkspaceIndex, NovaError> {
     let canonical_root = fs::canonicalize(working_copy_root).map_err(|error| {
         NovaError::command(
             "WORKSPACE_FILE_TREE_ROOT_FAILED",
@@ -998,23 +1007,176 @@ fn read_versioned_workspace_paths(
 fn parse_versioned_workspace_paths(
     xml: &str,
     canonical_root: &Path,
-) -> Result<HashSet<String>, NovaError> {
+) -> Result<VersionedWorkspaceIndex, NovaError> {
     parse_versioned_workspace_paths_reader(xml.as_bytes(), canonical_root)
 }
 
 const MAX_VERSIONED_WORKSPACE_PATHS: usize = 1_000_000;
 const MAX_SVN_INFO_PATH_BYTES: usize = 32 * 1024;
+const MAX_SVN_INFO_METADATA_BYTES: usize = 64 * 1024;
+const MAX_SVN_INFO_METADATA_POOL_BYTES: usize = 32 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CompactWorkspaceMetadata {
+    base_revision: u64,
+    last_revision: u64,
+    author_id: u32,
+    date_id: u32,
+}
+
+#[derive(Debug, Default)]
+struct MetadataStringPool {
+    ids: HashMap<String, u32>,
+    values: Vec<String>,
+    bytes: usize,
+}
+
+impl MetadataStringPool {
+    fn intern(&mut self, value: String) -> Result<u32, NovaError> {
+        self.intern_with_limit(value, MAX_SVN_INFO_METADATA_POOL_BYTES)
+    }
+
+    fn intern_with_limit(&mut self, value: String, max_bytes: usize) -> Result<u32, NovaError> {
+        if value.is_empty() {
+            return Ok(0);
+        }
+        if let Some(id) = self.ids.get(&value) {
+            return Ok(*id);
+        }
+        let next_bytes = self.bytes.saturating_add(value.len());
+        if next_bytes > max_bytes {
+            return Err(NovaError::command(
+                "SVN_FILE_TREE_INFO_METADATA_LIMIT_EXCEEDED",
+                "SVN 文件树元数据占用过多内存",
+                Some(format!("去重后的作者或日期字段超过 {} 字节", max_bytes)),
+                true,
+            ));
+        }
+        let id = u32::try_from(self.values.len())
+            .ok()
+            .and_then(|index| index.checked_add(1))
+            .unwrap_or(u32::MAX);
+        self.values.push(value.clone());
+        self.ids.insert(value, id);
+        self.bytes = next_bytes;
+        Ok(id)
+    }
+
+    fn resolve(&self, id: u32) -> Option<&str> {
+        let index = usize::try_from(id.checked_sub(1)?).ok()?;
+        self.values.get(index).map(String::as_str)
+    }
+}
+
+#[derive(Debug, Default)]
+struct VersionedWorkspaceIndex {
+    entries: HashMap<String, CompactWorkspaceMetadata>,
+    authors: MetadataStringPool,
+    dates: MetadataStringPool,
+}
+
+#[derive(Debug, Default)]
+struct ResolvedWorkspaceMetadata {
+    base_revision: Option<String>,
+    last_revision: Option<String>,
+    last_changed_date: Option<String>,
+    last_changed_author: Option<String>,
+}
+
+impl VersionedWorkspaceIndex {
+    fn contains(&self, path: &str) -> bool {
+        self.entries.contains_key(path)
+    }
+
+    fn insert(&mut self, path: String, entry: &StreamingInfoEntry) -> Result<(), NovaError> {
+        let author_id = self.authors.intern(entry.author.clone())?;
+        let date_id = self.dates.intern(entry.date.clone())?;
+        self.entries.insert(
+            path,
+            CompactWorkspaceMetadata {
+                base_revision: entry.base_revision,
+                last_revision: entry.last_revision,
+                author_id,
+                date_id,
+            },
+        );
+        Ok(())
+    }
+
+    fn resolve(&self, path: &str, fallback_revision: Option<&str>) -> ResolvedWorkspaceMetadata {
+        let Some(metadata) = self.entries.get(path) else {
+            return ResolvedWorkspaceMetadata {
+                base_revision: fallback_revision.map(ToString::to_string),
+                ..ResolvedWorkspaceMetadata::default()
+            };
+        };
+        ResolvedWorkspaceMetadata {
+            base_revision: revision_value(metadata.base_revision)
+                .or_else(|| fallback_revision.map(ToString::to_string)),
+            last_revision: revision_value(metadata.last_revision),
+            last_changed_date: self
+                .dates
+                .resolve(metadata.date_id)
+                .map(ToString::to_string),
+            last_changed_author: self
+                .authors
+                .resolve(metadata.author_id)
+                .map(ToString::to_string),
+        }
+    }
+
+    #[cfg(test)]
+    fn from_paths(paths: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            entries: paths
+                .into_iter()
+                .map(|path| (path, CompactWorkspaceMetadata::default()))
+                .collect(),
+            ..Self::default()
+        }
+    }
+}
+
+fn revision_value(revision: u64) -> Option<String> {
+    (revision > 0).then(|| revision.to_string())
+}
 
 #[derive(Debug)]
 struct StreamingInfoEntry {
     path: String,
     wc_root: String,
+    base_revision: u64,
+    last_revision: u64,
+    author: String,
+    date: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamingInfoTextField {
+    WcRoot,
+    Author,
+    Date,
+}
+
+fn parse_streaming_revision_attribute(
+    attribute: &Attribute<'_>,
+    decoder: Decoder,
+    field: &str,
+) -> Result<u64, NovaError> {
+    let value = attribute
+        .decode_and_unescape_value(decoder)
+        .map_err(|error| {
+            svn_file_tree_info_xml_error(format!("svn info {field} 解码失败：{error}"))
+        })?;
+    value.parse::<u64>().map_err(|error| {
+        svn_file_tree_info_xml_error(format!("svn info {field} 不是有效数字：{error}"))
+    })
 }
 
 fn parse_versioned_workspace_paths_reader<R: BufRead>(
     reader: R,
     canonical_root: &Path,
-) -> Result<HashSet<String>, NovaError> {
+) -> Result<VersionedWorkspaceIndex, NovaError> {
     parse_versioned_workspace_paths_reader_with_limit(
         reader,
         canonical_root,
@@ -1026,15 +1188,15 @@ fn parse_versioned_workspace_paths_reader_with_limit<R: BufRead>(
     reader: R,
     canonical_root: &Path,
     max_paths: usize,
-) -> Result<HashSet<String>, NovaError> {
+) -> Result<VersionedWorkspaceIndex, NovaError> {
     let mut reader = XmlReader::from_reader(reader);
     reader.config_mut().trim_text(true);
     let mut buffer = Vec::new();
     let mut current_entry: Option<StreamingInfoEntry> = None;
-    let mut reading_wc_root = false;
+    let mut reading_field: Option<StreamingInfoTextField> = None;
     let mut reported_root: Option<String> = None;
     let mut pending_entries = Vec::new();
-    let mut paths = HashSet::new();
+    let mut paths = VersionedWorkspaceIndex::default();
     let mut entry_count = 0usize;
 
     loop {
@@ -1054,22 +1216,36 @@ fn parse_versioned_workspace_paths_reader_with_limit<R: BufRead>(
                         true,
                     ));
                 }
-                let path = start
-                    .attributes()
-                    .find_map(|attribute| match attribute {
-                        Ok(attribute) if attribute.key.as_ref() == b"path" => Some(attribute),
-                        _ => None,
-                    })
-                    .ok_or_else(|| {
-                        svn_file_tree_info_xml_error("svn info entry 缺少 path 属性".to_string())
-                    })?
-                    .decode_and_unescape_value(reader.decoder())
-                    .map_err(|error| {
+                let mut path = None;
+                let mut base_revision = 0;
+                for attribute in start.attributes() {
+                    let attribute = attribute.map_err(|error| {
                         svn_file_tree_info_xml_error(format!(
-                            "svn info entry path 解码失败：{error}"
+                            "svn info entry 属性无法解析：{error}"
                         ))
-                    })?
-                    .into_owned();
+                    })?;
+                    if attribute.key.as_ref() == b"path" {
+                        path = Some(
+                            attribute
+                                .decode_and_unescape_value(reader.decoder())
+                                .map_err(|error| {
+                                    svn_file_tree_info_xml_error(format!(
+                                        "svn info entry path 解码失败：{error}"
+                                    ))
+                                })?
+                                .into_owned(),
+                        );
+                    } else if attribute.key.as_ref() == b"revision" {
+                        base_revision = parse_streaming_revision_attribute(
+                            &attribute,
+                            reader.decoder(),
+                            "entry revision",
+                        )?;
+                    }
+                }
+                let path = path.ok_or_else(|| {
+                    svn_file_tree_info_xml_error("svn info entry 缺少 path 属性".to_string())
+                })?;
                 if path.len() > MAX_SVN_INFO_PATH_BYTES {
                     return Err(NovaError::command(
                         "SVN_FILE_TREE_INFO_PATH_TOO_LONG",
@@ -1081,39 +1257,92 @@ fn parse_versioned_workspace_paths_reader_with_limit<R: BufRead>(
                 current_entry = Some(StreamingInfoEntry {
                     path,
                     wc_root: String::new(),
+                    base_revision,
+                    last_revision: 0,
+                    author: String::new(),
+                    date: String::new(),
                 });
             }
-            Event::Start(start) if start.name().as_ref() == b"wcroot-abspath" => {
-                reading_wc_root = current_entry.is_some();
+            Event::Start(start) if start.name().as_ref() == b"commit" => {
+                if let Some(entry) = current_entry.as_mut() {
+                    for attribute in start.attributes() {
+                        let attribute = attribute.map_err(|error| {
+                            svn_file_tree_info_xml_error(format!(
+                                "svn info commit 属性无法解析：{error}"
+                            ))
+                        })?;
+                        if attribute.key.as_ref() == b"revision" {
+                            entry.last_revision = parse_streaming_revision_attribute(
+                                &attribute,
+                                reader.decoder(),
+                                "commit revision",
+                            )?;
+                        }
+                    }
+                }
             }
-            Event::Text(text) if reading_wc_root => {
+            Event::Start(start) if start.name().as_ref() == b"wcroot-abspath" => {
+                reading_field = current_entry
+                    .as_ref()
+                    .map(|_| StreamingInfoTextField::WcRoot);
+            }
+            Event::Start(start) if start.name().as_ref() == b"author" => {
+                reading_field = current_entry
+                    .as_ref()
+                    .map(|_| StreamingInfoTextField::Author);
+            }
+            Event::Start(start) if start.name().as_ref() == b"date" => {
+                reading_field = current_entry.as_ref().map(|_| StreamingInfoTextField::Date);
+            }
+            Event::Text(text) if reading_field.is_some() => {
                 let decoded = text.decode().map_err(|error| {
-                    svn_file_tree_info_xml_error(format!(
-                        "svn info wcroot-abspath 解码失败：{error}"
-                    ))
+                    svn_file_tree_info_xml_error(format!("svn info 元数据解码失败：{error}"))
                 })?;
                 let decoded = unescape(&decoded).map_err(|error| {
                     svn_file_tree_info_xml_error(format!(
-                        "svn info wcroot-abspath 转义字符解析失败：{error}"
+                        "svn info 元数据转义字符解析失败：{error}"
                     ))
                 })?;
                 if let Some(entry) = current_entry.as_mut() {
-                    entry.wc_root.push_str(&decoded);
-                    if entry.wc_root.len() > MAX_SVN_INFO_PATH_BYTES {
-                        return Err(NovaError::command(
+                    let (target, max_bytes, code, message) = match reading_field {
+                        Some(StreamingInfoTextField::WcRoot) => (
+                            &mut entry.wc_root,
+                            MAX_SVN_INFO_PATH_BYTES,
                             "SVN_FILE_TREE_INFO_PATH_TOO_LONG",
                             "SVN 文件树信息包含过长根路径",
-                            Some(format!("工作副本根路径超过 {MAX_SVN_INFO_PATH_BYTES} 字节")),
+                        ),
+                        Some(StreamingInfoTextField::Author) => (
+                            &mut entry.author,
+                            MAX_SVN_INFO_METADATA_BYTES,
+                            "SVN_FILE_TREE_INFO_METADATA_TOO_LONG",
+                            "SVN 文件树信息包含过长作者字段",
+                        ),
+                        Some(StreamingInfoTextField::Date) => (
+                            &mut entry.date,
+                            MAX_SVN_INFO_METADATA_BYTES,
+                            "SVN_FILE_TREE_INFO_METADATA_TOO_LONG",
+                            "SVN 文件树信息包含过长日期字段",
+                        ),
+                        None => continue,
+                    };
+                    target.push_str(&decoded);
+                    if target.len() > max_bytes {
+                        return Err(NovaError::command(
+                            code,
+                            message,
+                            Some(format!("单个字段超过 {max_bytes} 字节")),
                             true,
                         ));
                     }
                 }
             }
-            Event::End(end) if end.name().as_ref() == b"wcroot-abspath" => {
-                reading_wc_root = false;
+            Event::End(end)
+                if matches!(end.name().as_ref(), b"wcroot-abspath" | b"author" | b"date") =>
+            {
+                reading_field = None;
             }
             Event::End(end) if end.name().as_ref() == b"entry" => {
-                reading_wc_root = false;
+                reading_field = None;
                 if let Some(entry) = current_entry.take() {
                     process_streaming_info_entry(
                         entry,
@@ -1139,7 +1368,7 @@ fn parse_versioned_workspace_paths_reader_with_limit<R: BufRead>(
         ));
     };
     for entry in pending_entries {
-        insert_streaming_info_path(entry, &reported_root, canonical_root, &mut paths);
+        insert_streaming_info_path(entry, &reported_root, canonical_root, &mut paths)?;
     }
     Ok(paths)
 }
@@ -1149,7 +1378,7 @@ fn process_streaming_info_entry(
     canonical_root: &Path,
     reported_root: &mut Option<String>,
     pending_entries: &mut Vec<StreamingInfoEntry>,
-    paths: &mut HashSet<String>,
+    paths: &mut VersionedWorkspaceIndex,
 ) -> Result<(), NovaError> {
     if entry.path == "." {
         let root = entry.wc_root.trim();
@@ -1167,7 +1396,7 @@ fn process_streaming_info_entry(
     }
 
     if let Some(root) = reported_root.as_deref() {
-        insert_streaming_info_path(entry, root, canonical_root, paths);
+        insert_streaming_info_path(entry, root, canonical_root, paths)?;
     } else {
         pending_entries.push(entry);
     }
@@ -1205,14 +1434,15 @@ fn insert_streaming_info_path(
     entry: StreamingInfoEntry,
     reported_root: &str,
     canonical_root: &Path,
-    paths: &mut HashSet<String>,
-) {
+    paths: &mut VersionedWorkspaceIndex,
+) -> Result<(), NovaError> {
     if entry.wc_root.trim() != reported_root {
-        return;
+        return Ok(());
     }
     if let Some(relative_path) = info_entry_relative_path(&entry.path, canonical_root) {
-        paths.insert(relative_path);
+        paths.insert(relative_path, &entry)?;
     }
+    Ok(())
 }
 
 fn svn_file_tree_info_xml_error(detail: String) -> NovaError {
@@ -1722,7 +1952,7 @@ fn read_workspace_children(
     root: &Path,
     directory: &Path,
     status_by_path: &HashMap<String, &ChangedFile>,
-    versioned_paths: &HashSet<String>,
+    versioned_paths: &VersionedWorkspaceIndex,
     max_files: usize,
     returned_files: &mut usize,
     total_files: &mut usize,
@@ -1765,7 +1995,8 @@ fn read_workspace_children(
         let status_match = workspace_tree_status_for_path(&relative_path, status_by_path);
         let reparse_point = is_workspace_tree_reparse_point(&metadata);
         if metadata.is_dir() && !reparse_point {
-            let versioned = versioned_paths.contains(&normalize_tree_path(&relative_path));
+            let normalized_path = normalize_tree_path(&relative_path);
+            let versioned = versioned_paths.contains(&normalized_path);
             let children = read_workspace_children(
                 root,
                 &path,
@@ -1781,6 +2012,8 @@ fn read_workspace_children(
             }
 
             let changed = status_match.changed || children.iter().any(|child| child.changed);
+            let svn_metadata =
+                versioned_paths.resolve(&normalized_path, status_match.revision.as_deref());
             nodes.push(WorkspaceFileNode {
                 path: relative_path,
                 name,
@@ -1792,7 +2025,11 @@ fn read_workspace_children(
                         "normal".to_string()
                     }
                 }),
-                revision: status_match.revision,
+                revision: svn_metadata.base_revision.clone(),
+                base_revision: svn_metadata.base_revision,
+                last_revision: svn_metadata.last_revision,
+                last_changed_date: svn_metadata.last_changed_date,
+                last_changed_author: svn_metadata.last_changed_author,
                 file_size: None,
                 changed,
                 versioned,
@@ -1824,16 +2061,21 @@ fn workspace_file_node(
     name: String,
     file_size: Option<u64>,
     status_by_path: &HashMap<String, &ChangedFile>,
-    versioned_paths: &HashSet<String>,
+    versioned_paths: &VersionedWorkspaceIndex,
 ) -> WorkspaceFileNode {
     let normalized_path = normalize_tree_path(&path);
     let status_match = workspace_tree_status_for_path(&normalized_path, status_by_path);
+    let svn_metadata = versioned_paths.resolve(&normalized_path, status_match.revision.as_deref());
     WorkspaceFileNode {
         path,
         name,
         kind: "file".to_string(),
         status: status_match.status.unwrap_or_else(|| "normal".to_string()),
-        revision: status_match.revision,
+        revision: svn_metadata.base_revision.clone(),
+        base_revision: svn_metadata.base_revision,
+        last_revision: svn_metadata.last_revision,
+        last_changed_date: svn_metadata.last_changed_date,
+        last_changed_author: svn_metadata.last_changed_author,
         file_size: status_match.file_size.or(file_size),
         changed: status_match.changed,
         versioned: versioned_paths.contains(&normalized_path),
@@ -1889,7 +2131,7 @@ fn workspace_tree_status_for_path(
 fn add_missing_status_nodes(
     nodes: &mut Vec<WorkspaceFileNode>,
     status_by_path: &HashMap<String, &ChangedFile>,
-    versioned_paths: &HashSet<String>,
+    versioned_paths: &VersionedWorkspaceIndex,
 ) {
     for file in status_by_path.values() {
         let normalized_path = normalize_tree_path(&file.path);
@@ -1911,7 +2153,7 @@ fn insert_status_node(
     nodes: &mut Vec<WorkspaceFileNode>,
     path: &str,
     file: &ChangedFile,
-    versioned_paths: &HashSet<String>,
+    versioned_paths: &VersionedWorkspaceIndex,
 ) {
     let segments = path
         .split('/')
@@ -1926,19 +2168,24 @@ fn insert_status_node_segments(
     segments: &[&str],
     parent_path: &str,
     file: &ChangedFile,
-    versioned_paths: &HashSet<String>,
+    versioned_paths: &VersionedWorkspaceIndex,
 ) {
     let Some((segment, remaining_segments)) = segments.split_first() else {
         return;
     };
 
     if remaining_segments.is_empty() {
+        let svn_metadata = versioned_paths.resolve(full_path, file.revision.as_deref());
         nodes.push(WorkspaceFileNode {
             path: full_path.to_string(),
             name: (*segment).to_string(),
             kind: "file".to_string(),
             status: file.status.clone(),
-            revision: file.revision.clone(),
+            revision: svn_metadata.base_revision.clone(),
+            base_revision: svn_metadata.base_revision,
+            last_revision: svn_metadata.last_revision,
+            last_changed_date: svn_metadata.last_changed_date,
+            last_changed_author: svn_metadata.last_changed_author,
             file_size: file.file_size,
             changed: true,
             versioned: versioned_paths.contains(full_path),
@@ -1956,12 +2203,17 @@ fn insert_status_node_segments(
         .iter()
         .position(|node| node.kind == "dir" && node.name == *segment)
         .unwrap_or_else(|| {
+            let svn_metadata = versioned_paths.resolve(&directory_path, None);
             nodes.push(WorkspaceFileNode {
                 path: directory_path.clone(),
                 name: (*segment).to_string(),
                 kind: "dir".to_string(),
                 status: "changed".to_string(),
-                revision: None,
+                revision: svn_metadata.base_revision.clone(),
+                base_revision: svn_metadata.base_revision,
+                last_revision: svn_metadata.last_revision,
+                last_changed_date: svn_metadata.last_changed_date,
+                last_changed_author: svn_metadata.last_changed_author,
                 file_size: None,
                 changed: true,
                 versioned: versioned_paths.contains(&directory_path),
@@ -2880,7 +3132,10 @@ mod tests {
             r#"
 <info>
   <entry path="."><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
-  <entry path="tracked.txt"><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
+  <entry path="tracked.txt" revision="42">
+    <wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info>
+    <commit revision="40"><author>alice &amp; bob</author><date>2026-07-11T01:02:03Z</date></commit>
+  </entry>
   <entry path="escaped&amp;name.txt"><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
   <entry path="src\windows.txt"><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
   <entry path=".env"><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
@@ -2898,6 +3153,14 @@ mod tests {
             parse_versioned_workspace_paths(&xml, &canonical_root).expect("versioned paths parse");
 
         assert!(paths.contains("tracked.txt"));
+        let metadata = paths.resolve("tracked.txt", None);
+        assert_eq!(metadata.base_revision.as_deref(), Some("42"));
+        assert_eq!(metadata.last_revision.as_deref(), Some("40"));
+        assert_eq!(metadata.last_changed_author.as_deref(), Some("alice & bob"));
+        assert_eq!(
+            metadata.last_changed_date.as_deref(),
+            Some("2026-07-11T01:02:03Z")
+        );
         assert!(paths.contains("escaped&name.txt"));
         if cfg!(windows) {
             assert!(paths.contains("src/windows.txt"));
@@ -2951,6 +3214,25 @@ mod tests {
 
         assert_eq!(output.bytes, b"abcd");
         assert!(output.truncated);
+    }
+
+    #[test]
+    fn bounds_and_deduplicates_streamed_metadata_strings() {
+        let mut pool = MetadataStringPool::default();
+
+        let first = pool
+            .intern_with_limit("alice".to_string(), 5)
+            .expect("first metadata value fits");
+        let duplicate = pool
+            .intern_with_limit("alice".to_string(), 5)
+            .expect("duplicate metadata value reuses storage");
+        assert_eq!(first, duplicate);
+        assert_eq!(pool.bytes, 5);
+
+        let error = pool
+            .intern_with_limit("b".to_string(), 5)
+            .expect_err("unique metadata beyond the pool limit must fail");
+        assert_command_error_code(error, "SVN_FILE_TREE_INFO_METADATA_LIMIT_EXCEEDED");
     }
 
     #[test]
@@ -3153,17 +3435,18 @@ mod tests {
             .iter()
             .map(|file| (normalize_tree_path(&file.path), file))
             .collect::<HashMap<_, _>>();
-        let versioned_paths = [
-            "src",
-            "src/main.rs",
-            "src/lib.rs",
-            "empty",
-            "docs",
-            "docs/missing.md",
-        ]
-        .into_iter()
-        .map(ToString::to_string)
-        .collect::<HashSet<_>>();
+        let versioned_paths = VersionedWorkspaceIndex::from_paths(
+            [
+                "src",
+                "src/main.rs",
+                "src/lib.rs",
+                "empty",
+                "docs",
+                "docs/missing.md",
+            ]
+            .into_iter()
+            .map(ToString::to_string),
+        );
         let mut returned_files = 0;
         let mut total_files = 0;
         let mut truncated = false;
@@ -3243,7 +3526,7 @@ mod tests {
         }
 
         let status_by_path: HashMap<String, &ChangedFile> = HashMap::new();
-        let versioned_paths = HashSet::from(["linked".to_string()]);
+        let versioned_paths = VersionedWorkspaceIndex::from_paths(["linked".to_string()]);
         let mut returned_files = 0;
         let mut total_files = 0;
         let mut truncated = false;
@@ -3346,8 +3629,14 @@ mod tests {
         })
         .expect("real file tree reads");
 
-        assert!(find_workspace_node(&tree.nodes, "tracked.txt")
-            .is_some_and(|node| node.status == "normal" && node.versioned));
+        let tracked_node =
+            find_workspace_node(&tree.nodes, "tracked.txt").expect("tracked node exists");
+        assert_eq!(tracked_node.status, "normal");
+        assert!(tracked_node.versioned);
+        assert!(tracked_node.base_revision.is_some());
+        assert!(tracked_node.last_revision.is_some());
+        assert!(tracked_node.last_changed_author.is_some());
+        assert!(tracked_node.last_changed_date.is_some());
         assert!(find_workspace_node(&tree.nodes, "empty")
             .is_some_and(|node| node.kind == "dir" && node.versioned));
         assert!(find_workspace_node(&tree.nodes, "ignored.txt")
