@@ -401,6 +401,9 @@
   let openRowMenuPath: string | null = null;
   let selectedRowPaths = new Set<string>();
   let rowSelectionAnchorPath: string | null = null;
+  let activeRowPath: string | null = null;
+  let keyboardRangeAnchorPath: string | null = null;
+  let keyboardRangeBasePaths = new Set<string>();
   let selectionWorkspaceRoot: string | null = null;
   let selectionFileTree: WorkspaceFileTree | null = null;
   const inspectorMinWidth = 300;
@@ -488,8 +491,8 @@
     });
   }
 
-  function isCommitSelected(path: string) {
-    return commitFiles.some((file) => file.path === path);
+  function isCommitSelected(path: string, selectedCommitFiles = commitFiles) {
+    return selectedCommitFiles.some((file) => file.path === path);
   }
 
   function isReviewed(path: string) {
@@ -643,8 +646,11 @@
     );
   }
 
-  function isTreeNodeCollapsed(node: WorkspaceFileNode) {
-    return node.kind === "dir" && collapsedTreePaths.has(node.path);
+  function isTreeNodeCollapsed(
+    node: WorkspaceFileNode,
+    collapsedPaths = collapsedTreePaths,
+  ) {
+    return node.kind === "dir" && collapsedPaths.has(node.path);
   }
 
   function toggleTreeNode(node: WorkspaceFileNode) {
@@ -690,6 +696,9 @@
       selectionWorkspaceRoot = workingCopyRoot;
       selectedRowPaths = new Set();
       rowSelectionAnchorPath = null;
+      activeRowPath = null;
+      keyboardRangeAnchorPath = null;
+      keyboardRangeBasePaths = new Set();
     }
     if (selectionFileTree === fileTree) {
       return;
@@ -707,8 +716,8 @@
     }
   }
 
-  function isRowSelected(path: string) {
-    return selectedRowPaths.has(path);
+  function isRowSelected(path: string, selectedPaths = selectedRowPaths) {
+    return selectedPaths.has(path);
   }
 
   function toggleRowSelection(path: string, checked: boolean, extendRange: boolean) {
@@ -733,7 +742,11 @@
       next.delete(path);
     }
     selectedRowPaths = next;
-    rowSelectionAnchorPath = path;
+    if (!extendRange || anchorIndex < 0) {
+      rowSelectionAnchorPath = path;
+    }
+    keyboardRangeAnchorPath = path;
+    keyboardRangeBasePaths = new Set(next);
     openRowMenuPath = null;
   }
 
@@ -748,12 +761,16 @@
     }
     selectedRowPaths = next;
     rowSelectionAnchorPath = checked ? treeRows.at(-1)?.path ?? null : null;
+    keyboardRangeAnchorPath = rowSelectionAnchorPath;
+    keyboardRangeBasePaths = new Set(next);
     openRowMenuPath = null;
   }
 
   function clearRowSelection() {
     selectedRowPaths = new Set();
     rowSelectionAnchorPath = null;
+    keyboardRangeAnchorPath = activeRowPath;
+    keyboardRangeBasePaths = new Set();
     openRowMenuPath = null;
   }
 
@@ -775,11 +792,176 @@
     if (selectedCommittablePaths.length === 0) {
       return;
     }
-    if (selectedCommittablePaths.every((path) => isCommitSelected(path))) {
+    if (selectedCommittablePaths.every((path) => isCommitSelected(path, commitFiles))) {
       onUnselectCommitFiles(selectedCommittablePaths);
     } else {
       onSelectCommitFiles(selectedCommittablePaths);
     }
+  }
+
+  function rowDomId(path: string) {
+    return `workspace-row-${encodeURIComponent(path)}`;
+  }
+
+  function reconcileActiveRow(rows: WorkspaceTreeRow[], inspectedPath: string | null) {
+    if (activeRowPath && rows.some((row) => row.path === activeRowPath)) {
+      return;
+    }
+    activeRowPath =
+      rows.find((row) => row.path === inspectedPath)?.path ?? rows[0]?.path ?? null;
+  }
+
+  function scrollActiveRowIntoView(path: string) {
+    queueMicrotask(() => {
+      const row = document.getElementById(rowDomId(path));
+      row?.scrollIntoView?.({ block: "nearest" });
+    });
+  }
+
+  function selectKeyboardRange(anchorPath: string, targetPath: string) {
+    const anchorIndex = treeRows.findIndex((row) => row.path === anchorPath);
+    const targetIndex = treeRows.findIndex((row) => row.path === targetPath);
+    if (anchorIndex < 0 || targetIndex < 0) {
+      return;
+    }
+    const start = Math.min(anchorIndex, targetIndex);
+    const end = Math.max(anchorIndex, targetIndex);
+    const next = new Set(keyboardRangeBasePaths);
+    for (const row of treeRows.slice(start, end + 1)) {
+      next.add(row.path);
+    }
+    selectedRowPaths = next;
+    rowSelectionAnchorPath = anchorPath;
+  }
+
+  function activateTreeRow(node: WorkspaceTreeRow, extendSelection = false) {
+    const previousActivePath = activeRowPath;
+    activeRowPath = node.path;
+    if (extendSelection) {
+      const anchorPath = keyboardRangeAnchorPath ?? previousActivePath ?? node.path;
+      selectKeyboardRange(anchorPath, node.path);
+    } else {
+      rowSelectionAnchorPath = node.path;
+      keyboardRangeAnchorPath = node.path;
+      keyboardRangeBasePaths = new Set(selectedRowPaths);
+    }
+    if (node.kind === "file") {
+      selectTreeNode(node);
+    }
+    openRowMenuPath = null;
+    scrollActiveRowIntoView(node.path);
+  }
+
+  function setTreeNodeCollapsed(node: WorkspaceTreeRow, collapsed: boolean) {
+    if (node.kind !== "dir") {
+      return;
+    }
+    const next = new Set(collapsedTreePaths);
+    if (collapsed) {
+      next.add(node.path);
+    } else {
+      next.delete(node.path);
+    }
+    collapsedTreePaths = next;
+  }
+
+  function activateTreeNodeFromPointer(node: WorkspaceFileNode) {
+    activeRowPath = node.path;
+    rowSelectionAnchorPath = node.path;
+    keyboardRangeAnchorPath = node.path;
+    keyboardRangeBasePaths = new Set(selectedRowPaths);
+    toggleTreeNode(node);
+  }
+
+  function moveActiveRow(targetIndex: number, extendSelection: boolean) {
+    const boundedIndex = Math.max(0, Math.min(treeRows.length - 1, targetIndex));
+    const target = treeRows[boundedIndex];
+    if (target) {
+      activateTreeRow(target, extendSelection);
+    }
+  }
+
+  function handleFileTableFocus(event: FocusEvent) {
+    if (event.target !== event.currentTarget || activeRowPath || treeRows.length === 0) {
+      return;
+    }
+    activateTreeRow(treeRows[0]);
+  }
+
+  function handleFileTableKeydown(event: KeyboardEvent) {
+    if (event.target !== event.currentTarget || treeRows.length === 0) {
+      return;
+    }
+    const currentIndex = Math.max(
+      0,
+      treeRows.findIndex((row) => row.path === activeRowPath),
+    );
+    const current = treeRows[currentIndex];
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+      toggleVisibleRowSelection(true);
+      event.preventDefault();
+      return;
+    }
+
+    switch (event.key) {
+      case "ArrowUp":
+        moveActiveRow(currentIndex - 1, event.shiftKey);
+        break;
+      case "ArrowDown":
+        moveActiveRow(currentIndex + 1, event.shiftKey);
+        break;
+      case "Home":
+        moveActiveRow(0, event.shiftKey);
+        break;
+      case "End":
+        moveActiveRow(treeRows.length - 1, event.shiftKey);
+        break;
+      case "ArrowLeft": {
+        if (current.kind === "dir" && !isTreeNodeCollapsed(current)) {
+          setTreeNodeCollapsed(current, true);
+          break;
+        }
+        const parentPath = current.path.includes("/")
+          ? current.path.slice(0, current.path.lastIndexOf("/"))
+          : null;
+        const parentIndex = parentPath
+          ? treeRows.findIndex((row) => row.path === parentPath)
+          : -1;
+        if (parentIndex >= 0) {
+          moveActiveRow(parentIndex, event.shiftKey);
+        }
+        break;
+      }
+      case "ArrowRight": {
+        if (current.kind !== "dir") {
+          break;
+        }
+        if (isTreeNodeCollapsed(current)) {
+          setTreeNodeCollapsed(current, false);
+          break;
+        }
+        const childIndex = treeRows.findIndex(
+          (row, index) => index > currentIndex && row.depth === current.depth + 1,
+        );
+        if (childIndex >= 0) {
+          moveActiveRow(childIndex, event.shiftKey);
+        }
+        break;
+      }
+      case "Enter":
+        if (current.kind === "dir") {
+          setTreeNodeCollapsed(current, !isTreeNodeCollapsed(current));
+        } else {
+          selectTreeNode(current);
+        }
+        break;
+      case " ":
+        toggleRowSelection(current.path, !isRowSelected(current.path), false);
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
   }
 
   function filterTreeNodes(
@@ -814,16 +996,20 @@
     });
   }
 
-  function flattenTreeNodes(nodes: WorkspaceFileNode[], depth = 0): WorkspaceTreeRow[] {
+  function flattenTreeNodes(
+    nodes: WorkspaceFileNode[],
+    depth = 0,
+    collapsedPaths = collapsedTreePaths,
+  ): WorkspaceTreeRow[] {
     return nodes.flatMap((node) => {
       const row = {
         ...node,
         depth,
       };
-      if (isTreeNodeCollapsed(node)) {
+      if (isTreeNodeCollapsed(node, collapsedPaths)) {
         return [row];
       }
-      return [row, ...flattenTreeNodes(node.children, depth + 1)];
+      return [row, ...flattenTreeNodes(node.children, depth + 1, collapsedPaths)];
     });
   }
 
@@ -1042,8 +1228,9 @@
     workingCopyTreeFilter,
     searchText,
   );
-  $: treeRows = flattenTreeNodes(filteredTreeNodes);
+  $: treeRows = flattenTreeNodes(filteredTreeNodes, 0, collapsedTreePaths);
   $: reconcileRowSelection(workspace?.working_copy_root ?? null, workspaceFileTree);
+  $: reconcileActiveRow(treeRows, selectedFilePath);
   $: selectedRowNodes = [...selectedRowPaths]
     .map((path) => treeNodeForPath(path))
     .filter((node): node is WorkspaceFileNode => node !== null);
@@ -1064,7 +1251,7 @@
   $: someVisibleRowsSelected = visibleSelectedRowCount > 0 && !allVisibleRowsSelected;
   $: allSelectedCommitTargets =
     selectedCommittablePaths.length > 0 &&
-    selectedCommittablePaths.every((path) => isCommitSelected(path));
+    selectedCommittablePaths.every((path) => isCommitSelected(path, commitFiles));
   $: commitFileCount = commitFiles.length;
   $: abnormalCount =
     (workingCopyStatus?.missing ?? 0) +
@@ -2255,9 +2442,18 @@
           class:inspector-hidden={!appSettings.showInspector}
           style={`--inspector-width: ${inspectorWidth}px`}
         >
-          <div class="file-browser" aria-label="工作副本文件树">
-            <div class="file-table-head">
-              <span class="selection-cell">
+          <div
+            class="file-browser"
+            role="treegrid"
+            tabindex="0"
+            aria-label="工作副本文件树"
+            aria-multiselectable="true"
+            aria-activedescendant={activeRowPath ? rowDomId(activeRowPath) : undefined}
+            on:focus={handleFileTableFocus}
+            on:keydown={handleFileTableKeydown}
+          >
+            <div class="file-table-head" role="row">
+              <span class="selection-cell" role="columnheader">
                 <input
                   type="checkbox"
                   aria-label="选择当前可见路径"
@@ -2267,68 +2463,77 @@
                   on:click={(event) => toggleVisibleRowSelection(event.currentTarget.checked)}
                 />
               </span>
-              <span>Name</span>
-              <span>Base</span>
-              <span>Last</span>
-              <span>Date</span>
-              <span>Author</span>
-              <span>Status</span>
-              <span>Size</span>
-              <span aria-hidden="true"></span>
+              <span role="columnheader">Name</span>
+              <span role="columnheader">Base</span>
+              <span role="columnheader">Last</span>
+              <span role="columnheader">Date</span>
+              <span role="columnheader">Author</span>
+              <span role="columnheader">Status</span>
+              <span role="columnheader">Size</span>
+              <span role="columnheader" aria-label="操作"></span>
             </div>
             {#if treeRows.length > 0}
               {#each treeRows as node (node.path)}
                 <div
+                  id={rowDomId(node.path)}
                   class="file-row"
+                  role="row"
+                  aria-level={node.depth + 1}
+                  aria-expanded={node.kind === "dir" ? !isTreeNodeCollapsed(node, collapsedTreePaths) : undefined}
+                  aria-selected={isRowSelected(node.path, selectedRowPaths)}
                   class:directory={node.kind === "dir"}
-                  class:selected={isRowSelected(node.path)}
+                  class:selected={isRowSelected(node.path, selectedRowPaths)}
+                  class:active-row={activeRowPath === node.path}
                   class:inspected={node.kind === "file" && isSelectedPath(node.path)}
                   class:abnormal={["missing", "conflicted", "obstructed"].includes(node.status)}
                 >
-                  <span class="selection-cell">
+                  <span class="selection-cell" role="gridcell">
                     <input
                       type="checkbox"
                       aria-label={`选择${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
-                      checked={isRowSelected(node.path)}
+                      checked={isRowSelected(node.path, selectedRowPaths)}
                       on:click={(event) => {
                         event.stopPropagation();
+                        activeRowPath = node.path;
                         toggleRowSelection(node.path, event.currentTarget.checked, event.shiftKey);
                       }}
                     />
                   </span>
-                  <button
-                    type="button"
-                    class="file-name"
-                    style={`--tree-depth: ${node.depth}`}
-                    aria-label={node.kind === "dir" ? `切换目录 ${node.path}` : `选择文件 ${node.path}`}
-                    aria-expanded={node.kind === "dir" ? !isTreeNodeCollapsed(node) : undefined}
-                    on:click={() => toggleTreeNode(node)}
-                  >
-                    <strong>
-                      <span
-                        class="tree-affordance"
-                        class:visible={node.kind === "dir"}
-                        class:collapsed={isTreeNodeCollapsed(node)}
-                        aria-hidden="true"
-                      ></span>
-                      <span
-                        class="tree-icon"
-                        class:folder-icon={node.kind === "dir"}
-                        class:file-icon={node.kind === "file"}
-                        aria-hidden="true"
-                      ></span>
-                      {node.name}
-                    </strong>
-                  </button>
-                  <span class="metadata-cell">{node.base_revision ?? node.revision ?? "-"}</span>
-                  <span class="metadata-cell">{node.last_revision ?? "-"}</span>
-                  <span class="metadata-cell" title={node.last_changed_date ?? undefined}>
+                  <span class="file-name-cell" role="gridcell">
+                    <button
+                      type="button"
+                      class="file-name"
+                      style={`--tree-depth: ${node.depth}`}
+                      aria-label={node.kind === "dir" ? `切换目录 ${node.path}` : `选择文件 ${node.path}`}
+                      aria-expanded={node.kind === "dir" ? !isTreeNodeCollapsed(node, collapsedTreePaths) : undefined}
+                      on:click={() => activateTreeNodeFromPointer(node)}
+                    >
+                      <strong>
+                        <span
+                          class="tree-affordance"
+                          class:visible={node.kind === "dir"}
+                          class:collapsed={isTreeNodeCollapsed(node, collapsedTreePaths)}
+                          aria-hidden="true"
+                        ></span>
+                        <span
+                          class="tree-icon"
+                          class:folder-icon={node.kind === "dir"}
+                          class:file-icon={node.kind === "file"}
+                          aria-hidden="true"
+                        ></span>
+                        {node.name}
+                      </strong>
+                    </button>
+                  </span>
+                  <span class="metadata-cell" role="gridcell">{node.base_revision ?? node.revision ?? "-"}</span>
+                  <span class="metadata-cell" role="gridcell">{node.last_revision ?? "-"}</span>
+                  <span class="metadata-cell" role="gridcell" title={node.last_changed_date ?? undefined}>
                     {formatSvnDate(node.last_changed_date)}
                   </span>
-                  <span class="metadata-cell" title={node.last_changed_author ?? undefined}>
+                  <span class="metadata-cell" role="gridcell" title={node.last_changed_author ?? undefined}>
                     {node.last_changed_author ?? "-"}
                   </span>
-                  <span class="status-stack">
+                  <span class="status-stack" role="gridcell">
                     {#if node.change_scope === "local" || node.change_scope === "both"}
                       <span class="status-pill local-status {statusClass(node.status)}">
                         {localStatusText(node)}
@@ -2343,8 +2548,8 @@
                       <span class="status-pill {statusClass(node.status)}">{labelStatus(node.status)}</span>
                     {/if}
                   </span>
-                  <span>{formatBytes(node.file_size)}</span>
-                  <span class="inline-row-actions">
+                  <span role="gridcell">{formatBytes(node.file_size)}</span>
+                  <span class="inline-row-actions" role="gridcell">
                     {#if isUnversionedPath(node.path)}
                       <button
                         type="button"
@@ -2369,15 +2574,15 @@
                         <button
                           type="button"
                           class="row-primary-action"
-                          class:active={isCommitSelected(node.path)}
-                          aria-label={isCommitSelected(node.path) ? `取消 Commit ${node.path}` : `Commit ${node.path}`}
+                          class:active={isCommitSelected(node.path, commitFiles)}
+                          aria-label={isCommitSelected(node.path, commitFiles) ? `取消 Commit ${node.path}` : `Commit ${node.path}`}
                           disabled={statusLoading}
                           on:click={() =>
-                            isCommitSelected(node.path)
+                            isCommitSelected(node.path, commitFiles)
                               ? onUnselectCommitFile(node.path)
                               : onSelectCommitFile(node.path)}
                         >
-                          Commit{isCommitSelected(node.path) ? " ✓" : ""}
+                          Commit{isCommitSelected(node.path, commitFiles) ? " ✓" : ""}
                         </button>
                       {/if}
                       {#if node.change_scope === "remote" || node.change_scope === "both"}

@@ -481,6 +481,11 @@ textarea {
   background: #ffffff;
 }
 
+.file-browser:focus-visible {
+  outline: 2px solid #4b8bc4;
+  outline-offset: -2px;
+}
+
 .file-table-head,
 .file-row,
 .table-head,
@@ -539,6 +544,11 @@ textarea {
   position: relative;
 }
 
+.file-row.active-row {
+  outline: 1px solid #6b9ac4;
+  outline-offset: -1px;
+}
+
 .file-row.inspected::before {
   position: absolute;
   top: 2px;
@@ -577,6 +587,10 @@ textarea {
   color: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.file-name-cell {
+  min-width: 0;
 }
 
 .file-name:focus-visible {
@@ -1604,6 +1618,10 @@ textarea {
 
 .versions-workbench[data-theme="dark"] .file-row.selected {
   background: #183d5f;
+}
+
+.versions-workbench[data-theme="dark"] .file-row.active-row {
+  outline-color: #78acd5;
 }
 
 .versions-workbench[data-theme="dark"] .file-row.abnormal {

@@ -328,10 +328,24 @@ if (
 }
 
 for (const column of ["Name", "Base", "Last", "Date", "Author", "Status", "Size"]) {
-  if (!mainWorkspace.includes(`<span>${column}</span>`)) {
+  if (!mainWorkspace.includes(`<span role="columnheader">${column}</span>`)) {
     console.error(`Versions 工作副本表格缺少栏位：${column}`);
     failed = true;
   }
+}
+
+if (
+  !fileBrowserSource.includes('role="treegrid"') ||
+  !fileBrowserSource.includes("aria-activedescendant") ||
+  !mainWorkspace.includes('case "ArrowUp"') ||
+  !mainWorkspace.includes('case "ArrowDown"') ||
+  !mainWorkspace.includes('case "ArrowLeft"') ||
+  !mainWorkspace.includes('case "ArrowRight"') ||
+  !mainWorkspace.includes('case "Home"') ||
+  !mainWorkspace.includes('case "End"')
+) {
+  console.error("工作副本文件表必须提供 treegrid 活动行和完整方向键导航");
+  failed = true;
 }
 
 if (

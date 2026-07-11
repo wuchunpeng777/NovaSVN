@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./MonacoDiffViewer.svelte", () => ({
@@ -419,6 +419,7 @@ describe("MainWorkspace", () => {
       ],
     };
     const onSelectCommitFiles = vi.fn();
+    const onUnselectCommitFiles = vi.fn();
     const onRevertPaths = vi.fn();
     const onMovePaths = vi.fn();
     const onDeletePaths = vi.fn();
@@ -429,6 +430,7 @@ describe("MainWorkspace", () => {
         workingCopyStatus: makeStatus([alpha, beta]),
         workspaceFileTree: tree,
         onSelectCommitFiles,
+        onUnselectCommitFiles,
         onRevertPaths,
         onMovePaths,
         onDeletePaths,
@@ -457,6 +459,15 @@ describe("MainWorkspace", () => {
     expect(onDeletePaths).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
 
     await rerender({
+      commitFiles: [
+        { path: "alpha.txt", status: "modified" },
+        { path: "beta.txt", status: "modified" },
+      ],
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "移出 Commit" }));
+    expect(onUnselectCommitFiles).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
+
+    await rerender({
       workspace: {
         ...makeWorkspace(),
         local_path: "C:/repo/other",
@@ -464,6 +475,113 @@ describe("MainWorkspace", () => {
       },
     });
     expect(screen.queryByRole("toolbar", { name: "所选路径批量操作" })).not.toBeInTheDocument();
+  });
+
+  it("navigates the working-copy treegrid with desktop keyboard semantics", async () => {
+    const alpha = makeFile("src/alpha.txt", "modified", "alpha-digest");
+    const beta = makeFile("src/beta.txt", "modified", "beta-digest");
+    const omega = makeFile("omega.txt", "modified", "omega-digest");
+    const alphaNode = {
+      ...makeScopedNode("src/alpha.txt", "modified", "local"),
+      name: "alpha.txt",
+    };
+    const betaNode = {
+      ...makeScopedNode("src/beta.txt", "modified", "local"),
+      name: "beta.txt",
+    };
+    const tree: WorkspaceFileTree = {
+      working_copy_root: "C:/repo/wc",
+      total_files: 4,
+      returned_files: 4,
+      truncated: false,
+      nodes: [
+        {
+          ...makeScopedNode("src", "normal", "none"),
+          name: "src",
+          kind: "dir",
+          file_size: null,
+          children: [alphaNode, betaNode],
+        },
+        makeScopedNode("omega.txt", "modified", "local"),
+      ],
+    };
+    const onSelectFile = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([alpha, beta, omega]),
+        workspaceFileTree: tree,
+        onSelectFile,
+      },
+    });
+
+    const treegrid = screen.getByRole("treegrid", { name: "工作副本文件树" });
+    expect(treegrid).toHaveAttribute("aria-activedescendant", "workspace-row-src");
+    treegrid.focus();
+
+    await fireEvent.keyDown(treegrid, { key: "ArrowRight" });
+    expect(treegrid).toHaveAttribute(
+      "aria-activedescendant",
+      "workspace-row-src%2Falpha.txt",
+    );
+    expect(onSelectFile).toHaveBeenLastCalledWith("src/alpha.txt");
+
+    await fireEvent.keyDown(treegrid, { key: "ArrowDown", shiftKey: true });
+    expect(treegrid).toHaveAttribute(
+      "aria-activedescendant",
+      "workspace-row-src%2Fbeta.txt",
+    );
+    expect(screen.getByRole("toolbar", { name: "所选路径批量操作" })).toHaveTextContent(
+      "2 个已选",
+    );
+
+    await fireEvent.keyDown(treegrid, { key: "ArrowUp", shiftKey: true });
+    expect(screen.getByRole("toolbar", { name: "所选路径批量操作" })).toHaveTextContent(
+      "1 个已选",
+    );
+    await fireEvent.keyDown(treegrid, { key: "ArrowDown", shiftKey: true });
+    expect(screen.getByRole("toolbar", { name: "所选路径批量操作" })).toHaveTextContent(
+      "2 个已选",
+    );
+
+    await fireEvent.keyDown(treegrid, { key: "Home" });
+    expect(treegrid).toHaveAttribute("aria-activedescendant", "workspace-row-src");
+    await fireEvent.keyDown(treegrid, { key: "ArrowLeft" });
+    await waitFor(() => {
+      expect(document.getElementById("workspace-row-src")).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+    });
+    await fireEvent.keyDown(treegrid, { key: "ArrowRight" });
+    await waitFor(() => {
+      expect(document.getElementById("workspace-row-src")).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      );
+    });
+    await fireEvent.keyDown(treegrid, { key: "ArrowRight" });
+    expect(treegrid).toHaveAttribute(
+      "aria-activedescendant",
+      "workspace-row-src%2Falpha.txt",
+    );
+    await fireEvent.keyDown(treegrid, { key: "ArrowLeft" });
+    expect(treegrid).toHaveAttribute("aria-activedescendant", "workspace-row-src");
+    await fireEvent.keyDown(treegrid, { key: "Enter" });
+    expect(document.getElementById("workspace-row-src")).toHaveAttribute("aria-expanded", "false");
+    await fireEvent.keyDown(treegrid, { key: "Enter" });
+    expect(document.getElementById("workspace-row-src")).toHaveAttribute("aria-expanded", "true");
+
+    await fireEvent.keyDown(treegrid, { key: "End" });
+    expect(treegrid).toHaveAttribute("aria-activedescendant", "workspace-row-omega.txt");
+    await fireEvent.keyDown(treegrid, { key: " " });
+    expect(screen.getByRole("checkbox", { name: "选择文件 omega.txt" })).toBeChecked();
+    await fireEvent.keyDown(treegrid, { key: "a", ctrlKey: true });
+    expect(screen.getByRole("checkbox", { name: "选择当前可见路径" })).toBeChecked();
+    expect(screen.getByRole("toolbar", { name: "所选路径批量操作" })).toHaveTextContent(
+      "4 个已选",
+    );
   });
 
   it("moves and deletes versioned files and directories from the working copy", async () => {
