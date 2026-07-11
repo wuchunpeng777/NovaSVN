@@ -348,6 +348,18 @@
       }
     }
 
+    if (kind === "update_path") {
+      const file = $workspaceStore.status?.files.find((item) => item.path === filePath);
+      if (file?.change_scope === "both") {
+        const confirmed = window.confirm(
+          `此路径同时包含本地改动和远端更新，Update 可能产生合并或冲突。是否继续？\n${filePath ?? ""}`,
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+    }
+
     if (kind === "delete_path") {
       const confirmed = window.confirm(
         `确定要从工作副本删除此路径吗？\n${filePath ?? ""}\n\n这会删除本地内容并安排 SVN 删除。\n未提交改动和目录内未版本控制内容可能丢失。`,
@@ -1325,6 +1337,7 @@
     workspaceStore.openPath(currentSvnExecutable()).then(() => syncCurrentBranchPoolEntry())}
   onRefreshStatus={() => refreshStatusAndSyncBranchPool()}
   onUpdateWorkspace={() => runSvnOperation("update")}
+  onUpdatePath={(path) => runSvnOperation("update_path", path)}
   onCleanupWorkspace={() => runSvnOperation("cleanup")}
   onChooseApplyPatch={chooseAndPreflightPatch}
   onRunApplyPatch={runApplyPatch}

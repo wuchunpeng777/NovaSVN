@@ -101,6 +101,7 @@ pub struct CreateCommitTaskRequest {
 #[serde(rename_all = "snake_case")]
 pub enum SvnOperationKind {
     Update,
+    UpdatePath,
     Cleanup,
     AddFile,
     DeletePath,
@@ -530,6 +531,11 @@ impl TaskQueue {
     ) -> Result<Task, NovaError> {
         let mut working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
         let file_path = match request.kind {
+            SvnOperationKind::UpdatePath => Some(normalize_relative_file_path(
+                request.file_path.as_deref().unwrap_or_default(),
+                "UPDATE_PATH_INVALID",
+                "Update 路径无效",
+            )?),
             SvnOperationKind::AddFile => Some(normalize_relative_file_path(
                 request.file_path.as_deref().unwrap_or_default(),
                 "ADD_FILE_PATH_INVALID",
@@ -1394,6 +1400,20 @@ fn run_svn_operation_task(
         SvnOperationKind::Update => {
             command.arg("update").arg(&root);
             append_task_log(state, task_id, "执行 svn update");
+        }
+        SvnOperationKind::UpdatePath => {
+            let Some(file_path) = payload.file_path.as_deref() else {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "Update 执行失败",
+                    Some("缺少要 update 的路径。".to_string()),
+                );
+                return;
+            };
+            command.arg("update").arg(root.join(file_path));
+            append_task_log(state, task_id, &format!("执行 svn update：{file_path}"));
         }
         SvnOperationKind::Cleanup => {
             command.arg("cleanup").arg(&root);
@@ -4191,6 +4211,9 @@ fn operation_title(
 ) -> String {
     match kind {
         SvnOperationKind::Update => "更新工作副本".to_string(),
+        SvnOperationKind::UpdatePath => {
+            format!("更新路径 {}", file_path.unwrap_or_default())
+        }
         SvnOperationKind::Cleanup => "清理工作副本".to_string(),
         SvnOperationKind::AddFile => {
             format!("添加文件 {}", file_path.unwrap_or_default())
@@ -5148,6 +5171,24 @@ mod tests {
         let queue = TaskQueue::new();
         let dir = test_temp_dir("svn-operation-paths");
 
+        let update_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: dir.display().to_string(),
+                kind: SvnOperationKind::UpdatePath,
+                file_path: Some("src/main.rs".to_string()),
+                target_path: None,
+                svn_executable: None,
+            })
+            .expect("path update task should be created");
+        assert_eq!(update_task.title, "更新路径 src/main.rs");
+        match update_task.payload {
+            TaskPayload::SvnOperation(payload) => {
+                assert!(matches!(payload.kind, SvnOperationKind::UpdatePath));
+                assert_eq!(payload.file_path.as_deref(), Some("src/main.rs"));
+            }
+            _ => panic!("expected svn operation payload"),
+        }
+
         let lock_task = queue
             .create_svn_operation_task(CreateSvnOperationTaskRequest {
                 working_copy_root: dir.display().to_string(),
@@ -5193,6 +5234,7 @@ mod tests {
         let dir = test_temp_dir("svn-operation-missing-path");
 
         for (kind, expected_code) in [
+            (SvnOperationKind::UpdatePath, "UPDATE_PATH_INVALID"),
             (SvnOperationKind::AddFile, "ADD_FILE_PATH_INVALID"),
             (SvnOperationKind::DeletePath, "DELETE_PATH_INVALID"),
             (SvnOperationKind::MovePath, "MOVE_SOURCE_PATH_INVALID"),
@@ -5293,6 +5335,86 @@ mod tests {
         assert!(added_paths
             .iter()
             .any(|path| path.ends_with("nested/new.txt")));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn updates_only_requested_path_in_real_working_copy() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-update-path-integration");
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let local_working_copy = root.join("local-working-copy");
+        let remote_working_copy = root.join("remote-working-copy");
+        fs::create_dir_all(&import_dir).expect("create update path import tree");
+        fs::write(import_dir.join("target.txt"), "base").expect("write update target fixture");
+        fs::write(import_dir.join("untouched.txt"), "base")
+            .expect("write untouched update fixture");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&local_working_copy),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&remote_working_copy),
+        );
+        fs::write(remote_working_copy.join("target.txt"), "remote target")
+            .expect("write remote update target");
+        fs::write(
+            remote_working_copy.join("untouched.txt"),
+            "remote untouched",
+        )
+        .expect("write remote untouched target");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&remote_working_copy)
+                .args(["-m", "remote changes"]),
+        );
+
+        let queue = TaskQueue::new();
+        let task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: local_working_copy.display().to_string(),
+                kind: SvnOperationKind::UpdatePath,
+                file_path: Some("target.txt".to_string()),
+                target_path: None,
+                svn_executable: None,
+            })
+            .expect("path update task should be created");
+        let task = wait_for_test_task(&queue, &task.task_id);
+
+        assert!(
+            matches!(task.status, TaskStatus::Success),
+            "Update 路径任务失败：{:?}",
+            task.error
+        );
+        assert_eq!(
+            fs::read_to_string(local_working_copy.join("target.txt")).unwrap(),
+            "remote target"
+        );
+        assert_eq!(
+            fs::read_to_string(local_working_copy.join("untouched.txt")).unwrap(),
+            "base"
+        );
+
         fs::remove_dir_all(root).ok();
     }
 

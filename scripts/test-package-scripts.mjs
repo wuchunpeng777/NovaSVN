@@ -82,6 +82,7 @@ const workspaceRs = fs.readFileSync(
   path.join(root, "src-tauri", "src", "workspace.rs"),
   "utf8",
 );
+const taskRs = fs.readFileSync(path.join(root, "src-tauri", "src", "task.rs"), "utf8");
 const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 
 const releaseScripts = ["release:windows", "release:macos"];
@@ -291,6 +292,23 @@ if (
   !workspaceRs.includes(".stdout(Stdio::piped())")
 ) {
   console.error("工作副本文件树必须流式读取 svn info，并限制路径与元数据内存");
+  failed = true;
+}
+
+const fileBrowserStart = mainWorkspace.indexOf('class="file-browser"');
+const fileBrowserEnd = mainWorkspace.indexOf('class="inspector-resizer"', fileBrowserStart);
+const fileBrowserSource = mainWorkspace.slice(fileBrowserStart, fileBrowserEnd);
+if (
+  fileBrowserStart < 0 ||
+  fileBrowserEnd < 0 ||
+  !taskRs.includes("SvnOperationKind::UpdatePath") ||
+  !taskRs.includes('format!("执行 svn update：{file_path}")') ||
+  !fileBrowserSource.includes("Commit") ||
+  !fileBrowserSource.includes("Update") ||
+  !fileBrowserSource.includes("Resolve") ||
+  fileBrowserSource.includes('role="button"')
+) {
+  console.error("文件行必须按状态使用真实按钮提供 Commit、Update、Add、Resolve 和菜单操作");
   failed = true;
 }
 

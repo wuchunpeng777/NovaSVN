@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import {
     Download,
+    Ellipsis,
     FileUp,
     LoaderCircle,
     PanelLeftClose,
@@ -241,6 +242,7 @@
   export let onOpenWorkspace: () => void = () => {};
   export let onRefreshStatus: () => void = () => {};
   export let onUpdateWorkspace: () => void = () => {};
+  export let onUpdatePath: (path: string) => void = () => {};
   export let onCleanupWorkspace: () => void = () => {};
   export let onChooseApplyPatch: () => void = () => {};
   export let onRunApplyPatch: (dryRun: boolean) => void = () => {};
@@ -391,6 +393,7 @@
   let workingCopyTreeFilter: WorkingCopyTreeFilter = "all";
   let selectedLogRevision: string | null = null;
   let collapsedTreePaths = new Set<string>();
+  let openRowMenuPath: string | null = null;
   const inspectorMinWidth = 300;
   const inspectorMaxWidth = 720;
   const sourceListWidth = 220;
@@ -545,6 +548,20 @@
     return changedFileForPath(path)?.status === "unversioned";
   }
 
+  function isConflictedPath(path: string) {
+    const file = changedFileForPath(path);
+    return file?.status === "conflicted" || !!file?.conflict_kind;
+  }
+
+  function toggleRowMenu(path: string) {
+    openRowMenuPath = openRowMenuPath === path ? null : path;
+  }
+
+  function runRowAction(action: () => void) {
+    openRowMenuPath = null;
+    action();
+  }
+
   function localStatusText(node: WorkspaceFileNode) {
     if (node.kind === "dir") {
       return "本地";
@@ -622,6 +639,7 @@
   }
 
   function toggleTreeNode(node: WorkspaceFileNode) {
+    openRowMenuPath = null;
     if (node.kind !== "dir") {
       selectTreeNode(node);
       return;
@@ -797,7 +815,13 @@
 
   function clearWorkingCopyFilters() {
     workingCopyTreeFilter = "all";
+    openRowMenuPath = null;
     onClearFilters();
+  }
+
+  function selectWorkingCopyTreeFilter(filter: WorkingCopyTreeFilter) {
+    workingCopyTreeFilter = filter;
+    openRowMenuPath = null;
   }
 
   function startInspectorResize(event: MouseEvent) {
@@ -935,7 +959,7 @@
     applyPatchResult.dry_run &&
     applyPatchResult.applied > 0 &&
     !applyPatchHasIssues;
-  $: updateRunning = pendingSvnOperationKind === "update";
+  $: updateRunning = pendingSvnOperationKind === "update" || pendingSvnOperationKind === "update_path";
   $: cleanupRunning = pendingSvnOperationKind === "cleanup";
   $: toolbarLocked =
     runningTaskId !== null || pendingSvnOperationKind !== null || applyPatchRunning;
@@ -2022,28 +2046,28 @@
             <button
               type="button"
               class:active={workingCopyTreeFilter === "all"}
-              on:click={() => (workingCopyTreeFilter = "all")}
+              on:click={() => selectWorkingCopyTreeFilter("all")}
             >
               全部文件
             </button>
             <button
               type="button"
               class:active={workingCopyTreeFilter === "local"}
-              on:click={() => (workingCopyTreeFilter = "local")}
+              on:click={() => selectWorkingCopyTreeFilter("local")}
             >
               本地改动
             </button>
             <button
               type="button"
               class:active={workingCopyTreeFilter === "remote"}
-              on:click={() => (workingCopyTreeFilter = "remote")}
+              on:click={() => selectWorkingCopyTreeFilter("remote")}
             >
               远端更新
             </button>
             <button
               type="button"
               class:active={workingCopyTreeFilter === "unversioned"}
-              on:click={() => (workingCopyTreeFilter = "unversioned")}
+              on:click={() => selectWorkingCopyTreeFilter("unversioned")}
             >
               未管理文件
             </button>
@@ -2070,16 +2094,20 @@
             </div>
             {#if treeRows.length > 0}
               {#each treeRows as node (node.path)}
-                <button
-                  type="button"
+                <div
                   class="file-row"
                   class:directory={node.kind === "dir"}
                   class:selected={node.kind === "file" && isSelectedPath(node.path)}
                   class:abnormal={["missing", "conflicted", "obstructed"].includes(node.status)}
-                  aria-expanded={node.kind === "dir" ? !isTreeNodeCollapsed(node) : undefined}
-                  on:click={() => toggleTreeNode(node)}
                 >
-                  <span class="file-name" style={`--tree-depth: ${node.depth}`}>
+                  <button
+                    type="button"
+                    class="file-name"
+                    style={`--tree-depth: ${node.depth}`}
+                    aria-label={node.kind === "dir" ? `切换目录 ${node.path}` : `选择文件 ${node.path}`}
+                    aria-expanded={node.kind === "dir" ? !isTreeNodeCollapsed(node) : undefined}
+                    on:click={() => toggleTreeNode(node)}
+                  >
                     <strong>
                       <span
                         class="tree-affordance"
@@ -2095,7 +2123,7 @@
                       ></span>
                       {node.name}
                     </strong>
-                  </span>
+                  </button>
                   <span class="metadata-cell">{node.base_revision ?? node.revision ?? "-"}</span>
                   <span class="metadata-cell">{node.last_revision ?? "-"}</span>
                   <span class="metadata-cell" title={node.last_changed_date ?? undefined}>
@@ -2122,117 +2150,136 @@
                   <span>{formatBytes(node.file_size)}</span>
                   <span class="inline-row-actions">
                     {#if isUnversionedPath(node.path)}
-                      <span
-                        role="button"
-                        tabindex="0"
-                        on:click|stopPropagation={() => onAddFile(node.path)}
-                        on:keydown|stopPropagation={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            onAddFile(node.path);
-                          }
-                        }}
+                      <button
+                        type="button"
+                        class="row-primary-action"
+                        aria-label={`Add ${node.path}`}
+                        disabled={statusLoading || toolbarLocked}
+                        on:click={() => onAddFile(node.path)}
                       >
                         Add
-                      </span>
-                      <span
-                        role="button"
-                        tabindex="0"
-                        aria-label={`Ignore ${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
-                        on:click|stopPropagation={() => onIgnorePath(node.path)}
-                        on:keydown|stopPropagation={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            onIgnorePath(node.path);
-                          }
-                        }}
-                      >
-                        Ignore
-                      </span>
-                    {:else if isLocalChangedPath(node.path) && isCommitSelected(node.path)}
-                      <em>已选提交</em>
-                      <span
-                        role="button"
-                        tabindex="0"
-                        on:click|stopPropagation={() => onUnselectCommitFile(node.path)}
-                        on:keydown|stopPropagation={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            onUnselectCommitFile(node.path);
-                          }
-                        }}
-                      >
-                        取消选择
-                      </span>
-                    {:else if isLocalChangedPath(node.path)}
-                      <span
-                        role="button"
-                        tabindex="0"
-                        aria-disabled={!isCommittablePath(node.path)}
-                        on:click|stopPropagation={() => isCommittablePath(node.path) && onSelectCommitFile(node.path)}
-                        on:keydown|stopPropagation={(event) => {
-                          if ((event.key === "Enter" || event.key === " ") && isCommittablePath(node.path)) {
-                            onSelectCommitFile(node.path);
-                          }
-                        }}
-                      >
-                        {isCommittablePath(node.path) ? "选择提交" : "需先处理"}
-                      </span>
+                      </button>
+                    {:else}
+                      {#if isConflictedPath(node.path)}
+                        <button
+                          type="button"
+                          class="row-primary-action"
+                          aria-label={`Resolve ${node.path}`}
+                          on:click={() => onSelectFile(node.path)}
+                        >
+                          Resolve
+                        </button>
+                      {:else if isLocalChangedPath(node.path) && isCommittablePath(node.path)}
+                        <button
+                          type="button"
+                          class="row-primary-action"
+                          class:active={isCommitSelected(node.path)}
+                          aria-label={isCommitSelected(node.path) ? `取消 Commit ${node.path}` : `Commit ${node.path}`}
+                          disabled={statusLoading}
+                          on:click={() =>
+                            isCommitSelected(node.path)
+                              ? onUnselectCommitFile(node.path)
+                              : onSelectCommitFile(node.path)}
+                        >
+                          Commit{isCommitSelected(node.path) ? " ✓" : ""}
+                        </button>
+                      {/if}
+                      {#if node.change_scope === "remote" || node.change_scope === "both"}
+                        <button
+                          type="button"
+                          class="row-primary-action"
+                          aria-label={`Update ${node.path}`}
+                          disabled={statusLoading || toolbarLocked}
+                          on:click={() => onUpdatePath(node.path)}
+                        >
+                          Update
+                        </button>
+                      {/if}
                     {/if}
-                    {#if isLocalChangedPath(node.path) && !isUnversionedPath(node.path)}
-                      <span
-                        role="button"
-                        tabindex="0"
-                        on:click|stopPropagation={() => onRevertFile(node.path)}
-                        on:keydown|stopPropagation={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            onRevertFile(node.path);
+                    {#if isUnversionedPath(node.path) || isLocalChangedPath(node.path) || canMovePath(node)}
+                      <button
+                        type="button"
+                        class="row-menu-trigger"
+                        aria-label={`更多操作 ${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
+                        aria-haspopup="menu"
+                        aria-expanded={openRowMenuPath === node.path}
+                        on:click={() => toggleRowMenu(node.path)}
+                        on:keydown={(event) => {
+                          if (event.key === "Escape") {
+                            openRowMenuPath = null;
                           }
                         }}
                       >
-                        撤销
-                      </span>
+                        <Ellipsis size={14} strokeWidth={2} aria-hidden="true" />
+                      </button>
                     {/if}
-                    {#if canMovePath(node)}
-                      <span
-                        role="button"
-                        tabindex="0"
-                        aria-label={`移动${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
-                        on:click|stopPropagation={() => onMovePath(node.path)}
-                        on:keydown|stopPropagation={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            onMovePath(node.path);
+                    {#if openRowMenuPath === node.path}
+                      <div
+                        class="row-action-menu"
+                        role="menu"
+                        tabindex="-1"
+                        aria-label={`路径操作 ${node.path}`}
+                        on:keydown={(event) => {
+                          if (event.key === "Escape") {
+                            openRowMenuPath = null;
                           }
                         }}
                       >
-                        移动
-                      </span>
-                      <span
-                        role="button"
-                        tabindex="0"
-                        aria-label={`复制${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
-                        on:click|stopPropagation={() => onCopyPath(node.path)}
-                        on:keydown|stopPropagation={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            onCopyPath(node.path);
-                          }
-                        }}
-                      >
-                        复制
-                      </span>
-                      <span
-                        role="button"
-                        tabindex="0"
-                        aria-label={`删除${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
-                        on:click|stopPropagation={() => onDeletePath(node.path)}
-                        on:keydown|stopPropagation={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            onDeletePath(node.path);
-                          }
-                        }}
-                      >
-                        删除
-                      </span>
+                        {#if isUnversionedPath(node.path)}
+                          <button
+                            type="button"
+                            role="menuitem"
+                            aria-label={`Ignore ${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
+                            disabled={statusLoading || toolbarLocked}
+                            on:click={() => runRowAction(() => onIgnorePath(node.path))}
+                          >
+                            Ignore
+                          </button>
+                        {/if}
+                        {#if isLocalChangedPath(node.path) && !isUnversionedPath(node.path)}
+                          <button
+                            type="button"
+                            role="menuitem"
+                            aria-label={`撤销${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
+                            disabled={statusLoading || toolbarLocked}
+                            on:click={() => runRowAction(() => onRevertFile(node.path))}
+                          >
+                            撤销
+                          </button>
+                        {/if}
+                        {#if canMovePath(node)}
+                          <button
+                            type="button"
+                            role="menuitem"
+                            aria-label={`移动${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
+                            disabled={statusLoading || toolbarLocked}
+                            on:click={() => runRowAction(() => onMovePath(node.path))}
+                          >
+                            移动
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            aria-label={`复制${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
+                            disabled={statusLoading || toolbarLocked}
+                            on:click={() => runRowAction(() => onCopyPath(node.path))}
+                          >
+                            复制
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            aria-label={`删除${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
+                            disabled={statusLoading || toolbarLocked}
+                            on:click={() => runRowAction(() => onDeletePath(node.path))}
+                          >
+                            删除
+                          </button>
+                        {/if}
+                      </div>
                     {/if}
                   </span>
-                </button>
+                </div>
               {/each}
             {:else if workspaceFileTree}
               <article class="empty-state">没有匹配的文件</article>

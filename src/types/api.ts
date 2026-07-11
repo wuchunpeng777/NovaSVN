@@ -74,6 +74,7 @@ export interface CreateCommitTaskRequest {
 
 export type SvnOperationKind =
   | "update"
+  | "update_path"
   | "cleanup"
   | "add_file"
   | "delete_path"

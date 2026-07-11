@@ -109,6 +109,39 @@ describe("App SVN operation completion", () => {
     });
   });
 
+  it("远端变化文件使用真实文件级 Update 任务", async () => {
+    await showRemoteUpdateSource();
+    const updateTask = makeTask({ task_id: "update-path", status: "pending" });
+    createSvnOperationTaskMock.mockResolvedValue(updateTask);
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([makeTaskSummary({ task_id: "update-path", status: "pending" })]),
+    );
+    getTaskMock.mockResolvedValue(updateTask);
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Update remote.txt" }));
+
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:/repo/wc",
+        kind: "update_path",
+        file_path: "remote.txt",
+        svn_executable: undefined,
+      });
+    });
+  });
+
+  it("本地与远端同时变化时确认后才执行文件级 Update", async () => {
+    await showRemoteUpdateSource("both");
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Update remote.txt" }));
+
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("可能产生合并或冲突"));
+    expect(createSvnOperationTaskMock).not.toHaveBeenCalled();
+  });
+
   it("选中其他任务时仍按 pending id 消费成功操作", async () => {
     const pendingTask = makeTaskSummary({ task_id: "svn-update", status: "success" });
     const selectedTask = makeTask({ task_id: "other-task", status: "running" });
@@ -271,7 +304,8 @@ describe("App SVN operation completion", () => {
     getTaskMock.mockResolvedValue(moveTask);
     render(App);
 
-    await fireEvent.click(screen.getByRole("button", { name: "移动文件 source.txt" }));
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作 文件 source.txt" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "移动文件 source.txt" }));
 
     await waitFor(() => {
       expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
@@ -293,7 +327,8 @@ describe("App SVN operation completion", () => {
     vi.spyOn(window, "confirm").mockReturnValue(false);
     render(App);
 
-    await fireEvent.click(screen.getByRole("button", { name: "移动文件 source.txt" }));
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作 文件 source.txt" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "移动文件 source.txt" }));
 
     expect(createSvnOperationTaskMock).not.toHaveBeenCalled();
   });
@@ -310,7 +345,8 @@ describe("App SVN operation completion", () => {
     getTaskMock.mockResolvedValue(copyTask);
     render(App);
 
-    await fireEvent.click(screen.getByRole("button", { name: "复制文件 source.txt" }));
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作 文件 source.txt" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "复制文件 source.txt" }));
 
     await waitFor(() => {
       expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
@@ -383,6 +419,55 @@ async function showMoveableSource() {
   ];
   listWorkspaceFilesMock.mockResolvedValueOnce(tree);
   await workspaceStore.refreshFileTree();
+}
+
+async function showRemoteUpdateSource(changeScope: "remote" | "both" = "remote") {
+  const status = makeStatus();
+  status.total = 1;
+  status.returned = 1;
+  status.local_changes = changeScope === "both" ? 1 : 0;
+  status.remote_changes = 1;
+  status.combined_changes = changeScope === "both" ? 1 : 0;
+  status.files = [
+    {
+      path: "remote.txt",
+      status: changeScope === "both" ? "modified" : "normal",
+      revision: "12",
+      property_status: null,
+      property_changed: false,
+      remote_status: "modified",
+      remote_property_status: null,
+      change_scope: changeScope,
+      abnormal: false,
+      lock_state: "none",
+      lock_owner: null,
+      lock_comment: null,
+      conflict_kind: null,
+      file_size: 10,
+      content_digest: "remote-digest",
+    },
+  ];
+  const tree = makeFileTree();
+  tree.total_files = 1;
+  tree.returned_files = 1;
+  tree.nodes = [
+    {
+      path: "remote.txt",
+      name: "remote.txt",
+      kind: "file",
+      status: changeScope === "both" ? "modified" : "normal",
+      revision: "12",
+      ...makeNodeMetadata("12", changeScope),
+      remote_status: "modified",
+      file_size: 10,
+      changed: true,
+      versioned: true,
+      children: [],
+    },
+  ];
+  scanWorkspaceStatusMock.mockResolvedValueOnce(status);
+  listWorkspaceFilesMock.mockResolvedValueOnce(tree);
+  await workspaceStore.refreshStatus();
 }
 
 async function showIgnorableSource() {

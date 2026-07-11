@@ -90,7 +90,7 @@ describe("consumePendingSvnOperationCompletion", () => {
     expect(
       consumePendingSvnOperationCompletion(
         "svn-delete",
-        "delete_path",
+        "update_path",
         "/repo/wc",
         "/repo/wc/",
         taskState,

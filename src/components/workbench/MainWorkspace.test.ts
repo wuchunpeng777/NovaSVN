@@ -271,7 +271,9 @@ describe("MainWorkspace", () => {
     });
 
     expect(screen.getByText("提交目标", { exact: true })).toBeInTheDocument();
-    expect(screen.getByText("已选提交", { exact: true })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "取消 Commit src/main.ts" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("暂存", { exact: false })).not.toBeInTheDocument();
     for (const heading of ["Name", "Base", "Last", "Date", "Author", "Status", "Size"]) {
       expect(screen.getByText(heading, { exact: true })).toBeInTheDocument();
@@ -282,7 +284,7 @@ describe("MainWorkspace", () => {
     expect(mainFileRow).toHaveTextContent("2026-07-11 01:02");
     expect(mainFileRow).toHaveTextContent("alice");
 
-    await fireEvent.click(screen.getByText("取消选择", { exact: true }));
+    await fireEvent.click(screen.getByRole("button", { name: "取消 Commit src/main.ts" }));
     await fireEvent.click(screen.getByRole("button", { name: "全选改动" }));
     await fireEvent.click(screen.getByRole("button", { name: "清除选择" }));
 
@@ -292,8 +294,9 @@ describe("MainWorkspace", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "未管理文件" }));
 
-    await fireEvent.click(screen.getByText("Add", { exact: true }));
-    await fireEvent.click(screen.getByRole("button", { name: "Ignore 文件 notes/new.txt" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Add notes/new.txt" }));
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作 文件 notes/new.txt" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Ignore 文件 notes/new.txt" }));
     expect(onAddFile).toHaveBeenCalledWith("notes/new.txt");
     expect(onIgnorePath).toHaveBeenCalledWith("notes/new.txt");
     expect(screen.getByText("作用目录：notes", { exact: true })).toBeInTheDocument();
@@ -319,7 +322,11 @@ describe("MainWorkspace", () => {
       remote_property_status: "modified",
       change_scope: "remote" as const,
     };
-    const workingCopyStatus = makeStatus([local, remote, both, remoteProps]);
+    const conflict = makeFile("conflict.txt", "conflicted", "conflict-digest");
+    const workingCopyStatus = makeStatus([local, remote, both, remoteProps, conflict]);
+    const onSelectCommitFile = vi.fn();
+    const onUpdatePath = vi.fn();
+    const onSelectFile = vi.fn();
 
     const { rerender } = render(MainWorkspace, {
       props: {
@@ -328,21 +335,25 @@ describe("MainWorkspace", () => {
         workingCopyStatus,
         workspaceFileTree: {
           working_copy_root: "C:/repo/wc",
-          total_files: 4,
-          returned_files: 4,
+          total_files: 5,
+          returned_files: 5,
           truncated: false,
           nodes: [
             makeScopedNode("local.txt", "modified", "local"),
             makeScopedNode("remote.txt", "normal", "remote", "modified"),
             makeScopedNode("both.txt", "modified", "both", "modified"),
             makeScopedNode("remote-props.txt", "normal", "remote"),
+            makeScopedNode("conflict.txt", "conflicted", "local"),
           ],
         },
+        onSelectCommitFile,
+        onUpdatePath,
+        onSelectFile,
       },
     });
 
     const summary = screen.getByRole("region", { name: "工作副本摘要" });
-    expect(summary).toHaveTextContent("2 本地改动");
+    expect(summary).toHaveTextContent("3 本地改动");
     expect(summary).toHaveTextContent("3 远端更新");
     expect(summary).toHaveTextContent("1 同时变化");
     const localRow = screen.getByText("local.txt", { exact: true }).closest(".file-row");
@@ -358,6 +369,18 @@ describe("MainWorkspace", () => {
     expect(bothRow).toHaveTextContent("本地 modify");
     expect(bothRow).toHaveTextContent("远端 modify");
     expect(remotePropsRow).toHaveTextContent("远端 属性");
+    expect(
+      within(remoteRow as HTMLElement).queryByRole("button", { name: /^Commit / }),
+    ).not.toBeInTheDocument();
+    expect(within(bothRow as HTMLElement).getByRole("button", { name: "Commit both.txt" })).toBeInTheDocument();
+    expect(within(bothRow as HTMLElement).getByRole("button", { name: "Update both.txt" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Commit local.txt" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Update remote.txt" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Resolve conflict.txt" }));
+    expect(onSelectCommitFile).toHaveBeenCalledWith("local.txt");
+    expect(onUpdatePath).toHaveBeenCalledWith("remote.txt");
+    expect(onSelectFile).toHaveBeenCalledWith("conflict.txt");
 
     const filters = screen.getByRole("region", { name: "改动过滤" });
     await fireEvent.click(within(filters).getByRole("button", { name: "远端更新" }));
@@ -402,8 +425,8 @@ describe("MainWorkspace", () => {
       },
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "移动目录 src" }));
-    await fireEvent.click(screen.getByRole("button", { name: "移动文件 src/main.ts" }));
+    await clickRowMenuAction("更多操作 目录 src", "移动目录 src");
+    await clickRowMenuAction("更多操作 文件 src/main.ts", "移动文件 src/main.ts");
     await fireEvent.click(
       screen.getByRole("button", { name: "在工作副本中移动 src/main.ts" }),
     );
@@ -412,8 +435,8 @@ describe("MainWorkspace", () => {
     expect(onMovePath).toHaveBeenNthCalledWith(2, "src/main.ts");
     expect(onMovePath).toHaveBeenNthCalledWith(3, "src/main.ts");
 
-    await fireEvent.click(screen.getByRole("button", { name: "复制目录 src" }));
-    await fireEvent.click(screen.getByRole("button", { name: "复制文件 src/main.ts" }));
+    await clickRowMenuAction("更多操作 目录 src", "复制目录 src");
+    await clickRowMenuAction("更多操作 文件 src/main.ts", "复制文件 src/main.ts");
     await fireEvent.click(
       screen.getByRole("button", { name: "在工作副本中复制 src/main.ts" }),
     );
@@ -422,8 +445,8 @@ describe("MainWorkspace", () => {
     expect(onCopyPath).toHaveBeenNthCalledWith(2, "src/main.ts");
     expect(onCopyPath).toHaveBeenNthCalledWith(3, "src/main.ts");
 
-    await fireEvent.click(screen.getByRole("button", { name: "删除目录 src" }));
-    await fireEvent.click(screen.getByRole("button", { name: "删除文件 src/main.ts" }));
+    await clickRowMenuAction("更多操作 目录 src", "删除目录 src");
+    await clickRowMenuAction("更多操作 文件 src/main.ts", "删除文件 src/main.ts");
     await fireEvent.click(
       screen.getByRole("button", { name: "从工作副本删除 src/main.ts" }),
     );
@@ -449,13 +472,15 @@ describe("MainWorkspace", () => {
     expect(
       screen.queryByRole("button", { name: "Ignore 目录 external" }),
     ).not.toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "删除目录 empty" }));
+    await clickRowMenuAction("更多操作 目录 empty", "删除目录 empty");
     expect(onDeletePath).toHaveBeenNthCalledWith(4, "empty");
-    await fireEvent.click(
-      screen.getByRole("button", { name: "删除文件 literal\\name.txt" }),
+    await clickRowMenuAction(
+      "更多操作 文件 literal\\name.txt",
+      "删除文件 literal\\name.txt",
     );
-    await fireEvent.click(
-      screen.getByRole("button", { name: "删除文件 literal/name.txt" }),
+    await clickRowMenuAction(
+      "更多操作 文件 literal/name.txt",
+      "删除文件 literal/name.txt",
     );
     expect(onDeletePath).toHaveBeenNthCalledWith(5, "literal\\name.txt");
     expect(onDeletePath).toHaveBeenNthCalledWith(6, "literal/name.txt");
@@ -493,7 +518,8 @@ describe("MainWorkspace", () => {
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "未管理文件" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Ignore 目录 drafts" }));
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作 目录 drafts" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Ignore 目录 drafts" }));
 
     expect(onIgnorePath).toHaveBeenCalledWith("drafts");
   });
@@ -686,6 +712,11 @@ function makeScopedNode(
     versioned: true,
     children: [],
   } satisfies WorkspaceFileTree["nodes"][number];
+}
+
+async function clickRowMenuAction(triggerName: string, actionName: string) {
+  await fireEvent.click(screen.getByRole("button", { name: triggerName }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: actionName }));
 }
 
 function makeFileTree(): WorkspaceFileTree {
