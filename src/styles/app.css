@@ -143,6 +143,40 @@ button {
   cursor: pointer;
 }
 
+.toolbar-actions {
+  gap: 4px;
+}
+
+.toolbar-actions .icon-button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+}
+
+.toolbar-actions .icon-button:not(:disabled):hover {
+  border-color: #8d99a5;
+  background: #f8fafb;
+}
+
+.toolbar-actions .icon-button:focus-visible {
+  outline: 2px solid #2f7dca;
+  outline-offset: 1px;
+}
+
+.toolbar-spinner {
+  animation: toolbar-spin 900ms linear infinite;
+}
+
+@keyframes toolbar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 button.primary,
 .workspace-location button.primary,
 .pane-actions button.primary,

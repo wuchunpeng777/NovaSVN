@@ -1304,6 +1304,7 @@
   tasks={$taskStore.snapshot.tasks}
   selectedTask={$taskStore.selectedTask}
   runningTaskId={$taskStore.snapshot.running_task_id}
+  pendingSvnOperationKind={$workspaceStore.pendingSvnOperationKind}
   taskError={$taskStore.error}
   backendMessage={backendMessage}
   commandError={commandError}

@@ -89,7 +89,7 @@ describe("App SVN operation completion", () => {
     getTaskMock.mockResolvedValue(createdTask);
     render(App);
 
-    const updateButton = screen.getByRole("button", { name: "更新" });
+    const updateButton = screen.getByRole("button", { name: "更新工作副本" });
     await fireEvent.click(updateButton);
     await fireEvent.click(updateButton);
 
@@ -99,6 +99,9 @@ describe("App SVN operation completion", () => {
     await waitFor(() => {
       expect(get(workspaceStore).pendingSvnOperationTaskId).toBe("svn-update");
     });
+    expect(
+      screen.getByRole("button", { name: "正在更新工作副本" }),
+    ).toBeDisabled();
     expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
       working_copy_root: "C:/repo/wc",
       kind: "update",

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import { Download, FileUp, LoaderCircle, RefreshCw, Wrench } from "@lucide/svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
   import type {
@@ -21,6 +22,7 @@
     SvnDetection,
     SvnLog,
     SvnProperties,
+    SvnOperationKind,
     Task,
     TaskStatus,
     TaskSummary,
@@ -192,6 +194,7 @@
   export let tasks: TaskSummary[] = [];
   export let selectedTask: Task | null = null;
   export let runningTaskId: string | null = null;
+  export let pendingSvnOperationKind: SvnOperationKind | null = null;
   export let taskError: CommandError | null = null;
   export let backendMessage = "";
   export let commandError: CommandError | null = null;
@@ -793,6 +796,10 @@
     applyPatchResult.dry_run &&
     applyPatchResult.applied > 0 &&
     !applyPatchHasIssues;
+  $: updateRunning = pendingSvnOperationKind === "update";
+  $: cleanupRunning = pendingSvnOperationKind === "cleanup";
+  $: toolbarLocked =
+    runningTaskId !== null || pendingSvnOperationKind !== null || applyPatchRunning;
 </script>
 
 <section class="versions-workbench" aria-label="NovaSVN 工作台">
@@ -831,22 +838,66 @@
         更多
       </button>
     </nav>
-    <div class="toolbar-actions">
-      <button type="button" on:click={onRefreshStatus} disabled={!workspace || statusLoading}>
-        {statusLoading ? "刷新中" : "刷新"}
-      </button>
-      <button type="button" on:click={onUpdateWorkspace} disabled={!workspace || runningTaskId !== null}>
-        更新
+    <div class="toolbar-actions" aria-label="工作副本工具栏">
+      <button
+        type="button"
+        class="icon-button"
+        aria-label={statusLoading ? "正在刷新工作副本状态" : "刷新工作副本状态"}
+        aria-busy={statusLoading}
+        title={statusLoading ? "正在刷新工作副本状态" : "刷新工作副本状态"}
+        on:click={onRefreshStatus}
+        disabled={!workspace || statusLoading || toolbarLocked}
+      >
+        {#if statusLoading}
+          <LoaderCircle class="toolbar-spinner" size={17} strokeWidth={1.8} aria-hidden="true" />
+        {:else}
+          <RefreshCw size={17} strokeWidth={1.8} aria-hidden="true" />
+        {/if}
       </button>
       <button
         type="button"
-        on:click={onChooseApplyPatch}
-        disabled={!workspace || runningTaskId !== null}
+        class="icon-button"
+        aria-label={updateRunning ? "正在更新工作副本" : "更新工作副本"}
+        aria-busy={updateRunning}
+        title={updateRunning ? "正在更新工作副本" : "更新工作副本"}
+        on:click={onUpdateWorkspace}
+        disabled={!workspace || statusLoading || toolbarLocked}
       >
-        应用 Patch
+        {#if updateRunning}
+          <LoaderCircle class="toolbar-spinner" size={17} strokeWidth={1.8} aria-hidden="true" />
+        {:else}
+          <Download size={17} strokeWidth={1.8} aria-hidden="true" />
+        {/if}
       </button>
-      <button type="button" on:click={onCleanupWorkspace} disabled={!workspace || runningTaskId !== null}>
-        清理
+      <button
+        type="button"
+        class="icon-button"
+        aria-label={applyPatchRunning ? "正在应用 Patch" : "应用 Patch"}
+        aria-busy={applyPatchRunning}
+        title={applyPatchRunning ? "正在应用 Patch" : "应用 Patch"}
+        on:click={onChooseApplyPatch}
+        disabled={!workspace || statusLoading || toolbarLocked}
+      >
+        {#if applyPatchRunning}
+          <LoaderCircle class="toolbar-spinner" size={17} strokeWidth={1.8} aria-hidden="true" />
+        {:else}
+          <FileUp size={17} strokeWidth={1.8} aria-hidden="true" />
+        {/if}
+      </button>
+      <button
+        type="button"
+        class="icon-button"
+        aria-label={cleanupRunning ? "正在清理工作副本" : "清理工作副本"}
+        aria-busy={cleanupRunning}
+        title={cleanupRunning ? "正在清理工作副本" : "清理工作副本"}
+        on:click={onCleanupWorkspace}
+        disabled={!workspace || statusLoading || toolbarLocked}
+      >
+        {#if cleanupRunning}
+          <LoaderCircle class="toolbar-spinner" size={17} strokeWidth={1.8} aria-hidden="true" />
+        {:else}
+          <Wrench size={17} strokeWidth={1.8} aria-hidden="true" />
+        {/if}
       </button>
     </div>
   </header>

@@ -21,6 +21,69 @@ import type {
 import MainWorkspace from "./MainWorkspace.svelte";
 
 describe("MainWorkspace", () => {
+  it("renders accessible toolbar icons and exposes operation running states", async () => {
+    const onRefreshStatus = vi.fn();
+    const onUpdateWorkspace = vi.fn();
+    const onChooseApplyPatch = vi.fn();
+    const onCleanupWorkspace = vi.fn();
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        onRefreshStatus,
+        onUpdateWorkspace,
+        onChooseApplyPatch,
+        onCleanupWorkspace,
+      },
+    });
+
+    const toolbar = screen.getByLabelText("工作副本工具栏");
+    const refreshButton = within(toolbar).getByRole("button", { name: "刷新工作副本状态" });
+    const updateButton = within(toolbar).getByRole("button", { name: "更新工作副本" });
+    const patchButton = within(toolbar).getByRole("button", { name: "应用 Patch" });
+    const cleanupButton = within(toolbar).getByRole("button", { name: "清理工作副本" });
+
+    expect(toolbar.querySelectorAll("svg")).toHaveLength(4);
+    expect(refreshButton).toHaveAttribute("title", "刷新工作副本状态");
+    expect(updateButton).toHaveAttribute("title", "更新工作副本");
+    expect(patchButton).toHaveAttribute("title", "应用 Patch");
+    expect(cleanupButton).toHaveAttribute("title", "清理工作副本");
+
+    await fireEvent.click(refreshButton);
+    await fireEvent.click(updateButton);
+    await fireEvent.click(patchButton);
+    await fireEvent.click(cleanupButton);
+    expect(onRefreshStatus).toHaveBeenCalledOnce();
+    expect(onUpdateWorkspace).toHaveBeenCalledOnce();
+    expect(onChooseApplyPatch).toHaveBeenCalledOnce();
+    expect(onCleanupWorkspace).toHaveBeenCalledOnce();
+
+    await rerender({ statusLoading: true });
+    expect(
+      within(toolbar).getByRole("button", { name: "正在刷新工作副本状态" }),
+    ).toBeDisabled();
+    expect(
+      within(toolbar)
+        .getAllByRole("button")
+        .every((button) => button.hasAttribute("disabled")),
+    ).toBe(true);
+
+    await rerender({ statusLoading: false, pendingSvnOperationKind: "update" });
+    expect(
+      within(toolbar).getByRole("button", { name: "正在更新工作副本" }),
+    ).toHaveAttribute("aria-busy", "true");
+
+    await rerender({ pendingSvnOperationKind: "cleanup" });
+    expect(
+      within(toolbar).getByRole("button", { name: "正在清理工作副本" }),
+    ).toHaveAttribute("aria-busy", "true");
+
+    await rerender({ pendingSvnOperationKind: null, applyPatchRunning: true });
+    expect(
+      within(toolbar).getByRole("button", { name: "正在应用 Patch" }),
+    ).toHaveAttribute("aria-busy", "true");
+  });
+
   it("uses current commit targets and excludes unversioned files", async () => {
     const onUnselectCommitFile = vi.fn();
     const onSelectAllCommitFiles = vi.fn();
