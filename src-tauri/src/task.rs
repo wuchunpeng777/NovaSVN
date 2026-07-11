@@ -225,6 +225,7 @@ pub enum RevisionDiffMode {
 pub struct CreateRevisionDiffTaskRequest {
     pub mode: RevisionDiffMode,
     pub working_copy_root: Option<String>,
+    pub target_url: Option<String>,
     pub left_revision: Option<String>,
     pub right_revision: Option<String>,
     pub left_url: Option<String>,
@@ -440,6 +441,7 @@ struct SvnSwitchTaskPayload {
 struct RevisionDiffTaskPayload {
     mode: RevisionDiffMode,
     working_copy_root: Option<String>,
+    target_url: Option<String>,
     left_revision: Option<String>,
     right_revision: Option<String>,
     left_url: Option<String>,
@@ -2728,8 +2730,17 @@ fn run_revision_diff_task(
                 .right_revision
                 .as_deref()
                 .expect("右 revision 已校验");
-            command.arg("-r").arg(format!("{left}:{right}")).arg(root);
-            format!("{root} r{left}:r{right}")
+            let command_target = payload.target_url.as_deref().unwrap_or(root);
+            command
+                .arg("-r")
+                .arg(format!("{left}:{right}"))
+                .arg(command_target);
+            let display_target = payload
+                .target_url
+                .as_deref()
+                .map(compact_repository_url)
+                .unwrap_or_else(|| root.to_string());
+            format!("{display_target} r{left}:r{right}")
         }
         RevisionDiffMode::WorkingCopyToRevision => {
             let root = payload
@@ -4924,10 +4935,16 @@ fn normalize_revision_diff_payload(
                     true,
                 ));
             }
+            let target_url = request
+                .target_url
+                .as_deref()
+                .map(normalize_repository_url)
+                .transpose()?;
 
             Ok(RevisionDiffTaskPayload {
                 mode: RevisionDiffMode::Revisions,
                 working_copy_root: Some(working_copy_root.display().to_string()),
+                target_url,
                 left_revision: Some(left_revision),
                 right_revision: Some(right_revision),
                 left_url: None,
@@ -4951,6 +4968,7 @@ fn normalize_revision_diff_payload(
             Ok(RevisionDiffTaskPayload {
                 mode: RevisionDiffMode::WorkingCopyToRevision,
                 working_copy_root: Some(working_copy_root.display().to_string()),
+                target_url: None,
                 left_revision: None,
                 right_revision: Some(right_revision),
                 left_url: None,
@@ -4974,6 +4992,7 @@ fn normalize_revision_diff_payload(
             Ok(RevisionDiffTaskPayload {
                 mode: RevisionDiffMode::Urls,
                 working_copy_root: None,
+                target_url: None,
                 left_revision: None,
                 right_revision: None,
                 left_url: Some(left_url),
@@ -7450,6 +7469,7 @@ mod tests {
             CreateRevisionDiffTaskRequest {
                 mode: RevisionDiffMode::Urls,
                 working_copy_root: None,
+                target_url: None,
                 left_revision: None,
                 right_revision: None,
                 left_url: Some("https://example.com/svn/branches/feature/".to_string()),
@@ -7475,6 +7495,7 @@ mod tests {
             CreateRevisionDiffTaskRequest {
                 mode: RevisionDiffMode::Revisions,
                 working_copy_root: Some(dir.display().to_string()),
+                target_url: None,
                 left_revision: Some(" 42 ".to_string()),
                 right_revision: Some("42".to_string()),
                 left_url: None,
@@ -7492,6 +7513,32 @@ mod tests {
             }
         }
 
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn accepts_repository_url_target_for_revision_diff() {
+        let dir = test_temp_dir("revision-diff-url-target");
+        let payload = normalize_revision_diff_payload(
+            CreateRevisionDiffTaskRequest {
+                mode: RevisionDiffMode::Revisions,
+                working_copy_root: Some(dir.display().to_string()),
+                target_url: Some(" https://example.com/svn/trunk/src/main.ts/ ".to_string()),
+                left_revision: Some("41".to_string()),
+                right_revision: Some("42".to_string()),
+                left_url: None,
+                right_url: None,
+                svn_executable: None,
+            },
+            "svn".to_string(),
+            test_temp_dir("revision-diff-url-target-output"),
+        )
+        .expect("repository URL target should be accepted");
+
+        assert_eq!(
+            payload.target_url.as_deref(),
+            Some("https://example.com/svn/trunk/src/main.ts")
+        );
         fs::remove_dir_all(dir).ok();
     }
 

@@ -416,6 +416,17 @@ if (
 }
 
 if (
+  !mainWorkspace.includes("openChangedPathRevisionDiff") ||
+  !mainWorkspace.includes('class="timeline-changed-path-button"') ||
+  !appStore.includes("repositoryPathUrl") ||
+  !taskRs.includes("target_url") ||
+  !taskRs.includes("payload.target_url.as_deref().unwrap_or(root)")
+) {
+  console.error("Timeline 改变路径必须通过目标仓库 URL 执行真实 Revision Diff");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||

@@ -490,6 +490,7 @@ function createTaskStore() {
   async function createRevisionDiff(request: {
     mode: RevisionDiffMode;
     workingCopyRoot?: string | null;
+    targetUrl?: string | null;
     leftRevision?: string | null;
     rightRevision?: string | null;
     leftUrl?: string | null;
@@ -502,6 +503,7 @@ function createTaskStore() {
       const task = await createRevisionDiffTask({
         mode: request.mode,
         working_copy_root: request.workingCopyRoot || undefined,
+        target_url: request.targetUrl || undefined,
         left_revision: request.leftRevision || undefined,
         right_revision: request.rightRevision || undefined,
         left_url: request.leftUrl || undefined,
@@ -1356,6 +1358,7 @@ export interface WorkspaceStoreState {
   svnLogLimit: number;
   revisionDiffForm: {
     mode: RevisionDiffMode;
+    targetUrl: string;
     leftRevision: string;
     rightRevision: string;
     leftUrl: string;
@@ -1487,6 +1490,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   svnLogLimit: 50,
   revisionDiffForm: {
     mode: "revisions",
+    targetUrl: "",
     leftRevision: "",
     rightRevision: "",
     leftUrl: "",
@@ -3435,21 +3439,36 @@ function createWorkspaceStore() {
     }));
   }
 
-  function prepareRevisionDiffFromLog(revision: string) {
-    const numericRevision = Number(revision);
-    update((state) => ({
-      ...state,
-      revisionDiffForm: {
-        ...state.revisionDiffForm,
-        mode: "revisions",
-        leftRevision:
-          Number.isFinite(numericRevision) && numericRevision > 1
-            ? String(numericRevision - 1)
-            : state.revisionDiffForm.leftRevision,
-        rightRevision: revision,
-      },
-      revisionDiffError: null,
-    }));
+  function prepareRevisionDiffFromLog(revision: string, repositoryPath?: string) {
+    const normalizedRevision = revision.trim();
+    const previousRevision = /^[1-9]\d*$/.test(normalizedRevision)
+      ? (BigInt(normalizedRevision) - 1n).toString()
+      : null;
+    let prepared = false;
+    update((state) => {
+      const targetUrl = repositoryPath
+        ? repositoryPathUrl(state.current?.repository_root, repositoryPath)
+        : "";
+      if (repositoryPath && !targetUrl) {
+        return {
+          ...state,
+          revisionDiffError: "改变路径无法映射到当前 SVN 仓库",
+        };
+      }
+      prepared = true;
+      return {
+        ...state,
+        revisionDiffForm: {
+          ...state.revisionDiffForm,
+          mode: "revisions",
+          targetUrl: targetUrl || "",
+          leftRevision: previousRevision ?? state.revisionDiffForm.leftRevision,
+          rightRevision: normalizedRevision,
+        },
+        revisionDiffError: null,
+      };
+    });
+    return prepared;
   }
 
   function markRevisionDiffTask(taskId: string | null) {
@@ -3740,6 +3759,28 @@ export function revisionDiffPatchFileName(result: Pick<RevisionDiffResult, "mode
   const mode = sanitizePatchFileNamePart(String(result.mode || "revision-diff"));
   const target = sanitizePatchFileNamePart(result.target || "target");
   return `novasvn-${mode}-${target}-${Date.now()}.patch`;
+}
+
+export function repositoryPathUrl(
+  repositoryRoot: string | null | undefined,
+  repositoryPath: string,
+) {
+  const root = repositoryRoot?.trim().replace(/\/+$/, "");
+  if (
+    !root ||
+    !repositoryPath.startsWith("/") ||
+    repositoryPath.includes("\\") ||
+    /[\u0000-\u001f\u007f]/.test(repositoryPath)
+  ) {
+    return null;
+  }
+  const segments = repositoryPath.split("/").filter(Boolean);
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    return null;
+  }
+  return segments.length > 0
+    ? `${root}/${segments.map((segment) => encodeURIComponent(segment)).join("/")}`
+    : root;
 }
 
 export function isSameRepositoryUrl(left: string | null | undefined, right: string | null | undefined) {

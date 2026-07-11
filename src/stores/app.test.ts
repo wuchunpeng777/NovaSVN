@@ -66,6 +66,7 @@ import type {
 import {
   appSettingsStore,
   isSameRepositoryUrl,
+  repositoryPathUrl,
   revisionDiffPatchFileName,
   svnStore,
   taskStore,
@@ -824,6 +825,33 @@ describe("taskStore merge tasks", () => {
   });
 });
 
+describe("taskStore revision diff tasks", () => {
+  it("forwards a path-scoped repository URL target", async () => {
+    createRevisionDiffTaskMock.mockResolvedValue(makeTask({ task_id: "revision-diff-1" }));
+
+    const task = await taskStore.createRevisionDiff({
+      mode: "revisions",
+      workingCopyRoot: "C:/repo/wc",
+      targetUrl: "https://example.com/svn/trunk/src/main.ts",
+      leftRevision: "41",
+      rightRevision: "42",
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(task?.task_id).toBe("revision-diff-1");
+    expect(createRevisionDiffTaskMock).toHaveBeenCalledWith({
+      mode: "revisions",
+      working_copy_root: "C:/repo/wc",
+      target_url: "https://example.com/svn/trunk/src/main.ts",
+      left_revision: "41",
+      right_revision: "42",
+      left_url: undefined,
+      right_url: undefined,
+      svn_executable: "C:/svn/svn.exe",
+    });
+  });
+});
+
 describe("taskStore SVN operation tasks", () => {
   it("maps a working-copy delete request to delete_path", async () => {
     createSvnOperationTaskMock.mockResolvedValue(makeTask({ task_id: "delete-1" }));
@@ -925,6 +953,39 @@ describe("taskStore SVN operation tasks", () => {
     appSettingsStore.load();
 
     expect(get(appSettingsStore).themeMode).toBe("dark");
+  });
+});
+
+describe("revision path targets", () => {
+  it("maps SVN changed paths to encoded repository URLs", () => {
+    expect(repositoryPathUrl("https://example.com/svn/", "/trunk/中文 #1.txt")).toBe(
+      "https://example.com/svn/trunk/%E4%B8%AD%E6%96%87%20%231.txt",
+    );
+    expect(repositoryPathUrl("https://example.com/svn", "/")).toBe(
+      "https://example.com/svn",
+    );
+    expect(repositoryPathUrl("https://example.com/svn", "../secret.txt")).toBeNull();
+    expect(repositoryPathUrl("https://example.com/svn", "/trunk/../secret.txt")).toBeNull();
+  });
+
+  it("prepares a path-scoped revision diff and clears it for revision selection", () => {
+    expect(workspaceStore.prepareRevisionDiffFromLog("42", "/trunk/src/main.ts")).toBe(true);
+    expect(get(workspaceStore).revisionDiffForm).toMatchObject({
+      mode: "revisions",
+      targetUrl: "https://example.com/svn/trunk/src/main.ts",
+      leftRevision: "41",
+      rightRevision: "42",
+    });
+
+    expect(workspaceStore.prepareRevisionDiffFromLog("40")).toBe(true);
+    expect(get(workspaceStore).revisionDiffForm.targetUrl).toBe("");
+
+    expect(workspaceStore.prepareRevisionDiffFromLog("1", "/trunk/first.txt")).toBe(true);
+    expect(get(workspaceStore).revisionDiffForm).toMatchObject({
+      leftRevision: "0",
+      rightRevision: "1",
+      targetUrl: "https://example.com/svn/trunk/first.txt",
+    });
   });
 });
 

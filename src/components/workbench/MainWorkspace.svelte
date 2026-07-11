@@ -122,12 +122,14 @@
   export let svnLogLimit = 50;
   export let revisionDiffForm: {
     mode: RevisionDiffMode;
+    targetUrl: string;
     leftRevision: string;
     rightRevision: string;
     leftUrl: string;
     rightUrl: string;
   } = {
     mode: "revisions",
+    targetUrl: "",
     leftRevision: "",
     rightRevision: "",
     leftUrl: "",
@@ -324,7 +326,10 @@
     value: string,
   ) => void = () => {};
   export let onRunRevisionDiff: () => void = () => {};
-  export let onPrepareRevisionDiffFromLog: (revision: string) => void = () => {};
+  export let onPrepareRevisionDiffFromLog: (
+    revision: string,
+    repositoryPath?: string,
+  ) => boolean = () => false;
   export let onExportRevisionDiffPatch: () => void = () => {};
 
   export let onCommitMessageInput: (value: string) => void = () => {};
@@ -1395,6 +1400,13 @@
     onPrepareRevisionDiffFromLog(revision);
   }
 
+  function openChangedPathRevisionDiff(revision: string, repositoryPath: string) {
+    selectedLogRevision = revision;
+    if (onPrepareRevisionDiffFromLog(revision, repositoryPath)) {
+      onRunRevisionDiff();
+    }
+  }
+
   function clearWorkingCopyFilters() {
     workingCopyTreeFilter = "all";
     openRowMenuPath = null;
@@ -1880,7 +1892,15 @@
                           {#each timelineEntryPaths(entry, expandedTimelineRevisions) as path (`${entry.revision}:${path.path}:${path.action}`)}
                             <div class="timeline-changed-path">
                               <span class="change-action">{path.action || "-"}</span>
-                              <code>{path.path}</code>
+                              <button
+                                type="button"
+                                class="timeline-changed-path-button"
+                                aria-label={`比较 r${entry.revision} 的 ${path.path}`}
+                                disabled={revisionDiffLoading}
+                                on:click={() => openChangedPathRevisionDiff(entry.revision, path.path)}
+                              >
+                                <code>{path.path}</code>
+                              </button>
                               <small>{path.kind || "-"}</small>
                             </div>
                           {/each}
@@ -1924,7 +1944,15 @@
                     <div>
                       <span class="change-action">{path.action || "-"}</span>
                       <span>
-                        <strong>{path.path}</strong>
+                        <button
+                          type="button"
+                          class="revision-path-button"
+                          aria-label={`比较 r${selectedLogEntry.revision} 的 ${path.path}`}
+                          disabled={revisionDiffLoading}
+                          on:click={() => openChangedPathRevisionDiff(selectedLogEntry.revision, path.path)}
+                        >
+                          {path.path}
+                        </button>
                         <small>{path.kind || "-"}</small>
                       </span>
                     </div>
@@ -1984,6 +2012,19 @@
                   )}
               />
             {:else}
+              {#if revisionDiffForm.mode === "revisions"}
+                <input
+                  type="url"
+                  value={revisionDiffForm.targetUrl}
+                  placeholder="比较目标 URL（留空使用工作副本）"
+                  aria-label="Revision Diff 目标 URL"
+                  on:input={(event) =>
+                    onRevisionDiffFormInput(
+                      "targetUrl",
+                      (event.currentTarget as HTMLInputElement).value,
+                    )}
+                />
+              {/if}
               {#if revisionDiffForm.mode === "revisions"}
                 <input
                   type="text"

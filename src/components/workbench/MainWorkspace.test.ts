@@ -311,6 +311,8 @@ describe("MainWorkspace", () => {
   });
 
   it("groups filtered Timeline revisions by local calendar date", async () => {
+    const onPrepareRevisionDiffFromLog = vi.fn(() => true);
+    const onRunRevisionDiff = vi.fn();
     render(MainWorkspace, {
       props: {
         view: workbenchViews.history,
@@ -326,6 +328,8 @@ describe("MainWorkspace", () => {
             makeLogEntry("9", "invalid-date", "carol", "旧数据"),
           ],
         },
+        onPrepareRevisionDiffFromLog,
+        onRunRevisionDiff,
       },
     });
 
@@ -347,13 +351,23 @@ describe("MainWorkspace", () => {
     );
     expect(newestEntry).toHaveTextContent("/trunk/file-12-4.txt");
     expect(newestEntry).toHaveTextContent("/trunk/file-12-5.txt");
+    await fireEvent.click(
+      within(newestEntry).getByRole("button", {
+        name: "比较 r12 的 /trunk/file-12-4.txt",
+      }),
+    );
+    expect(onPrepareRevisionDiffFromLog).toHaveBeenLastCalledWith(
+      "12",
+      "/trunk/file-12-4.txt",
+    );
+    expect(onRunRevisionDiff).toHaveBeenCalledOnce();
 
     const priorDay = within(timeline).getByRole("group", { name: "2026年7月10日" });
     expect(priorDay).toHaveTextContent("1 revision");
     expect(within(priorDay).getByText("r10")).toBeInTheDocument();
     expect(within(timeline).getByRole("group", { name: "日期未知" })).toHaveTextContent("r9");
 
-    await fireEvent.click(within(priorDay).getByRole("button"));
+    await fireEvent.click(within(priorDay).getByText("r10").closest("button") as HTMLElement);
     expect(within(screen.getByLabelText("Revision 比较")).getByText("r10")).toBeInTheDocument();
   });
 

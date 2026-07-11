@@ -207,6 +207,7 @@ export type RevisionDiffMode = "revisions" | "working_copy_to_revision" | "urls"
 export interface CreateRevisionDiffTaskRequest {
   mode: RevisionDiffMode;
   working_copy_root?: string;
+  target_url?: string;
   left_revision?: string;
   right_revision?: string;
   left_url?: string;

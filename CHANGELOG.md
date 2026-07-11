@@ -28,6 +28,7 @@
 - 应用原生菜单增加当前路径子菜单，按活动文件或目录状态动态提供 Open、Show in Folder、Commit、Update、Add、Resolve、Revert、Move、Copy、Ignore 和 Delete。
 - Timeline 按本地日历日期分组显示 revision，并为未知日期提供稳定分组。
 - Timeline revision 完整显示作者、精确时间、提交信息和改变路径，长路径清单可展开或收起。
+- Timeline 改变路径可直接运行对应仓库 URL 的 Revision Diff，结果限定在所点击文件或目录。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。

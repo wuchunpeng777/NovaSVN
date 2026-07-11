@@ -651,6 +651,7 @@
     const task = await taskStore.createRevisionDiff({
       mode: form.mode,
       workingCopyRoot: $workspaceStore.current?.working_copy_root,
+      targetUrl: form.targetUrl,
       leftRevision: form.leftRevision,
       rightRevision: form.rightRevision,
       leftUrl: form.leftUrl,
