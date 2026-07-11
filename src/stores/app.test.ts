@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../lib/api", () => ({
   createApplyPatchTask: vi.fn(),
   createMergeTask: vi.fn(),
+  createRevertRevisionTask: vi.fn(),
   createRevisionDiffTask: vi.fn(),
   createSvnBatchOperationTask: vi.fn(),
   createSvnOperationTask: vi.fn(),
@@ -29,6 +30,7 @@ import { get } from "svelte/store";
 import {
   createApplyPatchTask,
   createMergeTask,
+  createRevertRevisionTask,
   createRevisionDiffTask,
   createSvnBatchOperationTask,
   createSvnOperationTask,
@@ -76,6 +78,7 @@ import {
 
 const createApplyPatchTaskMock = vi.mocked(createApplyPatchTask);
 const createMergeTaskMock = vi.mocked(createMergeTask);
+const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
 const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
@@ -99,6 +102,7 @@ const setSvnPropertyMock = vi.mocked(setSvnProperty);
 beforeEach(() => {
   createApplyPatchTaskMock.mockReset();
   createMergeTaskMock.mockReset();
+  createRevertRevisionTaskMock.mockReset();
   createRevisionDiffTaskMock.mockReset();
   createSvnBatchOperationTaskMock.mockReset();
   createSvnOperationTaskMock.mockReset();
@@ -874,6 +878,23 @@ describe("taskStore revision diff tasks", () => {
       right_revision: "42",
       left_url: undefined,
       right_url: undefined,
+      svn_executable: "C:/svn/svn.exe",
+    });
+  });
+
+  it("forwards a Revert-to-Revision task", async () => {
+    createRevertRevisionTaskMock.mockResolvedValue(makeTask({ task_id: "revert-revision-1" }));
+
+    const task = await taskStore.createRevertRevision({
+      workingCopyRoot: "C:/repo/wc",
+      targetRevision: "10",
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(task?.task_id).toBe("revert-revision-1");
+    expect(createRevertRevisionTaskMock).toHaveBeenCalledWith({
+      working_copy_root: "C:/repo/wc",
+      target_revision: "10",
       svn_executable: "C:/svn/svn.exe",
     });
   });

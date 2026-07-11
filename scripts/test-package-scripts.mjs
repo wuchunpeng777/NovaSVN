@@ -473,6 +473,19 @@ if (
 }
 
 if (
+  !mainWorkspace.includes('class="timeline-revert-revision"') ||
+  !mainWorkspace.includes("onRevertToRevision(entry.revision)") ||
+  !appSvelte.includes("revertWorkspaceToRevision") ||
+  !appSvelte.includes('"revert_to_revision"') ||
+  !taskRs.includes("fn execute_revert_revision(") ||
+  !taskRs.includes('["merge", "--ignore-ancestry", "-r"]') ||
+  !tauriLib.includes("create_revert_revision_task")
+) {
+  console.error("Timeline Revert 到 Revision 必须执行带运行时安全检查的真实反向 Merge");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||

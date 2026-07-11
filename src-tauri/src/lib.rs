@@ -28,9 +28,9 @@ use task::{
     CreateApplyPatchTaskRequest, CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest,
     CreateMergeTaskRequest, CreateMockTaskRequest, CreatePartialCommitTaskRequest,
     CreateRepositoryCopyTaskRequest, CreateRepositoryListTaskRequest,
-    CreateRevisionDiffTaskRequest, CreateShadowWorkspaceTaskRequest,
-    CreateSvnBatchOperationTaskRequest, CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest,
-    Task, TaskQueue, TaskSnapshot,
+    CreateRevertRevisionTaskRequest, CreateRevisionDiffTaskRequest,
+    CreateShadowWorkspaceTaskRequest, CreateSvnBatchOperationTaskRequest,
+    CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest, Task, TaskQueue, TaskSnapshot,
 };
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use tauri::{Emitter, Manager};
@@ -564,6 +564,17 @@ fn create_revision_diff_task(
 }
 
 #[tauri::command]
+fn create_revert_revision_task(
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateRevertRevisionTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_revert_revision_task command received");
+    Ok(CommandResponse::success(
+        queue.create_revert_revision_task(request)?,
+    ))
+}
+
+#[tauri::command]
 fn create_merge_task(
     queue: tauri::State<'_, TaskQueue>,
     request: CreateMergeTaskRequest,
@@ -822,6 +833,7 @@ pub fn run() {
             create_branch_checkout_task,
             create_svn_switch_task,
             create_revision_diff_task,
+            create_revert_revision_task,
             create_merge_task,
             create_apply_patch_task,
             get_branch_pool,

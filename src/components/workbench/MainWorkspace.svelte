@@ -11,6 +11,7 @@
     PanelRightClose,
     PanelRightOpen,
     RefreshCw,
+    RotateCcw,
     Wrench,
     X,
   } from "@lucide/svelte";
@@ -342,6 +343,7 @@
     filePath: string,
     revision: string,
   ) => boolean = () => false;
+  export let onRevertToRevision: (revision: string) => void = () => {};
   export let onExportRevisionDiffPatch: () => void = () => {};
 
   export let onCommitMessageInput: (value: string) => void = () => {};
@@ -2119,6 +2121,16 @@
                           on:click={() => compareSelectedFileWithRevision(entry.revision)}
                         >
                           <GitCompareArrows size={15} strokeWidth={2} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          class="timeline-revert-revision"
+                          aria-label={`Revert 工作副本到 r${entry.revision}`}
+                          title={`Revert 工作副本到 r${entry.revision}`}
+                          disabled={!workspace || toolbarLocked}
+                          on:click={() => onRevertToRevision(entry.revision)}
+                        >
+                          <RotateCcw size={15} strokeWidth={2} aria-hidden="true" />
                         </button>
                       </header>
                       <p class="timeline-message">{entry.message || "无提交信息"}</p>

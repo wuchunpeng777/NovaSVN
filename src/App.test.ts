@@ -15,10 +15,12 @@ vi.mock("./lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/api")>();
   return {
     ...actual,
+    createRevertRevisionTask: vi.fn(),
     createSvnBatchOperationTask: vi.fn(),
     createSvnOperationTask: vi.fn(),
     ignoreWorkspacePath: vi.fn(),
     getTask: vi.fn(),
+    getSvnLog: vi.fn(),
     listTasks: vi.fn(),
     listWorkspaceFiles: vi.fn(),
     openWorkspaceFile: vi.fn(),
@@ -29,10 +31,12 @@ vi.mock("./lib/api", async (importOriginal) => {
 
 import { get } from "svelte/store";
 import {
+  createRevertRevisionTask,
   createSvnOperationTask,
   createSvnBatchOperationTask,
   ignoreWorkspacePath,
   getTask,
+  getSvnLog,
   listTasks,
   listWorkspaceFiles,
   openWorkspaceFile,
@@ -51,9 +55,11 @@ import type {
 import App from "./App.svelte";
 
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
+const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
 const ignoreWorkspacePathMock = vi.mocked(ignoreWorkspacePath);
 const getTaskMock = vi.mocked(getTask);
+const getSvnLogMock = vi.mocked(getSvnLog);
 const listTasksMock = vi.mocked(listTasks);
 const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
 const openWorkspaceFileMock = vi.mocked(openWorkspaceFile);
@@ -62,9 +68,11 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(async () => {
   createSvnOperationTaskMock.mockReset();
+  createRevertRevisionTaskMock.mockReset();
   createSvnBatchOperationTaskMock.mockReset();
   ignoreWorkspacePathMock.mockReset();
   getTaskMock.mockReset();
+  getSvnLogMock.mockReset();
   listTasksMock.mockReset();
   listWorkspaceFilesMock.mockReset();
   openWorkspaceFileMock.mockReset();
@@ -148,6 +156,49 @@ describe("App SVN operation completion", () => {
 
     expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("可能产生合并或冲突"));
     expect(createSvnOperationTaskMock).not.toHaveBeenCalled();
+  });
+
+  it("确认后创建 Revert-to-Revision 任务并绑定普通 SVN 完成刷新", async () => {
+    getSvnLogMock.mockResolvedValue({
+      target: "https://example.com/svn/trunk",
+      entries: [
+        {
+          revision: "10",
+          author: "alice",
+          date: "2026-07-11T10:00:00Z",
+          message: "target",
+          changed_paths: [],
+        },
+      ],
+      has_more: false,
+      next_start_revision: null,
+    });
+    await workspaceStore.refreshSvnLog(undefined);
+    setCurrentView("history");
+    const task = makeTask({ task_id: "revert-revision-10", status: "pending" });
+    createRevertRevisionTaskMock.mockResolvedValue(task);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(App);
+
+    const revertButton = screen.getByRole("button", { name: "Revert 工作副本到 r10" });
+    await fireEvent.click(revertButton);
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("反向 Merge"));
+    expect(createRevertRevisionTaskMock).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    await fireEvent.click(revertButton);
+    await waitFor(() => {
+      expect(createRevertRevisionTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:/repo/wc",
+        target_revision: "10",
+        svn_executable: undefined,
+      });
+    });
+    expect(get(workspaceStore)).toMatchObject({
+      pendingSvnOperationTaskId: "revert-revision-10",
+      pendingSvnOperationKind: "revert_to_revision",
+      pendingSvnOperationWorkingCopyRoot: "C:/repo/wc",
+    });
   });
 
   it("多选路径确认后创建单个批量 Revert 任务", async () => {

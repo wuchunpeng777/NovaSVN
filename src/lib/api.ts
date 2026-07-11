@@ -12,6 +12,7 @@ import type {
   CreatePartialCommitTaskRequest,
   CreateRepositoryCopyTaskRequest,
   CreateRepositoryListTaskRequest,
+  CreateRevertRevisionTaskRequest,
   CreateRevisionDiffTaskRequest,
   CreateShadowWorkspaceTaskRequest,
   CreateSvnBatchOperationTaskRequest,
@@ -184,6 +185,12 @@ export function createRevisionDiffTask(
   request: CreateRevisionDiffTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_revision_diff_task", { request });
+}
+
+export function createRevertRevisionTask(
+  request: CreateRevertRevisionTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_revert_revision_task", { request });
 }
 
 export function createMergeTask(request: CreateMergeTaskRequest): Promise<Task> {

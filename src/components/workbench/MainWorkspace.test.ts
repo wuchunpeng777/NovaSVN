@@ -452,6 +452,7 @@ describe("MainWorkspace", () => {
     const onPrepareWorkingCopyFileRevisionDiff = vi.fn(() => true);
     const onRunRevisionDiff = vi.fn();
     const onRevisionDiffFormInput = vi.fn();
+    const onRevertToRevision = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.history,
@@ -467,6 +468,7 @@ describe("MainWorkspace", () => {
         onPrepareWorkingCopyFileRevisionDiff,
         onRunRevisionDiff,
         onRevisionDiffFormInput,
+        onRevertToRevision,
       },
     });
 
@@ -477,6 +479,13 @@ describe("MainWorkspace", () => {
     await fireEvent.click(compareFile);
     expect(onPrepareWorkingCopyFileRevisionDiff).toHaveBeenCalledWith("src/main.ts", "12");
     expect(onRunRevisionDiff).toHaveBeenCalledOnce();
+
+    const revertRevision = screen.getByRole("button", {
+      name: "Revert 工作副本到 r12",
+    });
+    expect(revertRevision).toHaveAttribute("title", "Revert 工作副本到 r12");
+    await fireEvent.click(revertRevision);
+    expect(onRevertToRevision).toHaveBeenCalledWith("12");
 
     await fireEvent.click(
       within(screen.getByLabelText("Revision 比较")).getByRole("button", {

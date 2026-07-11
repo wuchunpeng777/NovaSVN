@@ -101,7 +101,10 @@ export type SvnBatchOperationKind =
   | "delete_paths"
   | "move_paths";
 
-export type PendingSvnOperationKind = SvnOperationKind | SvnBatchOperationKind;
+export type PendingSvnOperationKind =
+  | SvnOperationKind
+  | SvnBatchOperationKind
+  | "revert_to_revision";
 
 export interface CreateSvnBatchOperationTaskRequest {
   working_copy_root: string;
@@ -525,6 +528,12 @@ export interface SetSvnPropertyRequest {
   file_path?: string;
   name: string;
   value: string;
+  svn_executable?: string;
+}
+
+export interface CreateRevertRevisionTaskRequest {
+  working_copy_root: string;
+  target_revision: string;
   svn_executable?: string;
 }
 

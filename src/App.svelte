@@ -940,6 +940,40 @@
     );
   }
 
+  async function revertWorkspaceToRevision(revision: string) {
+    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+    if (
+      !workingCopyRoot ||
+      svnOperationCreationCoordinator.isCreating() ||
+      $workspaceStore.pendingSvnOperationTaskId !== null
+    ) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `确定要把工作副本内容恢复到 r${revision} 吗？\n${workingCopyRoot}\n\n这会执行反向 Merge 并生成本地改动，不会自动提交。\n工作副本必须无本地改动且已 Update 到 HEAD。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    await svnOperationCreationCoordinator.create(
+      () => $workspaceStore.pendingSvnOperationTaskId !== null,
+      () =>
+        taskStore.createRevertRevision({
+          workingCopyRoot,
+          targetRevision: revision,
+          svnExecutable: currentSvnExecutable(),
+        }),
+      (task) =>
+        workspaceStore.markSvnOperationTask(
+          task.task_id,
+          "revert_to_revision",
+          workingCopyRoot,
+        ),
+    );
+  }
+
   async function runSvnBatchOperation(
     kind: SvnBatchOperationKind,
     filePaths: string[],
@@ -1561,6 +1595,7 @@
   onPrepareRevisionDiffFromLog={workspaceStore.prepareRevisionDiffFromLog}
   onPrepareRevisionDiffRange={workspaceStore.prepareRevisionDiffRange}
   onPrepareWorkingCopyFileRevisionDiff={workspaceStore.prepareWorkingCopyFileRevisionDiff}
+  onRevertToRevision={revertWorkspaceToRevision}
   onExportRevisionDiffPatch={workspaceStore.exportRevisionDiffPatch}
   onCommitMessageInput={workspaceStore.setCommitMessage}
   onCommitTemplateInput={workspaceStore.setCommitTemplate}

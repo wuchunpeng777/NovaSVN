@@ -10,6 +10,7 @@ import {
   createPartialCommitTask,
   createRepositoryCopyTask,
   createRepositoryListTask,
+  createRevertRevisionTask,
   createRevisionDiffTask,
   createShadowWorkspaceTask,
   createSvnBatchOperationTask,
@@ -617,6 +618,32 @@ function createTaskStore() {
     }
   }
 
+  async function createRevertRevision(request: {
+    workingCopyRoot: string;
+    targetRevision: string;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createRevertRevisionTask({
+        working_copy_root: request.workingCopyRoot,
+        target_revision: request.targetRevision,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function createSvnBatchOperation(request: {
     workingCopyRoot: string;
     kind: SvnBatchOperationKind;
@@ -692,6 +719,7 @@ function createTaskStore() {
     createBranchCheckout,
     createSvnSwitch,
     createRevisionDiff,
+    createRevertRevision,
     createMerge,
     createApplyPatch,
     select,
