@@ -327,7 +327,11 @@
     });
   }
 
-  async function runSvnOperation(kind: SvnOperationKind, filePath?: string) {
+  async function runSvnOperation(
+    kind: SvnOperationKind,
+    filePath?: string,
+    targetPath?: string,
+  ) {
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
     if (
       !workingCopyRoot ||
@@ -367,6 +371,7 @@
           workingCopyRoot,
           kind,
           filePath,
+          targetPath,
           svnExecutable: currentSvnExecutable(),
         }),
       (task) => workspaceStore.markSvnOperationTask(task.task_id, kind, workingCopyRoot),
@@ -836,6 +841,24 @@
     );
   }
 
+  async function moveWorkspacePath(sourcePath: string) {
+    const targetPath = window.prompt(
+      "请输入 Move 目标路径（相对于当前工作副本）",
+      sourcePath,
+    );
+    if (targetPath === null || !targetPath.trim()) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `确定移动工作副本路径吗？\n\n源：${sourcePath}\n目标：${targetPath}\n\n本地内容和未提交改动会一同移动，并生成可提交的 SVN Move 变更。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    await runSvnOperation("move_path", sourcePath, targetPath);
+  }
+
   $: consumePendingTask($workspaceStore.pendingCommitTaskId, $taskStore.snapshot, (task) => {
     if (task.status === "success") {
       const committedPaths = $workspaceStore.commitFiles.map((file) => file.path);
@@ -1279,6 +1302,7 @@
   onClearCommitFiles={workspaceStore.clearCommitFiles}
   onAddFile={(path) => runSvnOperation("add_file", path)}
   onDeletePath={(path) => runSvnOperation("delete_path", path)}
+  onMovePath={moveWorkspacePath}
   onRevertFile={(path) => runSvnOperation("revert_file", path)}
   onLockFile={(path) => runSvnOperation("lock_file", path)}
   onUnlockFile={(path) => runSvnOperation("unlock_file", path)}

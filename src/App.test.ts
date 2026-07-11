@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./components/workbench/MonacoDiffViewer.svelte", () => ({
   default: vi.fn().mockImplementation((internals) => ({
@@ -68,6 +68,10 @@ beforeEach(async () => {
   scanWorkspaceStatusMock.mockResolvedValue(makeStatus());
   listWorkspaceFilesMock.mockResolvedValue(makeFileTree());
   await workspaceStore.openPath(undefined, "C:/repo/wc");
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("App SVN operation completion", () => {
@@ -247,7 +251,67 @@ describe("App SVN operation completion", () => {
     });
     expect(get(workspaceStore).mergeError).toBe("用户取消 Merge");
   });
+
+  it("确认源和目标后创建工作副本 Move 任务", async () => {
+    await showMoveableSource();
+    vi.spyOn(window, "prompt").mockReturnValue("renamed.txt");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const moveTask = makeTask({ task_id: "move-task", status: "pending" });
+    createSvnOperationTaskMock.mockResolvedValue(moveTask);
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([makeTaskSummary({ task_id: "move-task", status: "pending" })]),
+    );
+    getTaskMock.mockResolvedValue(moveTask);
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "移动文件 source.txt" }));
+
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:/repo/wc",
+        kind: "move_path",
+        file_path: "source.txt",
+        target_path: "renamed.txt",
+        svn_executable: undefined,
+      });
+    });
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringContaining("源：source.txt\n目标：renamed.txt"),
+    );
+  });
+
+  it("取消 Move 影响确认时不创建任务", async () => {
+    await showMoveableSource();
+    vi.spyOn(window, "prompt").mockReturnValue("renamed.txt");
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "移动文件 source.txt" }));
+
+    expect(createSvnOperationTaskMock).not.toHaveBeenCalled();
+  });
 });
+
+async function showMoveableSource() {
+  const tree = makeFileTree();
+  tree.total_files = 1;
+  tree.returned_files = 1;
+  tree.nodes = [
+    {
+      path: "source.txt",
+      name: "source.txt",
+      kind: "file",
+      status: "modified",
+      revision: "12",
+      file_size: 10,
+      changed: true,
+      versioned: true,
+      children: [],
+    },
+  ];
+  listWorkspaceFilesMock.mockResolvedValueOnce(tree);
+  await workspaceStore.refreshFileTree();
+}
 
 function makeWorkspace(): WorkspaceSummary {
   return {

@@ -69,8 +69,9 @@ describe("MainWorkspace", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("deletes versioned files and directories from the working copy", async () => {
+  it("moves and deletes versioned files and directories from the working copy", async () => {
     const onDeletePath = vi.fn();
+    const onMovePath = vi.fn();
     const modified = makeFile("src/main.ts", "modified", "main-digest");
 
     render(MainWorkspace, {
@@ -82,8 +83,19 @@ describe("MainWorkspace", () => {
         selectedFilePath: modified.path,
         selectedFile: modified,
         onDeletePath,
+        onMovePath,
       },
     });
+
+    await fireEvent.click(screen.getByRole("button", { name: "移动目录 src" }));
+    await fireEvent.click(screen.getByRole("button", { name: "移动文件 src/main.ts" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "在工作副本中移动 src/main.ts" }),
+    );
+
+    expect(onMovePath).toHaveBeenNthCalledWith(1, "src");
+    expect(onMovePath).toHaveBeenNthCalledWith(2, "src/main.ts");
+    expect(onMovePath).toHaveBeenNthCalledWith(3, "src/main.ts");
 
     await fireEvent.click(screen.getByRole("button", { name: "删除目录 src" }));
     await fireEvent.click(screen.getByRole("button", { name: "删除文件 src/main.ts" }));
@@ -99,6 +111,9 @@ describe("MainWorkspace", () => {
     expect(screen.getByText("ignored.log", { exact: true })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "删除文件 ignored.log" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "移动文件 ignored.log" }),
     ).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "删除目录 empty" }));
     expect(onDeletePath).toHaveBeenNthCalledWith(4, "empty");

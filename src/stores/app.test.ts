@@ -795,6 +795,27 @@ describe("taskStore SVN operation tasks", () => {
       svn_executable: "C:/svn/svn.exe",
     });
   });
+
+  it("maps working-copy Move source and target paths", async () => {
+    createSvnOperationTaskMock.mockResolvedValue(makeTask({ task_id: "move-1" }));
+
+    const task = await taskStore.createSvnOperation({
+      workingCopyRoot: "C:/repo/wc",
+      kind: "move_path",
+      filePath: "src/old.ts",
+      targetPath: "src/new.ts",
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(task?.task_id).toBe("move-1");
+    expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+      working_copy_root: "C:/repo/wc",
+      kind: "move_path",
+      file_path: "src/old.ts",
+      target_path: "src/new.ts",
+      svn_executable: "C:/svn/svn.exe",
+    });
+  });
 });
 
 describe("workspaceStore SVN operation state", () => {

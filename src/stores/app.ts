@@ -278,6 +278,7 @@ function createTaskStore() {
     workingCopyRoot: string;
     kind: SvnOperationKind;
     filePath?: string | null;
+    targetPath?: string | null;
     svnExecutable?: string | null;
   }) {
     update((state) => ({ ...state, loading: true, error: null }));
@@ -287,6 +288,7 @@ function createTaskStore() {
         working_copy_root: request.workingCopyRoot,
         kind: request.kind,
         file_path: request.filePath || undefined,
+        ...(request.targetPath ? { target_path: request.targetPath } : {}),
         svn_executable: request.svnExecutable || undefined,
       });
       selectedTaskId = task.task_id;

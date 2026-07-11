@@ -242,6 +242,7 @@
   export let onClearCommitFiles: () => void = () => {};
   export let onAddFile: (path: string) => void = () => {};
   export let onDeletePath: (path: string) => void = () => {};
+  export let onMovePath: (path: string) => void = () => {};
   export let onRevertFile: (path: string) => void = () => {};
   export let onLockFile: (path: string) => void = () => {};
   export let onUnlockFile: (path: string) => void = () => {};
@@ -510,6 +511,10 @@
       ["file", "dir"].includes(node.kind) &&
       !["deleted", "missing", "external", "unversioned"].includes(node.status)
     );
+  }
+
+  function canMovePath(node: WorkspaceFileNode | null) {
+    return canDeletePath(node);
   }
 
   function isTreeNodeCollapsed(node: WorkspaceFileNode) {
@@ -1833,7 +1838,20 @@
                         撤销
                       </span>
                     {/if}
-                    {#if canDeletePath(node)}
+                    {#if canMovePath(node)}
+                      <span
+                        role="button"
+                        tabindex="0"
+                        aria-label={`移动${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
+                        on:click|stopPropagation={() => onMovePath(node.path)}
+                        on:keydown|stopPropagation={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            onMovePath(node.path);
+                          }
+                        }}
+                      >
+                        移动
+                      </span>
                       <span
                         role="button"
                         tabindex="0"
@@ -1940,7 +1958,14 @@
                       </button>
                     {/if}
                   {/if}
-                  {#if canDeletePath(selectedTreeNode)}
+                  {#if canMovePath(selectedTreeNode)}
+                    <button
+                      type="button"
+                      aria-label={`在工作副本中移动 ${selectedTreeNode?.path ?? ""}`}
+                      on:click={() => selectedTreeNode && onMovePath(selectedTreeNode.path)}
+                    >
+                      移动
+                    </button>
                     <button
                       type="button"
                       aria-label={`从工作副本删除 ${selectedTreeNode?.path ?? ""}`}

@@ -77,6 +77,7 @@ export type SvnOperationKind =
   | "cleanup"
   | "add_file"
   | "delete_path"
+  | "move_path"
   | "revert_file"
   | "lock_file"
   | "unlock_file"
@@ -89,6 +90,7 @@ export interface CreateSvnOperationTaskRequest {
   working_copy_root: string;
   kind: SvnOperationKind;
   file_path?: string;
+  target_path?: string;
   svn_executable?: string;
 }
 
