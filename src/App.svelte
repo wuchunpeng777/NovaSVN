@@ -669,6 +669,11 @@
     workspaceStore.markRevisionDiffTask(task.task_id);
   }
 
+  async function setSvnLogFileOnlyAndRefresh(value: boolean) {
+    workspaceStore.setSvnLogFileOnly(value);
+    await workspaceStore.refreshSvnLog(currentSvnExecutable());
+  }
+
   async function runMerge() {
     if (!$workspaceStore.current) {
       workspaceStore.failMergeTask("请先打开 SVN 工作副本");
@@ -1547,7 +1552,7 @@
   onCreateRepositoryCopy={createRepositoryCopy}
   onRefreshSvnLog={() => workspaceStore.refreshSvnLog(currentSvnExecutable())}
   onSvnLogFilterInput={workspaceStore.setSvnLogFilter}
-  onSvnLogFileOnlyInput={workspaceStore.setSvnLogFileOnly}
+  onSvnLogFileOnlyInput={setSvnLogFileOnlyAndRefresh}
   onSvnLogLimitInput={workspaceStore.setSvnLogLimit}
   onLoadMoreSvnLog={() => workspaceStore.loadMoreSvnLog(currentSvnExecutable())}
   onRevisionDiffFormInput={workspaceStore.setRevisionDiffForm}

@@ -1861,6 +1861,7 @@
             </button>
             <button
               type="button"
+              aria-label="加载更多 Revision"
               on:click={onLoadMoreSvnLog}
               disabled={!workspace || svnLogLoading || !svnLog?.has_more}
             >
@@ -1920,27 +1921,37 @@
                 )}
             />
           </label>
-          <input
-            type="number"
-            aria-label="Timeline 日志数量"
-            min="1"
-            max="200"
-            value={svnLogLimit}
-            on:input={(event) =>
-              onSvnLogLimitInput(Number((event.currentTarget as HTMLInputElement).value))}
-          />
-          <label>
+          <label class="timeline-number-filter">
+            <span>每页</span>
+            <input
+              type="number"
+              aria-label="Timeline 日志数量"
+              min="1"
+              max="200"
+              value={svnLogLimit}
+              on:input={(event) =>
+                onSvnLogLimitInput(Number((event.currentTarget as HTMLInputElement).value))}
+            />
+          </label>
+          <label
+            class="timeline-file-filter"
+            title={selectedFilePath ? `仅显示 ${selectedFilePath} 的历史` : "先在工作副本中选择文件"}
+          >
             <input
               type="checkbox"
               checked={svnLogFileOnly}
+              disabled={svnLogLoading || (!selectedFilePath && !svnLogFileOnly)}
               on:change={(event) =>
                 onSvnLogFileOnlyInput((event.currentTarget as HTMLInputElement).checked)}
             />
-            <span>选中文件</span>
+            <span>{selectedFilePath ? basename(selectedFilePath) : "选中文件"}</span>
           </label>
           <button type="button" on:click={clearTimelineFilters} disabled={!timelineHasFilters}>
             清除过滤
           </button>
+          <span class="timeline-filter-summary" aria-live="polite">
+            {filteredLogEntries.length} / {svnLog?.entries.length ?? 0} revisions{svnLog?.has_more ? " · 还有更多" : ""}
+          </span>
           {#if svnLogDateRangeInvalid}
             <span class="timeline-filter-error" role="status">开始日期不能晚于结束日期</span>
           {/if}

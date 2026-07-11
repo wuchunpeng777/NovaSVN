@@ -124,6 +124,11 @@ beforeEach(() => {
   workspaceStore.clearWorkspaceDraft();
   workspaceStore.setCommitMessage("");
   workspaceStore.setSvnLogFileOnly(false);
+  workspaceStore.setSvnLogFilter("svnLogAuthorFilter", "");
+  workspaceStore.setSvnLogFilter("svnLogKeywordFilter", "");
+  workspaceStore.setSvnLogFilter("svnLogDateFromFilter", "");
+  workspaceStore.setSvnLogFilter("svnLogDateToFilter", "");
+  workspaceStore.setSvnLogLimit(50);
   workspaceStore.markSvnOperationTask(null, null, null);
   getFileDiffMock.mockResolvedValue({
     path: "src/main.ts",
@@ -768,6 +773,21 @@ describe("workspaceStore svn log", () => {
     });
   });
 
+  it("clears the previous log snapshot when file history scope changes", async () => {
+    openWorkspaceMock.mockResolvedValue(makeWorkspace());
+    scanWorkspaceStatusMock.mockResolvedValue(makeStatus([]));
+    getSvnLogMock.mockResolvedValue(makeSvnLog([makeSvnLogEntry({ revision: "12" })]));
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    await workspaceStore.refreshSvnLog();
+    expect(get(workspaceStore).svnLog?.entries).toHaveLength(1);
+
+    workspaceStore.setSvnLogFileOnly(true);
+    expect(get(workspaceStore).svnLog).toBeNull();
+    expect(get(workspaceStore).svnLogError).toBeNull();
+  });
+
   it("merges additional log pages without duplicating revisions", async () => {
     const workspace = makeWorkspace();
 
@@ -785,6 +805,8 @@ describe("workspaceStore svn log", () => {
 
     workspaceStore.setPathInput("C:/repo/wc");
     await workspaceStore.openPath();
+    workspaceStore.setSvnLogFilter("svnLogAuthorFilter", "alice");
+    workspaceStore.setSvnLogFilter("svnLogKeywordFilter", "feature");
     await workspaceStore.refreshSvnLog();
     await workspaceStore.loadMoreSvnLog();
 
@@ -797,6 +819,10 @@ describe("workspaceStore svn log", () => {
       "10",
     ]);
     expect(get(workspaceStore).svnLog?.has_more).toBe(false);
+    expect(get(workspaceStore)).toMatchObject({
+      svnLogAuthorFilter: "alice",
+      svnLogKeywordFilter: "feature",
+    });
   });
 });
 

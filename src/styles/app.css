@@ -421,12 +421,9 @@ textarea {
   min-width: 110px;
 }
 
-.timeline-filters > input[type="number"] {
-  flex: 0 0 72px;
-  width: 72px;
-}
-
-.timeline-date-filter {
+.timeline-date-filter,
+.timeline-number-filter,
+.timeline-file-filter {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -437,6 +434,26 @@ textarea {
 
 .timeline-date-filter input {
   width: 132px;
+}
+
+.timeline-number-filter input {
+  width: 68px;
+}
+
+.timeline-file-filter {
+  max-width: 150px;
+}
+
+.timeline-file-filter span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timeline-filter-summary {
+  margin-left: auto;
+  color: #687482;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .timeline-filter-error {
@@ -1926,7 +1943,10 @@ textarea {
   color: #aeb8c2;
 }
 
-.versions-workbench[data-theme="dark"] .timeline-date-filter {
+.versions-workbench[data-theme="dark"] .timeline-date-filter,
+.versions-workbench[data-theme="dark"] .timeline-number-filter,
+.versions-workbench[data-theme="dark"] .timeline-file-filter,
+.versions-workbench[data-theme="dark"] .timeline-filter-summary {
   color: #aeb8c2;
 }
 

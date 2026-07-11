@@ -30,6 +30,7 @@
 - Timeline revision 完整显示作者、精确时间、提交信息和改变路径，长路径清单可展开或收起。
 - Timeline 改变路径可直接运行对应仓库 URL 的 Revision Diff，结果限定在所点击文件或目录。
 - Timeline 增加开始与结束日期过滤、无效范围提示和一键清除过滤，结束日期包含当天全部提交。
+- Timeline 作者、关键字、日期、当前文件和每页数量过滤可组合使用，文件范围切换会立即重载，并显示过滤结果与分页状态。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。

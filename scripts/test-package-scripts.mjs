@@ -437,6 +437,16 @@ if (
 }
 
 if (
+  !mainWorkspace.includes('class="timeline-filter-summary"') ||
+  !mainWorkspace.includes('aria-label="加载更多 Revision"') ||
+  !appSvelte.includes("setSvnLogFileOnlyAndRefresh") ||
+  !appStore.includes("svnLog: state.svnLogFileOnly === value ? state.svnLog : null")
+) {
+  console.error("Timeline 组合过滤必须正确重载文件范围、保留分页并显示结果状态");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||

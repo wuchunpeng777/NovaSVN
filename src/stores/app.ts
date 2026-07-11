@@ -3415,6 +3415,8 @@ function createWorkspaceStore() {
     update((state) => ({
       ...state,
       svnLogFileOnly: value,
+      svnLog: state.svnLogFileOnly === value ? state.svnLog : null,
+      svnLogError: null,
     }));
   }
 

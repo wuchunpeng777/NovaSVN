@@ -423,6 +423,65 @@ describe("MainWorkspace", () => {
     expect(onSvnLogFileOnlyInput).toHaveBeenCalledWith(false);
   });
 
+  it("combines Timeline text, author, date, file, quantity, and paging controls", async () => {
+    const onSvnLogFilterInput = vi.fn();
+    const onSvnLogFileOnlyInput = vi.fn();
+    const onSvnLogLimitInput = vi.fn();
+    const onLoadMoreSvnLog = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.history,
+        workspace: makeWorkspace(),
+        selectedFilePath: "src/main.ts",
+        svnLogAuthorFilter: "alice",
+        svnLogKeywordFilter: "menu",
+        svnLogDateFromFilter: "2026-07-11",
+        svnLogDateToFilter: "2026-07-11",
+        svnLogFileOnly: true,
+        svnLogLimit: 25,
+        svnLog: {
+          target: "src/main.ts",
+          has_more: true,
+          next_start_revision: "9",
+          entries: [
+            makeLogEntry("12", "2026-07-11T10:00:00", "alice", "menu feature"),
+            makeLogEntry("11", "2026-07-11T09:00:00", "alice", "other feature"),
+            makeLogEntry("10", "2026-07-11T08:00:00", "bob", "menu fix"),
+            makeLogEntry("9", "2026-07-10T08:00:00", "alice", "menu older"),
+          ],
+        },
+        onSvnLogFilterInput,
+        onSvnLogFileOnlyInput,
+        onSvnLogLimitInput,
+        onLoadMoreSvnLog,
+      },
+    });
+
+    const timeline = screen.getByLabelText("Revision 列表");
+    expect(within(timeline).getByText("r12")).toBeInTheDocument();
+    expect(within(timeline).queryByText("r11")).not.toBeInTheDocument();
+    expect(within(timeline).queryByText("r10")).not.toBeInTheDocument();
+    expect(within(timeline).queryByText("r9")).not.toBeInTheDocument();
+    expect(screen.getByText("1 / 4 revisions · 还有更多")).toBeInTheDocument();
+
+    const fileOnly = screen.getByRole("checkbox", { name: "main.ts" });
+    expect(fileOnly).toBeChecked();
+    expect(fileOnly).toBeEnabled();
+    await fireEvent.click(fileOnly);
+    expect(onSvnLogFileOnlyInput).toHaveBeenCalledWith(false);
+
+    await fireEvent.input(screen.getByLabelText("Timeline 作者"), {
+      target: { value: "bob" },
+    });
+    expect(onSvnLogFilterInput).toHaveBeenCalledWith("svnLogAuthorFilter", "bob");
+    await fireEvent.input(screen.getByLabelText("Timeline 日志数量"), {
+      target: { value: "50" },
+    });
+    expect(onSvnLogLimitInput).toHaveBeenCalledWith(50);
+    await fireEvent.click(screen.getByRole("button", { name: "加载更多 Revision" }));
+    expect(onLoadMoreSvnLog).toHaveBeenCalledOnce();
+  });
+
   it("uses current commit targets and excludes unversioned files", async () => {
     const onUnselectCommitFile = vi.fn();
     const onSelectAllCommitFiles = vi.fn();
