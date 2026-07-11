@@ -567,6 +567,13 @@ describe("MainWorkspace", () => {
               author: "alice",
               date: "2026-07-10T10:00:00Z",
             },
+            {
+              name: "README.md",
+              kind: "file",
+              revision: "8",
+              author: "bob",
+              date: "2026-07-09T09:00:00Z",
+            },
           ],
         },
         onRepositoryRevisionInput,
@@ -577,6 +584,18 @@ describe("MainWorkspace", () => {
     const revisionInput = screen.getByLabelText("仓库 Revision");
     expect(revisionInput).toHaveValue(10);
     expect(screen.getByText("@r10")).toBeInTheDocument();
+    const repositoryTable = screen.getByLabelText("仓库目录");
+    expect(within(repositoryTable).getByText("Last Revision")).toBeInTheDocument();
+    const directoryRow = within(repositoryTable).getByText("src", { exact: true }).closest("button")!;
+    const directoryMetadata = directoryRow.querySelectorAll("span");
+    expect(directoryMetadata[0]).toHaveTextContent("目录");
+    expect(directoryMetadata[1]).toHaveTextContent("9");
+    expect(directoryMetadata[2]).toHaveTextContent("alice");
+    expect(directoryMetadata[3]).toHaveAttribute("title", "2026-07-10T10:00:00Z");
+    const fileRow = within(repositoryTable).getByText("README.md", { exact: true }).closest("button")!;
+    expect(fileRow).toHaveTextContent("文件");
+    expect(fileRow).toHaveTextContent("8");
+    expect(fileRow).toHaveTextContent("bob");
     await fireEvent.input(revisionInput, { target: { value: "8" } });
     expect(onRepositoryRevisionInput).toHaveBeenCalledWith("8");
     await fireEvent.keyDown(revisionInput, { key: "Enter" });

@@ -510,6 +510,19 @@ if (
 }
 
 if (
+  !mainWorkspace.includes("Last Revision") ||
+  !mainWorkspace.includes("repositoryEntryKindLabel") ||
+  !mainWorkspace.includes("title={entry.author || undefined}") ||
+  !mainWorkspace.includes("title={entry.date || undefined}") ||
+  !taskRs.includes('let revision = commit') ||
+  !taskRs.includes('let author = commit') ||
+  !taskRs.includes('let date = commit')
+) {
+  console.error("Repository 条目必须显示 Last Revision、作者、日期和准确类型");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||

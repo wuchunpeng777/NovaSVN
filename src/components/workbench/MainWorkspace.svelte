@@ -626,6 +626,16 @@
     });
   }
 
+  function repositoryEntryKindLabel(kind: string) {
+    if (kind === "dir") {
+      return "目录";
+    }
+    if (kind === "file") {
+      return "文件";
+    }
+    return kind || "未知";
+  }
+
   function timelineEntryPaths(
     entry: SvnLog["entries"][number],
     expandedRevisions: Set<string>,
@@ -2434,7 +2444,7 @@
           <div class="table-head">
             <span>名称</span>
             <span>类型</span>
-            <span>Revision</span>
+            <span>Last Revision</span>
             <span>作者</span>
             <span>日期</span>
           </div>
@@ -2460,10 +2470,10 @@
                 on:click={() => onLoadRepositoryUrl(joinRepositoryUrl(repositoryList.url, entry.name))}
               >
                 <strong>{entry.name || "/"}</strong>
-                <span>{entry.kind === "dir" ? "目录" : "文件"}</span>
+                <span title={entry.kind}>{repositoryEntryKindLabel(entry.kind)}</span>
                 <span>{entry.revision || "-"}</span>
-                <span>{entry.author || "-"}</span>
-                <span>{formatDate(entry.date)}</span>
+                <span title={entry.author || undefined}>{entry.author || "-"}</span>
+                <span title={entry.date || undefined}>{formatDate(entry.date)}</span>
               </button>
             {/each}
             {#if repositoryEntries.length === 0}
