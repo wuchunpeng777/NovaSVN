@@ -27,11 +27,11 @@ use system_integration::StartupIntent;
 use task::{
     CreateApplyPatchTaskRequest, CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest,
     CreateMergeTaskRequest, CreateMockTaskRequest, CreatePartialCommitTaskRequest,
-    CreateRepositoryCopyTaskRequest, CreateRepositoryFileTaskRequest,
-    CreateRepositoryListTaskRequest, CreateRevertRevisionTaskRequest,
-    CreateRevisionDiffTaskRequest, CreateShadowWorkspaceTaskRequest,
-    CreateSvnBatchOperationTaskRequest, CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest,
-    Task, TaskQueue, TaskSnapshot,
+    CreateRepositoryCheckoutTaskRequest, CreateRepositoryCopyTaskRequest,
+    CreateRepositoryFileTaskRequest, CreateRepositoryListTaskRequest,
+    CreateRevertRevisionTaskRequest, CreateRevisionDiffTaskRequest,
+    CreateShadowWorkspaceTaskRequest, CreateSvnBatchOperationTaskRequest,
+    CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest, Task, TaskQueue, TaskSnapshot,
 };
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use tauri::{Emitter, Manager};
@@ -578,6 +578,17 @@ fn create_branch_checkout_task(
 }
 
 #[tauri::command]
+fn create_repository_checkout_task(
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateRepositoryCheckoutTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_repository_checkout_task command received");
+    Ok(CommandResponse::success(
+        queue.create_repository_checkout_task(request)?,
+    ))
+}
+
+#[tauri::command]
 fn create_svn_switch_task(
     queue: tauri::State<'_, TaskQueue>,
     request: CreateSvnSwitchTaskRequest,
@@ -896,6 +907,7 @@ pub fn run() {
             create_repository_file_task,
             create_repository_copy_task,
             create_branch_checkout_task,
+            create_repository_checkout_task,
             create_svn_switch_task,
             create_revision_diff_task,
             create_revert_revision_task,

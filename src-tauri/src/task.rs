@@ -214,6 +214,14 @@ pub struct CreateBranchCheckoutTaskRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct CreateRepositoryCheckoutTaskRequest {
+    pub url: String,
+    pub local_path: String,
+    pub revision: Option<String>,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateSvnSwitchTaskRequest {
     pub working_copy_root: String,
     pub target_url: String,
@@ -350,6 +358,7 @@ enum TaskPayload {
     RepositoryFile(RepositoryFileTaskPayload),
     RepositoryCopy(RepositoryCopyTaskPayload),
     BranchCheckout(BranchCheckoutTaskPayload),
+    RepositoryCheckout(RepositoryCheckoutTaskPayload),
     SvnSwitch(SvnSwitchTaskPayload),
     RevisionDiff(RevisionDiffTaskPayload),
     RevertRevision(RevertRevisionTaskPayload),
@@ -463,6 +472,14 @@ struct RepositoryCopyTaskPayload {
 #[derive(Debug, Clone)]
 struct BranchCheckoutTaskPayload {
     branch_url: String,
+    local_path: String,
+    revision: Option<String>,
+    svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct RepositoryCheckoutTaskPayload {
+    url: String,
     local_path: String,
     revision: Option<String>,
     svn_executable: String,
@@ -1206,6 +1223,45 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_repository_checkout_task(
+        &self,
+        request: CreateRepositoryCheckoutTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let url = normalize_repository_url(&request.url)?;
+        let local_path = normalize_checkout_path(&request.local_path)?;
+        validate_checkout_destination(Path::new(&local_path))?;
+        let revision = normalize_optional_revision_value(
+            request.revision.as_deref(),
+            "REPOSITORY_CHECKOUT_REVISION_INVALID",
+            "仓库 Checkout Revision 无效",
+        )?;
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!("Checkout {}", compact_repository_url(&url)),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "仓库 Checkout 任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::RepositoryCheckout(RepositoryCheckoutTaskPayload {
+                url,
+                local_path,
+                revision,
+                svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn create_svn_switch_task(
         &self,
         request: CreateSvnSwitchTaskRequest,
@@ -1599,6 +1655,9 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             }
             TaskPayload::BranchCheckout(payload) => {
                 run_branch_checkout_task(&state, &task_id, payload)
+            }
+            TaskPayload::RepositoryCheckout(payload) => {
+                run_repository_checkout_task(&state, &task_id, payload)
             }
             TaskPayload::SvnSwitch(payload) => run_svn_switch_task(&state, &task_id, payload),
             TaskPayload::RevisionDiff(payload) => run_revision_diff_task(&state, &task_id, payload),
@@ -3868,6 +3927,82 @@ fn run_branch_checkout_task(
     }
 }
 
+fn run_repository_checkout_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: RepositoryCheckoutTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "仓库 Checkout 开始执行",
+        None,
+    );
+    if let Err(error) = validate_checkout_destination(Path::new(&payload.local_path)) {
+        update_task(
+            state,
+            task_id,
+            TaskStatus::Failed,
+            "仓库 Checkout 目标不可用",
+            Some(error.to_string()),
+        );
+        return;
+    }
+
+    let command_target =
+        repository_url_with_peg_revision(&payload.url, payload.revision.as_deref());
+    append_task_log(
+        state,
+        task_id,
+        &format!(
+            "执行 svn checkout：{} -> {}",
+            payload.url, payload.local_path
+        ),
+    );
+    let mut command = Command::new(&payload.svn_executable);
+    command.arg("checkout");
+    if let Some(revision) = payload.revision.as_deref() {
+        command.arg("-r").arg(revision);
+    }
+    command
+        .arg("--")
+        .arg(command_target)
+        .arg(&payload.local_path);
+
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                "仓库 Checkout 成功",
+                None,
+            );
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "仓库 Checkout 失败",
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
 fn run_svn_switch_task(
     state: &Arc<Mutex<TaskQueueState>>,
     task_id: &str,
@@ -5530,6 +5665,94 @@ fn normalize_checkout_path(path: &str) -> Result<String, NovaError> {
     }
 
     Ok(trimmed.to_string())
+}
+
+fn validate_checkout_destination(path: &Path) -> Result<(), NovaError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || metadata_is_reparse_point(&metadata) {
+                return Err(NovaError::command(
+                    "REPOSITORY_CHECKOUT_DESTINATION_UNSAFE",
+                    "Checkout 本地目标不可用",
+                    Some("目标目录不能是符号链接或 reparse point。".to_string()),
+                    true,
+                ));
+            }
+            if !metadata.is_dir() {
+                return Err(NovaError::command(
+                    "REPOSITORY_CHECKOUT_DESTINATION_NOT_DIRECTORY",
+                    "Checkout 本地目标不可用",
+                    Some("目标路径已存在且不是目录。".to_string()),
+                    true,
+                ));
+            }
+            let mut entries = fs::read_dir(path).map_err(|error| {
+                NovaError::command(
+                    "REPOSITORY_CHECKOUT_DESTINATION_UNREADABLE",
+                    "无法检查 Checkout 本地目标",
+                    Some(format!("读取目录 `{}` 失败：{error}", path.display())),
+                    true,
+                )
+            })?;
+            if entries
+                .next()
+                .transpose()
+                .map_err(|error| {
+                    NovaError::command(
+                        "REPOSITORY_CHECKOUT_DESTINATION_UNREADABLE",
+                        "无法检查 Checkout 本地目标",
+                        Some(format!("读取目录 `{}` 失败：{error}", path.display())),
+                        true,
+                    )
+                })?
+                .is_some()
+            {
+                return Err(NovaError::command(
+                    "REPOSITORY_CHECKOUT_DESTINATION_NOT_EMPTY",
+                    "Checkout 本地目标必须为空",
+                    Some(format!("目录 `{}` 已包含文件。", path.display())),
+                    true,
+                ));
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let parent = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .ok_or_else(|| {
+                    NovaError::command(
+                        "REPOSITORY_CHECKOUT_PARENT_REQUIRED",
+                        "Checkout 本地目标不可用",
+                        Some("目标路径必须包含已存在的父目录。".to_string()),
+                        true,
+                    )
+                })?;
+            let parent_metadata = fs::metadata(parent).map_err(|error| {
+                NovaError::command(
+                    "REPOSITORY_CHECKOUT_PARENT_UNAVAILABLE",
+                    "Checkout 父目录不可用",
+                    Some(format!("读取父目录 `{}` 失败：{error}", parent.display())),
+                    true,
+                )
+            })?;
+            if !parent_metadata.is_dir() {
+                return Err(NovaError::command(
+                    "REPOSITORY_CHECKOUT_PARENT_NOT_DIRECTORY",
+                    "Checkout 父目录不可用",
+                    Some(format!("`{}` 不是目录。", parent.display())),
+                    true,
+                ));
+            }
+            Ok(())
+        }
+        Err(error) => Err(NovaError::command(
+            "REPOSITORY_CHECKOUT_DESTINATION_UNAVAILABLE",
+            "无法检查 Checkout 本地目标",
+            Some(format!("读取路径 `{}` 失败：{error}", path.display())),
+            true,
+        )),
+    }
 }
 
 fn normalize_revision_diff_payload(

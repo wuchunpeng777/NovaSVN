@@ -485,6 +485,13 @@ export interface WorkspaceFileNode {
   children: WorkspaceFileNode[];
 }
 
+export interface CreateRepositoryCheckoutTaskRequest {
+  url: string;
+  local_path: string;
+  revision?: string;
+  svn_executable?: string;
+}
+
 export interface RepositoryFileResult {
   url: string;
   revision: string | null;

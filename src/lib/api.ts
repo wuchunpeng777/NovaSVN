@@ -10,6 +10,7 @@ import type {
   CreateBranchCheckoutTaskRequest,
   CreateMockTaskRequest,
   CreatePartialCommitTaskRequest,
+  CreateRepositoryCheckoutTaskRequest,
   CreateRepositoryCopyTaskRequest,
   CreateRepositoryFileTaskRequest,
   CreateRepositoryListTaskRequest,
@@ -197,6 +198,12 @@ export function createRevisionDiffTask(
   request: CreateRevisionDiffTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_revision_diff_task", { request });
+}
+
+export function createRepositoryCheckoutTask(
+  request: CreateRepositoryCheckoutTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_repository_checkout_task", { request });
 }
 
 export function createRepositoryFileTask(
