@@ -7,6 +7,7 @@
   export let contentDiff: FileContentDiff | null = null;
   export let inlineMode = false;
   export let showWhitespace = false;
+  export let theme: "light" | "dark" = "light";
 
   let container: HTMLDivElement;
   let monacoModule: typeof Monaco | null = null;
@@ -57,6 +58,10 @@
     });
   }
 
+  $: if (monacoModule) {
+    monacoModule.editor.setTheme(theme === "dark" ? "vs-dark" : "vs");
+  }
+
   function createEditor() {
     if (!monacoModule || editor || !contentDiff) {
       return;
@@ -73,6 +78,7 @@
       lineNumbersMinChars: 3,
       overviewRulerLanes: 0,
     });
+    monacoModule.editor.setTheme(theme === "dark" ? "vs-dark" : "vs");
     updateModels();
   }
 

@@ -49,6 +49,7 @@ export interface AppSettingsState {
   svnExecutable: string;
   diffMode: "side_by_side" | "inline";
   showWhitespace: boolean;
+  themeMode: "system" | "light" | "dark";
   showSourceList: boolean;
   showInspector: boolean;
   commitTemplate: string;

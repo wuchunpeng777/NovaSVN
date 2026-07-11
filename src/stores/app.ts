@@ -91,6 +91,7 @@ const initialAppSettings: AppSettingsState = {
   svnExecutable: "",
   diffMode: "side_by_side",
   showWhitespace: false,
+  themeMode: "system",
   showSourceList: true,
   showInspector: true,
   commitTemplate: "",
@@ -3707,6 +3708,10 @@ function loadAppSettings(): AppSettingsState {
           : "side_by_side",
       showWhitespace:
         typeof parsed.showWhitespace === "boolean" ? parsed.showWhitespace : false,
+      themeMode:
+        parsed.themeMode === "light" || parsed.themeMode === "dark"
+          ? parsed.themeMode
+          : "system",
       showSourceList:
         typeof parsed.showSourceList === "boolean" ? parsed.showSourceList : true,
       showInspector:

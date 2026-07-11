@@ -884,6 +884,14 @@ describe("taskStore SVN operation tasks", () => {
       showInspector: false,
     });
   });
+
+  it("persists the selected theme mode", () => {
+    appSettingsStore.setField("themeMode", "dark");
+
+    appSettingsStore.load();
+
+    expect(get(appSettingsStore).themeMode).toBe("dark");
+  });
 });
 
 describe("workspaceStore SVN operation state", () => {

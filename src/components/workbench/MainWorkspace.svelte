@@ -217,6 +217,7 @@
     svnExecutable: "",
     diffMode: "side_by_side",
     showWhitespace: false,
+    themeMode: "system",
     showSourceList: true,
     showInspector: true,
     commitTemplate: "",
@@ -398,6 +399,9 @@
   let inspectorWidth = 400;
   let inspectorMaximumWidth = inspectorMaxWidth;
   let resizingInspector = false;
+  let systemPrefersDark = false;
+  let themeMediaQuery: MediaQueryList | null = null;
+  let resolvedTheme: "light" | "dark" = "light";
 
   $: if (appSettings.diffMode) {
     diffInline = appSettings.diffMode === "inline";
@@ -406,6 +410,12 @@
   $: if (typeof window !== "undefined" && appSettings.showSourceList !== undefined) {
     syncInspectorWidthToWindow();
   }
+  $: resolvedTheme =
+    appSettings.themeMode === "system"
+      ? systemPrefersDark
+        ? "dark"
+        : "light"
+      : appSettings.themeMode;
 
   function labelStatus(status: string) {
     return statusLabels[status] ?? status;
@@ -795,6 +805,10 @@
     onAppSettingInput("showInspector", !appSettings.showInspector);
   }
 
+  function syncSystemTheme(event?: MediaQueryListEvent) {
+    systemPrefersDark = event?.matches ?? themeMediaQuery?.matches ?? false;
+  }
+
   function focusPatchDialog(node: HTMLElement) {
     node.focus();
   }
@@ -810,11 +824,17 @@
   onDestroy(() => {
     stopInspectorResize();
     window.removeEventListener("resize", syncInspectorWidthToWindow);
+    themeMediaQuery?.removeEventListener("change", syncSystemTheme);
   });
 
   onMount(() => {
     syncInspectorWidthToWindow();
     window.addEventListener("resize", syncInspectorWidthToWindow);
+    if (typeof window.matchMedia === "function") {
+      themeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      syncSystemTheme();
+      themeMediaQuery.addEventListener("change", syncSystemTheme);
+    }
   });
 
   $: files = workingCopyStatus?.files ?? [];
@@ -863,7 +883,12 @@
     runningTaskId !== null || pendingSvnOperationKind !== null || applyPatchRunning;
 </script>
 
-<section class="versions-workbench" aria-label="NovaSVN 工作台">
+<section
+  class="versions-workbench"
+  data-theme={resolvedTheme}
+  data-theme-mode={appSettings.themeMode}
+  aria-label="NovaSVN 工作台"
+>
   <header class="versions-titlebar" inert={applyPatchDialogOpen}>
     <div class="window-identity">
       <strong>NovaSVN</strong>
@@ -1716,6 +1741,59 @@
 
         <section class="settings-view">
           <article>
+            <h2>界面</h2>
+            <div class="segmented-control theme-control" aria-label="主题模式">
+              <button
+                type="button"
+                class:active={appSettings.themeMode === "system"}
+                aria-pressed={appSettings.themeMode === "system"}
+                on:click={() => onAppSettingInput("themeMode", "system")}
+              >
+                跟随系统
+              </button>
+              <button
+                type="button"
+                class:active={appSettings.themeMode === "light"}
+                aria-pressed={appSettings.themeMode === "light"}
+                on:click={() => onAppSettingInput("themeMode", "light")}
+              >
+                浅色
+              </button>
+              <button
+                type="button"
+                class:active={appSettings.themeMode === "dark"}
+                aria-pressed={appSettings.themeMode === "dark"}
+                on:click={() => onAppSettingInput("themeMode", "dark")}
+              >
+                深色
+              </button>
+            </div>
+            <label class="checkbox-row">
+              <input
+                type="checkbox"
+                checked={appSettings.showSourceList}
+                on:change={(event) =>
+                  onAppSettingInput(
+                    "showSourceList",
+                    (event.currentTarget as HTMLInputElement).checked,
+                  )}
+              />
+              <span>显示项目侧栏</span>
+            </label>
+            <label class="checkbox-row">
+              <input
+                type="checkbox"
+                checked={appSettings.showInspector}
+                on:change={(event) =>
+                  onAppSettingInput(
+                    "showInspector",
+                    (event.currentTarget as HTMLInputElement).checked,
+                  )}
+              />
+              <span>显示工作副本检查器</span>
+            </label>
+          </article>
+          <article>
             <h2>SVN</h2>
             <div class="button-row">
               <button type="button" on:click={onDetectSvn} disabled={svnLoading}>
@@ -2273,6 +2351,7 @@
                   contentDiff={selectedFileContentDiff}
                   inlineMode={diffInline}
                   showWhitespace={showWhitespace}
+                  theme={resolvedTheme}
                 />
               {:else if selectedFileDiff}
                 <pre class="text-diff">{selectedFileDiff.text || "没有文本 diff"}</pre>

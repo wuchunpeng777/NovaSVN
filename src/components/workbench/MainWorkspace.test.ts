@@ -178,6 +178,64 @@ describe("MainWorkspace", () => {
     );
   });
 
+  it("resolves the system theme and exposes persistent theme controls", async () => {
+    const originalMatchMedia = window.matchMedia;
+    let themeListener: (event: MediaQueryListEvent) => void = () => {};
+    const mediaQuery = {
+      matches: true,
+      media: "(prefers-color-scheme: dark)",
+      onchange: null,
+      addEventListener: vi.fn(
+        (_type: string, listener: (event: MediaQueryListEvent) => void) => {
+          themeListener = listener;
+        },
+      ),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    } as unknown as MediaQueryList;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn(() => mediaQuery),
+    });
+    const onAppSettingInput = vi.fn();
+
+    try {
+      const { container, rerender } = render(MainWorkspace, {
+        props: {
+          view: workbenchViews.changes,
+          workspace: makeWorkspace(),
+          appSettings: makeAppSettings({ themeMode: "system" }),
+          onAppSettingInput,
+        },
+      });
+      const workbench = container.querySelector(".versions-workbench");
+      expect(workbench).toHaveAttribute("data-theme-mode", "system");
+      expect(workbench).toHaveAttribute("data-theme", "dark");
+
+      themeListener({ matches: false } as MediaQueryListEvent);
+      await vi.waitFor(() => expect(workbench).toHaveAttribute("data-theme", "light"));
+
+      await rerender({
+        view: workbenchViews.settings,
+        appSettings: makeAppSettings({ themeMode: "light" }),
+      });
+      const themeControl = screen.getByLabelText("主题模式");
+      expect(within(themeControl).getByRole("button", { name: "浅色" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      await fireEvent.click(within(themeControl).getByRole("button", { name: "深色" }));
+      expect(onAppSettingInput).toHaveBeenLastCalledWith("themeMode", "dark");
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: originalMatchMedia,
+      });
+    }
+  });
+
   it("uses current commit targets and excludes unversioned files", async () => {
     const onUnselectCommitFile = vi.fn();
     const onSelectAllCommitFiles = vi.fn();
@@ -453,6 +511,7 @@ function makeAppSettings(settings: Partial<AppSettingsState> = {}): AppSettingsS
     svnExecutable: "",
     diffMode: "side_by_side",
     showWhitespace: false,
+    themeMode: "system",
     showSourceList: true,
     showInspector: true,
     commitTemplate: "",

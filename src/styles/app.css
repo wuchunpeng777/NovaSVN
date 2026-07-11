@@ -44,6 +44,7 @@ button {
     minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
+  color: #17202a;
   background: #f6f7f8;
 }
 
@@ -1103,10 +1104,19 @@ textarea {
 }
 
 .settings-view {
-  grid-template-columns: repeat(3, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   align-content: start;
   overflow: auto;
   padding: 12px;
+}
+
+.theme-control {
+  width: 100%;
+}
+
+.theme-control button {
+  flex: 1;
+  padding: 0 8px;
 }
 
 .empty-state {
@@ -1263,6 +1273,317 @@ textarea {
 .error-notice strong,
 .error-notice p {
   margin: 0;
+}
+
+.versions-workbench[data-theme="dark"] {
+  --layout-divider-color: #414852;
+  color: #e6ebf0;
+  background: #171a1f;
+  color-scheme: dark;
+  scrollbar-color: #4b5561 #20242a;
+}
+
+.versions-workbench[data-theme="dark"] .versions-titlebar,
+.versions-workbench[data-theme="dark"] .workspace-location,
+.versions-workbench[data-theme="dark"] .inspector-resizer {
+  background: #2a3037;
+}
+
+.versions-workbench[data-theme="dark"] .source-list {
+  background: #24292f;
+}
+
+.versions-workbench[data-theme="dark"] .content-pane {
+  background: #191d22;
+}
+
+.versions-workbench[data-theme="dark"] .pane-header,
+.versions-workbench[data-theme="dark"] .changes-toolbar,
+.versions-workbench[data-theme="dark"] .timeline-filters,
+.versions-workbench[data-theme="dark"] .repository-urlbar,
+.versions-workbench[data-theme="dark"] .file-browser,
+.versions-workbench[data-theme="dark"] .file-row,
+.versions-workbench[data-theme="dark"] .timeline-list,
+.versions-workbench[data-theme="dark"] .timeline-entry > button,
+.versions-workbench[data-theme="dark"] .repository-table,
+.versions-workbench[data-theme="dark"] .repository-row,
+.versions-workbench[data-theme="dark"] .inspector-section,
+.versions-workbench[data-theme="dark"] .advanced-card,
+.versions-workbench[data-theme="dark"] .settings-view article,
+.versions-workbench[data-theme="dark"] .advanced-section,
+.versions-workbench[data-theme="dark"] .revision-file-list > div,
+.versions-workbench[data-theme="dark"] .blame-table,
+.versions-workbench[data-theme="dark"] .patch-dialog {
+  background: #20242a;
+}
+
+.versions-workbench[data-theme="dark"] .summary-strip,
+.versions-workbench[data-theme="dark"] .file-table-head,
+.versions-workbench[data-theme="dark"] .table-head,
+.versions-workbench[data-theme="dark"] .inspector,
+.versions-workbench[data-theme="dark"] .revision-compare,
+.versions-workbench[data-theme="dark"] .breadcrumbs,
+.versions-workbench[data-theme="dark"] .breadcrumbs button,
+.versions-workbench[data-theme="dark"] .blame-head,
+.versions-workbench[data-theme="dark"] .change-action {
+  background: #282d34;
+}
+
+.versions-workbench[data-theme="dark"] .pane-header,
+.versions-workbench[data-theme="dark"] .summary-strip,
+.versions-workbench[data-theme="dark"] .changes-toolbar,
+.versions-workbench[data-theme="dark"] .timeline-filters,
+.versions-workbench[data-theme="dark"] .repository-urlbar,
+.versions-workbench[data-theme="dark"] .file-table-head,
+.versions-workbench[data-theme="dark"] .table-head,
+.versions-workbench[data-theme="dark"] .inspector-section,
+.versions-workbench[data-theme="dark"] .advanced-card,
+.versions-workbench[data-theme="dark"] .settings-view article,
+.versions-workbench[data-theme="dark"] .advanced-section,
+.versions-workbench[data-theme="dark"] .monaco-diff-viewer,
+.versions-workbench[data-theme="dark"] .blame-table,
+.versions-workbench[data-theme="dark"] .revision-files,
+.versions-workbench[data-theme="dark"] .revision-file-list > div,
+.versions-workbench[data-theme="dark"] .breadcrumbs,
+.versions-workbench[data-theme="dark"] .patch-dialog,
+.versions-workbench[data-theme="dark"] .patch-summary {
+  border-color: #414852;
+}
+
+.versions-workbench[data-theme="dark"] .blame-row > span + span,
+.versions-workbench[data-theme="dark"] .patch-summary span + span {
+  border-color: #30363d;
+}
+
+.versions-workbench[data-theme="dark"] .mode-switcher,
+.versions-workbench[data-theme="dark"] .segmented-control,
+.versions-workbench[data-theme="dark"] .mode-switcher button,
+.versions-workbench[data-theme="dark"] .segmented-control button {
+  border-color: #4b5561;
+  background: #303740;
+}
+
+.versions-workbench[data-theme="dark"] .mode-switcher button.active,
+.versions-workbench[data-theme="dark"] .segmented-control button.active {
+  background: #48515c;
+  color: #ffffff;
+}
+
+.versions-workbench[data-theme="dark"] .toolbar-actions button,
+.versions-workbench[data-theme="dark"] .workspace-location button,
+.versions-workbench[data-theme="dark"] .pane-actions button,
+.versions-workbench[data-theme="dark"] .button-row button,
+.versions-workbench[data-theme="dark"] .repository-urlbar button,
+.versions-workbench[data-theme="dark"] .changes-toolbar button,
+.versions-workbench[data-theme="dark"] .revision-compare button,
+.versions-workbench[data-theme="dark"] .advanced-section button,
+.versions-workbench[data-theme="dark"] .advanced-card button,
+.versions-workbench[data-theme="dark"] .settings-view button,
+.versions-workbench[data-theme="dark"] .inspector button,
+.versions-workbench[data-theme="dark"] .source-item,
+.versions-workbench[data-theme="dark"] .branch-tags button,
+.versions-workbench[data-theme="dark"] .quick-picks button,
+.versions-workbench[data-theme="dark"] .task-list button,
+.versions-workbench[data-theme="dark"] .property-list button,
+.versions-workbench[data-theme="dark"] .branch-pick-row button,
+.versions-workbench[data-theme="dark"] .patch-dialog button,
+.versions-workbench[data-theme="dark"] input,
+.versions-workbench[data-theme="dark"] textarea,
+.versions-workbench[data-theme="dark"] select {
+  border-color: #4b5561;
+  background: #252a31;
+  color: #e6ebf0;
+}
+
+.versions-workbench[data-theme="dark"] .toolbar-actions .icon-button:not(:disabled):hover,
+.versions-workbench[data-theme="dark"] .file-row:hover,
+.versions-workbench[data-theme="dark"] .repository-row:hover {
+  border-color: #637080;
+  background: #303740;
+}
+
+.versions-workbench[data-theme="dark"] button.primary,
+.versions-workbench[data-theme="dark"] .workspace-location button.primary,
+.versions-workbench[data-theme="dark"] .pane-actions button.primary,
+.versions-workbench[data-theme="dark"] .revision-compare button.primary,
+.versions-workbench[data-theme="dark"] .advanced-card button.primary,
+.versions-workbench[data-theme="dark"] .settings-view button.primary,
+.versions-workbench[data-theme="dark"] .inspector button.primary,
+.versions-workbench[data-theme="dark"] .patch-dialog button.primary {
+  border-color: #4c91c9;
+  background: #2874b2;
+  color: #ffffff;
+}
+
+.versions-workbench[data-theme="dark"] button:disabled,
+.versions-workbench[data-theme="dark"] button[disabled],
+.versions-workbench[data-theme="dark"] .repository-row:disabled {
+  border-color: #39414a;
+  background: #282d33;
+  color: #78838e;
+}
+
+.versions-workbench[data-theme="dark"] .source-item {
+  background: #2b3138;
+}
+
+.versions-workbench[data-theme="dark"] .source-item.active {
+  border-color: #49789f;
+  background: #24445f;
+}
+
+.versions-workbench[data-theme="dark"] .file-row.directory {
+  background: #22272d;
+}
+
+.versions-workbench[data-theme="dark"] .file-row.selected {
+  background: #183d5f;
+}
+
+.versions-workbench[data-theme="dark"] .file-row.abnormal {
+  background: #3d2a1d;
+}
+
+.versions-workbench[data-theme="dark"] .file-row,
+.versions-workbench[data-theme="dark"] .repository-row,
+.versions-workbench[data-theme="dark"] .timeline-entry,
+.versions-workbench[data-theme="dark"] .blame-row {
+  border-bottom-color: #30363d;
+}
+
+.versions-workbench[data-theme="dark"] .window-identity span,
+.versions-workbench[data-theme="dark"] .source-list h2,
+.versions-workbench[data-theme="dark"] .source-item small,
+.versions-workbench[data-theme="dark"] .source-item em,
+.versions-workbench[data-theme="dark"] .source-empty,
+.versions-workbench[data-theme="dark"] .source-sidebar-meta p,
+.versions-workbench[data-theme="dark"] .muted,
+.versions-workbench[data-theme="dark"] .pane-header p,
+.versions-workbench[data-theme="dark"] .file-name small,
+.versions-workbench[data-theme="dark"] .file-card span,
+.versions-workbench[data-theme="dark"] .file-card small,
+.versions-workbench[data-theme="dark"] .property-list span,
+.versions-workbench[data-theme="dark"] .task-list span,
+.versions-workbench[data-theme="dark"] .task-list em,
+.versions-workbench[data-theme="dark"] .task-list small,
+.versions-workbench[data-theme="dark"] .revision-result,
+.versions-workbench[data-theme="dark"] .revision-file-list small,
+.versions-workbench[data-theme="dark"] .patch-dialog > header p,
+.versions-workbench[data-theme="dark"] .patch-summary span,
+.versions-workbench[data-theme="dark"] .empty-state {
+  color: #a9b3bd;
+}
+
+.versions-workbench[data-theme="dark"] .file-table-head,
+.versions-workbench[data-theme="dark"] .table-head,
+.versions-workbench[data-theme="dark"] .blame-head,
+.versions-workbench[data-theme="dark"] .blame-line-number,
+.versions-workbench[data-theme="dark"] .task-log time {
+  color: #a9b3bd;
+}
+
+.versions-workbench[data-theme="dark"] .tree-affordance.visible::before {
+  border-color: #a9b3bd;
+}
+
+.versions-workbench[data-theme="dark"] .summary-strip,
+.versions-workbench[data-theme="dark"] .revision-files > strong,
+.versions-workbench[data-theme="dark"] .change-action,
+.versions-workbench[data-theme="dark"] .task-log p {
+  color: #c0c8d0;
+}
+
+.versions-workbench[data-theme="dark"] .summary-strip strong,
+.versions-workbench[data-theme="dark"] .blame-content code,
+.versions-workbench[data-theme="dark"] .patch-summary strong {
+  color: #f4f7fa;
+}
+
+.versions-workbench[data-theme="dark"] .inline-row-actions span,
+.versions-workbench[data-theme="dark"] .inline-row-actions em,
+.versions-workbench[data-theme="dark"] .timeline-entry > button:hover,
+.versions-workbench[data-theme="dark"] .breadcrumbs button {
+  color: #75b7ea;
+}
+
+.versions-workbench[data-theme="dark"] .timeline-entry > button.active {
+  color: #8bc8f5;
+}
+
+.versions-workbench[data-theme="dark"] .timeline-entry p {
+  color: #d4dbe2;
+}
+
+.versions-workbench[data-theme="dark"] .text-diff,
+.versions-workbench[data-theme="dark"] .revision-result + pre,
+.versions-workbench[data-theme="dark"] .advanced-card pre,
+.versions-workbench[data-theme="dark"] .patch-output {
+  border-color: #414852;
+  background: #181c21;
+  color: #e6ebf0;
+}
+
+.versions-workbench[data-theme="dark"] .status-pill {
+  background: #39414a;
+  color: #d4dbe2;
+}
+
+.versions-workbench[data-theme="dark"] .status-modified {
+  background: #4a3d16;
+  color: #f2cf66;
+}
+
+.versions-workbench[data-theme="dark"] .status-added,
+.versions-workbench[data-theme="dark"] .status-unversioned {
+  background: #1f4028;
+  color: #7ee09a;
+}
+
+.versions-workbench[data-theme="dark"] .status-deleted,
+.versions-workbench[data-theme="dark"] .status-missing {
+  background: #482426;
+  color: #ffaaa7;
+}
+
+.versions-workbench[data-theme="dark"] .status-conflicted,
+.versions-workbench[data-theme="dark"] .status-obstructed,
+.versions-workbench[data-theme="dark"] .status-renamed {
+  background: #4a2f1e;
+  color: #ffbb7d;
+}
+
+.versions-workbench[data-theme="dark"] .safety-box {
+  border-color: #80671f;
+  background: #3f351b;
+}
+
+.versions-workbench[data-theme="dark"] .patch-dialog-status.patch-warning {
+  color: #ffbb7d;
+}
+
+.versions-workbench[data-theme="dark"] .inline-error,
+.versions-workbench[data-theme="dark"] .error-notice {
+  border-color: #754144;
+  background: #442426;
+  color: #ffaaa7;
+}
+
+.versions-workbench[data-theme="dark"] .patch-dialog-backdrop {
+  background: #111418;
+}
+
+.versions-workbench[data-theme="dark"] .file-icon::before {
+  border-color: #718296;
+  background: #252a31;
+}
+
+.versions-workbench[data-theme="dark"] .file-icon::after {
+  border-color: #718296;
+  background: #46515d;
+}
+
+.versions-workbench[data-theme="dark"] input[type="checkbox"] {
+  accent-color: #4c91c9;
 }
 
 @media (max-width: 1180px) {

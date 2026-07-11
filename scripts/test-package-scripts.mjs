@@ -138,6 +138,21 @@ for (const layoutToken of [
   }
 }
 
+for (const themeToken of [
+  'data-theme="dark"',
+  "color-scheme: dark",
+  'onAppSettingInput("themeMode", "system")',
+  'theme={resolvedTheme}',
+]) {
+  const themeSource = themeToken.startsWith("data-theme") || themeToken.includes("color-scheme")
+    ? appCss
+    : mainWorkspace;
+  if (!themeSource.includes(themeToken)) {
+    console.error(`Versions 主题实现缺少：${themeToken}`);
+    failed = true;
+  }
+}
+
 for (const scriptName of releaseScripts) {
   const command = packageJson.scripts?.[scriptName];
   if (typeof command !== "string") {
