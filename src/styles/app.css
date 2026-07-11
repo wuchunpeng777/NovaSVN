@@ -15,7 +15,7 @@
 html,
 body,
 #app {
-  min-width: 1100px;
+  min-width: 960px;
   min-height: 100vh;
   margin: 0;
 }
@@ -32,8 +32,16 @@ button {
 }
 
 .versions-workbench {
+  --titlebar-height: 44px;
+  --locationbar-height: 42px;
+  --source-list-width: 220px;
+  --inspector-divider-width: 6px;
+  --inspector-min-width: 300px;
+  --layout-divider-color: #bdc5ce;
   display: grid;
-  grid-template-rows: 44px 42px minmax(0, 1fr);
+  grid-template-rows:
+    var(--titlebar-height) var(--locationbar-height)
+    minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
   background: #f6f7f8;
@@ -45,7 +53,7 @@ button {
   align-items: center;
   gap: 14px;
   min-width: 0;
-  border-bottom: 1px solid #b8c0c8;
+  border-bottom: 1px solid var(--layout-divider-color);
   background: #edf0f3;
   padding: 0 12px;
 }
@@ -219,14 +227,14 @@ textarea {
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
-  border-bottom: 1px solid #c7ced6;
+  border-bottom: 1px solid var(--layout-divider-color);
   background: #f7f8f9;
   padding: 6px 12px;
 }
 
 .versions-layout {
   display: grid;
-  grid-template-columns: 252px minmax(0, 1fr);
+  grid-template-columns: var(--source-list-width) minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -236,7 +244,7 @@ textarea {
   gap: 16px;
   min-height: 0;
   overflow: auto;
-  border-right: 1px solid #bdc5ce;
+  border-right: 1px solid var(--layout-divider-color);
   background: #e8ecef;
   padding: 14px 10px;
 }
@@ -401,7 +409,12 @@ textarea {
 
 .work-copy-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 6px minmax(320px, var(--inspector-width, 430px));
+  grid-template-columns:
+    minmax(0, 1fr) var(--inspector-divider-width)
+    minmax(
+      var(--inspector-min-width),
+      min(var(--inspector-width, 400px), calc(100% - 360px))
+    );
   min-height: 0;
 }
 
@@ -641,9 +654,11 @@ textarea {
 }
 
 .inspector-resizer {
-  min-width: 6px;
-  border-right: 1px solid #c6ced6;
-  border-left: 1px solid #dce2e8;
+  width: var(--inspector-divider-width);
+  min-width: var(--inspector-divider-width);
+  border: 0;
+  border-right: 1px solid var(--layout-divider-color);
+  border-left: 1px solid var(--layout-divider-color);
   background: #edf0f3;
   cursor: col-resize;
 }
@@ -1235,10 +1250,6 @@ textarea {
 }
 
 @media (max-width: 1180px) {
-  .work-copy-grid {
-    grid-template-columns: minmax(0, 1fr) 6px minmax(320px, var(--inspector-width, 380px));
-  }
-
   .file-table-head,
   .file-row {
     grid-template-columns: minmax(190px, 1fr) 78px 66px 58px 120px;

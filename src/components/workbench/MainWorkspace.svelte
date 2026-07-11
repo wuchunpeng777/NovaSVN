@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { Download, FileUp, LoaderCircle, RefreshCw, Wrench } from "@lucide/svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
@@ -378,7 +378,12 @@
   let workingCopyTreeFilter: WorkingCopyTreeFilter = "changed";
   let selectedLogRevision: string | null = null;
   let collapsedTreePaths = new Set<string>();
-  let inspectorWidth = 430;
+  const inspectorMinWidth = 300;
+  const inspectorMaxWidth = 720;
+  const sourceListWidth = 220;
+  const inspectorDividerWidth = 6;
+  const fileBrowserMinWidth = 360;
+  let inspectorWidth = 400;
   let resizingInspector = false;
 
   $: if (appSettings.diffMode) {
@@ -733,11 +738,29 @@
     if (!resizingInspector) {
       return;
     }
-    inspectorWidth = Math.min(Math.max(window.innerWidth - event.clientX, 320), 760);
+    inspectorWidth = constrainInspectorWidth(window.innerWidth - event.clientX);
   }
 
   function adjustInspectorWidth(delta: number) {
-    inspectorWidth = Math.min(Math.max(inspectorWidth + delta, 320), 760);
+    inspectorWidth = constrainInspectorWidth(inspectorWidth + delta);
+  }
+
+  function currentInspectorMaxWidth() {
+    return Math.max(
+      inspectorMinWidth,
+      Math.min(
+        inspectorMaxWidth,
+        window.innerWidth - sourceListWidth - inspectorDividerWidth - fileBrowserMinWidth,
+      ),
+    );
+  }
+
+  function constrainInspectorWidth(width: number) {
+    return Math.min(Math.max(width, inspectorMinWidth), currentInspectorMaxWidth());
+  }
+
+  function constrainInspectorToWindow() {
+    inspectorWidth = constrainInspectorWidth(inspectorWidth);
   }
 
   function focusPatchDialog(node: HTMLElement) {
@@ -754,6 +777,12 @@
 
   onDestroy(() => {
     stopInspectorResize();
+    window.removeEventListener("resize", constrainInspectorToWindow);
+  });
+
+  onMount(() => {
+    constrainInspectorToWindow();
+    window.addEventListener("resize", constrainInspectorToWindow);
   });
 
   $: files = workingCopyStatus?.files ?? [];
@@ -1966,22 +1995,35 @@
             {/if}
           </div>
 
-          <button
-            type="button"
+          <div
+            role="slider"
+            tabindex="0"
             class="inspector-resizer"
             aria-label="调整右侧面板宽度"
+            aria-orientation="horizontal"
+            aria-valuemin={inspectorMinWidth}
+            aria-valuemax={currentInspectorMaxWidth()}
+            aria-valuenow={inspectorWidth}
             on:mousedown={startInspectorResize}
             on:keydown={(event) => {
               if (event.key === "ArrowLeft") {
-                adjustInspectorWidth(24);
-                event.preventDefault();
-              }
-              if (event.key === "ArrowRight") {
                 adjustInspectorWidth(-24);
                 event.preventDefault();
               }
+              if (event.key === "ArrowRight") {
+                adjustInspectorWidth(24);
+                event.preventDefault();
+              }
+              if (event.key === "Home") {
+                inspectorWidth = inspectorMinWidth;
+                event.preventDefault();
+              }
+              if (event.key === "End") {
+                inspectorWidth = currentInspectorMaxWidth();
+                event.preventDefault();
+              }
             }}
-          ></button>
+          ></div>
 
           <aside class="inspector" aria-label="详情和提交">
             <section class="inspector-section">

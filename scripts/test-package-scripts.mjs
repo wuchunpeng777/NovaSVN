@@ -116,6 +116,28 @@ const startupActionViewChecks = [
 ];
 let failed = false;
 
+const tauriWindowMinWidth = tauriConfig.app?.windows?.[0]?.minWidth;
+const cssWindowMinWidth = Number(
+  appCss.match(/html,\s*body,\s*#app\s*\{[^}]*min-width:\s*(\d+)px/s)?.[1] ?? NaN,
+);
+if (!Number.isFinite(cssWindowMinWidth) || cssWindowMinWidth !== tauriWindowMinWidth) {
+  console.error(
+    `CSS 最小宽度 ${cssWindowMinWidth || "未配置"} 必须与 Tauri ${tauriWindowMinWidth || "未配置"} 一致`,
+  );
+  failed = true;
+}
+
+for (const layoutToken of [
+  "--source-list-width: 220px",
+  "--inspector-divider-width: 6px",
+  "--inspector-min-width: 300px",
+]) {
+  if (!appCss.includes(layoutToken)) {
+    console.error(`Versions 布局缺少稳定尺寸：${layoutToken}`);
+    failed = true;
+  }
+}
+
 for (const scriptName of releaseScripts) {
   const command = packageJson.scripts?.[scriptName];
   if (typeof command !== "string") {

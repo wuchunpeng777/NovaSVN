@@ -84,6 +84,44 @@ describe("MainWorkspace", () => {
     ).toHaveAttribute("aria-busy", "true");
   });
 
+  it("keeps the inspector within the 960px window layout budget", async () => {
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 960 });
+
+    try {
+      render(MainWorkspace, {
+        props: {
+          view: workbenchViews.changes,
+          workspace: makeWorkspace(),
+        },
+      });
+
+      const resizer = screen.getByRole("slider", { name: "调整右侧面板宽度" });
+      expect(resizer).toHaveAttribute("aria-valuemin", "300");
+      expect(resizer).toHaveAttribute("aria-valuemax", "374");
+      expect(resizer).toHaveAttribute("aria-valuenow", "374");
+      expect(resizer).toHaveAttribute("aria-orientation", "horizontal");
+
+      await fireEvent.keyDown(resizer, { key: "ArrowLeft" });
+      expect(resizer).toHaveAttribute("aria-valuenow", "350");
+
+      await fireEvent.keyDown(resizer, { key: "ArrowRight" });
+      expect(resizer).toHaveAttribute("aria-valuenow", "374");
+
+      await fireEvent.keyDown(resizer, { key: "Home" });
+      expect(resizer).toHaveAttribute("aria-valuenow", "300");
+
+      await fireEvent.keyDown(resizer, { key: "End" });
+      expect(resizer).toHaveAttribute("aria-valuenow", "374");
+    } finally {
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: originalInnerWidth,
+      });
+      window.dispatchEvent(new Event("resize"));
+    }
+  });
+
   it("uses current commit targets and excludes unversioned files", async () => {
     const onUnselectCommitFile = vi.fn();
     const onSelectAllCommitFiles = vi.fn();
