@@ -82,6 +82,10 @@ const workspaceRs = fs.readFileSync(
   path.join(root, "src-tauri", "src", "workspace.rs"),
   "utf8",
 );
+const externalToolRs = fs.readFileSync(
+  path.join(root, "src-tauri", "src", "external_tool.rs"),
+  "utf8",
+);
 const taskRs = fs.readFileSync(path.join(root, "src-tauri", "src", "task.rs"), "utf8");
 const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 
@@ -345,6 +349,17 @@ if (
   !mainWorkspace.includes('case "End"')
 ) {
   console.error("工作副本文件表必须提供 treegrid 活动行和完整方向键导航");
+  failed = true;
+}
+
+if (
+  !fileBrowserSource.includes("on:dblclick") ||
+  !mainWorkspace.includes("onOpenWorkspaceFile(node.path)") ||
+  !externalToolRs.includes("canonical_target.starts_with(&canonical_root)") ||
+  !externalToolRs.includes('(\"explorer\", vec![target.display().to_string()])') ||
+  externalToolRs.includes('\"cmd\"')
+) {
+  console.error("双击打开必须使用安全工作副本路径和无命令解释器的系统默认应用入口");
   failed = true;
 }
 

@@ -21,6 +21,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     getTask: vi.fn(),
     listTasks: vi.fn(),
     listWorkspaceFiles: vi.fn(),
+    openWorkspaceFile: vi.fn(),
     openWorkspace: vi.fn(),
     scanWorkspaceStatus: vi.fn(),
   };
@@ -34,6 +35,7 @@ import {
   getTask,
   listTasks,
   listWorkspaceFiles,
+  openWorkspaceFile,
   openWorkspace,
   scanWorkspaceStatus,
 } from "./lib/api";
@@ -54,6 +56,7 @@ const ignoreWorkspacePathMock = vi.mocked(ignoreWorkspacePath);
 const getTaskMock = vi.mocked(getTask);
 const listTasksMock = vi.mocked(listTasks);
 const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
+const openWorkspaceFileMock = vi.mocked(openWorkspaceFile);
 const openWorkspaceMock = vi.mocked(openWorkspace);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
@@ -64,6 +67,7 @@ beforeEach(async () => {
   getTaskMock.mockReset();
   listTasksMock.mockReset();
   listWorkspaceFilesMock.mockReset();
+  openWorkspaceFileMock.mockReset();
   openWorkspaceMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
 
@@ -200,6 +204,24 @@ describe("App SVN operation completion", () => {
         svn_executable: undefined,
       });
     });
+  });
+
+  it("双击文件时通过安全后端入口打开系统默认应用", async () => {
+    await showMoveableSource();
+    openWorkspaceFileMock.mockResolvedValue({
+      target_path: "C:/repo/wc/source.txt",
+    });
+    render(App);
+
+    await fireEvent.dblClick(screen.getByRole("button", { name: "选择文件 source.txt" }));
+
+    await waitFor(() => {
+      expect(openWorkspaceFileMock).toHaveBeenCalledWith({
+        working_copy_root: "C:/repo/wc",
+        file_path: "source.txt",
+      });
+    });
+    expect(screen.getAllByText("已打开文件：C:/repo/wc/source.txt")).toHaveLength(2);
   });
 
   it("选中其他任务时仍按 pending id 消费成功操作", async () => {

@@ -584,6 +584,52 @@ describe("MainWorkspace", () => {
     );
   });
 
+  it("opens existing files on double click and keeps directories in the tree", async () => {
+    const openFile = makeFile("open.txt", "modified", "open-digest");
+    const missingFile = makeFile("missing.txt", "missing", "missing-digest");
+    const tree: WorkspaceFileTree = {
+      working_copy_root: "C:/repo/wc",
+      total_files: 3,
+      returned_files: 3,
+      truncated: false,
+      nodes: [
+        makeScopedNode("open.txt", "modified", "local"),
+        makeScopedNode("missing.txt", "missing", "local"),
+        {
+          ...makeScopedNode("folder", "normal", "none"),
+          kind: "dir",
+          file_size: null,
+        },
+      ],
+    };
+    const onOpenWorkspaceFile = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([openFile, missingFile]),
+        workspaceFileTree: tree,
+        onOpenWorkspaceFile,
+      },
+    });
+
+    await fireEvent.dblClick(screen.getByRole("button", { name: "选择文件 open.txt" }));
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith("open.txt");
+    expect(screen.getByRole("treegrid", { name: "工作副本文件树" })).toHaveAttribute(
+      "aria-activedescendant",
+      "workspace-row-open.txt",
+    );
+
+    await fireEvent.dblClick(screen.getByRole("button", { name: "选择文件 missing.txt" }));
+    expect(onOpenWorkspaceFile).toHaveBeenCalledOnce();
+
+    await fireEvent.dblClick(screen.getByRole("button", { name: "切换目录 folder" }));
+    expect(document.getElementById("workspace-row-folder")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
   it("moves and deletes versioned files and directories from the working copy", async () => {
     const onDeletePath = vi.fn();
     const onMovePath = vi.fn();

@@ -873,6 +873,24 @@
     toggleTreeNode(node);
   }
 
+  function canOpenWorkspaceNode(node: WorkspaceFileNode | null) {
+    return !!node && node.kind === "file" && !["deleted", "missing"].includes(node.status);
+  }
+
+  function openTreeNodeFromPointer(node: WorkspaceFileNode) {
+    activeRowPath = node.path;
+    rowSelectionAnchorPath = node.path;
+    keyboardRangeAnchorPath = node.path;
+    keyboardRangeBasePaths = new Set(selectedRowPaths);
+    if (node.kind === "dir") {
+      setTreeNodeCollapsed(node, !isTreeNodeCollapsed(node));
+      return;
+    }
+    if (canOpenWorkspaceNode(node)) {
+      onOpenWorkspaceFile(node.path);
+    }
+  }
+
   function moveActiveRow(targetIndex: number, extendSelection: boolean) {
     const boundedIndex = Math.max(0, Math.min(treeRows.length - 1, targetIndex));
     const target = treeRows[boundedIndex];
@@ -2507,6 +2525,7 @@
                       aria-label={node.kind === "dir" ? `切换目录 ${node.path}` : `选择文件 ${node.path}`}
                       aria-expanded={node.kind === "dir" ? !isTreeNodeCollapsed(node, collapsedTreePaths) : undefined}
                       on:click={() => activateTreeNodeFromPointer(node)}
+                      on:dblclick={() => openTreeNodeFromPointer(node)}
                     >
                       <strong>
                         <span
@@ -2737,6 +2756,7 @@
                 <div class="button-row wrap">
                   <button
                     type="button"
+                    disabled={!canOpenWorkspaceNode(selectedTreeNode)}
                     on:click={() =>
                       selectedFilePath && onOpenWorkspaceFile(selectedFilePath)}
                   >
@@ -2744,6 +2764,7 @@
                   </button>
                   <button
                     type="button"
+                    disabled={!canOpenWorkspaceNode(selectedTreeNode)}
                     on:click={() =>
                       selectedFilePath && onOpenFileLocation(selectedFilePath)}
                   >

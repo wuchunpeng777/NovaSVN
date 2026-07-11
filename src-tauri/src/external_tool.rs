@@ -192,15 +192,7 @@ fn open_file_location_command(root: &Path, target: &Path) -> (&'static str, Vec<
 
 fn open_workspace_file_command(target: &Path) -> (&'static str, Vec<String>) {
     if cfg!(target_os = "windows") {
-        return (
-            "cmd",
-            vec![
-                "/C".to_string(),
-                "start".to_string(),
-                "".to_string(),
-                target.display().to_string(),
-            ],
-        );
+        return ("explorer", vec![target.display().to_string()]);
     }
 
     if cfg!(target_os = "macos") {
@@ -283,8 +275,7 @@ fn normalize_root(path: &str) -> Result<PathBuf, NovaError> {
 }
 
 fn normalize_file_path(root: &Path, file_path: &str) -> Result<PathBuf, NovaError> {
-    let trimmed = file_path.trim();
-    if trimmed.is_empty() {
+    if file_path.is_empty() {
         return Err(NovaError::command(
             "EXTERNAL_TOOL_FILE_EMPTY",
             "请选择要打开的文件",
@@ -293,9 +284,18 @@ fn normalize_file_path(root: &Path, file_path: &str) -> Result<PathBuf, NovaErro
         ));
     }
 
-    let relative = PathBuf::from(trimmed);
-    if path_utils::is_absolute_or_windows_path(&relative, trimmed)
-        || path_utils::has_parent_segment(trimmed)
+    if file_path.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "EXTERNAL_TOOL_FILE_INVALID",
+            "外部工具目标文件无效",
+            Some("文件路径不能包含控制字符。".to_string()),
+            true,
+        ));
+    }
+
+    let relative = PathBuf::from(file_path);
+    if path_utils::is_absolute_or_windows_path(&relative, file_path)
+        || path_utils::has_parent_segment(file_path)
     {
         return Err(NovaError::command(
             "EXTERNAL_TOOL_FILE_INVALID",
@@ -305,7 +305,41 @@ fn normalize_file_path(root: &Path, file_path: &str) -> Result<PathBuf, NovaErro
         ));
     }
 
-    Ok(root.join(relative))
+    let canonical_root = root.canonicalize().map_err(|error| {
+        NovaError::command(
+            "WORKSPACE_PATH_INVALID",
+            "工作副本路径不可用",
+            Some(format!("路径：{}。错误：{error}", root.display())),
+            true,
+        )
+    })?;
+    let target = root.join(relative);
+    let canonical_target = target.canonicalize().map_err(|error| {
+        NovaError::command(
+            "EXTERNAL_TOOL_FILE_NOT_FOUND",
+            "要打开的文件不存在",
+            Some(format!("路径：{}。错误：{error}", target.display())),
+            true,
+        )
+    })?;
+    if !canonical_target.starts_with(&canonical_root) {
+        return Err(NovaError::command(
+            "EXTERNAL_TOOL_FILE_OUTSIDE_WORKSPACE",
+            "要打开的文件不在当前工作副本内",
+            Some(format!("解析后的路径：{}", canonical_target.display())),
+            true,
+        ));
+    }
+    if !canonical_target.is_file() {
+        return Err(NovaError::command(
+            "EXTERNAL_TOOL_TARGET_NOT_FILE",
+            "要打开的目标不是文件",
+            Some(format!("路径：{}", canonical_target.display())),
+            true,
+        ));
+    }
+
+    Ok(canonical_target)
 }
 
 fn normalize_generated_file_path(generated_root: &Path, path: &str) -> Result<PathBuf, NovaError> {
@@ -406,6 +440,61 @@ mod tests {
     }
 
     #[test]
+    fn resolves_existing_workspace_files_and_rejects_non_files() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let container = std::env::temp_dir().join(format!("novasvn-open-file-{nonce}"));
+        let root = container.join("wc");
+        std::fs::create_dir_all(root.join("folder")).unwrap();
+        std::fs::write(root.join("safe.txt"), "safe").unwrap();
+
+        assert_eq!(
+            normalize_file_path(&root, "safe.txt").unwrap(),
+            root.join("safe.txt").canonicalize().unwrap()
+        );
+        assert!(matches!(
+            normalize_file_path(&root, "missing.txt"),
+            Err(NovaError::Command { ref code, .. }) if code == "EXTERNAL_TOOL_FILE_NOT_FOUND"
+        ));
+        assert!(matches!(
+            normalize_file_path(&root, "folder"),
+            Err(NovaError::Command { ref code, .. }) if code == "EXTERNAL_TOOL_TARGET_NOT_FILE"
+        ));
+
+        std::fs::remove_dir_all(container).ok();
+    }
+
+    #[test]
+    fn rejects_workspace_symlinks_that_escape_the_root() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let container = std::env::temp_dir().join(format!("novasvn-open-link-{nonce}"));
+        let root = container.join("wc");
+        let outside = container.join("outside.txt");
+        let link = root.join("link.txt");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&outside, "outside").unwrap();
+
+        #[cfg(unix)]
+        let link_created = std::os::unix::fs::symlink(&outside, &link).is_ok();
+        #[cfg(windows)]
+        let link_created = std::os::windows::fs::symlink_file(&outside, &link).is_ok();
+
+        if link_created {
+            assert!(matches!(
+                normalize_file_path(&root, "link.txt"),
+                Err(NovaError::Command { ref code, .. })
+                    if code == "EXTERNAL_TOOL_FILE_OUTSIDE_WORKSPACE"
+            ));
+        }
+        std::fs::remove_dir_all(container).ok();
+    }
+
+    #[test]
     fn rejects_invalid_generated_file_paths() {
         let root = std::env::temp_dir();
 
@@ -451,16 +540,8 @@ mod tests {
         let target = Path::new("C:\\wc\\src\\main.rs");
         let (program, args) = open_workspace_file_command(target);
 
-        assert_eq!(program, "cmd");
-        assert_eq!(
-            args,
-            vec![
-                "/C".to_string(),
-                "start".to_string(),
-                "".to_string(),
-                target.display().to_string()
-            ]
-        );
+        assert_eq!(program, "explorer");
+        assert_eq!(args, vec![target.display().to_string()]);
     }
 
     #[cfg(not(target_os = "windows"))]
