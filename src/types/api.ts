@@ -137,6 +137,10 @@ export interface OpenGeneratedFileLocationRequest {
   path: string;
 }
 
+export interface OpenRepositoryTempFileRequest {
+  path: string;
+}
+
 export interface ExternalToolLaunch {
   kind: ExternalToolKind | string;
   tool_path: string;
@@ -152,6 +156,10 @@ export interface OpenWorkspaceFile {
 }
 
 export interface OpenGeneratedFileLocation {
+  target_path: string;
+}
+
+export interface OpenRepositoryTempFile {
   target_path: string;
 }
 
@@ -176,6 +184,12 @@ export interface CreatePartialCommitTaskRequest {
 }
 
 export interface CreateRepositoryListTaskRequest {
+  url: string;
+  revision?: string;
+  svn_executable?: string;
+}
+
+export interface CreateRepositoryFileTaskRequest {
   url: string;
   revision?: string;
   svn_executable?: string;
@@ -293,6 +307,7 @@ export interface RemoveTaskWorkspaceRequest {
 
 export interface TaskResult {
   repository_list: RepositoryListResult | null;
+  repository_file: RepositoryFileResult | null;
   revision_diff: RevisionDiffResult | null;
   merge_result: MergeResult | null;
   apply_patch_result: ApplyPatchResult | null;
@@ -468,6 +483,14 @@ export interface WorkspaceFileNode {
   changed: boolean;
   versioned: boolean;
   children: WorkspaceFileNode[];
+}
+
+export interface RepositoryFileResult {
+  url: string;
+  revision: string | null;
+  file_path: string;
+  file_name: string;
+  bytes: number;
 }
 
 export interface AppMenuState {

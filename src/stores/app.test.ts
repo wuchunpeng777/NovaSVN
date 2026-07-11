@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../lib/api", () => ({
   createApplyPatchTask: vi.fn(),
   createMergeTask: vi.fn(),
+  createRepositoryFileTask: vi.fn(),
   createRepositoryListTask: vi.fn(),
   createRevertRevisionTask: vi.fn(),
   createRevisionDiffTask: vi.fn(),
@@ -31,6 +32,7 @@ import { get } from "svelte/store";
 import {
   createApplyPatchTask,
   createMergeTask,
+  createRepositoryFileTask,
   createRepositoryListTask,
   createRevertRevisionTask,
   createRevisionDiffTask,
@@ -80,6 +82,7 @@ import {
 
 const createApplyPatchTaskMock = vi.mocked(createApplyPatchTask);
 const createMergeTaskMock = vi.mocked(createMergeTask);
+const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
@@ -105,6 +108,7 @@ const setSvnPropertyMock = vi.mocked(setSvnProperty);
 beforeEach(() => {
   createApplyPatchTaskMock.mockReset();
   createMergeTaskMock.mockReset();
+  createRepositoryFileTaskMock.mockReset();
   createRepositoryListTaskMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
   createRevisionDiffTaskMock.mockReset();
@@ -861,6 +865,50 @@ describe("taskStore repository list tasks", () => {
       url: "https://example.com/svn/trunk/src",
       revision: "10",
       svn_executable: "C:/svn/svn.exe",
+    });
+  });
+
+  it("creates repository file tasks and clears their workspace state", async () => {
+    createRepositoryFileTaskMock.mockResolvedValue(makeTask({ task_id: "repository-file-r8" }));
+
+    const task = await taskStore.createRepositoryFile({
+      url: "https://example.com/svn/trunk/README.md",
+      revision: "8",
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(task?.task_id).toBe("repository-file-r8");
+    expect(createRepositoryFileTaskMock).toHaveBeenCalledWith({
+      url: "https://example.com/svn/trunk/README.md",
+      revision: "8",
+      svn_executable: "C:/svn/svn.exe",
+    });
+
+    workspaceStore.markRepositoryFileTask("repository-file-r8");
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryFileTaskId: "repository-file-r8",
+      repositoryFileLoading: true,
+      repositoryFileError: null,
+    });
+    workspaceStore.completeRepositoryFile({
+      url: "https://example.com/svn/trunk/README.md",
+      revision: "8",
+      file_path: "C:/data/README.md",
+      file_name: "README.md",
+      bytes: 7,
+    });
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryFileTaskId: null,
+      repositoryFileLoading: false,
+      repositoryFileError: null,
+    });
+
+    workspaceStore.markRepositoryFileTask("repository-file-failed");
+    workspaceStore.failRepositoryFile("下载失败");
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryFileTaskId: null,
+      repositoryFileLoading: false,
+      repositoryFileError: "下载失败",
     });
   });
 

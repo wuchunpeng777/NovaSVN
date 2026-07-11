@@ -15,6 +15,7 @@ vi.mock("./lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/api")>();
   return {
     ...actual,
+    createRepositoryFileTask: vi.fn(),
     createRevertRevisionTask: vi.fn(),
     createSvnBatchOperationTask: vi.fn(),
     createSvnOperationTask: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     getSvnLog: vi.fn(),
     listTasks: vi.fn(),
     listWorkspaceFiles: vi.fn(),
+    openRepositoryTempFile: vi.fn(),
     openWorkspaceFile: vi.fn(),
     openWorkspace: vi.fn(),
     scanWorkspaceStatus: vi.fn(),
@@ -31,6 +33,7 @@ vi.mock("./lib/api", async (importOriginal) => {
 
 import { get } from "svelte/store";
 import {
+  createRepositoryFileTask,
   createRevertRevisionTask,
   createSvnOperationTask,
   createSvnBatchOperationTask,
@@ -39,6 +42,7 @@ import {
   getSvnLog,
   listTasks,
   listWorkspaceFiles,
+  openRepositoryTempFile,
   openWorkspaceFile,
   openWorkspace,
   scanWorkspaceStatus,
@@ -55,6 +59,7 @@ import type {
 import App from "./App.svelte";
 
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
+const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
 const ignoreWorkspacePathMock = vi.mocked(ignoreWorkspacePath);
@@ -62,12 +67,14 @@ const getTaskMock = vi.mocked(getTask);
 const getSvnLogMock = vi.mocked(getSvnLog);
 const listTasksMock = vi.mocked(listTasks);
 const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
+const openRepositoryTempFileMock = vi.mocked(openRepositoryTempFile);
 const openWorkspaceFileMock = vi.mocked(openWorkspaceFile);
 const openWorkspaceMock = vi.mocked(openWorkspace);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(async () => {
   createSvnOperationTaskMock.mockReset();
+  createRepositoryFileTaskMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
   createSvnBatchOperationTaskMock.mockReset();
   ignoreWorkspacePathMock.mockReset();
@@ -75,6 +82,7 @@ beforeEach(async () => {
   getSvnLogMock.mockReset();
   listTasksMock.mockReset();
   listWorkspaceFilesMock.mockReset();
+  openRepositoryTempFileMock.mockReset();
   openWorkspaceFileMock.mockReset();
   openWorkspaceMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
@@ -370,6 +378,7 @@ describe("App SVN operation completion", () => {
           revision: null,
           entries: [],
         },
+        repository_file: null,
         revision_diff: null,
         merge_result: null,
         apply_patch_result: null,
@@ -396,6 +405,116 @@ describe("App SVN operation completion", () => {
     expect(get(workspaceStore).repositoryList?.url).toBe(
       "https://example.com/svn/trunk/src",
     );
+  });
+
+  it("仓库文件任务完成后按 pending id 打开临时副本", async () => {
+    setCurrentView("repository");
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk",
+      revision: "10",
+      entries: [
+        {
+          name: "README space.md",
+          kind: "file",
+          revision: "9",
+          author: "dev",
+          date: "2026-07-11T01:02:03Z",
+        },
+      ],
+    });
+    const pendingTask = makeTask({ task_id: "repository-file", status: "pending" });
+    createRepositoryFileTaskMock.mockResolvedValue(pendingTask);
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-file", status: "pending" }),
+      ]),
+    );
+    openRepositoryTempFileMock.mockResolvedValue({ target_path: "C:/data/README space.md" });
+    render(App);
+
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "打开仓库文件 README space.md 的临时副本",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(createRepositoryFileTaskMock).toHaveBeenCalledWith({
+        url: "https://example.com/svn/trunk/README%20space.md",
+        revision: "10",
+        svn_executable: undefined,
+      });
+      expect(get(workspaceStore).pendingRepositoryFileTaskId).toBe("repository-file");
+    });
+
+    const completedTask = makeTask({
+      task_id: "repository-file",
+      status: "success",
+      result: {
+        repository_list: null,
+        repository_file: {
+          url: "https://example.com/svn/trunk/README%20space.md",
+          revision: "10",
+          file_path: "C:/data/README space.md",
+          file_name: "README space.md",
+          bytes: 12,
+        },
+        revision_diff: null,
+        merge_result: null,
+        apply_patch_result: null,
+      },
+    });
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-file", status: "success" }),
+      ]),
+    );
+    getTaskMock.mockResolvedValue(completedTask);
+    await taskStore.refresh();
+
+    await waitFor(() => {
+      expect(openRepositoryTempFileMock).toHaveBeenCalledWith({
+        path: "C:/data/README space.md",
+      });
+      expect(get(workspaceStore).pendingRepositoryFileTaskId).toBeNull();
+      expect(get(workspaceStore).repositoryFileError).toBeNull();
+    });
+  });
+
+  it("仓库临时副本打开失败时解除 pending 并显示错误", async () => {
+    const failedTask = makeTask({
+      task_id: "repository-open-failed",
+      status: "success",
+      result: {
+        repository_list: null,
+        repository_file: {
+          url: "https://example.com/svn/trunk/file.txt",
+          revision: null,
+          file_path: "C:/data/file.txt",
+          file_name: "file.txt",
+          bytes: 4,
+        },
+        revision_diff: null,
+        merge_result: null,
+        apply_patch_result: null,
+      },
+    });
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-open-failed", status: "success" }),
+      ]),
+    );
+    getTaskMock.mockResolvedValue(failedTask);
+    openRepositoryTempFileMock.mockRejectedValue({ message: "没有可用的默认应用" });
+    render(App);
+
+    workspaceStore.markRepositoryFileTask("repository-open-failed");
+    await taskStore.refresh();
+
+    await waitFor(() => {
+      expect(get(workspaceStore).pendingRepositoryFileTaskId).toBeNull();
+      expect(get(workspaceStore).repositoryFileError).toBe("没有可用的默认应用");
+    });
   });
 
   it("按 pending id 处理取消的 Merge", async () => {

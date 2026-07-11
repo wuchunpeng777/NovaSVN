@@ -182,6 +182,13 @@ pub struct CreateRepositoryListTaskRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct CreateRepositoryFileTaskRequest {
+    pub url: String,
+    pub revision: Option<String>,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RepositoryCopyKind {
     Branch,
@@ -264,9 +271,19 @@ pub struct CreateApplyPatchTaskRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskResult {
     pub repository_list: Option<RepositoryListResult>,
+    pub repository_file: Option<RepositoryFileResult>,
     pub revision_diff: Option<RevisionDiffResult>,
     pub merge_result: Option<MergeResult>,
     pub apply_patch_result: Option<ApplyPatchResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RepositoryFileResult {
+    pub url: String,
+    pub revision: Option<String>,
+    pub file_path: String,
+    pub file_name: String,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -330,6 +347,7 @@ enum TaskPayload {
     ShadowWorkspace(ShadowWorkspaceTaskPayload),
     PartialCommit(PartialCommitTaskPayload),
     RepositoryList(RepositoryListTaskPayload),
+    RepositoryFile(RepositoryFileTaskPayload),
     RepositoryCopy(RepositoryCopyTaskPayload),
     BranchCheckout(BranchCheckoutTaskPayload),
     SvnSwitch(SvnSwitchTaskPayload),
@@ -422,6 +440,14 @@ struct RepositoryListTaskPayload {
     url: String,
     revision: Option<String>,
     svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct RepositoryFileTaskPayload {
+    url: String,
+    revision: Option<String>,
+    svn_executable: String,
+    output_dir: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -1029,6 +1055,56 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_repository_file_task(
+        &self,
+        app: &AppHandle,
+        request: CreateRepositoryFileTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let url = normalize_repository_url(&request.url)?;
+        let revision = normalize_repository_list_revision(request.revision.as_deref())?;
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        let output_dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|error| {
+                NovaError::command(
+                    "APP_DATA_DIR_FAILED",
+                    "无法获取应用数据目录",
+                    Some(error.to_string()),
+                    true,
+                )
+            })?
+            .join("repository-files");
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let revision_label = revision.as_deref().unwrap_or("HEAD");
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!(
+                "打开仓库文件 {} @ {revision_label}",
+                compact_repository_url(&url)
+            ),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "仓库文件下载任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::RepositoryFile(RepositoryFileTaskPayload {
+                url,
+                revision,
+                svn_executable,
+                output_dir,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn create_repository_copy_task(
         &self,
         request: CreateRepositoryCopyTaskRequest,
@@ -1514,6 +1590,9 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             }
             TaskPayload::RepositoryList(payload) => {
                 run_repository_list_task(&state, &task_id, payload)
+            }
+            TaskPayload::RepositoryFile(payload) => {
+                run_repository_file_task(&state, &task_id, payload)
             }
             TaskPayload::RepositoryCopy(payload) => {
                 run_repository_copy_task(&state, &task_id, payload)
@@ -2646,6 +2725,7 @@ fn run_repository_list_task(
                         task_id,
                         TaskResult {
                             repository_list: Some(result),
+                            repository_file: None,
                             revision_diff: None,
                             merge_result: None,
                             apply_patch_result: None,
@@ -2690,6 +2770,252 @@ fn run_repository_list_task(
             );
         }
     }
+}
+
+fn run_repository_file_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: RepositoryFileTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "仓库文件开始下载",
+        None,
+    );
+    let revision_label = payload.revision.as_deref().unwrap_or("HEAD");
+    append_task_log(
+        state,
+        task_id,
+        &format!("执行 svn cat -r {revision_label}：{}", payload.url),
+    );
+
+    if let Err(error) = fs::create_dir_all(&payload.output_dir) {
+        update_task(
+            state,
+            task_id,
+            TaskStatus::Failed,
+            "仓库文件临时目录创建失败",
+            Some(format!(
+                "路径：{}；错误：{error}",
+                payload.output_dir.display()
+            )),
+        );
+        return;
+    }
+    let output_dir = match normalize_repository_output_dir(&payload.output_dir) {
+        Ok(output_dir) => output_dir,
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "仓库文件临时目录校验失败",
+                Some(error.to_string()),
+            );
+            return;
+        }
+    };
+    let (file, file_path, file_name) =
+        match create_repository_temp_file(&output_dir, &payload.url, task_id) {
+            Ok(result) => result,
+            Err(error) => {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "仓库临时文件创建失败",
+                    Some(error.to_string()),
+                );
+                return;
+            }
+        };
+
+    let mut command = Command::new(&payload.svn_executable);
+    command.arg("cat");
+    if let Some(revision) = payload.revision.as_deref() {
+        command.args(["-r", revision]);
+    }
+    let output = command
+        .arg(&payload.url)
+        .stdout(std::process::Stdio::from(file))
+        .output();
+    match output {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            let bytes = match file_path.metadata() {
+                Ok(metadata) => metadata.len(),
+                Err(error) => {
+                    fs::remove_file(&file_path).ok();
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "仓库临时文件校验失败",
+                        Some(format!("路径：{}；错误：{error}", file_path.display())),
+                    );
+                    return;
+                }
+            };
+            set_task_result(
+                state,
+                task_id,
+                TaskResult {
+                    repository_list: None,
+                    repository_file: Some(RepositoryFileResult {
+                        url: payload.url,
+                        revision: payload.revision,
+                        file_path: file_path.display().to_string(),
+                        file_name,
+                        bytes,
+                    }),
+                    revision_diff: None,
+                    merge_result: None,
+                    apply_patch_result: None,
+                },
+            );
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                &format!("仓库文件已下载，{bytes} 字节"),
+                None,
+            );
+        }
+        Ok(output) => {
+            fs::remove_file(&file_path).ok();
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "仓库文件下载失败",
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            fs::remove_file(&file_path).ok();
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN cat 启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn repository_temp_file_name(url: &str, task_id: &str) -> String {
+    let raw_name = url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or("repository-file");
+    let (raw_stem, raw_extension) = raw_name
+        .rsplit_once('.')
+        .filter(|(stem, extension)| !stem.is_empty() && !extension.is_empty())
+        .map_or((raw_name, None), |(stem, extension)| {
+            (stem, Some(extension))
+        });
+    let stem = sanitize_patch_file_part(raw_stem);
+    let stem = if stem == "diff" {
+        "repository-file".to_string()
+    } else {
+        stem
+    };
+    let extension = raw_extension
+        .map(|value| {
+            value
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .take(32)
+                .collect::<String>()
+        })
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+    let name = format!("{stem}{extension}");
+    format!("{}-{name}", sanitize_patch_file_part(task_id))
+}
+
+fn normalize_repository_output_dir(output_dir: &Path) -> Result<PathBuf, NovaError> {
+    let parent = output_dir.parent().ok_or_else(|| {
+        NovaError::command(
+            "REPOSITORY_FILE_DIR_INVALID",
+            "仓库文件临时目录无效",
+            Some(format!("路径：{}", output_dir.display())),
+            true,
+        )
+    })?;
+    let canonical_parent = parent.canonicalize().map_err(|error| {
+        NovaError::command(
+            "REPOSITORY_FILE_DIR_INVALID",
+            "仓库文件临时目录不可用",
+            Some(format!("路径：{}；错误：{error}", parent.display())),
+            true,
+        )
+    })?;
+    let canonical_output_dir = output_dir.canonicalize().map_err(|error| {
+        NovaError::command(
+            "REPOSITORY_FILE_DIR_INVALID",
+            "仓库文件临时目录不可用",
+            Some(format!("路径：{}；错误：{error}", output_dir.display())),
+            true,
+        )
+    })?;
+    if !canonical_output_dir.starts_with(&canonical_parent) {
+        return Err(NovaError::command(
+            "REPOSITORY_FILE_DIR_OUTSIDE_APP_DATA",
+            "仓库文件临时目录越界",
+            Some(format!("解析后的路径：{}", canonical_output_dir.display())),
+            true,
+        ));
+    }
+    Ok(canonical_output_dir)
+}
+
+fn create_repository_temp_file(
+    output_dir: &Path,
+    url: &str,
+    task_id: &str,
+) -> Result<(fs::File, PathBuf, String), NovaError> {
+    let base_name = repository_temp_file_name(url, task_id);
+    for attempt in 0..100u8 {
+        let file_name = if attempt == 0 {
+            base_name.clone()
+        } else if let Some((stem, extension)) = base_name.rsplit_once('.') {
+            format!("{stem}-{attempt}.{extension}")
+        } else {
+            format!("{base_name}-{attempt}")
+        };
+        let file_path = output_dir.join(&file_name);
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        match options.open(&file_path) {
+            Ok(file) => return Ok((file, file_path, file_name)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(NovaError::command(
+                    "REPOSITORY_TEMP_FILE_CREATE_FAILED",
+                    "无法创建仓库文件临时副本",
+                    Some(format!("路径：{}；错误：{error}", file_path.display())),
+                    true,
+                ));
+            }
+        }
+    }
+
+    Err(NovaError::command(
+        "REPOSITORY_TEMP_FILE_CREATE_FAILED",
+        "无法创建唯一的仓库文件临时副本",
+        Some(format!("目录：{}", output_dir.display())),
+        true,
+    ))
 }
 
 fn run_repository_copy_task(
@@ -2904,6 +3230,7 @@ fn run_revision_diff_task(
                 task_id,
                 TaskResult {
                     repository_list: None,
+                    repository_file: None,
                     revision_diff: Some(result),
                     merge_result: None,
                     apply_patch_result: None,
@@ -3197,6 +3524,7 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
                 task_id,
                 TaskResult {
                     repository_list: None,
+                    repository_file: None,
                     revision_diff: None,
                     merge_result: Some(result),
                     apply_patch_result: None,
@@ -3443,6 +3771,7 @@ fn set_apply_patch_result(
         task_id,
         TaskResult {
             repository_list: None,
+            repository_file: None,
             revision_diff: None,
             merge_result: None,
             apply_patch_result: Some(ApplyPatchResult {
@@ -5873,6 +6202,25 @@ mod tests {
         panic!("任务未在测试超时前结束");
     }
 
+    fn repository_file_test_state(task_id: &str) -> Arc<Mutex<TaskQueueState>> {
+        let now = timestamp_millis();
+        Arc::new(Mutex::new(TaskQueueState {
+            tasks: vec![Task {
+                task_id: task_id.to_string(),
+                title: "仓库文件测试".to_string(),
+                status: TaskStatus::Pending,
+                logs: Vec::new(),
+                error: None,
+                result: None,
+                created_at: now,
+                updated_at: now,
+                payload: TaskPayload::Mock(MockTaskOutcome::Success),
+            }],
+            pending: VecDeque::new(),
+            running_task_id: Some(task_id.to_string()),
+        }))
+    }
+
     #[cfg(windows)]
     fn write_svn_status_stub(dir: &Path, status_xml: &str) -> PathBuf {
         let path = dir.join("svn-status-stub.cmd");
@@ -8043,6 +8391,150 @@ mod tests {
         assert!(name.starts_with("novasvn-urls-"));
         assert!(name.ends_with("-task-42.patch"));
         assert!(!name.contains(['\\', '/', ':', '?', '"', '<', '>', '|']));
+    }
+
+    #[test]
+    fn builds_safe_repository_temp_file_names_and_preserves_extension() {
+        let url = format!(
+            "https://example.com/svn/trunk/{}.archive.JSON",
+            "a".repeat(200)
+        );
+        let name = repository_temp_file_name(&url, "task:42");
+
+        assert!(name.starts_with("task-42-"));
+        assert!(name.ends_with(".JSON"));
+        assert!(!name.contains(['\\', '/', ':', '?', '"', '<', '>', '|']));
+    }
+
+    #[test]
+    fn creates_unique_repository_temp_files_without_overwriting() {
+        let root = test_temp_dir("repository-temp-file-unique");
+        let output_dir = root.join("repository-files");
+        fs::create_dir(&output_dir).unwrap();
+        let output_dir = normalize_repository_output_dir(&output_dir).unwrap();
+        let (_, first_path, first_name) = create_repository_temp_file(
+            &output_dir,
+            "https://example.com/svn/trunk/readme.txt",
+            "task-1",
+        )
+        .unwrap();
+        fs::write(&first_path, "first").unwrap();
+        let (_, second_path, second_name) = create_repository_temp_file(
+            &output_dir,
+            "https://example.com/svn/trunk/readme.txt",
+            "task-1",
+        )
+        .unwrap();
+
+        assert_ne!(first_path, second_path);
+        assert_eq!(fs::read_to_string(&first_path).unwrap(), "first");
+        assert!(first_name.ends_with(".txt"));
+        assert!(second_name.ends_with(".txt"));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_repository_output_directory_symlink_escape() {
+        let root = test_temp_dir("repository-output-link");
+        let app_data = root.join("app-data");
+        let outside = root.join("outside");
+        let linked_output = app_data.join("repository-files");
+        fs::create_dir_all(&app_data).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+
+        #[cfg(unix)]
+        let link_created = std::os::unix::fs::symlink(&outside, &linked_output).is_ok();
+        #[cfg(windows)]
+        let link_created = std::os::windows::fs::symlink_dir(&outside, &linked_output).is_ok();
+
+        if link_created {
+            assert!(matches!(
+                normalize_repository_output_dir(&linked_output),
+                Err(NovaError::Command { ref code, .. })
+                    if code == "REPOSITORY_FILE_DIR_OUTSIDE_APP_DATA"
+            ));
+        }
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn downloads_binary_repository_file_at_revision_and_cleans_failed_output() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("repository-file-integration");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        let output_dir = root.join("repository-files");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+
+        let file = working_copy.join("binary.bin");
+        let revision_one = vec![0, 1, 2, 13, 10, 127, 128, 254, 255];
+        let revision_two = vec![9, 8, 7, 0, 255];
+        fs::write(&file, &revision_one).expect("write revision one binary");
+        run_test_command(Command::new("svn").arg("add").arg(&file));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "binary revision one"]),
+        );
+        fs::write(&file, &revision_two).expect("write revision two binary");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "binary revision two"]),
+        );
+
+        let file_url = format!("{repository_url}/binary.bin");
+        let success_state = repository_file_test_state("repository-file-success");
+        run_repository_file_task(
+            &success_state,
+            "repository-file-success",
+            RepositoryFileTaskPayload {
+                url: file_url.clone(),
+                revision: Some("1".to_string()),
+                svn_executable: "svn".to_string(),
+                output_dir: output_dir.clone(),
+            },
+        );
+        let success_task = success_state.lock().unwrap().tasks[0].clone();
+        assert!(matches!(success_task.status, TaskStatus::Success));
+        let result = success_task
+            .result
+            .and_then(|result| result.repository_file)
+            .expect("repository file result");
+        assert_eq!(result.revision.as_deref(), Some("1"));
+        assert_eq!(result.bytes, revision_one.len() as u64);
+        assert!(result.file_name.ends_with(".bin"));
+        assert_eq!(fs::read(&result.file_path).unwrap(), revision_one);
+
+        let failed_output_dir = root.join("failed-repository-files");
+        let failed_state = repository_file_test_state("repository-file-failed");
+        run_repository_file_task(
+            &failed_state,
+            "repository-file-failed",
+            RepositoryFileTaskPayload {
+                url: format!("{repository_url}/missing.bin"),
+                revision: Some("1".to_string()),
+                svn_executable: "svn".to_string(),
+                output_dir: failed_output_dir.clone(),
+            },
+        );
+        let failed_task = failed_state.lock().unwrap().tasks[0].clone();
+        assert!(matches!(failed_task.status, TaskStatus::Failed));
+        assert_eq!(fs::read_dir(&failed_output_dir).unwrap().count(), 0);
+
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

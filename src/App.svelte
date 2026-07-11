@@ -8,6 +8,7 @@
     getStartupIntent,
     launchExternalTool,
     openFileLocation,
+    openRepositoryTempFile,
     openWorkspaceFile,
   } from "./lib/api";
   import {
@@ -49,6 +50,7 @@
   let queuedAppMenuState: AppMenuState | null = null;
   let appMenuStateSignature = "";
   let appMenuSyncRunning = false;
+  let repositoryFileCreating = false;
   const repositoryLayoutTaskChecks = new Set<string>();
   const applyPatchTaskChecks = new Set<string>();
   const missingSvnOperationTaskChecks = new Set<string>();
@@ -464,6 +466,36 @@
     workspaceStore.markRepositoryListTask(task.task_id, targetUrl);
   }
 
+  async function openRepositoryFile(fileName: string) {
+    const repositoryList = $workspaceStore.repositoryList;
+    if (
+      !repositoryList ||
+      !fileName.trim() ||
+      repositoryFileCreating ||
+      $workspaceStore.pendingRepositoryFileTaskId !== null
+    ) {
+      return;
+    }
+
+    repositoryFileCreating = true;
+    const url = joinRepositoryUrl(repositoryList.url, fileName);
+    const task = await taskStore.createRepositoryFile({
+      url,
+      revision: repositoryList.revision ?? $workspaceStore.repositoryRevisionInput,
+      svnExecutable: currentSvnExecutable(),
+    });
+    repositoryFileCreating = false;
+
+    if (!task) {
+      workspaceStore.failRepositoryFile(
+        $taskStore.error?.message ?? "仓库文件下载任务创建失败",
+      );
+      return;
+    }
+
+    workspaceStore.markRepositoryFileTask(task.task_id);
+  }
+
   async function detectRepositoryLayout() {
     const root = ($workspaceStore.repositoryUrlInput || $workspaceStore.current?.repository_root || "")
       .trim()
@@ -503,7 +535,13 @@
   }
 
   function joinRepositoryUrl(root: string, path: string) {
-    const normalizedPath = path.trim().replace(/^\/+|\/+$/g, "");
+    const normalizedPath = path
+      .trim()
+      .replace(/^\/+|\/+$/g, "")
+      .split("/")
+      .filter(Boolean)
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
     if (!normalizedPath) {
       return root.replace(/\/+$/, "");
     }
@@ -1204,6 +1242,32 @@
   );
 
   $: consumePendingTask(
+    $workspaceStore.pendingRepositoryFileTaskId,
+    $taskStore.snapshot,
+    async (task) => {
+      if (task.status !== "success") {
+        workspaceStore.failRepositoryFile(task.error ?? "仓库文件下载失败");
+        return;
+      }
+
+      const result = task.result?.repository_file;
+      if (!result) {
+        workspaceStore.failRepositoryFile("仓库文件任务没有返回结果");
+        return;
+      }
+
+      try {
+        await openRepositoryTempFile({ path: result.file_path });
+        workspaceStore.completeRepositoryFile(result);
+      } catch (error) {
+        workspaceStore.failRepositoryFile(
+          (error as CommandError).message ?? "仓库文件临时副本打开失败",
+        );
+      }
+    },
+  );
+
+  $: consumePendingTask(
     $workspaceStore.pendingRepositoryCopyTaskId,
     $taskStore.snapshot,
     (task) => {
@@ -1437,6 +1501,10 @@
   repositoryList={$workspaceStore.repositoryList}
   repositoryLoading={$workspaceStore.repositoryLoading}
   repositoryError={$workspaceStore.repositoryError}
+  repositoryFileLoading={
+    repositoryFileCreating || $workspaceStore.repositoryFileLoading
+  }
+  repositoryFileError={$workspaceStore.repositoryFileError}
   repositoryLayout={$workspaceStore.repositoryLayout}
   repositoryLayoutResults={$workspaceStore.repositoryLayoutResults}
   repositoryLayoutErrors={$workspaceStore.repositoryLayoutErrors}
@@ -1584,6 +1652,7 @@
   onRepositoryRevisionInput={workspaceStore.setRepositoryRevisionInput}
   onUseWorkspaceRepositoryRoot={workspaceStore.useWorkspaceRepositoryRoot}
   onLoadRepositoryUrl={loadRepositoryUrl}
+  onOpenRepositoryFile={openRepositoryFile}
   onRepositoryLayoutPathInput={workspaceStore.setRepositoryLayoutPath}
   onDetectRepositoryLayout={detectRepositoryLayout}
   onRepositoryCopyFormInput={workspaceStore.setRepositoryCopyForm}

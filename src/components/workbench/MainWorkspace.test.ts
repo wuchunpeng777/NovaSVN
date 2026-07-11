@@ -550,6 +550,7 @@ describe("MainWorkspace", () => {
   it("browses repository URLs at an explicit revision and keeps it while navigating", async () => {
     const onRepositoryRevisionInput = vi.fn();
     const onLoadRepositoryUrl = vi.fn();
+    const onOpenRepositoryFile = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.repository,
@@ -578,6 +579,7 @@ describe("MainWorkspace", () => {
         },
         onRepositoryRevisionInput,
         onLoadRepositoryUrl,
+        onOpenRepositoryFile,
       },
     });
 
@@ -596,6 +598,13 @@ describe("MainWorkspace", () => {
     expect(fileRow).toHaveTextContent("文件");
     expect(fileRow).toHaveTextContent("8");
     expect(fileRow).toHaveTextContent("bob");
+    expect(fileRow).toBeEnabled();
+    expect(fileRow).toHaveAttribute(
+      "title",
+      "下载并打开 README.md @r10",
+    );
+    await fireEvent.click(fileRow);
+    expect(onOpenRepositoryFile).toHaveBeenCalledWith("README.md");
     await fireEvent.input(revisionInput, { target: { value: "8" } });
     expect(onRepositoryRevisionInput).toHaveBeenCalledWith("8");
     await fireEvent.keyDown(revisionInput, { key: "Enter" });
@@ -603,6 +612,12 @@ describe("MainWorkspace", () => {
 
     await fireEvent.click(screen.getByText("src", { exact: true }).closest("button") as HTMLElement);
     expect(onLoadRepositoryUrl).toHaveBeenLastCalledWith("https://example.com/svn/trunk/src");
+
+    await rerender({ repositoryFileLoading: true, repositoryFileError: "文件下载失败" });
+    expect(
+      screen.getByRole("button", { name: "打开仓库文件 README.md 的临时副本" }),
+    ).toBeDisabled();
+    expect(screen.getByText("文件下载失败")).toBeInTheDocument();
 
     await rerender({
       repositoryRevisionInput: "",

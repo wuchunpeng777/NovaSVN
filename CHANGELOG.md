@@ -37,6 +37,7 @@
 - Revision Diff 可导出完整 Patch；预览截断时显示完整文件名和路径，完整文件写入失败会使任务失败。
 - Repository 可浏览任意 SVN URL 的 HEAD 或指定数字 Revision，目录导航保持当前历史快照。
 - Repository 目录表明确显示条目类型、Last Revision、作者和日期，并为完整元数据提供 tooltip。
+- Repository 文件可按当前历史 Revision 通过真实 `svn cat` 下载二进制安全的临时副本，并使用系统默认应用打开。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。

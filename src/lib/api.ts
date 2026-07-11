@@ -11,6 +11,7 @@ import type {
   CreateMockTaskRequest,
   CreatePartialCommitTaskRequest,
   CreateRepositoryCopyTaskRequest,
+  CreateRepositoryFileTaskRequest,
   CreateRepositoryListTaskRequest,
   CreateRevertRevisionTaskRequest,
   CreateRevisionDiffTaskRequest,
@@ -36,6 +37,8 @@ import type {
   OpenFileLocationRequest,
   OpenGeneratedFileLocation,
   OpenGeneratedFileLocationRequest,
+  OpenRepositoryTempFile,
+  OpenRepositoryTempFileRequest,
   OpenWorkspaceFile,
   OpenWorkspaceFileRequest,
   OpenWorkspaceRequest,
@@ -141,6 +144,12 @@ export function createSvnOperationTask(
   return callBackend<Task>("create_svn_operation_task", { request });
 }
 
+export function openRepositoryTempFile(
+  request: OpenRepositoryTempFileRequest,
+): Promise<OpenRepositoryTempFile> {
+  return callBackend<OpenRepositoryTempFile>("open_repository_temp_file", { request });
+}
+
 export function createSvnBatchOperationTask(
   request: CreateSvnBatchOperationTaskRequest,
 ): Promise<Task> {
@@ -185,6 +194,12 @@ export function createRevisionDiffTask(
   request: CreateRevisionDiffTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_revision_diff_task", { request });
+}
+
+export function createRepositoryFileTask(
+  request: CreateRepositoryFileTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_repository_file_task", { request });
 }
 
 export function createRevertRevisionTask(

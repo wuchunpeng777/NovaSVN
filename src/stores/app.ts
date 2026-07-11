@@ -9,6 +9,7 @@ import {
   createMockTask,
   createPartialCommitTask,
   createRepositoryCopyTask,
+  createRepositoryFileTask,
   createRepositoryListTask,
   createRevertRevisionTask,
   createRevisionDiffTask,
@@ -62,6 +63,7 @@ import type {
   MockTaskOutcome,
   ParsedFileDiff,
   RepositoryListResult,
+  RepositoryFileResult,
   RepositoryCopyKind,
   RevisionDiffMode,
   RevisionDiffResult,
@@ -620,6 +622,32 @@ function createTaskStore() {
     }
   }
 
+  async function createRepositoryFile(request: {
+    url: string;
+    revision?: string | null;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createRepositoryFileTask({
+        url: request.url,
+        revision: request.revision || undefined,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function createRevertRevision(request: {
     workingCopyRoot: string;
     targetRevision: string;
@@ -717,6 +745,7 @@ function createTaskStore() {
     createShadowWorkspace,
     createPartialCommit,
     createRepositoryList,
+    createRepositoryFile,
     createRepositoryCopy,
     createBranchCheckout,
     createSvnSwitch,
@@ -1330,6 +1359,9 @@ export interface WorkspaceStoreState {
   repositoryCurrentUrl: string;
   repositoryList: RepositoryListResult | null;
   pendingRepositoryListTaskId: string | null;
+  pendingRepositoryFileTaskId: string | null;
+  repositoryFileLoading: boolean;
+  repositoryFileError: string | null;
   repositoryLayout: {
     trunkPath: string;
     branchesPath: string;
@@ -1464,6 +1496,9 @@ const initialWorkspaceState: WorkspaceStoreState = {
   repositoryCurrentUrl: "",
   repositoryList: null,
   pendingRepositoryListTaskId: null,
+  pendingRepositoryFileTaskId: null,
+  repositoryFileLoading: false,
+  repositoryFileError: null,
   repositoryLayout: {
     trunkPath: "trunk",
     branchesPath: "branches",
@@ -1597,6 +1632,9 @@ function createWorkspaceStore() {
         repositoryCurrentUrl: "",
         repositoryList: null,
         pendingRepositoryListTaskId: null,
+        pendingRepositoryFileTaskId: null,
+        repositoryFileLoading: false,
+        repositoryFileError: null,
         repositoryLayoutTasks: emptyRepositoryLayoutTasks(),
         repositoryLayoutResults: emptyRepositoryLayoutResults(),
         repositoryLayoutErrors: emptyRepositoryLayoutErrors(),
@@ -1692,6 +1730,9 @@ function createWorkspaceStore() {
         repositoryCurrentUrl: "",
         repositoryList: null,
         pendingRepositoryListTaskId: null,
+        pendingRepositoryFileTaskId: null,
+        repositoryFileLoading: false,
+        repositoryFileError: null,
         repositoryLayoutTasks: emptyRepositoryLayoutTasks(),
         repositoryLayoutResults: emptyRepositoryLayoutResults(),
         repositoryLayoutErrors: emptyRepositoryLayoutErrors(),
@@ -2830,6 +2871,34 @@ function createWorkspaceStore() {
     }
   }
 
+  function markRepositoryFileTask(taskId: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryFileTaskId: taskId,
+      repositoryFileLoading: taskId !== null,
+      repositoryFileError: null,
+    }));
+  }
+
+  function completeRepositoryFile(result: RepositoryFileResult) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryFileTaskId: null,
+      repositoryFileLoading: false,
+      repositoryFileError: null,
+    }));
+    return result;
+  }
+
+  function failRepositoryFile(message: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryFileTaskId: null,
+      repositoryFileLoading: false,
+      repositoryFileError: message ?? "仓库文件打开失败",
+    }));
+  }
+
   function isCurrentStatusRequest(requestGeneration: number, root: string) {
     const state = get({ subscribe });
     return (
@@ -3814,6 +3883,9 @@ function createWorkspaceStore() {
     markRepositoryListTask,
     applyRepositoryListResult,
     failRepositoryList,
+    markRepositoryFileTask,
+    completeRepositoryFile,
+    failRepositoryFile,
     setRepositoryLayoutPath,
     markRepositoryLayoutTask,
     applyRepositoryLayoutResult,

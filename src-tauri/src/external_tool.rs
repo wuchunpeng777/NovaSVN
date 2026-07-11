@@ -40,6 +40,11 @@ pub struct OpenGeneratedFileLocationRequest {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct OpenRepositoryTempFileRequest {
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ExternalToolLaunch {
     pub kind: String,
@@ -59,6 +64,11 @@ pub struct OpenWorkspaceFile {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OpenGeneratedFileLocation {
+    pub target_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenRepositoryTempFile {
     pub target_path: String,
 }
 
@@ -342,6 +352,29 @@ fn normalize_file_path(root: &Path, file_path: &str) -> Result<PathBuf, NovaErro
     Ok(canonical_target)
 }
 
+pub fn open_repository_temp_file(
+    generated_root: &Path,
+    request: OpenRepositoryTempFileRequest,
+) -> Result<OpenRepositoryTempFile, NovaError> {
+    let target = normalize_generated_file_path(generated_root, &request.path)?;
+    let (program, args) = open_workspace_file_command(&target);
+    let mut command = Command::new(program);
+    command.args(args);
+
+    command.spawn().map_err(|error| {
+        NovaError::command(
+            "OPEN_REPOSITORY_TEMP_FILE_FAILED",
+            "无法打开仓库文件临时副本",
+            Some(format!("目标：{}。错误：{error}", target.display())),
+            true,
+        )
+    })?;
+
+    Ok(OpenRepositoryTempFile {
+        target_path: target.display().to_string(),
+    })
+}
+
 fn normalize_generated_file_path(generated_root: &Path, path: &str) -> Result<PathBuf, NovaError> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -380,6 +413,33 @@ fn normalize_generated_file_path(generated_root: &Path, path: &str) -> Result<Pa
             true,
         )
     })?;
+    let canonical_parent = generated_root
+        .parent()
+        .ok_or_else(|| {
+            NovaError::command(
+                "GENERATED_FILE_ROOT_INVALID",
+                "生成文件目录不可用",
+                Some(format!("路径：{}", generated_root.display())),
+                true,
+            )
+        })?
+        .canonicalize()
+        .map_err(|error| {
+            NovaError::command(
+                "GENERATED_FILE_ROOT_INVALID",
+                "生成文件目录不可用",
+                Some(error.to_string()),
+                true,
+            )
+        })?;
+    if !canonical_root.starts_with(&canonical_parent) {
+        return Err(NovaError::command(
+            "GENERATED_FILE_ROOT_OUTSIDE_PARENT",
+            "生成文件目录越界",
+            Some(format!("解析后的路径：{}", canonical_root.display())),
+            true,
+        ));
+    }
     let canonical_path = path.canonicalize().map_err(|error| {
         NovaError::command(
             "GENERATED_FILE_NOT_FOUND",
@@ -393,7 +453,7 @@ fn normalize_generated_file_path(generated_root: &Path, path: &str) -> Result<Pa
         return Err(NovaError::command(
             "GENERATED_FILE_PATH_OUTSIDE_ROOT",
             "生成文件路径越界",
-            Some("只能打开 NovaSVN 生成的 Revision Diff patch 文件。".to_string()),
+            Some("只能打开 NovaSVN 生成文件目录中的文件。".to_string()),
             true,
         ));
     }
@@ -509,7 +569,14 @@ mod tests {
         let outside = std::env::temp_dir().join("novasvn-generated-outside.patch");
         let _ = std::fs::remove_dir_all(&allowed);
         std::fs::create_dir_all(&allowed).unwrap();
+        let inside = allowed.join("safe.txt");
+        std::fs::write(&inside, "safe").unwrap();
         std::fs::write(&outside, "patch").unwrap();
+
+        assert_eq!(
+            normalize_generated_file_path(&allowed, &inside.display().to_string()).unwrap(),
+            inside.canonicalize().unwrap()
+        );
 
         let error = normalize_generated_file_path(&allowed, &outside.display().to_string())
             .expect_err("outside generated file root must be rejected");

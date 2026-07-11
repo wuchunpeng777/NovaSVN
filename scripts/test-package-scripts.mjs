@@ -523,6 +523,20 @@ if (
 }
 
 if (
+  !mainWorkspace.includes("onOpenRepositoryFile(entry.name)") ||
+  !mainWorkspace.includes("打开仓库文件 ${entry.name} 的临时副本") ||
+  !appSvelte.includes("openRepositoryTempFile({ path: result.file_path })") ||
+  !appSvelte.includes("pendingRepositoryFileTaskId") ||
+  !appStore.includes("function markRepositoryFileTask(") ||
+  !taskRs.includes("TaskPayload::RepositoryFile") ||
+  !taskRs.includes(".stdout(std::process::Stdio::from(file))") ||
+  !taskRs.includes("repository_file: Some(RepositoryFileResult")
+) {
+  console.error("Repository 文件必须通过真实 svn cat 流式下载，并从独立 pending 任务打开安全临时副本");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||

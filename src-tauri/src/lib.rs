@@ -18,8 +18,8 @@ use diff::{GenerateSelectedPatchRequest, ParsedDiff, SelectedPatch};
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
 use external_tool::{
     ExternalToolLaunch, LaunchExternalToolRequest, OpenFileLocation, OpenFileLocationRequest,
-    OpenGeneratedFileLocation, OpenGeneratedFileLocationRequest, OpenWorkspaceFile,
-    OpenWorkspaceFileRequest,
+    OpenGeneratedFileLocation, OpenGeneratedFileLocationRequest, OpenRepositoryTempFile,
+    OpenRepositoryTempFileRequest, OpenWorkspaceFile, OpenWorkspaceFileRequest,
 };
 use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
@@ -27,10 +27,11 @@ use system_integration::StartupIntent;
 use task::{
     CreateApplyPatchTaskRequest, CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest,
     CreateMergeTaskRequest, CreateMockTaskRequest, CreatePartialCommitTaskRequest,
-    CreateRepositoryCopyTaskRequest, CreateRepositoryListTaskRequest,
-    CreateRevertRevisionTaskRequest, CreateRevisionDiffTaskRequest,
-    CreateShadowWorkspaceTaskRequest, CreateSvnBatchOperationTaskRequest,
-    CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest, Task, TaskQueue, TaskSnapshot,
+    CreateRepositoryCopyTaskRequest, CreateRepositoryFileTaskRequest,
+    CreateRepositoryListTaskRequest, CreateRevertRevisionTaskRequest,
+    CreateRevisionDiffTaskRequest, CreateShadowWorkspaceTaskRequest,
+    CreateSvnBatchOperationTaskRequest, CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest,
+    Task, TaskQueue, TaskSnapshot,
 };
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use tauri::{Emitter, Manager};
@@ -444,6 +445,29 @@ fn open_generated_file_location(
 }
 
 #[tauri::command]
+fn open_repository_temp_file(
+    app: tauri::AppHandle,
+    request: OpenRepositoryTempFileRequest,
+) -> CommandResult<OpenRepositoryTempFile> {
+    println!("[NovaSVN] open_repository_temp_file command received");
+    let generated_root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| {
+            NovaError::command(
+                "APP_DATA_DIR_FAILED",
+                "无法获取应用数据目录",
+                Some(error.to_string()),
+                true,
+            )
+        })?
+        .join("repository-files");
+    Ok(CommandResponse::success(
+        external_tool::open_repository_temp_file(&generated_root, request)?,
+    ))
+}
+
+#[tauri::command]
 fn create_mock_task(
     queue: tauri::State<'_, TaskQueue>,
     request: CreateMockTaskRequest,
@@ -515,6 +539,18 @@ fn create_repository_list_task(
     println!("[NovaSVN] create_repository_list_task command received");
     Ok(CommandResponse::success(
         queue.create_repository_list_task(request)?,
+    ))
+}
+
+#[tauri::command]
+fn create_repository_file_task(
+    app: tauri::AppHandle,
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateRepositoryFileTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_repository_file_task command received");
+    Ok(CommandResponse::success(
+        queue.create_repository_file_task(&app, request)?,
     ))
 }
 
@@ -822,6 +858,7 @@ pub fn run() {
             open_file_location,
             open_workspace_file,
             open_generated_file_location,
+            open_repository_temp_file,
             create_mock_task,
             create_commit_task,
             create_svn_operation_task,
@@ -829,6 +866,7 @@ pub fn run() {
             create_shadow_workspace_task,
             create_partial_commit_task,
             create_repository_list_task,
+            create_repository_file_task,
             create_repository_copy_task,
             create_branch_checkout_task,
             create_svn_switch_task,

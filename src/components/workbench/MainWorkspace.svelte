@@ -76,6 +76,8 @@
   export let repositoryList: RepositoryListResult | null = null;
   export let repositoryLoading = false;
   export let repositoryError: string | null = null;
+  export let repositoryFileLoading = false;
+  export let repositoryFileError: string | null = null;
   export let repositoryLayout = {
     trunkPath: "trunk",
     branchesPath: "branches",
@@ -302,6 +304,7 @@
   export let onRepositoryRevisionInput: (value: string) => void = () => {};
   export let onUseWorkspaceRepositoryRoot: () => void = () => {};
   export let onLoadRepositoryUrl: (url?: string) => void = () => {};
+  export let onOpenRepositoryFile: (fileName: string) => void = () => {};
   export let onRepositoryLayoutPathInput: (
     kind: "trunk" | "branches" | "tags",
     value: string,
@@ -2422,6 +2425,9 @@
         {#if repositoryError}
           <p class="inline-error">{repositoryError}</p>
         {/if}
+        {#if repositoryFileError}
+          <p class="inline-error">{repositoryFileError}</p>
+        {/if}
 
         {#if breadcrumbs.length > 0}
           <nav class="breadcrumbs" aria-label="仓库路径">
@@ -2466,8 +2472,21 @@
               <button
                 type="button"
                 class="repository-row"
-                disabled={entry.kind !== "dir"}
-                on:click={() => onLoadRepositoryUrl(joinRepositoryUrl(repositoryList.url, entry.name))}
+                disabled={entry.kind !== "dir" && (entry.kind !== "file" || repositoryFileLoading)}
+                aria-label={entry.kind === "dir"
+                  ? `打开仓库目录 ${entry.name}`
+                  : entry.kind === "file"
+                    ? `打开仓库文件 ${entry.name} 的临时副本`
+                    : `仓库条目 ${entry.name}`}
+                title={entry.kind === "dir"
+                  ? `打开目录 ${entry.name}`
+                  : entry.kind === "file"
+                    ? `下载并打开 ${entry.name} @${repositoryList.revision ? `r${repositoryList.revision}` : "HEAD"}`
+                    : undefined}
+                on:click={() =>
+                  entry.kind === "dir"
+                    ? onLoadRepositoryUrl(joinRepositoryUrl(repositoryList.url, entry.name))
+                    : onOpenRepositoryFile(entry.name)}
               >
                 <strong>{entry.name || "/"}</strong>
                 <span title={entry.kind}>{repositoryEntryKindLabel(entry.kind)}</span>
