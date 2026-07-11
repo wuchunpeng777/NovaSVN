@@ -1189,12 +1189,27 @@ textarea {
 
 .timeline-entry > button {
   display: grid;
-  grid-template-columns: 80px 120px 1fr;
+  grid-template-columns: 68px minmax(80px, 110px) 76px minmax(58px, 1fr);
+  align-items: center;
+  gap: 6px;
   width: 100%;
   border: 0;
   background: #ffffff;
   padding: 0;
   text-align: left;
+}
+
+.timeline-author,
+.timeline-path-count {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-path-count {
+  color: #6b7784;
+  text-align: right;
 }
 
 .timeline-entry > button:hover {
@@ -1206,9 +1221,53 @@ textarea {
   font-weight: 700;
 }
 
-.timeline-entry p {
+.timeline-message {
   margin: 6px 0 0;
   color: #344150;
+}
+
+.timeline-changed-paths {
+  display: grid;
+  gap: 1px;
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid #dbe1e6;
+  border-radius: 5px;
+  background: #dbe1e6;
+}
+
+.timeline-changed-path {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 50px;
+  align-items: start;
+  gap: 7px;
+  background: #f8f9fa;
+  padding: 5px 7px;
+  font-size: 11px;
+}
+
+.timeline-changed-path code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.timeline-changed-path small {
+  color: #6b7784;
+  text-align: right;
+}
+
+.timeline-path-toggle {
+  width: 100%;
+  min-height: 27px;
+  border: 0;
+  border-radius: 0;
+  background: #f1f4f6;
+  color: #315f86;
+}
+
+.timeline-no-paths {
+  margin: 7px 0 0;
 }
 
 .revision-compare {
@@ -1785,6 +1844,25 @@ textarea {
 
 .versions-workbench[data-theme="dark"] .timeline-day-header span {
   color: #aeb8c2;
+}
+
+.versions-workbench[data-theme="dark"] .timeline-path-count,
+.versions-workbench[data-theme="dark"] .timeline-changed-path small {
+  color: #aeb8c2;
+}
+
+.versions-workbench[data-theme="dark"] .timeline-changed-paths {
+  border-color: #414852;
+  background: #414852;
+}
+
+.versions-workbench[data-theme="dark"] .timeline-changed-path {
+  background: #20242a;
+}
+
+.versions-workbench[data-theme="dark"] .timeline-path-toggle {
+  background: #303740;
+  color: #9bc9ee;
 }
 
 .versions-workbench[data-theme="dark"] .window-identity span,

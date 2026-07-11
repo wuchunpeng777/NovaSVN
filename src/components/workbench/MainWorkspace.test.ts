@@ -320,7 +320,7 @@ describe("MainWorkspace", () => {
           has_more: false,
           next_start_revision: null,
           entries: [
-            makeLogEntry("12", "2026-07-11T15:20:00", "alice", "完成菜单"),
+            makeLogEntry("12", "2026-07-11T15:20:00", "alice", "完成菜单", 5),
             makeLogEntry("11", "2026-07-11T09:10:00", "bob", "补充测试"),
             makeLogEntry("10", "2026-07-10T18:30:00", "alice", "更新文档"),
             makeLogEntry("9", "invalid-date", "carol", "旧数据"),
@@ -334,6 +334,19 @@ describe("MainWorkspace", () => {
     expect(newestDay).toHaveTextContent("2 revisions");
     expect(within(newestDay).getByText("r12")).toBeInTheDocument();
     expect(within(newestDay).getByText("r11")).toBeInTheDocument();
+    const newestEntry = within(newestDay).getByText("r12").closest(".timeline-entry") as HTMLElement;
+    expect(newestEntry).toHaveTextContent("alice");
+    expect(newestEntry).toHaveTextContent("15:20:00");
+    expect(newestEntry).toHaveTextContent("完成菜单");
+    expect(newestEntry).toHaveTextContent("5 paths");
+    expect(newestEntry).toHaveTextContent("/trunk/file-12-1.txt");
+    expect(newestEntry).toHaveTextContent("/trunk/file-12-3.txt");
+    expect(newestEntry).not.toHaveTextContent("/trunk/file-12-4.txt");
+    await fireEvent.click(
+      within(newestEntry).getByRole("button", { name: "展开其余 2 条路径" }),
+    );
+    expect(newestEntry).toHaveTextContent("/trunk/file-12-4.txt");
+    expect(newestEntry).toHaveTextContent("/trunk/file-12-5.txt");
 
     const priorDay = within(timeline).getByRole("group", { name: "2026年7月10日" });
     expect(priorDay).toHaveTextContent("1 revision");
@@ -1305,20 +1318,24 @@ function makeNodeMetadata(
   };
 }
 
-function makeLogEntry(revision: string, date: string, author: string, message: string) {
+function makeLogEntry(
+  revision: string,
+  date: string,
+  author: string,
+  message: string,
+  pathCount = 1,
+) {
   return {
     revision,
     author,
     date,
     message,
-    changed_paths: [
-      {
-        path: `/trunk/file-${revision}.txt`,
-        action: "M",
-        kind: "file",
-        copy_from_path: null,
-        copy_from_revision: null,
-      },
-    ],
+    changed_paths: Array.from({ length: pathCount }, (_, index) => ({
+      path: `/trunk/file-${revision}-${index + 1}.txt`,
+      action: "M",
+      kind: "file",
+      copy_from_path: null,
+      copy_from_revision: null,
+    })),
   };
 }

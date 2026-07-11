@@ -409,6 +409,7 @@
   let showWhitespace = false;
   let workingCopyTreeFilter: WorkingCopyTreeFilter = "all";
   let selectedLogRevision: string | null = null;
+  let expandedTimelineRevisions = new Set<string>();
   let collapsedTreePaths = new Set<string>();
   let openRowMenuPath: string | null = null;
   let selectedRowPaths = new Set<string>();
@@ -587,6 +588,38 @@
       }
     }
     return [...groups.values()];
+  }
+
+  function formatTimelineTime(value: string) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return "-";
+    }
+    return date.toLocaleTimeString("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  }
+
+  function timelineEntryPaths(
+    entry: SvnLog["entries"][number],
+    expandedRevisions: Set<string>,
+  ) {
+    return expandedRevisions.has(entry.revision)
+      ? entry.changed_paths
+      : entry.changed_paths.slice(0, 3);
+  }
+
+  function toggleTimelineEntryPaths(revision: string) {
+    const next = new Set(expandedTimelineRevisions);
+    if (next.has(revision)) {
+      next.delete(revision);
+    } else {
+      next.add(revision);
+    }
+    expandedTimelineRevisions = next;
   }
 
   function selectInspectorTab(tab: InspectorTab, focus = false) {
@@ -1834,10 +1867,39 @@
                         on:click={() => selectLogEntry(entry.revision)}
                       >
                         <strong>r{entry.revision}</strong>
-                        <span>{entry.author || "-"}</span>
-                        <time>{formatDate(entry.date)}</time>
+                        <span class="timeline-author" title={entry.author || undefined}>{entry.author || "-"}</span>
+                        <time title={entry.date}>{formatTimelineTime(entry.date)}</time>
+                        <span class="timeline-path-count">{entry.changed_paths.length} paths</span>
                       </button>
-                      <p>{entry.message || "无提交信息"}</p>
+                      <p class="timeline-message">{entry.message || "无提交信息"}</p>
+                      {#if entry.changed_paths.length > 0}
+                        <div
+                          class="timeline-changed-paths"
+                          aria-label={`r${entry.revision} 改变路径`}
+                        >
+                          {#each timelineEntryPaths(entry, expandedTimelineRevisions) as path (`${entry.revision}:${path.path}:${path.action}`)}
+                            <div class="timeline-changed-path">
+                              <span class="change-action">{path.action || "-"}</span>
+                              <code>{path.path}</code>
+                              <small>{path.kind || "-"}</small>
+                            </div>
+                          {/each}
+                          {#if entry.changed_paths.length > 3}
+                            <button
+                              type="button"
+                              class="timeline-path-toggle"
+                              aria-expanded={expandedTimelineRevisions.has(entry.revision)}
+                              on:click={() => toggleTimelineEntryPaths(entry.revision)}
+                            >
+                              {expandedTimelineRevisions.has(entry.revision)
+                                ? "收起改变路径"
+                                : `展开其余 ${entry.changed_paths.length - 3} 条路径`}
+                            </button>
+                          {/if}
+                        </div>
+                      {:else}
+                        <p class="muted timeline-no-paths">没有改变路径</p>
+                      {/if}
                     </article>
                   {/each}
                 </section>

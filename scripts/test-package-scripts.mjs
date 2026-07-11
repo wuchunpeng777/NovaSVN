@@ -407,9 +407,11 @@ if (
 if (
   !mainWorkspace.includes("groupTimelineEntries") ||
   !mainWorkspace.includes('class="timeline-day-group"') ||
-  !mainWorkspace.includes('class="timeline-day-header"')
+  !mainWorkspace.includes('class="timeline-day-header"') ||
+  !mainWorkspace.includes('class="timeline-changed-paths"') ||
+  !mainWorkspace.includes("expandedTimelineRevisions")
 ) {
-  console.error("Timeline 必须按本地日期分组 revision，并保留未知日期组");
+  console.error("Timeline 必须按日期分组，并完整展示可展开的 revision 改变路径");
   failed = true;
 }
 
