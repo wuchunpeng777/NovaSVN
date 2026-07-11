@@ -364,6 +364,19 @@ if (
 }
 
 if (
+  !fileBrowserSource.includes("on:contextmenu") ||
+  !mainWorkspace.includes('class="workspace-context-menu"') ||
+  !mainWorkspace.includes('event.key === "ContextMenu"') ||
+  !mainWorkspace.includes('event.shiftKey && event.key === "F10"') ||
+  !mainWorkspace.includes("runContextRevert") ||
+  !mainWorkspace.includes("runContextMove") ||
+  !mainWorkspace.includes("runContextDelete")
+) {
+  console.error("工作副本路径必须提供状态化右键菜单、批量操作和键盘入口");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||

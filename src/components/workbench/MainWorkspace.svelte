@@ -404,6 +404,11 @@
   let activeRowPath: string | null = null;
   let keyboardRangeAnchorPath: string | null = null;
   let keyboardRangeBasePaths = new Set<string>();
+  let contextMenuPath: string | null = null;
+  let contextMenuX = 0;
+  let contextMenuY = 0;
+  let fileBrowserElement: HTMLElement | null = null;
+  let contextMenuElement: HTMLElement | null = null;
   let selectionWorkspaceRoot: string | null = null;
   let selectionFileTree: WorkspaceFileTree | null = null;
   const inspectorMinWidth = 300;
@@ -699,6 +704,7 @@
       activeRowPath = null;
       keyboardRangeAnchorPath = null;
       keyboardRangeBasePaths = new Set();
+      closeContextMenu();
     }
     if (selectionFileTree === fileTree) {
       return;
@@ -713,6 +719,9 @@
     }
     if (rowSelectionAnchorPath && !availablePaths.has(rowSelectionAnchorPath)) {
       rowSelectionAnchorPath = null;
+    }
+    if (contextMenuPath && !availablePaths.has(contextMenuPath)) {
+      closeContextMenu();
     }
   }
 
@@ -891,6 +900,144 @@
     }
   }
 
+  function closeContextMenu(restoreGridFocus = false) {
+    contextMenuPath = null;
+    contextMenuElement = null;
+    if (restoreGridFocus) {
+      queueMicrotask(() => fileBrowserElement?.focus());
+    }
+  }
+
+  function focusInitialContextMenuItem() {
+    queueMicrotask(() => {
+      if (!contextMenuElement) {
+        return;
+      }
+      const rect = contextMenuElement.getBoundingClientRect();
+      contextMenuX = Math.max(8, Math.min(contextMenuX, window.innerWidth - rect.width - 8));
+      contextMenuY = Math.max(8, Math.min(contextMenuY, window.innerHeight - rect.height - 8));
+      contextMenuElement
+        .querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+        ?.focus();
+    });
+  }
+
+  function openContextMenuAt(node: WorkspaceTreeRow, clientX: number, clientY: number) {
+    activeRowPath = node.path;
+    rowSelectionAnchorPath = node.path;
+    keyboardRangeAnchorPath = node.path;
+    if (!selectedRowPaths.has(node.path)) {
+      selectedRowPaths = new Set([node.path]);
+      keyboardRangeBasePaths = new Set(selectedRowPaths);
+    }
+    contextMenuPath = node.path;
+    contextMenuX = clientX;
+    contextMenuY = clientY;
+    openRowMenuPath = null;
+    if (node.kind === "file") {
+      selectTreeNode(node);
+    }
+    focusInitialContextMenuItem();
+  }
+
+  function openRowContextMenu(event: MouseEvent, node: WorkspaceTreeRow) {
+    event.preventDefault();
+    event.stopPropagation();
+    openContextMenuAt(node, event.clientX, event.clientY);
+  }
+
+  function openActiveRowContextMenu() {
+    const node = treeRows.find((row) => row.path === activeRowPath) ?? treeRows[0];
+    if (!node) {
+      return;
+    }
+    const row = document.getElementById(rowDomId(node.path));
+    const rect = row?.getBoundingClientRect();
+    openContextMenuAt(node, rect?.left ?? 12, rect?.bottom ?? 12);
+  }
+
+  function runContextMenuAction(action: () => void) {
+    closeContextMenu();
+    action();
+  }
+
+  function runContextRevert() {
+    const paths = selectedRevertablePaths;
+    if (paths.length === 1) {
+      onRevertFile(paths[0]);
+    } else if (paths.length > 1) {
+      onRevertPaths(paths);
+    }
+  }
+
+  function runContextMove() {
+    const paths = selectedMovablePaths;
+    if (paths.length === 1) {
+      onMovePath(paths[0]);
+    } else if (paths.length > 1) {
+      onMovePaths(paths);
+    }
+  }
+
+  function runContextDelete() {
+    const paths = selectedDeletablePaths;
+    if (paths.length === 1) {
+      onDeletePath(paths[0]);
+    } else if (paths.length > 1) {
+      onDeletePaths(paths);
+    }
+  }
+
+  function contextMenuItems() {
+    return Array.from(
+      contextMenuElement?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]:not(:disabled)',
+      ) ?? [],
+    );
+  }
+
+  function handleContextMenuKeydown(event: KeyboardEvent) {
+    const items = contextMenuItems();
+    if (items.length === 0) {
+      return;
+    }
+    const currentIndex = items.findIndex((item) => item === document.activeElement);
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowDown") {
+      nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
+    } else if (event.key === "ArrowUp") {
+      nextIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = items.length - 1;
+    } else if (event.key === "Escape") {
+      closeContextMenu(true);
+      event.preventDefault();
+      return;
+    } else {
+      return;
+    }
+    items[nextIndex]?.focus();
+    event.preventDefault();
+  }
+
+  function closeContextMenuOnOutsidePointer(event: PointerEvent) {
+    if (
+      contextMenuPath &&
+      event.target instanceof Node &&
+      !contextMenuElement?.contains(event.target)
+    ) {
+      closeContextMenu();
+    }
+  }
+
+  function closeContextMenuOnWindowChange() {
+    if (contextMenuPath) {
+      closeContextMenu();
+    }
+  }
+
   function moveActiveRow(targetIndex: number, extendSelection: boolean) {
     const boundedIndex = Math.max(0, Math.min(treeRows.length - 1, targetIndex));
     const target = treeRows[boundedIndex];
@@ -915,6 +1062,11 @@
       treeRows.findIndex((row) => row.path === activeRowPath),
     );
     const current = treeRows[currentIndex];
+    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+      openActiveRowContextMenu();
+      event.preventDefault();
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
       toggleVisibleRowSelection(true);
       event.preventDefault();
@@ -1227,12 +1379,18 @@
   onDestroy(() => {
     stopInspectorResize();
     window.removeEventListener("resize", syncInspectorWidthToWindow);
+    window.removeEventListener("resize", closeContextMenuOnWindowChange);
+    window.removeEventListener("blur", closeContextMenuOnWindowChange);
+    window.removeEventListener("pointerdown", closeContextMenuOnOutsidePointer);
     themeMediaQuery?.removeEventListener("change", syncSystemTheme);
   });
 
   onMount(() => {
     syncInspectorWidthToWindow();
     window.addEventListener("resize", syncInspectorWidthToWindow);
+    window.addEventListener("resize", closeContextMenuOnWindowChange);
+    window.addEventListener("blur", closeContextMenuOnWindowChange);
+    window.addEventListener("pointerdown", closeContextMenuOnOutsidePointer);
     if (typeof window.matchMedia === "function") {
       themeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
       syncSystemTheme();
@@ -1288,6 +1446,7 @@
     filteredLogEntries[0] ??
     null;
   $: selectedTreeNode = treeNodeForPath(selectedFilePath);
+  $: contextMenuNode = treeNodeForPath(contextMenuPath);
   $: unconfirmedWarningCount = safetyCheck.warnings.filter(
     (item) => !safetyCheck.confirmedWarningIds.includes(item.id),
   ).length;
@@ -2461,6 +2620,7 @@
           style={`--inspector-width: ${inspectorWidth}px`}
         >
           <div
+            bind:this={fileBrowserElement}
             class="file-browser"
             role="treegrid"
             tabindex="0"
@@ -2496,6 +2656,7 @@
                   id={rowDomId(node.path)}
                   class="file-row"
                   role="row"
+                  tabindex="-1"
                   aria-level={node.depth + 1}
                   aria-expanded={node.kind === "dir" ? !isTreeNodeCollapsed(node, collapsedTreePaths) : undefined}
                   aria-selected={isRowSelected(node.path, selectedRowPaths)}
@@ -2504,6 +2665,7 @@
                   class:active-row={activeRowPath === node.path}
                   class:inspected={node.kind === "file" && isSelectedPath(node.path)}
                   class:abnormal={["missing", "conflicted", "obstructed"].includes(node.status)}
+                  on:contextmenu={(event) => openRowContextMenu(event, node)}
                 >
                   <span class="selection-cell" role="gridcell">
                     <input
@@ -3113,6 +3275,134 @@
       {/if}
     </main>
   </div>
+
+  {#if contextMenuNode}
+    <div
+      bind:this={contextMenuElement}
+      class="workspace-context-menu"
+      role="menu"
+      tabindex="-1"
+      aria-label={`路径菜单 ${contextMenuNode.path}`}
+      style={`left: ${contextMenuX}px; top: ${contextMenuY}px`}
+      on:keydown={handleContextMenuKeydown}
+      on:focusout={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (nextTarget instanceof Node && !event.currentTarget.contains(nextTarget)) {
+          closeContextMenu();
+        }
+      }}
+    >
+      {#if canOpenWorkspaceNode(contextMenuNode)}
+        <button
+          type="button"
+          role="menuitem"
+          on:click={() => runContextMenuAction(() => onOpenWorkspaceFile(contextMenuNode.path))}
+        >
+          打开
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          on:click={() => runContextMenuAction(() => onOpenFileLocation(contextMenuNode.path))}
+        >
+          显示位置
+        </button>
+        <span role="separator"></span>
+      {/if}
+      {#if isUnversionedPath(contextMenuNode.path)}
+        <button
+          type="button"
+          role="menuitem"
+          disabled={statusLoading || toolbarLocked}
+          on:click={() => runContextMenuAction(() => onAddFile(contextMenuNode.path))}
+        >
+          Add
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={statusLoading || toolbarLocked}
+          on:click={() => runContextMenuAction(() => onIgnorePath(contextMenuNode.path))}
+        >
+          Ignore
+        </button>
+      {:else}
+        {#if isConflictedPath(contextMenuNode.path)}
+          <button
+            type="button"
+            role="menuitem"
+            on:click={() => runContextMenuAction(() => onSelectFile(contextMenuNode.path))}
+          >
+            Resolve
+          </button>
+        {/if}
+        {#if selectedCommittablePaths.length > 0}
+          <button
+            type="button"
+            role="menuitem"
+            disabled={statusLoading}
+            on:click={() => runContextMenuAction(toggleSelectedCommitPaths)}
+          >
+            {allSelectedCommitTargets ? "移出 Commit" : "加入 Commit"}
+          </button>
+        {/if}
+        {#if contextMenuNode.change_scope === "remote" || contextMenuNode.change_scope === "both"}
+          <button
+            type="button"
+            role="menuitem"
+            disabled={statusLoading || toolbarLocked}
+            on:click={() => runContextMenuAction(() => onUpdatePath(contextMenuNode.path))}
+          >
+            Update
+          </button>
+        {/if}
+      {/if}
+      {#if selectedRevertablePaths.length > 0 || selectedMovablePaths.length > 0 || selectedDeletablePaths.length > 0}
+        <span role="separator"></span>
+      {/if}
+      {#if selectedRevertablePaths.length > 0}
+        <button
+          type="button"
+          role="menuitem"
+          disabled={statusLoading || toolbarLocked}
+          on:click={() => runContextMenuAction(runContextRevert)}
+        >
+          Revert{selectedRevertablePaths.length > 1 ? ` ${selectedRevertablePaths.length} 项` : ""}
+        </button>
+      {/if}
+      {#if selectedMovablePaths.length > 0}
+        <button
+          type="button"
+          role="menuitem"
+          disabled={statusLoading || toolbarLocked}
+          on:click={() => runContextMenuAction(runContextMove)}
+        >
+          Move{selectedMovablePaths.length > 1 ? ` ${selectedMovablePaths.length} 项` : ""}
+        </button>
+      {/if}
+      {#if canMovePath(contextMenuNode)}
+        <button
+          type="button"
+          role="menuitem"
+          disabled={statusLoading || toolbarLocked}
+          on:click={() => runContextMenuAction(() => onCopyPath(contextMenuNode.path))}
+        >
+          Copy
+        </button>
+      {/if}
+      {#if selectedDeletablePaths.length > 0}
+        <button
+          type="button"
+          role="menuitem"
+          class="danger-action"
+          disabled={statusLoading || toolbarLocked}
+          on:click={() => runContextMenuAction(runContextDelete)}
+        >
+          Delete{selectedDeletablePaths.length > 1 ? ` ${selectedDeletablePaths.length} 项` : ""}
+        </button>
+      {/if}
+    </div>
+  {/if}
 
   {#if applyPatchDialogOpen}
     <div class="patch-dialog-backdrop">

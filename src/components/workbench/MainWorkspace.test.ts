@@ -630,6 +630,101 @@ describe("MainWorkspace", () => {
     );
   });
 
+  it("opens a state-aware context menu for pointer and keyboard workflows", async () => {
+    const alpha = makeFile("alpha.txt", "modified", "alpha-digest");
+    const beta = makeFile("beta.txt", "modified", "beta-digest");
+    const remote = {
+      ...makeFile("remote.txt", "normal", "remote-digest"),
+      remote_status: "modified",
+      change_scope: "remote" as const,
+    };
+    const draft = makeFile("draft.txt", "unversioned", "draft-digest");
+    const tree: WorkspaceFileTree = {
+      working_copy_root: "C:/repo/wc",
+      total_files: 4,
+      returned_files: 4,
+      truncated: false,
+      nodes: [
+        makeScopedNode("alpha.txt", "modified", "local"),
+        makeScopedNode("beta.txt", "modified", "local"),
+        makeScopedNode("remote.txt", "normal", "remote", "modified"),
+        {
+          ...makeScopedNode("draft.txt", "unversioned", "local"),
+          versioned: false,
+        },
+      ],
+    };
+    const onRevertPaths = vi.fn();
+    const onUpdatePath = vi.fn();
+    const onIgnorePath = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([alpha, beta, remote, draft]),
+        workspaceFileTree: tree,
+        onRevertPaths,
+        onUpdatePath,
+        onIgnorePath,
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择文件 alpha.txt" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择文件 beta.txt" }));
+    await fireEvent.contextMenu(document.getElementById("workspace-row-alpha.txt") as HTMLElement, {
+      clientX: 140,
+      clientY: 120,
+    });
+
+    const batchMenu = screen.getByRole("menu", { name: "路径菜单 alpha.txt" });
+    expect(screen.getByRole("checkbox", { name: "选择文件 beta.txt" })).toBeChecked();
+    expect(within(batchMenu).getByRole("menuitem", { name: "Revert 2 项" })).toBeInTheDocument();
+    expect(within(batchMenu).getByRole("menuitem", { name: "Move 2 项" })).toBeInTheDocument();
+    expect(within(batchMenu).getByRole("menuitem", { name: "Delete 2 项" })).toBeInTheDocument();
+    await fireEvent.click(within(batchMenu).getByRole("menuitem", { name: "Revert 2 项" }));
+    expect(onRevertPaths).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
+    expect(screen.queryByRole("menu", { name: "路径菜单 alpha.txt" })).not.toBeInTheDocument();
+
+    await fireEvent.contextMenu(document.getElementById("workspace-row-beta.txt") as HTMLElement, {
+      clientX: 5000,
+      clientY: 5000,
+    });
+    const boundedMenu = screen.getByRole("menu", { name: "路径菜单 beta.txt" });
+    await waitFor(() => {
+      expect(Number.parseFloat(boundedMenu.style.left)).toBeLessThanOrEqual(window.innerWidth - 8);
+      expect(Number.parseFloat(boundedMenu.style.top)).toBeLessThanOrEqual(window.innerHeight - 8);
+    });
+    await fireEvent.keyDown(boundedMenu, { key: "Escape" });
+
+    await fireEvent.contextMenu(document.getElementById("workspace-row-remote.txt") as HTMLElement);
+    const remoteMenu = screen.getByRole("menu", { name: "路径菜单 remote.txt" });
+    expect(screen.getByRole("checkbox", { name: "选择文件 remote.txt" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "选择文件 alpha.txt" })).not.toBeChecked();
+    expect(within(remoteMenu).queryByRole("menuitem", { name: /Commit/ })).not.toBeInTheDocument();
+    expect(within(remoteMenu).queryByRole("menuitem", { name: /Revert/ })).not.toBeInTheDocument();
+    await fireEvent.click(within(remoteMenu).getByRole("menuitem", { name: "Update" }));
+    expect(onUpdatePath).toHaveBeenCalledWith("remote.txt");
+
+    await fireEvent.contextMenu(document.getElementById("workspace-row-draft.txt") as HTMLElement);
+    const draftMenu = screen.getByRole("menu", { name: "路径菜单 draft.txt" });
+    expect(within(draftMenu).getByRole("menuitem", { name: "Add" })).toBeInTheDocument();
+    await fireEvent.click(within(draftMenu).getByRole("menuitem", { name: "Ignore" }));
+    expect(onIgnorePath).toHaveBeenCalledWith("draft.txt");
+
+    const treegrid = screen.getByRole("treegrid", { name: "工作副本文件树" });
+    treegrid.focus();
+    await fireEvent.keyDown(treegrid, { key: "F10", shiftKey: true });
+    const keyboardMenu = screen.getByRole("menu", { name: "路径菜单 draft.txt" });
+    await waitFor(() => {
+      expect(within(keyboardMenu).getByRole("menuitem", { name: "打开" })).toHaveFocus();
+    });
+    await fireEvent.keyDown(keyboardMenu, { key: "ArrowDown" });
+    expect(within(keyboardMenu).getByRole("menuitem", { name: "显示位置" })).toHaveFocus();
+    await fireEvent.keyDown(keyboardMenu, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "路径菜单 draft.txt" })).not.toBeInTheDocument();
+    await waitFor(() => expect(treegrid).toHaveFocus());
+  });
+
   it("moves and deletes versioned files and directories from the working copy", async () => {
     const onDeletePath = vi.fn();
     const onMovePath = vi.fn();
