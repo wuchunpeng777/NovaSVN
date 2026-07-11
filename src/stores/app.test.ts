@@ -12,6 +12,7 @@ vi.mock("../lib/api", () => ({
   detectSvn: vi.fn(),
   getFileContentDiff: vi.fn(),
   getFileDiff: vi.fn(),
+  getRepositoryFileLog: vi.fn(),
   getSvnBlame: vi.fn(),
   getSvnLog: vi.fn(),
   getSvnProperties: vi.fn(),
@@ -41,6 +42,7 @@ import {
   detectSvn,
   getFileContentDiff,
   getFileDiff,
+  getRepositoryFileLog,
   getSvnBlame,
   getSvnLog,
   getSvnProperties,
@@ -91,6 +93,7 @@ const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
 const detectSvnMock = vi.mocked(detectSvn);
 const getFileContentDiffMock = vi.mocked(getFileContentDiff);
 const getFileDiffMock = vi.mocked(getFileDiff);
+const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const getSvnBlameMock = vi.mocked(getSvnBlame);
 const getSvnLogMock = vi.mocked(getSvnLog);
 const getSvnPropertiesMock = vi.mocked(getSvnProperties);
@@ -117,6 +120,7 @@ beforeEach(() => {
   detectSvnMock.mockReset();
   getFileContentDiffMock.mockReset();
   getFileDiffMock.mockReset();
+  getRepositoryFileLogMock.mockReset();
   getSvnBlameMock.mockReset();
   getSvnLogMock.mockReset();
   getSvnPropertiesMock.mockReset();
@@ -136,6 +140,7 @@ beforeEach(() => {
   workspaceStore.clearWorkspaceDraft();
   workspaceStore.setCommitMessage("");
   workspaceStore.setSvnLogFileOnly(false);
+  workspaceStore.clearRepositoryFileLog();
   workspaceStore.setSvnLogFilter("svnLogAuthorFilter", "");
   workspaceStore.setSvnLogFilter("svnLogKeywordFilter", "");
   workspaceStore.setSvnLogFilter("svnLogDateFromFilter", "");
@@ -926,6 +931,87 @@ describe("taskStore repository list tasks", () => {
     });
     workspaceStore.setRepositoryRevisionInput("");
     expect(get(workspaceStore).repositoryRevisionInput).toBe("");
+  });
+});
+
+describe("workspaceStore repository file log", () => {
+  it("loads the selected historical file and merges later pages without duplicates", async () => {
+    const target = "https://example.com/svn/trunk/README.md";
+    getRepositoryFileLogMock
+      .mockResolvedValueOnce(
+        makeSvnLog(
+          [
+            makeSvnLogEntry({ revision: "10", message: "latest" }),
+            makeSvnLogEntry({ revision: "9", message: "already loaded" }),
+          ],
+          { target, has_more: true, next_start_revision: "9" },
+        ),
+      )
+      .mockResolvedValueOnce(
+        makeSvnLog(
+          [
+            makeSvnLogEntry({ revision: "9", message: "duplicate" }),
+            makeSvnLogEntry({ revision: "8", message: "older" }),
+          ],
+          { target, has_more: false, next_start_revision: null },
+        ),
+      );
+
+    await workspaceStore.loadRepositoryFileLog({
+      url: target,
+      revision: "10",
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(getRepositoryFileLogMock).toHaveBeenNthCalledWith(1, {
+      url: target,
+      revision: "10",
+      svn_executable: "C:/svn/svn.exe",
+      limit: 50,
+    });
+    expect(get(workspaceStore)).toMatchObject({
+      repositoryFileLogRevision: "10",
+      repositoryFileLogLoading: false,
+      repositoryFileLogError: null,
+    });
+
+    await workspaceStore.loadMoreRepositoryFileLog("C:/svn/svn.exe");
+
+    expect(getRepositoryFileLogMock).toHaveBeenNthCalledWith(2, {
+      url: target,
+      revision: "10",
+      svn_executable: "C:/svn/svn.exe",
+      limit: 50,
+      start_revision: "9",
+    });
+    expect(
+      get(workspaceStore).repositoryFileLog?.entries.map((entry) => entry.revision),
+    ).toEqual(["10", "9", "8"]);
+    expect(get(workspaceStore).repositoryFileLog?.has_more).toBe(false);
+  });
+
+  it("ignores a file log response after the panel is closed", async () => {
+    const pending = deferred<SvnLog>();
+    getRepositoryFileLogMock.mockReturnValue(pending.promise);
+
+    const loading = workspaceStore.loadRepositoryFileLog({
+      url: "https://example.com/svn/trunk/slow.txt",
+      revision: "7",
+    });
+    workspaceStore.clearRepositoryFileLog();
+    pending.resolve(
+      makeSvnLog([makeSvnLogEntry({ revision: "7" })], {
+        target: "https://example.com/svn/trunk/slow.txt",
+      }),
+    );
+    await loading;
+
+    expect(get(workspaceStore)).toMatchObject({
+      repositoryFileLogRevision: null,
+      repositoryFileLog: null,
+      repositoryFileLogLoading: false,
+      repositoryFileLogError: null,
+    });
   });
 });
 

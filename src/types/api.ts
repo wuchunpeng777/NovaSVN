@@ -556,6 +556,14 @@ export interface SetSvnPropertyRequest {
   svn_executable?: string;
 }
 
+export interface GetRepositoryFileLogRequest {
+  url: string;
+  revision?: string;
+  svn_executable?: string;
+  limit?: number;
+  start_revision?: string;
+}
+
 export interface CreateRevertRevisionTaskRequest {
   working_copy_root: string;
   target_revision: string;

@@ -5476,7 +5476,7 @@ fn batch_operation_title(
     }
 }
 
-fn normalize_repository_url(url: &str) -> Result<String, NovaError> {
+pub(crate) fn normalize_repository_url(url: &str) -> Result<String, NovaError> {
     let trimmed = url.trim();
     if trimmed.is_empty() {
         return Err(NovaError::command(
@@ -5695,7 +5695,9 @@ fn normalize_revert_target_revision(revision: &str) -> Result<String, NovaError>
     Ok(value.to_string())
 }
 
-fn normalize_repository_list_revision(revision: Option<&str>) -> Result<Option<String>, NovaError> {
+pub(crate) fn normalize_repository_list_revision(
+    revision: Option<&str>,
+) -> Result<Option<String>, NovaError> {
     let Some(value) = revision.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
     };

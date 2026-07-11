@@ -551,6 +551,9 @@ describe("MainWorkspace", () => {
     const onRepositoryRevisionInput = vi.fn();
     const onLoadRepositoryUrl = vi.fn();
     const onOpenRepositoryFile = vi.fn();
+    const onLoadRepositoryFileLog = vi.fn();
+    const onLoadMoreRepositoryFileLog = vi.fn();
+    const onCloseRepositoryFileLog = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.repository,
@@ -580,6 +583,9 @@ describe("MainWorkspace", () => {
         onRepositoryRevisionInput,
         onLoadRepositoryUrl,
         onOpenRepositoryFile,
+        onLoadRepositoryFileLog,
+        onLoadMoreRepositoryFileLog,
+        onCloseRepositoryFileLog,
       },
     });
 
@@ -605,6 +611,12 @@ describe("MainWorkspace", () => {
     );
     await fireEvent.click(fileRow);
     expect(onOpenRepositoryFile).toHaveBeenCalledWith("README.md");
+    const logButton = screen.getByRole("button", {
+      name: "查看仓库文件 README.md 的 Log",
+    });
+    expect(logButton).toHaveAttribute("title", "查看 README.md 的 Log");
+    await fireEvent.click(logButton);
+    expect(onLoadRepositoryFileLog).toHaveBeenCalledWith("README.md");
     await fireEvent.input(revisionInput, { target: { value: "8" } });
     expect(onRepositoryRevisionInput).toHaveBeenCalledWith("8");
     await fireEvent.keyDown(revisionInput, { key: "Enter" });
@@ -618,6 +630,35 @@ describe("MainWorkspace", () => {
       screen.getByRole("button", { name: "打开仓库文件 README.md 的临时副本" }),
     ).toBeDisabled();
     expect(screen.getByText("文件下载失败")).toBeInTheDocument();
+
+    await rerender({
+      repositoryFileLoading: false,
+      repositoryFileError: null,
+      repositoryFileLogRevision: "10",
+      repositoryFileLog: {
+        target: "https://example.com/svn/trunk/README.md",
+        has_more: true,
+        next_start_revision: "7",
+        entries: [
+          {
+            revision: "8",
+            author: "bob",
+            date: "2026-07-09T09:00:00Z",
+            message: "Update README",
+            changed_paths: [],
+          },
+        ],
+      },
+    });
+    const logPanel = screen.getByLabelText("仓库文件日志");
+    expect(within(logPanel).getByText("r8")).toBeInTheDocument();
+    expect(within(logPanel).getByText("Update README")).toBeInTheDocument();
+    await fireEvent.click(within(logPanel).getByRole("button", { name: "更多" }));
+    expect(onLoadMoreRepositoryFileLog).toHaveBeenCalledOnce();
+    await fireEvent.click(
+      within(logPanel).getByRole("button", { name: "关闭仓库文件 Log" }),
+    );
+    expect(onCloseRepositoryFileLog).toHaveBeenCalledOnce();
 
     await rerender({
       repositoryRevisionInput: "",

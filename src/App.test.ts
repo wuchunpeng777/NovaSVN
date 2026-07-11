@@ -22,6 +22,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     ignoreWorkspacePath: vi.fn(),
     getTask: vi.fn(),
     getSvnLog: vi.fn(),
+    getRepositoryFileLog: vi.fn(),
     listTasks: vi.fn(),
     listWorkspaceFiles: vi.fn(),
     openRepositoryTempFile: vi.fn(),
@@ -40,6 +41,7 @@ import {
   ignoreWorkspacePath,
   getTask,
   getSvnLog,
+  getRepositoryFileLog,
   listTasks,
   listWorkspaceFiles,
   openRepositoryTempFile,
@@ -65,6 +67,7 @@ const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
 const ignoreWorkspacePathMock = vi.mocked(ignoreWorkspacePath);
 const getTaskMock = vi.mocked(getTask);
 const getSvnLogMock = vi.mocked(getSvnLog);
+const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const listTasksMock = vi.mocked(listTasks);
 const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
 const openRepositoryTempFileMock = vi.mocked(openRepositoryTempFile);
@@ -80,6 +83,7 @@ beforeEach(async () => {
   ignoreWorkspacePathMock.mockReset();
   getTaskMock.mockReset();
   getSvnLogMock.mockReset();
+  getRepositoryFileLogMock.mockReset();
   listTasksMock.mockReset();
   listWorkspaceFilesMock.mockReset();
   openRepositoryTempFileMock.mockReset();
@@ -514,6 +518,54 @@ describe("App SVN operation completion", () => {
     await waitFor(() => {
       expect(get(workspaceStore).pendingRepositoryFileTaskId).toBeNull();
       expect(get(workspaceStore).repositoryFileError).toBe("没有可用的默认应用");
+    });
+  });
+
+  it("仓库文件 Log 使用当前 Revision 和编码后的文件 URL", async () => {
+    setCurrentView("repository");
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk",
+      revision: "10",
+      entries: [
+        {
+          name: "README space.md",
+          kind: "file",
+          revision: "9",
+          author: "dev",
+          date: "2026-07-11T01:02:03Z",
+        },
+      ],
+    });
+    getRepositoryFileLogMock.mockResolvedValue({
+      target: "https://example.com/svn/trunk/README%20space.md",
+      entries: [
+        {
+          revision: "9",
+          author: "dev",
+          date: "2026-07-11T01:02:03Z",
+          message: "Update README",
+          changed_paths: [],
+        },
+      ],
+      has_more: false,
+      next_start_revision: null,
+    });
+    render(App);
+
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "查看仓库文件 README space.md 的 Log",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(getRepositoryFileLogMock).toHaveBeenCalledWith({
+        url: "https://example.com/svn/trunk/README%20space.md",
+        revision: "10",
+        svn_executable: undefined,
+        limit: 50,
+      });
+      expect(screen.getByLabelText("仓库文件日志")).toHaveTextContent("Update README");
     });
   });
 

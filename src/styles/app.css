@@ -1555,7 +1555,12 @@ textarea {
 
 .table-head,
 .repository-row {
-  grid-template-columns: minmax(300px, 1fr) 90px 100px 120px 140px;
+  grid-template-columns: minmax(210px, 1fr) 90px 100px 120px 140px 40px;
+}
+
+.repository-row-shell {
+  position: relative;
+  width: 100%;
 }
 
 .repository-row {
@@ -1648,6 +1653,130 @@ textarea {
   align-content: start;
   overflow: auto;
   padding: 12px;
+}
+
+.repository-row > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repository-row-actions {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  z-index: 1;
+  display: flex;
+  transform: translateY(-50%);
+}
+
+.repository-row-action,
+.repository-file-log-actions .icon-button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d7dde4;
+  border-radius: 5px;
+  background: #ffffff;
+  padding: 0;
+  color: #536070;
+}
+
+.repository-row-action:not(:disabled):hover,
+.repository-file-log-actions .icon-button:not(:disabled):hover {
+  border-color: #b8c2cc;
+  background: #e9eef3;
+  color: #245f96;
+}
+
+.repository-file-log-panel {
+  border-top: 1px solid #d8dde3;
+  border-bottom: 1px solid #d8dde3;
+  background: #f8fafb;
+}
+
+.repository-file-log-panel > header {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #e1e5e9;
+  padding: 7px 12px;
+}
+
+.repository-file-log-panel > header > div:first-child {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.repository-file-log-panel h2 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.repository-file-log-panel code {
+  overflow: hidden;
+  color: #536070;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repository-file-log-panel header span {
+  color: #687482;
+  font-size: 12px;
+}
+
+.repository-file-log-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.repository-file-log-actions > button:first-child {
+  min-height: 28px;
+  padding: 3px 9px;
+}
+
+.repository-file-log-list {
+  max-height: 280px;
+  overflow: auto;
+}
+
+.repository-file-log-list article {
+  display: grid;
+  min-height: 40px;
+  grid-template-columns: 70px 110px 150px minmax(220px, 1fr);
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #e6eaee;
+  padding: 5px 12px;
+}
+
+.repository-file-log-list article:last-child {
+  border-bottom: 0;
+}
+
+.repository-file-log-list time,
+.repository-file-log-list span {
+  overflow: hidden;
+  color: #687482;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repository-file-log-list p {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .metadata-cell {
@@ -1888,6 +2017,7 @@ textarea {
 .versions-workbench[data-theme="dark"] .timeline-entry-summary,
 .versions-workbench[data-theme="dark"] .repository-table,
 .versions-workbench[data-theme="dark"] .repository-row,
+.versions-workbench[data-theme="dark"] .repository-file-log-panel,
 .versions-workbench[data-theme="dark"] .inspector-section,
 .versions-workbench[data-theme="dark"] .advanced-card,
 .versions-workbench[data-theme="dark"] .settings-view article,
@@ -1895,6 +2025,27 @@ textarea {
 .versions-workbench[data-theme="dark"] .revision-file-list > div,
 .versions-workbench[data-theme="dark"] .blame-table,
 .versions-workbench[data-theme="dark"] .patch-dialog {
+  background: #20242a;
+}
+
+.versions-workbench[data-theme="dark"] .repository-file-log-panel,
+.versions-workbench[data-theme="dark"] .repository-file-log-panel > header,
+.versions-workbench[data-theme="dark"] .repository-file-log-list article {
+  border-color: #30363d;
+}
+
+.versions-workbench[data-theme="dark"] .repository-row-action,
+.versions-workbench[data-theme="dark"] .repository-file-log-actions .icon-button,
+.versions-workbench[data-theme="dark"] .repository-file-log-panel code,
+.versions-workbench[data-theme="dark"] .repository-file-log-panel header span,
+.versions-workbench[data-theme="dark"] .repository-file-log-list time,
+.versions-workbench[data-theme="dark"] .repository-file-log-list span {
+  color: #aeb8c2;
+}
+
+.versions-workbench[data-theme="dark"] .repository-row-action,
+.versions-workbench[data-theme="dark"] .repository-file-log-actions .icon-button {
+  border-color: #39414a;
   background: #20242a;
 }
 

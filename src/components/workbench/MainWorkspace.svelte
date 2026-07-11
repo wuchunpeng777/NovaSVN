@@ -6,6 +6,7 @@
     FileUp,
     FolderOpen,
     GitCompareArrows,
+    History,
     LoaderCircle,
     PanelLeftClose,
     PanelLeftOpen,
@@ -78,6 +79,10 @@
   export let repositoryError: string | null = null;
   export let repositoryFileLoading = false;
   export let repositoryFileError: string | null = null;
+  export let repositoryFileLog: SvnLog | null = null;
+  export let repositoryFileLogRevision: string | null = null;
+  export let repositoryFileLogLoading = false;
+  export let repositoryFileLogError: CommandError | null = null;
   export let repositoryLayout = {
     trunkPath: "trunk",
     branchesPath: "branches",
@@ -305,6 +310,9 @@
   export let onUseWorkspaceRepositoryRoot: () => void = () => {};
   export let onLoadRepositoryUrl: (url?: string) => void = () => {};
   export let onOpenRepositoryFile: (fileName: string) => void = () => {};
+  export let onLoadRepositoryFileLog: (fileName: string) => void = () => {};
+  export let onLoadMoreRepositoryFileLog: () => void = () => {};
+  export let onCloseRepositoryFileLog: () => void = () => {};
   export let onRepositoryLayoutPathInput: (
     kind: "trunk" | "branches" | "tags",
     value: string,
@@ -2453,6 +2461,7 @@
             <span>Last Revision</span>
             <span>作者</span>
             <span>日期</span>
+            <span aria-label="操作"></span>
           </div>
           {#if repositoryLoading}
             <article class="empty-state">仓库目录加载中</article>
@@ -2467,33 +2476,51 @@
               <span>-</span>
               <span>-</span>
               <span>-</span>
+              <span></span>
             </button>
             {#each repositoryEntries as entry (entry.kind + ":" + entry.name)}
-              <button
-                type="button"
-                class="repository-row"
-                disabled={entry.kind !== "dir" && (entry.kind !== "file" || repositoryFileLoading)}
-                aria-label={entry.kind === "dir"
-                  ? `打开仓库目录 ${entry.name}`
-                  : entry.kind === "file"
-                    ? `打开仓库文件 ${entry.name} 的临时副本`
-                    : `仓库条目 ${entry.name}`}
-                title={entry.kind === "dir"
-                  ? `打开目录 ${entry.name}`
-                  : entry.kind === "file"
-                    ? `下载并打开 ${entry.name} @${repositoryList.revision ? `r${repositoryList.revision}` : "HEAD"}`
-                    : undefined}
-                on:click={() =>
-                  entry.kind === "dir"
-                    ? onLoadRepositoryUrl(joinRepositoryUrl(repositoryList.url, entry.name))
-                    : onOpenRepositoryFile(entry.name)}
-              >
-                <strong>{entry.name || "/"}</strong>
-                <span title={entry.kind}>{repositoryEntryKindLabel(entry.kind)}</span>
-                <span>{entry.revision || "-"}</span>
-                <span title={entry.author || undefined}>{entry.author || "-"}</span>
-                <span title={entry.date || undefined}>{formatDate(entry.date)}</span>
-              </button>
+              <div class="repository-row-shell">
+                <button
+                  type="button"
+                  class="repository-row"
+                  disabled={entry.kind !== "dir" && (entry.kind !== "file" || repositoryFileLoading)}
+                  aria-label={entry.kind === "dir"
+                    ? `打开仓库目录 ${entry.name}`
+                    : entry.kind === "file"
+                      ? `打开仓库文件 ${entry.name} 的临时副本`
+                      : `仓库条目 ${entry.name}`}
+                  title={entry.kind === "dir"
+                    ? `打开目录 ${entry.name}`
+                    : entry.kind === "file"
+                      ? `下载并打开 ${entry.name} @${repositoryList.revision ? `r${repositoryList.revision}` : "HEAD"}`
+                      : undefined}
+                  on:click={() =>
+                    entry.kind === "dir"
+                      ? onLoadRepositoryUrl(joinRepositoryUrl(repositoryList.url, entry.name))
+                      : onOpenRepositoryFile(entry.name)}
+                >
+                  <strong>{entry.name || "/"}</strong>
+                  <span title={entry.kind}>{repositoryEntryKindLabel(entry.kind)}</span>
+                  <span>{entry.revision || "-"}</span>
+                  <span title={entry.author || undefined}>{entry.author || "-"}</span>
+                  <span title={entry.date || undefined}>{formatDate(entry.date)}</span>
+                  <span></span>
+                </button>
+                {#if entry.kind === "file"}
+                  <div class="repository-row-actions">
+                    <button
+                      type="button"
+                      class="repository-row-action"
+                      aria-label={`查看仓库文件 ${entry.name} 的 Log`}
+                      title={`查看 ${entry.name} 的 Log`}
+                      disabled={repositoryFileLogLoading}
+                      on:click={() => onLoadRepositoryFileLog(entry.name)}
+                    >
+                      <History size={15} strokeWidth={2} aria-hidden="true" />
+                    </button>
+                  </div>
+                {/if}
+              </div>
             {/each}
             {#if repositoryEntries.length === 0}
               <article class="empty-state">当前目录为空</article>
@@ -2502,6 +2529,53 @@
             <article class="empty-state">输入仓库 URL 后开始浏览</article>
           {/if}
         </section>
+
+        {#if repositoryFileLog || repositoryFileLogLoading || repositoryFileLogError}
+          <section class="repository-file-log-panel" aria-label="仓库文件日志">
+            <header>
+              <div>
+                <h2>文件 Log</h2>
+                <code title={repositoryFileLog?.target}>{repositoryFileLog?.target ?? "正在读取仓库文件历史"}</code>
+                <span>@{repositoryFileLogRevision ? `r${repositoryFileLogRevision}` : "HEAD"}</span>
+              </div>
+              <div class="repository-file-log-actions">
+                <button
+                  type="button"
+                  disabled={repositoryFileLogLoading || !repositoryFileLog?.has_more}
+                  on:click={onLoadMoreRepositoryFileLog}
+                >
+                  {repositoryFileLogLoading && repositoryFileLog ? "加载中" : "更多"}
+                </button>
+                <button
+                  type="button"
+                  class="icon-button"
+                  aria-label="关闭仓库文件 Log"
+                  title="关闭仓库文件 Log"
+                  on:click={onCloseRepositoryFileLog}
+                >
+                  <X size={15} strokeWidth={2} aria-hidden="true" />
+                </button>
+              </div>
+            </header>
+            <ErrorNotice error={repositoryFileLogError} />
+            {#if repositoryFileLog?.entries.length}
+              <div class="repository-file-log-list">
+                {#each repositoryFileLog.entries as entry (entry.revision)}
+                  <article>
+                    <strong>r{entry.revision}</strong>
+                    <span title={entry.author || undefined}>{entry.author || "-"}</span>
+                    <time title={entry.date}>{formatTimelineTime(entry.date)}</time>
+                    <p>{entry.message || "无提交信息"}</p>
+                  </article>
+                {/each}
+              </div>
+            {:else if repositoryFileLogLoading}
+              <article class="empty-state">正在读取文件 Log</article>
+            {:else if repositoryFileLog}
+              <article class="empty-state">当前快照之前没有文件日志</article>
+            {/if}
+          </section>
+        {/if}
 
         <details class="advanced-section">
           <summary>分支和标签</summary>

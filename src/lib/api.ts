@@ -26,6 +26,7 @@ import type {
   GenerateSelectedPatchRequest,
   GetFileContentDiffRequest,
   GetFileDiffRequest,
+  GetRepositoryFileLogRequest,
   GetSvnBlameRequest,
   GetSvnLogRequest,
   GetSvnPropertiesRequest,
@@ -316,6 +317,12 @@ export function setSvnProperty(
   request: SetSvnPropertyRequest,
 ): Promise<SvnProperties> {
   return callBackend<SvnProperties>("set_svn_property", { request });
+}
+
+export function getRepositoryFileLog(
+  request: GetRepositoryFileLogRequest,
+): Promise<SvnLog> {
+  return callBackend<SvnLog>("get_repository_file_log", { request });
 }
 
 export function ignoreWorkspacePath(

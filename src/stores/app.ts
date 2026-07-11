@@ -22,6 +22,7 @@ import {
   getFileContentDiff,
   getFileDiff,
   getBranchPool,
+  getRepositoryFileLog,
   getSvnBlame,
   getSvnLog,
   getSvnProperties,
@@ -1362,6 +1363,10 @@ export interface WorkspaceStoreState {
   pendingRepositoryFileTaskId: string | null;
   repositoryFileLoading: boolean;
   repositoryFileError: string | null;
+  repositoryFileLogRevision: string | null;
+  repositoryFileLog: SvnLog | null;
+  repositoryFileLogLoading: boolean;
+  repositoryFileLogError: CommandError | null;
   repositoryLayout: {
     trunkPath: string;
     branchesPath: string;
@@ -1499,6 +1504,10 @@ const initialWorkspaceState: WorkspaceStoreState = {
   pendingRepositoryFileTaskId: null,
   repositoryFileLoading: false,
   repositoryFileError: null,
+  repositoryFileLogRevision: null,
+  repositoryFileLog: null,
+  repositoryFileLogLoading: false,
+  repositoryFileLogError: null,
   repositoryLayout: {
     trunkPath: "trunk",
     branchesPath: "branches",
@@ -1592,6 +1601,7 @@ function createWorkspaceStore() {
   let openPathGeneration = 0;
   let statusRefreshGeneration = 0;
   let fileTreeRefreshGeneration = 0;
+  let repositoryFileLogGeneration = 0;
 
   async function loadRecent() {
     update((state) => ({ ...state, loading: true, error: null }));
@@ -1635,6 +1645,10 @@ function createWorkspaceStore() {
         pendingRepositoryFileTaskId: null,
         repositoryFileLoading: false,
         repositoryFileError: null,
+        repositoryFileLogRevision: null,
+        repositoryFileLog: null,
+        repositoryFileLogLoading: false,
+        repositoryFileLogError: null,
         repositoryLayoutTasks: emptyRepositoryLayoutTasks(),
         repositoryLayoutResults: emptyRepositoryLayoutResults(),
         repositoryLayoutErrors: emptyRepositoryLayoutErrors(),
@@ -1733,6 +1747,10 @@ function createWorkspaceStore() {
         pendingRepositoryFileTaskId: null,
         repositoryFileLoading: false,
         repositoryFileError: null,
+        repositoryFileLogRevision: null,
+        repositoryFileLog: null,
+        repositoryFileLogLoading: false,
+        repositoryFileLogError: null,
         repositoryLayoutTasks: emptyRepositoryLayoutTasks(),
         repositoryLayoutResults: emptyRepositoryLayoutResults(),
         repositoryLayoutErrors: emptyRepositoryLayoutErrors(),
@@ -2428,12 +2446,19 @@ function createWorkspaceStore() {
   }
 
   function markRepositoryListTask(taskId: string | null, url?: string) {
+    if (taskId) {
+      repositoryFileLogGeneration += 1;
+    }
     update((state) => ({
       ...state,
       pendingRepositoryListTaskId: taskId,
       repositoryCurrentUrl: url ?? state.repositoryCurrentUrl,
       repositoryLoading: taskId !== null,
       repositoryError: null,
+      repositoryFileLogRevision: taskId ? null : state.repositoryFileLogRevision,
+      repositoryFileLog: taskId ? null : state.repositoryFileLog,
+      repositoryFileLogLoading: taskId ? false : state.repositoryFileLogLoading,
+      repositoryFileLogError: taskId ? null : state.repositoryFileLogError,
     }));
   }
 
@@ -2896,6 +2921,113 @@ function createWorkspaceStore() {
       pendingRepositoryFileTaskId: null,
       repositoryFileLoading: false,
       repositoryFileError: message ?? "仓库文件打开失败",
+    }));
+  }
+
+  async function loadRepositoryFileLog(request: {
+    url: string;
+    revision?: string | null;
+    svnExecutable?: string | null;
+  }) {
+    const requestGeneration = ++repositoryFileLogGeneration;
+    const revision = request.revision || null;
+    update((state) => ({
+      ...state,
+      repositoryFileLogRevision: revision,
+      repositoryFileLog: null,
+      repositoryFileLogLoading: true,
+      repositoryFileLogError: null,
+    }));
+
+    try {
+      const log = await getRepositoryFileLog({
+        url: request.url,
+        revision: revision || undefined,
+        svn_executable: request.svnExecutable || undefined,
+        limit: 50,
+      });
+      if (requestGeneration !== repositoryFileLogGeneration) {
+        return null;
+      }
+      update((state) => ({
+        ...state,
+        repositoryFileLog: log,
+        repositoryFileLogLoading: false,
+        repositoryFileLogError: null,
+      }));
+      return log;
+    } catch (error) {
+      if (requestGeneration !== repositoryFileLogGeneration) {
+        return null;
+      }
+      update((state) => ({
+        ...state,
+        repositoryFileLog: null,
+        repositoryFileLogLoading: false,
+        repositoryFileLogError: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
+  async function loadMoreRepositoryFileLog(svnExecutable?: string | null) {
+    const state = get({ subscribe });
+    const startRevision = state.repositoryFileLog?.next_start_revision;
+    if (
+      state.repositoryFileLogLoading ||
+      !state.repositoryFileLog?.has_more ||
+      !startRevision
+    ) {
+      return null;
+    }
+    const requestGeneration = repositoryFileLogGeneration;
+    update((current) => ({
+      ...current,
+      repositoryFileLogLoading: true,
+      repositoryFileLogError: null,
+    }));
+
+    try {
+      const next = await getRepositoryFileLog({
+        url: state.repositoryFileLog.target,
+        revision: state.repositoryFileLogRevision || undefined,
+        svn_executable: svnExecutable || undefined,
+        limit: 50,
+        start_revision: startRevision,
+      });
+      if (requestGeneration !== repositoryFileLogGeneration) {
+        return null;
+      }
+      update((current) => ({
+        ...current,
+        repositoryFileLog: current.repositoryFileLog
+          ? mergeSvnLogPage(current.repositoryFileLog, next)
+          : next,
+        repositoryFileLogLoading: false,
+        repositoryFileLogError: null,
+      }));
+      return next;
+    } catch (error) {
+      if (requestGeneration !== repositoryFileLogGeneration) {
+        return null;
+      }
+      update((current) => ({
+        ...current,
+        repositoryFileLogLoading: false,
+        repositoryFileLogError: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
+  function clearRepositoryFileLog() {
+    repositoryFileLogGeneration += 1;
+    update((state) => ({
+      ...state,
+      repositoryFileLogRevision: null,
+      repositoryFileLog: null,
+      repositoryFileLogLoading: false,
+      repositoryFileLogError: null,
     }));
   }
 
@@ -3886,6 +4018,9 @@ function createWorkspaceStore() {
     markRepositoryFileTask,
     completeRepositoryFile,
     failRepositoryFile,
+    loadRepositoryFileLog,
+    loadMoreRepositoryFileLog,
+    clearRepositoryFileLog,
     setRepositoryLayoutPath,
     markRepositoryLayoutTask,
     applyRepositoryLayoutResult,

@@ -496,6 +496,18 @@
     workspaceStore.markRepositoryFileTask(task.task_id);
   }
 
+  function loadRepositoryFileLog(fileName: string) {
+    const repositoryList = $workspaceStore.repositoryList;
+    if (!repositoryList || !fileName.trim()) {
+      return;
+    }
+    void workspaceStore.loadRepositoryFileLog({
+      url: joinRepositoryUrl(repositoryList.url, fileName),
+      revision: repositoryList.revision ?? $workspaceStore.repositoryRevisionInput,
+      svnExecutable: currentSvnExecutable(),
+    });
+  }
+
   async function detectRepositoryLayout() {
     const root = ($workspaceStore.repositoryUrlInput || $workspaceStore.current?.repository_root || "")
       .trim()
@@ -1505,6 +1517,10 @@
     repositoryFileCreating || $workspaceStore.repositoryFileLoading
   }
   repositoryFileError={$workspaceStore.repositoryFileError}
+  repositoryFileLog={$workspaceStore.repositoryFileLog}
+  repositoryFileLogRevision={$workspaceStore.repositoryFileLogRevision}
+  repositoryFileLogLoading={$workspaceStore.repositoryFileLogLoading}
+  repositoryFileLogError={$workspaceStore.repositoryFileLogError}
   repositoryLayout={$workspaceStore.repositoryLayout}
   repositoryLayoutResults={$workspaceStore.repositoryLayoutResults}
   repositoryLayoutErrors={$workspaceStore.repositoryLayoutErrors}
@@ -1653,6 +1669,10 @@
   onUseWorkspaceRepositoryRoot={workspaceStore.useWorkspaceRepositoryRoot}
   onLoadRepositoryUrl={loadRepositoryUrl}
   onOpenRepositoryFile={openRepositoryFile}
+  onLoadRepositoryFileLog={loadRepositoryFileLog}
+  onLoadMoreRepositoryFileLog={() =>
+    workspaceStore.loadMoreRepositoryFileLog(currentSvnExecutable())}
+  onCloseRepositoryFileLog={workspaceStore.clearRepositoryFileLog}
   onRepositoryLayoutPathInput={workspaceStore.setRepositoryLayoutPath}
   onDetectRepositoryLayout={detectRepositoryLayout}
   onRepositoryCopyFormInput={workspaceStore.setRepositoryCopyForm}

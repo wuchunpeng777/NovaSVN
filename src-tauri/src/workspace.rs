@@ -17,7 +17,14 @@ use roxmltree::Document;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::{error::NovaError, executable::normalize_executable_setting};
+use crate::{
+    error::NovaError,
+    executable::normalize_executable_setting,
+    task::{
+        normalize_repository_list_revision, normalize_repository_url,
+        repository_url_with_peg_revision,
+    },
+};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct OpenWorkspaceRequest {
@@ -173,6 +180,15 @@ pub struct GetFileContentDiffRequest {
 pub struct GetSvnLogRequest {
     pub working_copy_root: String,
     pub file_path: Option<String>,
+    pub svn_executable: Option<String>,
+    pub limit: Option<usize>,
+    pub start_revision: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetRepositoryFileLogRequest {
+    pub url: String,
+    pub revision: Option<String>,
     pub svn_executable: Option<String>,
     pub limit: Option<usize>,
     pub start_revision: Option<String>,
@@ -375,6 +391,66 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
         &xml,
         &display_status_path(&target.display().to_string(), &root),
     )?;
+    trim_svn_log_page(&mut log, limit);
+    Ok(log)
+}
+
+pub fn get_repository_file_log(request: GetRepositoryFileLogRequest) -> Result<SvnLog, NovaError> {
+    let url = normalize_repository_url(&request.url)?;
+    let revision = normalize_repository_list_revision(request.revision.as_deref())?;
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let limit = request.limit.unwrap_or(50).clamp(1, 200);
+    let start_revision = request
+        .start_revision
+        .as_deref()
+        .map(normalize_log_revision_value)
+        .transpose()?;
+    if let (Some(start_revision), Some(revision)) = (start_revision.as_deref(), revision.as_deref())
+    {
+        let start_revision_number = start_revision.parse::<u64>().unwrap_or(u64::MAX);
+        let revision_number = revision.parse::<u64>().unwrap_or(0);
+        if start_revision_number > revision_number {
+            return Err(NovaError::command(
+                "REPOSITORY_FILE_LOG_START_AFTER_REVISION",
+                "仓库文件日志分页 Revision 无效",
+                Some("分页起点不能晚于当前仓库历史快照。".to_string()),
+                true,
+            ));
+        }
+    }
+    let effective_start_revision = start_revision.as_deref().or(revision.as_deref());
+    let command_target = repository_url_with_peg_revision(&url, revision.as_deref());
+    let mut command = Command::new(&executable);
+    command
+        .args(["log", "--xml", "--verbose", "--limit"])
+        .arg((limit + 1).to_string());
+    if let Some(start_revision) = effective_start_revision {
+        command.arg("-r").arg(format!("{start_revision}:0"));
+    }
+    command.arg("--").arg(command_target);
+
+    let output = command.output().map_err(|error| {
+        NovaError::command(
+            "REPOSITORY_FILE_LOG_FAILED",
+            "无法读取仓库文件日志",
+            Some(format!(
+                "执行 `{executable} log --xml --verbose --limit {}` 失败：{error}",
+                limit + 1
+            )),
+            true,
+        )
+    })?;
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "REPOSITORY_FILE_LOG_COMMAND_FAILED",
+            "仓库文件日志读取失败",
+            Some(command_error_detail(&executable, "log", &output)),
+            true,
+        ));
+    }
+
+    let xml = String::from_utf8_lossy(&output.stdout);
+    let mut log = parse_svn_log_xml(&xml, &url)?;
     trim_svn_log_page(&mut log, limit);
     Ok(log)
 }
@@ -3244,6 +3320,101 @@ mod tests {
         assert_eq!(summary.repository_url, "https://example.com/svn/trunk");
         assert_eq!(summary.repository_root, "https://example.com/svn");
         assert_eq!(summary.working_copy_root, "C:\\wc");
+    }
+
+    #[test]
+    fn reads_deleted_repository_file_log_at_revision_with_pagination() {
+        if !svn_test_tools_available() {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-repository-file-log-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(&root).unwrap();
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        let file = working_copy.join("history.txt");
+        fs::write(&file, "revision one\n").unwrap();
+        run_test_command(Command::new("svn").arg("add").arg(&file));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "file revision one"]),
+        );
+        fs::write(&file, "revision two\n").unwrap();
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "file revision two"]),
+        );
+        run_test_command(Command::new("svn").arg("delete").arg(&file));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "delete file at head"]),
+        );
+
+        let file_url = format!("{repository_url}/history.txt");
+        let first_page = get_repository_file_log(GetRepositoryFileLogRequest {
+            url: file_url.clone(),
+            revision: Some("2".to_string()),
+            svn_executable: None,
+            limit: Some(1),
+            start_revision: None,
+        })
+        .expect("historical file log first page");
+        assert_eq!(first_page.target, file_url);
+        assert_eq!(first_page.entries.len(), 1);
+        assert_eq!(first_page.entries[0].revision, "2");
+        assert_eq!(first_page.entries[0].message, "file revision two");
+        assert!(first_page.has_more);
+        assert_eq!(first_page.next_start_revision.as_deref(), Some("1"));
+
+        let second_page = get_repository_file_log(GetRepositoryFileLogRequest {
+            url: file_url,
+            revision: Some("2".to_string()),
+            svn_executable: None,
+            limit: Some(1),
+            start_revision: first_page.next_start_revision,
+        })
+        .expect("historical file log second page");
+        assert_eq!(second_page.entries.len(), 1);
+        assert_eq!(second_page.entries[0].revision, "1");
+        assert_eq!(second_page.entries[0].message, "file revision one");
+        assert!(!second_page.has_more);
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_repository_file_log_page_after_snapshot_revision() {
+        let error = get_repository_file_log(GetRepositoryFileLogRequest {
+            url: "https://example.com/svn/trunk/history.txt".to_string(),
+            revision: Some("10".to_string()),
+            svn_executable: None,
+            limit: Some(50),
+            start_revision: Some("11".to_string()),
+        })
+        .expect_err("repository log pagination must remain within snapshot");
+
+        assert_command_error_code(error, "REPOSITORY_FILE_LOG_START_AFTER_REVISION");
     }
 
     #[test]

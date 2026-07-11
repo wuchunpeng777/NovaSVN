@@ -538,6 +538,19 @@ if (
 }
 
 if (
+  !mainWorkspace.includes("查看仓库文件 ${entry.name} 的 Log") ||
+  !mainWorkspace.includes('aria-label="仓库文件日志"') ||
+  !appSvelte.includes("workspaceStore.loadRepositoryFileLog({") ||
+  !appStore.includes("function loadMoreRepositoryFileLog(") ||
+  !workspaceRs.includes("pub fn get_repository_file_log(") ||
+  !workspaceRs.includes('["log", "--xml", "--verbose", "--limit"]') ||
+  !workspaceRs.includes("repository_url_with_peg_revision(&url")
+) {
+  console.error("Repository 文件 Log 必须限定当前历史 Revision，支持真实 svn log 分页并使用独立界面状态");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||
