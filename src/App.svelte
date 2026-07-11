@@ -40,6 +40,7 @@
   let unlistenAppMenu: UnlistenFn | null = null;
   const repositoryLayoutTaskChecks = new Set<string>();
   const applyPatchTaskChecks = new Set<string>();
+  const missingSvnOperationTaskChecks = new Set<string>();
   const svnOperationCreationCoordinator = createSvnOperationCreationCoordinator();
 
   $: activeView = workbenchViews[$currentView];
@@ -879,6 +880,34 @@
       },
     },
   );
+
+  async function checkMissingSvnOperationTask(taskId: string) {
+    if (missingSvnOperationTaskChecks.has(taskId)) {
+      return;
+    }
+
+    missingSvnOperationTaskChecks.add(taskId);
+    const missing = await taskStore.confirmTaskMissing(taskId);
+    missingSvnOperationTaskChecks.delete(taskId);
+    if (!missing || $workspaceStore.pendingSvnOperationTaskId !== taskId) {
+      return;
+    }
+
+    workspaceStore.failSvnOperationTask(
+      "运行中的 SVN 操作已从任务队列中消失，可能是后端已重启；请刷新工作副本后重试",
+    );
+  }
+
+  $: if (
+    $workspaceStore.pendingSvnOperationTaskId &&
+    !$taskStore.loading &&
+    !$taskStore.error &&
+    !$taskStore.snapshot.tasks.some(
+      (task) => task.task_id === $workspaceStore.pendingSvnOperationTaskId,
+    )
+  ) {
+    void checkMissingSvnOperationTask($workspaceStore.pendingSvnOperationTaskId);
+  }
 
   $: if (
     $workspaceStore.pendingRepositoryListTaskId &&

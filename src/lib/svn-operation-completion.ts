@@ -131,13 +131,17 @@ export function createSvnOperationCreationCoordinator(): SvnOperationCreationCoo
   };
 }
 
-function isSameWorkingCopyRoot(left: string, right: string) {
+export function isSameWorkingCopyRoot(left: string, right: string) {
   return normalizeWorkingCopyRoot(left) === normalizeWorkingCopyRoot(right);
 }
 
-function normalizeWorkingCopyRoot(path: string) {
-  const normalized = path.replaceAll("\\", "/");
-  const windowsPath = /^[a-z]:\//i.test(normalized) || normalized.startsWith("//");
-  const withoutTrailingSeparator = normalized.replace(/\/+$/, "") || "/";
+export function normalizeWorkingCopyRoot(path: string) {
+  const windowsPath =
+    /^[a-z]:[\\/]/i.test(path) || path.startsWith("\\\\") || path.startsWith("//");
+  const normalized = windowsPath ? path.replaceAll("\\", "/") : path;
+  let withoutTrailingSeparator = normalized.replace(/\/+$/, "") || "/";
+  if (/^[a-z]:$/i.test(withoutTrailingSeparator)) {
+    withoutTrailingSeparator += "/";
+  }
   return windowsPath ? withoutTrailingSeparator.toLowerCase() : withoutTrailingSeparator;
 }

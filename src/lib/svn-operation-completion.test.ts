@@ -4,6 +4,8 @@ import type { Task, TaskSnapshot, TaskSummary } from "../types/api";
 import {
   consumePendingSvnOperationCompletion,
   createSvnOperationCreationCoordinator,
+  isSameWorkingCopyRoot,
+  normalizeWorkingCopyRoot,
 } from "./svn-operation-completion";
 
 function makeTaskSummary(task: Partial<TaskSummary> = {}): TaskSummary {
@@ -229,5 +231,32 @@ describe("createSvnOperationCreationCoordinator", () => {
     expect(await coordinator.create(() => true, createTask, vi.fn())).toBe(false);
     expect(createTask).not.toHaveBeenCalled();
     expect(coordinator.isCreating()).toBe(false);
+  });
+});
+
+describe("working copy root normalization", () => {
+  it.each([
+    ["C:\\", "c:/"],
+    ["C:\\Repo\\Working Copy\\", "c:/repo/working copy"],
+    ["\\\\Server\\Share\\Working Copy\\", "//server/share/working copy"],
+    ["/repo/wc/", "/repo/wc"],
+    ["/", "/"],
+  ])("normalizes %s", (input, expected) => {
+    expect(normalizeWorkingCopyRoot(input)).toBe(expected);
+  });
+
+  it("compares Windows drive and UNC roots case-insensitively", () => {
+    expect(isSameWorkingCopyRoot("C:\\Repo\\WC\\", "c:/repo/wc")).toBe(true);
+    expect(
+      isSameWorkingCopyRoot(
+        "\\\\Server\\Share\\Project",
+        "//server/share/project/",
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps Unix roots case-sensitive and preserves literal backslashes", () => {
+    expect(isSameWorkingCopyRoot("/Repo/WC", "/repo/wc")).toBe(false);
+    expect(isSameWorkingCopyRoot("/repo/literal\\name", "/repo/literal/name")).toBe(false);
   });
 });

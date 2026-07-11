@@ -12,6 +12,7 @@ vi.mock("../lib/api", () => ({
   getSvnLog: vi.fn(),
   getSvnProperties: vi.fn(),
   getTaskWorkspaces: vi.fn(),
+  listWorkspaceFiles: vi.fn(),
   openGeneratedFileLocation: vi.fn(),
   openWorkspace: vi.fn(),
   parseUnifiedDiff: vi.fn(),
@@ -35,6 +36,7 @@ import {
   getSvnLog,
   getSvnProperties,
   getTaskWorkspaces,
+  listWorkspaceFiles,
   openGeneratedFileLocation,
   openWorkspace,
   parseUnifiedDiff,
@@ -54,6 +56,7 @@ import type {
   TaskWorkspaceEntry,
   TaskWorkspaceList,
   WorkingCopyStatus,
+  WorkspaceFileTree,
   WorkspaceSummary,
 } from "../types/api";
 import {
@@ -77,6 +80,7 @@ const getSvnBlameMock = vi.mocked(getSvnBlame);
 const getSvnLogMock = vi.mocked(getSvnLog);
 const getSvnPropertiesMock = vi.mocked(getSvnProperties);
 const getTaskWorkspacesMock = vi.mocked(getTaskWorkspaces);
+const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
 const openGeneratedFileLocationMock = vi.mocked(openGeneratedFileLocation);
 const openWorkspaceMock = vi.mocked(openWorkspace);
 const parseUnifiedDiffMock = vi.mocked(parseUnifiedDiff);
@@ -97,6 +101,7 @@ beforeEach(() => {
   getSvnLogMock.mockReset();
   getSvnPropertiesMock.mockReset();
   getTaskWorkspacesMock.mockReset();
+  listWorkspaceFilesMock.mockReset();
   openGeneratedFileLocationMock.mockReset();
   openWorkspaceMock.mockReset();
   parseUnifiedDiffMock.mockReset();
@@ -127,6 +132,7 @@ beforeEach(() => {
     max_bytes: 1024,
   });
   parseUnifiedDiffMock.mockResolvedValue({ files: [] });
+  listWorkspaceFilesMock.mockResolvedValue(makeFileTree("C:/repo/wc"));
   openGeneratedFileLocationMock.mockResolvedValue({ target_path: "C:/app/patches/diff.patch" });
 });
 
@@ -826,6 +832,136 @@ describe("workspaceStore SVN operation state", () => {
     expect(get(workspaceStore).current?.working_copy_root).toBe("C:/repo/original");
     expect(get(workspaceStore).pathInput).toBe("C:/repo/original");
   });
+
+  it("打开或切换工作副本时保留运行中的 pending 操作", async () => {
+    workspaceStore.markSvnOperationTask("svn-1", "update", "C:/repo/original");
+    openWorkspaceMock.mockResolvedValueOnce(
+      makeWorkspace({ working_copy_root: "C:/repo/other" }),
+    );
+    scanWorkspaceStatusMock.mockResolvedValueOnce(
+      makeStatus([], { working_copy_root: "C:/repo/other" }),
+    );
+    listWorkspaceFilesMock.mockResolvedValueOnce(makeFileTree("C:/repo/other"));
+
+    await workspaceStore.openPath(undefined, "C:/repo/other");
+
+    expect(get(workspaceStore)).toMatchObject({
+      pendingSvnOperationTaskId: "svn-1",
+      pendingSvnOperationKind: "update",
+      pendingSvnOperationWorkingCopyRoot: "C:/repo/original",
+    });
+  });
+
+  it("任务从后端队列消失时清理 pending 并给出可恢复错误", () => {
+    workspaceStore.markSvnOperationTask("missing-task", "cleanup", "C:/repo/wc");
+
+    workspaceStore.failSvnOperationTask("任务队列已重置");
+
+    expect(get(workspaceStore)).toMatchObject({
+      pendingSvnOperationTaskId: null,
+      pendingSvnOperationKind: null,
+      pendingSvnOperationWorkingCopyRoot: null,
+      statusError: {
+        code: "SVN_OPERATION_TASK_MISSING",
+        message: "任务队列已重置",
+        recoverable: true,
+      },
+    });
+  });
+
+  it("后发的打开请求优先，旧请求完成后不能覆盖当前工作副本", async () => {
+    const firstOpen = deferred<WorkspaceSummary>();
+    const secondOpen = deferred<WorkspaceSummary>();
+    const secondWorkspace = makeWorkspace({
+      working_copy_root: "C:/repo/second",
+      local_path: "C:/repo/second",
+    });
+    const secondStatus = makeStatus([], { working_copy_root: "C:/repo/second" });
+    openWorkspaceMock
+      .mockReturnValueOnce(firstOpen.promise)
+      .mockReturnValueOnce(secondOpen.promise);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(secondStatus);
+    listWorkspaceFilesMock.mockResolvedValueOnce(makeFileTree("C:/repo/second"));
+
+    const firstRequest = workspaceStore.openPath(undefined, "C:/repo/first");
+    const secondRequest = workspaceStore.openPath(undefined, "C:/repo/second");
+    secondOpen.resolve(secondWorkspace);
+
+    expect(await secondRequest).toBe(secondWorkspace);
+
+    firstOpen.resolve(
+      makeWorkspace({
+        working_copy_root: "C:/repo/first",
+        local_path: "C:/repo/first",
+      }),
+    );
+
+    expect(await firstRequest).toBeNull();
+    expect(get(workspaceStore).current?.working_copy_root).toBe("C:/repo/second");
+    expect(get(workspaceStore).status).toBe(secondStatus);
+  });
+
+  it("切换工作副本后丢弃旧状态扫描结果", async () => {
+    const originalWorkspace = makeWorkspace({ working_copy_root: "C:/repo/original" });
+    openWorkspaceMock.mockResolvedValueOnce(originalWorkspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(
+      makeStatus([], { working_copy_root: "C:/repo/original" }),
+    );
+    listWorkspaceFilesMock.mockResolvedValueOnce(makeFileTree("C:/repo/original"));
+    await workspaceStore.openPath(undefined, "C:/repo/original");
+
+    const staleScan = deferred<WorkingCopyStatus>();
+    scanWorkspaceStatusMock.mockReturnValueOnce(staleScan.promise);
+    const staleRefresh = workspaceStore.refreshStatus(undefined, "C:/repo/original");
+
+    const nextWorkspace = makeWorkspace({ working_copy_root: "C:/repo/next" });
+    const nextStatus = makeStatus([], { working_copy_root: "C:/repo/next" });
+    openWorkspaceMock.mockResolvedValueOnce(nextWorkspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(nextStatus);
+    listWorkspaceFilesMock.mockResolvedValueOnce(makeFileTree("C:/repo/next"));
+    await workspaceStore.openPath(undefined, "C:/repo/next");
+
+    staleScan.resolve(
+      makeStatus(
+        [makeFile({ path: "stale.txt", content_digest: "stale" })],
+        { working_copy_root: "C:/repo/original" },
+      ),
+    );
+
+    expect(await staleRefresh).toBeNull();
+    expect(get(workspaceStore).current?.working_copy_root).toBe("C:/repo/next");
+    expect(get(workspaceStore).status).toBe(nextStatus);
+  });
+
+  it("切换工作副本后丢弃旧文件树结果", async () => {
+    openWorkspaceMock.mockResolvedValueOnce(
+      makeWorkspace({ working_copy_root: "C:/repo/original" }),
+    );
+    scanWorkspaceStatusMock.mockResolvedValueOnce(
+      makeStatus([], { working_copy_root: "C:/repo/original" }),
+    );
+    listWorkspaceFilesMock.mockResolvedValueOnce(makeFileTree("C:/repo/original"));
+    await workspaceStore.openPath(undefined, "C:/repo/original");
+
+    const staleTree = deferred<WorkspaceFileTree>();
+    listWorkspaceFilesMock.mockReturnValueOnce(staleTree.promise);
+    const staleRefresh = workspaceStore.refreshFileTree(undefined, "C:/repo/original");
+
+    openWorkspaceMock.mockResolvedValueOnce(
+      makeWorkspace({ working_copy_root: "C:/repo/next" }),
+    );
+    scanWorkspaceStatusMock.mockResolvedValueOnce(
+      makeStatus([], { working_copy_root: "C:/repo/next" }),
+    );
+    const nextTree = makeFileTree("C:/repo/next");
+    listWorkspaceFilesMock.mockResolvedValueOnce(nextTree);
+    await workspaceStore.openPath(undefined, "C:/repo/next");
+
+    staleTree.resolve(makeFileTree("C:/repo/original", "stale.txt"));
+
+    expect(await staleRefresh).toBeNull();
+    expect(get(workspaceStore).fileTree).toBe(nextTree);
+  });
 });
 
 describe("taskStore apply patch tasks", () => {
@@ -981,6 +1117,41 @@ function makeWorkspace(workspace: Partial<WorkspaceSummary> = {}): WorkspaceSumm
     revision: "12",
     ...workspace,
   };
+}
+
+function makeFileTree(
+  workingCopyRoot: string,
+  path = "src/main.ts",
+): WorkspaceFileTree {
+  return {
+    working_copy_root: workingCopyRoot,
+    total_files: 1,
+    returned_files: 1,
+    truncated: false,
+    nodes: [
+      {
+        path,
+        name: path,
+        kind: "file",
+        status: "normal",
+        revision: "12",
+        file_size: 128,
+        changed: false,
+        versioned: true,
+        children: [],
+      },
+    ],
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 function makeBranchPoolEntry(entry: Partial<BranchPoolEntry> = {}): BranchPoolEntry {

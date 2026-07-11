@@ -78,6 +78,7 @@ import type {
   WorkspaceFileTree,
   WorkspaceSummary,
 } from "../types/api";
+import { isSameWorkingCopyRoot } from "../lib/svn-operation-completion";
 
 export const currentView = writable<AppView>("changes");
 
@@ -603,6 +604,15 @@ function createTaskStore() {
     }
   }
 
+  async function confirmTaskMissing(taskId: string) {
+    try {
+      await getTask(taskId);
+      return false;
+    } catch (error) {
+      return (error as CommandError).code === "TASK_NOT_FOUND";
+    }
+  }
+
   function startPolling() {
     if (pollTimer !== null) {
       return;
@@ -641,6 +651,7 @@ function createTaskStore() {
     select,
     cancel,
     getTaskById,
+    confirmTaskMissing,
     startPolling,
     stopPolling,
   };
@@ -1461,6 +1472,9 @@ const initialWorkspaceState: WorkspaceStoreState = {
 
 function createWorkspaceStore() {
   const { subscribe, update } = writable<WorkspaceStoreState>(initialWorkspaceState);
+  let openPathGeneration = 0;
+  let statusRefreshGeneration = 0;
+  let fileTreeRefreshGeneration = 0;
 
   async function loadRecent() {
     update((state) => ({ ...state, loading: true, error: null }));
@@ -1540,7 +1554,15 @@ function createWorkspaceStore() {
     svnExecutable?: string | null,
     explicitPath?: string | null,
   ): Promise<WorkspaceSummary | null> {
-    update((state) => ({ ...state, loading: true, error: null }));
+    const requestGeneration = ++openPathGeneration;
+    statusRefreshGeneration += 1;
+    fileTreeRefreshGeneration += 1;
+    update((state) => ({
+      ...state,
+      loading: true,
+      error: null,
+      statusLoading: false,
+    }));
 
     let path = explicitPath?.trim() ?? "";
     if (explicitPath === undefined || explicitPath === null) {
@@ -1555,6 +1577,9 @@ function createWorkspaceStore() {
         path,
         svn_executable: svnExecutable || undefined,
       });
+      if (requestGeneration !== openPathGeneration) {
+        return null;
+      }
       const draft = loadWorkspaceDraft(current);
       const commitSettings = loadCommitMessageSettings();
       update((state) => ({
@@ -1580,9 +1605,6 @@ function createWorkspaceStore() {
         commitError: null,
         pendingCommitTaskId: null,
         pendingPartialCommitTaskId: null,
-        pendingSvnOperationTaskId: null,
-        pendingSvnOperationKind: null,
-        pendingSvnOperationWorkingCopyRoot: null,
         ...emptyApplyPatchState(),
         repositoryUrlInput: current.repository_root,
         repositoryCurrentUrl: "",
@@ -1612,8 +1634,11 @@ function createWorkspaceStore() {
         error: null,
       }));
       await refreshStatus(svnExecutable, current.working_copy_root);
-      return current;
+      return requestGeneration === openPathGeneration ? current : null;
     } catch (error) {
+      if (requestGeneration !== openPathGeneration) {
+        return null;
+      }
       update((state) => ({
         ...state,
         loading: false,
@@ -2187,6 +2212,21 @@ function createWorkspaceStore() {
     }));
   }
 
+  function failSvnOperationTask(message: string) {
+    update((state) => ({
+      ...state,
+      pendingSvnOperationTaskId: null,
+      pendingSvnOperationKind: null,
+      pendingSvnOperationWorkingCopyRoot: null,
+      statusError: {
+        code: "SVN_OPERATION_TASK_MISSING",
+        message,
+        detail: null,
+        recoverable: true,
+      },
+    }));
+  }
+
   function setRepositoryUrlInput(value: string) {
     update((state) => ({
       ...state,
@@ -2481,15 +2521,10 @@ function createWorkspaceStore() {
     svnExecutable?: string | null,
     workingCopyRoot?: string,
   ): Promise<WorkingCopyStatus | null> {
-    let root = workingCopyRoot ?? "";
-    update((state) => {
-      root = root || state.current?.working_copy_root || "";
-      return {
-        ...state,
-        statusLoading: true,
-        statusError: null,
-      };
-    });
+    const requestGeneration = ++statusRefreshGeneration;
+    fileTreeRefreshGeneration += 1;
+    const state = get({ subscribe });
+    const root = workingCopyRoot || state.current?.working_copy_root || "";
 
     if (!root) {
       update((state) => ({
@@ -2505,6 +2540,19 @@ function createWorkspaceStore() {
       return null;
     }
 
+    if (
+      state.current &&
+      !isSameWorkingCopyRoot(root, state.current.working_copy_root)
+    ) {
+      return null;
+    }
+
+    update((current) => ({
+      ...current,
+      statusLoading: true,
+      statusError: null,
+    }));
+
     let refreshedStatus: WorkingCopyStatus | null = null;
     try {
       let previousSelectedFilePath: string | null = null;
@@ -2518,9 +2566,15 @@ function createWorkspaceStore() {
         offset: 0,
         limit: 500,
       });
+      if (!isCurrentStatusRequest(requestGeneration, root)) {
+        return null;
+      }
       refreshedStatus = status;
       const selectedFilePath = applyStatusResult(status, previousSelectedFilePath);
       await refreshFileTree(svnExecutable, root);
+      if (!isCurrentStatusRequest(requestGeneration, root)) {
+        return null;
+      }
       if (selectedFilePath) {
         await Promise.all([
           refreshFileDiff(svnExecutable, root, selectedFilePath),
@@ -2530,6 +2584,9 @@ function createWorkspaceStore() {
       }
       return status;
     } catch (error) {
+      if (!isCurrentStatusRequest(requestGeneration, root)) {
+        return null;
+      }
       update((state) => ({
         ...state,
         statusLoading: false,
@@ -2540,13 +2597,14 @@ function createWorkspaceStore() {
   }
 
   async function refreshFileTree(svnExecutable?: string | null, workingCopyRoot?: string) {
-    let root = workingCopyRoot ?? "";
-    update((state) => {
-      root = root || state.current?.working_copy_root || "";
-      return state;
-    });
+    const requestGeneration = ++fileTreeRefreshGeneration;
+    const state = get({ subscribe });
+    const root = workingCopyRoot || state.current?.working_copy_root || "";
 
-    if (!root) {
+    if (
+      !root ||
+      (state.current && !isSameWorkingCopyRoot(root, state.current.working_copy_root))
+    ) {
       return null;
     }
 
@@ -2556,12 +2614,18 @@ function createWorkspaceStore() {
         svn_executable: svnExecutable || undefined,
         max_files: 5000,
       });
+      if (!isCurrentFileTreeRequest(requestGeneration, root)) {
+        return null;
+      }
       update((state) => ({
         ...state,
         fileTree,
       }));
       return fileTree;
     } catch (error) {
+      if (!isCurrentFileTreeRequest(requestGeneration, root)) {
+        return null;
+      }
       update((state) => ({
         ...state,
         statusError: error as CommandError,
@@ -2578,6 +2642,9 @@ function createWorkspaceStore() {
       return;
     }
 
+    const requestGeneration = ++statusRefreshGeneration;
+    fileTreeRefreshGeneration += 1;
+
     update((current) => ({
       ...current,
       statusLoading: true,
@@ -2591,6 +2658,9 @@ function createWorkspaceStore() {
         offset: currentStatus.files.length,
         limit: 500,
       });
+      if (!isCurrentStatusRequest(requestGeneration, root)) {
+        return;
+      }
       const existingPaths = new Set(currentStatus.files.map((file) => file.path));
       const mergedStatus = {
         ...nextPage,
@@ -2605,12 +2675,33 @@ function createWorkspaceStore() {
       };
       applyStatusResult(mergedStatus, state.selectedFilePath);
     } catch (error) {
+      if (!isCurrentStatusRequest(requestGeneration, root)) {
+        return;
+      }
       update((current) => ({
         ...current,
         statusLoading: false,
         statusError: error as CommandError,
       }));
     }
+  }
+
+  function isCurrentStatusRequest(requestGeneration: number, root: string) {
+    const state = get({ subscribe });
+    return (
+      requestGeneration === statusRefreshGeneration &&
+      state.current !== null &&
+      isSameWorkingCopyRoot(root, state.current.working_copy_root)
+    );
+  }
+
+  function isCurrentFileTreeRequest(requestGeneration: number, root: string) {
+    const state = get({ subscribe });
+    return (
+      requestGeneration === fileTreeRefreshGeneration &&
+      state.current !== null &&
+      isSameWorkingCopyRoot(root, state.current.working_copy_root)
+    );
   }
 
   function applyStatusResult(
@@ -3408,6 +3499,7 @@ function createWorkspaceStore() {
     markPartialCommitTask,
     completePartialCommit,
     markSvnOperationTask,
+    failSvnOperationTask,
     setRepositoryUrlInput,
     useWorkspaceRepositoryRoot,
     markRepositoryListTask,
