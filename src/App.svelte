@@ -877,6 +877,27 @@
     await runSvnOperation("copy_path", sourcePath, targetPath);
   }
 
+  async function ignoreWorkspacePath(path: string) {
+    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+    if (!workingCopyRoot || $workspaceStore.svnPropertiesLoading) {
+      return;
+    }
+    const separatorIndex = path.lastIndexOf("/");
+    const ruleDirectory = separatorIndex >= 0 ? path.slice(0, separatorIndex) || "." : ".";
+    const confirmed = window.confirm(
+      `确定 Ignore 此工作副本路径吗？\n\n目标：${path}\n规则作用目录：${ruleDirectory}\n\nNovaSVN 会把名称追加到该目录的 svn:ignore 属性，已有规则会保留。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const properties = await workspaceStore.ignorePath(path, currentSvnExecutable());
+    if (!properties) {
+      return;
+    }
+    await refreshStatusAndSyncBranchPool(workingCopyRoot);
+  }
+
   $: consumePendingTask($workspaceStore.pendingCommitTaskId, $taskStore.snapshot, (task) => {
     if (task.status === "success") {
       const committedPaths = $workspaceStore.commitFiles.map((file) => file.path);
@@ -1319,6 +1340,7 @@
   onSelectAllCommitFiles={workspaceStore.selectAllCommitFiles}
   onClearCommitFiles={workspaceStore.clearCommitFiles}
   onAddFile={(path) => runSvnOperation("add_file", path)}
+  onIgnorePath={ignoreWorkspacePath}
   onDeletePath={(path) => runSvnOperation("delete_path", path)}
   onMovePath={moveWorkspacePath}
   onCopyPath={copyWorkspacePath}

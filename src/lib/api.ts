@@ -26,6 +26,7 @@ import type {
   GetSvnBlameRequest,
   GetSvnLogRequest,
   GetSvnPropertiesRequest,
+  IgnoreWorkspacePathRequest,
   ExternalToolLaunch,
   LaunchExternalToolRequest,
   ListWorkspaceFilesRequest,
@@ -286,6 +287,12 @@ export function setSvnProperty(
   request: SetSvnPropertyRequest,
 ): Promise<SvnProperties> {
   return callBackend<SvnProperties>("set_svn_property", { request });
+}
+
+export function ignoreWorkspacePath(
+  request: IgnoreWorkspacePathRequest,
+): Promise<SvnProperties> {
+  return callBackend<SvnProperties>("ignore_workspace_path", { request });
 }
 
 export function parseUnifiedDiff(diffText: string): Promise<ParsedDiff> {

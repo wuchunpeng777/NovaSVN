@@ -241,6 +241,7 @@
   export let onSelectAllCommitFiles: () => void = () => {};
   export let onClearCommitFiles: () => void = () => {};
   export let onAddFile: (path: string) => void = () => {};
+  export let onIgnorePath: (path: string) => void = () => {};
   export let onDeletePath: (path: string) => void = () => {};
   export let onMovePath: (path: string) => void = () => {};
   export let onCopyPath: (path: string) => void = () => {};
@@ -516,6 +517,15 @@
 
   function canMovePath(node: WorkspaceFileNode | null) {
     return canDeletePath(node);
+  }
+
+  function canIgnorePath(node: WorkspaceFileNode | null) {
+    return (
+      !!node &&
+      !node.versioned &&
+      ["file", "dir"].includes(node.kind) &&
+      node.status === "unversioned"
+    );
   }
 
   function isTreeNodeCollapsed(node: WorkspaceFileNode) {
@@ -1796,6 +1806,19 @@
                       >
                         Add
                       </span>
+                      <span
+                        role="button"
+                        tabindex="0"
+                        aria-label={`Ignore ${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
+                        on:click|stopPropagation={() => onIgnorePath(node.path)}
+                        on:keydown|stopPropagation={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            onIgnorePath(node.path);
+                          }
+                        }}
+                      >
+                        Ignore
+                      </span>
                     {:else if isChangedPath(node.path) && isCommitSelected(node.path)}
                       <em>已选提交</em>
                       <span
@@ -1972,6 +1995,15 @@
                       </button>
                     {/if}
                   {/if}
+                  {#if canIgnorePath(selectedTreeNode)}
+                    <button
+                      type="button"
+                      aria-label={`在工作副本中 Ignore ${selectedTreeNode?.path ?? ""}`}
+                      on:click={() => selectedTreeNode && onIgnorePath(selectedTreeNode.path)}
+                    >
+                      Ignore
+                    </button>
+                  {/if}
                   {#if canMovePath(selectedTreeNode)}
                     <button
                       type="button"
@@ -2128,6 +2160,7 @@
               </div>
               <ErrorNotice error={svnPropertiesError} />
               {#if svnProperties}
+                <p class="muted">作用目录：{svnProperties.target}</p>
                 <div class="property-list">
                   {#each svnProperties.properties as property (property.name)}
                     <button type="button" on:click={() => onUsePropertyForEdit(property.name, property.value)}>

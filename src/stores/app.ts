@@ -22,6 +22,7 @@ import {
   getSvnBlame,
   getSvnLog,
   getSvnProperties,
+  ignoreWorkspacePath,
   getTaskWorkspaces,
   generateSelectedPatch,
   getShadowWorkspaceStatus,
@@ -2730,6 +2731,9 @@ function createWorkspaceStore() {
         status,
       );
       const selectedFileChanged = selectedFilePath !== state.selectedFilePath;
+      const preserveScopedProperties =
+        state.svnProperties !== null &&
+        state.svnProperties.target !== state.selectedFilePath;
       const nextState = {
         ...state,
         status,
@@ -2746,7 +2750,9 @@ function createWorkspaceStore() {
         statusLoading: false,
         statusError: null,
         ...(selectedFileChanged ? clearSvnBlameState() : {}),
-        ...(selectedFileChanged ? clearSvnPropertiesState() : {}),
+        ...(selectedFileChanged && !preserveScopedProperties
+          ? clearSvnPropertiesState()
+          : {}),
       };
       saveWorkspaceDraftFromState(nextState);
       return nextState;
@@ -3155,6 +3161,76 @@ function createWorkspaceStore() {
     }
   }
 
+  async function ignorePath(
+    path: string,
+    svnExecutable?: string | null,
+  ): Promise<SvnProperties | null> {
+    const state = get({ subscribe });
+    if (!state.current) {
+      update((current) => ({
+        ...current,
+        svnPropertiesError: {
+          code: "WORKSPACE_REQUIRED",
+          message: "请先打开 SVN 工作副本",
+          detail: null,
+          recoverable: true,
+        },
+      }));
+      return null;
+    }
+
+    const workingCopyRoot = state.current.working_copy_root;
+    update((current) => ({
+      ...current,
+      svnPropertiesLoading: true,
+      svnPropertiesError: null,
+    }));
+
+    try {
+      const svnProperties = await ignoreWorkspacePath({
+        working_copy_root: workingCopyRoot,
+        file_path: path,
+        svn_executable: svnExecutable || undefined,
+      });
+      const ignoreValue =
+        svnProperties.properties.find((property) => property.name === "svn:ignore")?.value ?? "";
+      update((current) => {
+        if (
+          !current.current ||
+          !isSameWorkingCopyRoot(current.current.working_copy_root, workingCopyRoot)
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          svnProperties,
+          svnPropertiesLoading: false,
+          svnPropertiesError: null,
+          propertyEditForm: {
+            name: "svn:ignore",
+            value: ignoreValue,
+          },
+        };
+      });
+      return svnProperties;
+    } catch (error) {
+      update((current) => {
+        if (
+          !current.current ||
+          !isSameWorkingCopyRoot(current.current.working_copy_root, workingCopyRoot)
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          svnPropertiesLoading: false,
+          svnPropertiesError: error as CommandError,
+        };
+      });
+      return null;
+    }
+  }
+
   async function refreshSvnLog(svnExecutable?: string | null) {
     await fetchSvnLogPage(svnExecutable, false);
   }
@@ -3537,6 +3613,7 @@ function createWorkspaceStore() {
     setPropertyEditForm,
     usePropertyForEdit,
     saveSvnProperty,
+    ignorePath,
     refreshSvnLog,
     loadMoreSvnLog,
     setSvnLogFilter,

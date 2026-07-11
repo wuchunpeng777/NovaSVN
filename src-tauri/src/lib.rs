@@ -35,9 +35,10 @@ use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskW
 use tauri::{Emitter, Manager};
 use workspace::{
     FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, GetSvnBlameRequest,
-    GetSvnLogRequest, GetSvnPropertiesRequest, ListWorkspaceFilesRequest, OpenWorkspaceRequest,
-    RecentWorkspace, ScanWorkspaceStatusRequest, SetSvnPropertyRequest, SvnBlame, SvnLog,
-    SvnProperties, WorkingCopyStatus, WorkspaceFileTree, WorkspaceSummary,
+    GetSvnLogRequest, GetSvnPropertiesRequest, IgnoreWorkspacePathRequest,
+    ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace, ScanWorkspaceStatusRequest,
+    SetSvnPropertyRequest, SvnBlame, SvnLog, SvnProperties, WorkingCopyStatus, WorkspaceFileTree,
+    WorkspaceSummary,
 };
 
 fn create_app_menu<R: tauri::Runtime>(
@@ -513,6 +514,14 @@ fn set_svn_property(request: SetSvnPropertyRequest) -> CommandResult<SvnProperti
 }
 
 #[tauri::command]
+fn ignore_workspace_path(request: IgnoreWorkspacePathRequest) -> CommandResult<SvnProperties> {
+    println!("[NovaSVN] ignore_workspace_path command received");
+    Ok(CommandResponse::success(workspace::ignore_workspace_path(
+        request,
+    )?))
+}
+
+#[tauri::command]
 fn parse_unified_diff(diff_text: String) -> CommandResult<ParsedDiff> {
     println!("[NovaSVN] parse_unified_diff command received");
     Ok(CommandResponse::success(diff::parse_unified_diff(
@@ -612,6 +621,7 @@ pub fn run() {
             get_svn_blame,
             get_svn_properties,
             set_svn_property,
+            ignore_workspace_path,
             parse_unified_diff,
             generate_selected_patch,
             get_shadow_workspace_status,

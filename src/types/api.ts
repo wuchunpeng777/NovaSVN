@@ -474,6 +474,12 @@ export interface SetSvnPropertyRequest {
   svn_executable?: string;
 }
 
+export interface IgnoreWorkspacePathRequest {
+  working_copy_root: string;
+  file_path: string;
+  svn_executable?: string;
+}
+
 export interface FileDiff {
   path: string;
   text: string;

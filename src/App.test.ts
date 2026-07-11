@@ -16,6 +16,7 @@ vi.mock("./lib/api", async (importOriginal) => {
   return {
     ...actual,
     createSvnOperationTask: vi.fn(),
+    ignoreWorkspacePath: vi.fn(),
     getTask: vi.fn(),
     listTasks: vi.fn(),
     listWorkspaceFiles: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("./lib/api", async (importOriginal) => {
 import { get } from "svelte/store";
 import {
   createSvnOperationTask,
+  ignoreWorkspacePath,
   getTask,
   listTasks,
   listWorkspaceFiles,
@@ -45,6 +47,7 @@ import type {
 import App from "./App.svelte";
 
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
+const ignoreWorkspacePathMock = vi.mocked(ignoreWorkspacePath);
 const getTaskMock = vi.mocked(getTask);
 const listTasksMock = vi.mocked(listTasks);
 const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
@@ -53,6 +56,7 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(async () => {
   createSvnOperationTaskMock.mockReset();
+  ignoreWorkspacePathMock.mockReset();
   getTaskMock.mockReset();
   listTasksMock.mockReset();
   listWorkspaceFilesMock.mockReset();
@@ -318,6 +322,42 @@ describe("App SVN operation completion", () => {
       expect.stringContaining("源：source.txt\n目标：copied.txt"),
     );
   });
+
+  it("确认目标和作用目录后写入 Ignore 并刷新工作副本", async () => {
+    await showIgnorableSource();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    ignoreWorkspacePathMock.mockResolvedValueOnce({
+      target: "assets",
+      properties: [{ name: "svn:ignore", value: "cache.tmp" }],
+      externals: null,
+    });
+    scanWorkspaceStatusMock.mockClear();
+    listWorkspaceFilesMock.mockClear();
+    render(App);
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "在工作副本中 Ignore assets/cache.tmp" }),
+    );
+
+    await waitFor(() => {
+      expect(ignoreWorkspacePathMock).toHaveBeenCalledWith({
+        working_copy_root: "C:/repo/wc",
+        file_path: "assets/cache.tmp",
+        svn_executable: undefined,
+      });
+    });
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringContaining("目标：assets/cache.tmp\n规则作用目录：assets"),
+    );
+    await waitFor(() => {
+      expect(scanWorkspaceStatusMock).toHaveBeenCalledOnce();
+      expect(listWorkspaceFilesMock).toHaveBeenCalledOnce();
+    });
+    expect(get(workspaceStore)).toMatchObject({
+      svnProperties: { target: "assets" },
+      propertyEditForm: { name: "svn:ignore", value: "cache.tmp" },
+    });
+  });
 });
 
 async function showMoveableSource() {
@@ -339,6 +379,48 @@ async function showMoveableSource() {
   ];
   listWorkspaceFilesMock.mockResolvedValueOnce(tree);
   await workspaceStore.refreshFileTree();
+}
+
+async function showIgnorableSource() {
+  const status = makeStatus();
+  status.total = 1;
+  status.returned = 1;
+  status.unversioned = 1;
+  status.files = [
+    {
+      path: "assets/cache.tmp",
+      status: "unversioned",
+      revision: null,
+      property_status: null,
+      property_changed: false,
+      abnormal: false,
+      lock_state: "none",
+      lock_owner: null,
+      lock_comment: null,
+      conflict_kind: null,
+      file_size: 10,
+      content_digest: "cache-digest",
+    },
+  ];
+  const tree = makeFileTree();
+  tree.total_files = 1;
+  tree.returned_files = 1;
+  tree.nodes = [
+    {
+      path: "assets/cache.tmp",
+      name: "cache.tmp",
+      kind: "file",
+      status: "unversioned",
+      revision: null,
+      file_size: 10,
+      changed: true,
+      versioned: false,
+      children: [],
+    },
+  ];
+  scanWorkspaceStatusMock.mockResolvedValueOnce(status);
+  listWorkspaceFilesMock.mockResolvedValueOnce(tree);
+  await workspaceStore.refreshStatus();
 }
 
 function makeWorkspace(): WorkspaceSummary {

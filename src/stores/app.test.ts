@@ -11,6 +11,7 @@ vi.mock("../lib/api", () => ({
   getSvnBlame: vi.fn(),
   getSvnLog: vi.fn(),
   getSvnProperties: vi.fn(),
+  ignoreWorkspacePath: vi.fn(),
   getTaskWorkspaces: vi.fn(),
   listWorkspaceFiles: vi.fn(),
   openGeneratedFileLocation: vi.fn(),
@@ -35,6 +36,7 @@ import {
   getSvnBlame,
   getSvnLog,
   getSvnProperties,
+  ignoreWorkspacePath,
   getTaskWorkspaces,
   listWorkspaceFiles,
   openGeneratedFileLocation,
@@ -79,6 +81,7 @@ const getFileDiffMock = vi.mocked(getFileDiff);
 const getSvnBlameMock = vi.mocked(getSvnBlame);
 const getSvnLogMock = vi.mocked(getSvnLog);
 const getSvnPropertiesMock = vi.mocked(getSvnProperties);
+const ignoreWorkspacePathMock = vi.mocked(ignoreWorkspacePath);
 const getTaskWorkspacesMock = vi.mocked(getTaskWorkspaces);
 const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
 const openGeneratedFileLocationMock = vi.mocked(openGeneratedFileLocation);
@@ -100,6 +103,7 @@ beforeEach(() => {
   getSvnBlameMock.mockReset();
   getSvnLogMock.mockReset();
   getSvnPropertiesMock.mockReset();
+  ignoreWorkspacePathMock.mockReset();
   getTaskWorkspacesMock.mockReset();
   listWorkspaceFilesMock.mockReset();
   openGeneratedFileLocationMock.mockReset();
@@ -296,6 +300,37 @@ describe("workspaceStore svn properties", () => {
       code: "WORKSPACE_REQUIRED",
       message: "请先打开 SVN 工作副本",
       recoverable: true,
+    });
+  });
+
+  it("stores the parent ignore scope and edit value after Ignore succeeds", async () => {
+    openWorkspaceMock.mockResolvedValueOnce(makeWorkspace());
+    scanWorkspaceStatusMock.mockResolvedValue(makeStatus([]));
+    ignoreWorkspacePathMock.mockResolvedValueOnce(
+      makeSvnProperties({
+        target: "notes",
+        properties: [{ name: "svn:ignore", value: "existing.tmp\nnew.tmp" }],
+      }),
+    );
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    const result = await workspaceStore.ignorePath("notes/new.tmp", "C:/svn/svn.exe");
+
+    expect(ignoreWorkspacePathMock).toHaveBeenCalledWith({
+      working_copy_root: "C:/repo/wc",
+      file_path: "notes/new.tmp",
+      svn_executable: "C:/svn/svn.exe",
+    });
+    expect(result?.target).toBe("notes");
+    expect(get(workspaceStore)).toMatchObject({
+      svnProperties: { target: "notes" },
+      propertyEditForm: {
+        name: "svn:ignore",
+        value: "existing.tmp\nnew.tmp",
+      },
+      svnPropertiesLoading: false,
+      svnPropertiesError: null,
     });
   });
 

@@ -12,6 +12,7 @@
 - 支持对当前工作副本内的版本控制文件和目录执行 Delete，删除前明确提示本地内容与未提交改动风险。
 - 支持在当前工作副本内安全 Move 文件和目录，执行前确认源、目标及本地改动影响。
 - 支持在当前工作副本内安全 Copy 文件和目录，复制结果保留 SVN 历史并自动进入提交目标。
+- 支持对未版本控制文件和目录执行 Ignore，保留父目录已有的 `svn:ignore` 规则并明确显示规则作用目录。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。

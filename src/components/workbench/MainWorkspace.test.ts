@@ -26,6 +26,7 @@ describe("MainWorkspace", () => {
     const onSelectAllCommitFiles = vi.fn();
     const onClearCommitFiles = vi.fn();
     const onAddFile = vi.fn();
+    const onIgnorePath = vi.fn();
     const modified = makeFile("src/main.ts", "modified", "main-digest");
     const unversioned = makeFile("notes/new.txt", "unversioned", "new-digest");
 
@@ -45,6 +46,12 @@ describe("MainWorkspace", () => {
         onSelectAllCommitFiles,
         onClearCommitFiles,
         onAddFile,
+        onIgnorePath,
+        svnProperties: {
+          target: "notes",
+          properties: [{ name: "svn:ignore", value: "new.txt" }],
+          externals: null,
+        },
       },
     });
 
@@ -63,7 +70,10 @@ describe("MainWorkspace", () => {
     await fireEvent.click(screen.getByRole("button", { name: "未管理文件" }));
 
     await fireEvent.click(screen.getByText("Add", { exact: true }));
+    await fireEvent.click(screen.getByRole("button", { name: "Ignore 文件 notes/new.txt" }));
     expect(onAddFile).toHaveBeenCalledWith("notes/new.txt");
+    expect(onIgnorePath).toHaveBeenCalledWith("notes/new.txt");
+    expect(screen.getByText("作用目录：notes", { exact: true })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "删除文件 notes/new.txt" }),
     ).not.toBeInTheDocument();
@@ -130,6 +140,12 @@ describe("MainWorkspace", () => {
     expect(
       screen.queryByRole("button", { name: "复制文件 ignored.log" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Ignore 文件 ignored.log" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Ignore 目录 external" }),
+    ).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "删除目录 empty" }));
     expect(onDeletePath).toHaveBeenNthCalledWith(4, "empty");
     await fireEvent.click(
@@ -140,6 +156,42 @@ describe("MainWorkspace", () => {
     );
     expect(onDeletePath).toHaveBeenNthCalledWith(5, "literal\\name.txt");
     expect(onDeletePath).toHaveBeenNthCalledWith(6, "literal/name.txt");
+  });
+
+  it("offers Ignore for an unversioned directory", async () => {
+    const onIgnorePath = vi.fn();
+    const directory = makeFile("drafts", "unversioned", "drafts-digest");
+    const tree = makeFileTree();
+    tree.total_files = 1;
+    tree.returned_files = 1;
+    tree.nodes = [
+      {
+        path: "drafts",
+        name: "drafts",
+        kind: "dir",
+        status: "unversioned",
+        revision: null,
+        file_size: null,
+        changed: true,
+        versioned: false,
+        children: [],
+      },
+    ];
+
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([directory]),
+        workspaceFileTree: tree,
+        onIgnorePath,
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "未管理文件" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Ignore 目录 drafts" }));
+
+    expect(onIgnorePath).toHaveBeenCalledWith("drafts");
   });
 
   it("keeps a Unix backslash filename intact in the inspector", () => {
@@ -280,8 +332,8 @@ function makeStatus(files: ChangedFile[]): WorkingCopyStatus {
 function makeFileTree(): WorkspaceFileTree {
   return {
     working_copy_root: "C:/repo/wc",
-    total_files: 5,
-    returned_files: 5,
+    total_files: 8,
+    returned_files: 8,
     truncated: false,
     nodes: [
       {
@@ -328,6 +380,29 @@ function makeFileTree(): WorkspaceFileTree {
         changed: false,
         versioned: false,
         children: [],
+      },
+      {
+        path: "external",
+        name: "external",
+        kind: "dir",
+        status: "external",
+        revision: null,
+        file_size: null,
+        changed: false,
+        versioned: false,
+        children: [
+          {
+            path: "external/file.txt",
+            name: "file.txt",
+            kind: "file",
+            status: "normal",
+            revision: null,
+            file_size: 64,
+            changed: false,
+            versioned: false,
+            children: [],
+          },
+        ],
       },
       {
         path: "empty",

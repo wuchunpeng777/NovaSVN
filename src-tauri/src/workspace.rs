@@ -155,6 +155,13 @@ pub struct SetSvnPropertyRequest {
     pub svn_executable: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct IgnoreWorkspacePathRequest {
+    pub working_copy_root: String,
+    pub file_path: String,
+    pub svn_executable: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FileDiff {
     pub path: String,
@@ -501,6 +508,188 @@ pub fn set_svn_property(request: SetSvnPropertyRequest) -> Result<SvnProperties,
     get_svn_properties(GetSvnPropertiesRequest {
         working_copy_root: request.working_copy_root,
         file_path: request.file_path,
+        svn_executable: Some(executable),
+    })
+}
+
+pub fn ignore_workspace_path(
+    request: IgnoreWorkspacePathRequest,
+) -> Result<SvnProperties, NovaError> {
+    let root = normalize_workspace_path(&request.working_copy_root)?;
+    let file_path = normalize_relative_file_path(&request.file_path)?;
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let target = root.join(&file_path);
+    let status_output = Command::new(&executable)
+        .args(["status", "--xml", "--no-ignore"])
+        .arg(&target)
+        .current_dir(&root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_IGNORE_STATUS_FAILED",
+                "无法确认 Ignore 目标状态",
+                Some(format!(
+                    "执行 `{executable} status --xml --no-ignore` 失败：{error}"
+                )),
+                true,
+            )
+        })?;
+    if !status_output.status.success() {
+        return Err(NovaError::command(
+            "SVN_IGNORE_STATUS_FAILED",
+            "Ignore 目标状态读取失败",
+            Some(command_error_detail(
+                &executable,
+                "status --xml --no-ignore",
+                &status_output,
+            )),
+            true,
+        ));
+    }
+    let status_xml = String::from_utf8_lossy(&status_output.stdout);
+    let document = Document::parse(&status_xml).map_err(|error| {
+        NovaError::command(
+            "SVN_IGNORE_STATUS_INVALID",
+            "Ignore 目标状态无法解析",
+            Some(format!("svn status --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+    let item = document
+        .descendants()
+        .find(|node| node.has_tag_name("wc-status"))
+        .and_then(|node| node.attribute("item"))
+        .ok_or_else(|| {
+            NovaError::command(
+                "SVN_IGNORE_TARGET_NOT_UNVERSIONED",
+                "Ignore 目标不是未版本控制路径",
+                Some(format!("路径：{file_path}")),
+                true,
+            )
+        })?;
+    if item == "ignored" {
+        return Err(NovaError::command(
+            "SVN_IGNORE_ALREADY_IGNORED",
+            "目标已经被 Ignore",
+            Some(format!("路径：{file_path}")),
+            true,
+        ));
+    }
+    if item != "unversioned" {
+        return Err(NovaError::command(
+            "SVN_IGNORE_TARGET_NOT_UNVERSIONED",
+            "只能 Ignore 未版本控制路径",
+            Some(format!("路径：{file_path}；当前状态：{item}")),
+            true,
+        ));
+    }
+
+    let (parent_path, pattern) = file_path
+        .rsplit_once('/')
+        .map(|(parent, name)| (Some(parent.to_string()), name.to_string()))
+        .unwrap_or_else(|| (None, file_path.clone()));
+    let parent_target = parent_path
+        .as_deref()
+        .map(|parent| root.join(parent))
+        .unwrap_or_else(|| root.clone());
+    let parent_info = Command::new(&executable)
+        .args(["info", "--xml"])
+        .arg(&parent_target)
+        .current_dir(&root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_IGNORE_PARENT_STATUS_FAILED",
+                "无法确认 Ignore 规则作用目录",
+                Some(format!("执行 `{executable} info --xml` 失败：{error}")),
+                true,
+            )
+        })?;
+    if !parent_info.status.success() {
+        return Err(NovaError::command(
+            "SVN_IGNORE_PARENT_NOT_VERSIONED",
+            "Ignore 规则作用目录未纳入版本控制",
+            Some(format!(
+                "作用目录：{}。{}",
+                display_status_path(&parent_target.display().to_string(), &root),
+                command_error_detail(&executable, "info --xml", &parent_info)
+            )),
+            true,
+        ));
+    }
+    let parent_info_xml = String::from_utf8_lossy(&parent_info.stdout);
+    let parent_summary = parse_svn_info_xml(&parent_info_xml, &parent_target).map_err(|error| {
+        NovaError::command(
+            "SVN_IGNORE_PARENT_STATUS_INVALID",
+            "Ignore 规则作用目录信息无法解析",
+            Some(error.to_string()),
+            true,
+        )
+    })?;
+    let canonical_root = fs::canonicalize(&root).map_err(|error| {
+        NovaError::command(
+            "SVN_IGNORE_ROOT_INVALID",
+            "无法确认当前工作副本根目录",
+            Some(format!("路径：{}。错误：{error}", root.display())),
+            true,
+        )
+    })?;
+    let canonical_parent_root =
+        fs::canonicalize(&parent_summary.working_copy_root).map_err(|error| {
+            NovaError::command(
+                "SVN_IGNORE_PARENT_ROOT_INVALID",
+                "无法确认 Ignore 规则作用目录所属工作副本",
+                Some(format!(
+                    "SVN 返回：{}。错误：{error}",
+                    parent_summary.working_copy_root
+                )),
+                true,
+            )
+        })?;
+    if canonical_parent_root != canonical_root {
+        return Err(NovaError::command(
+            "SVN_IGNORE_PARENT_OUTSIDE_WORKING_COPY",
+            "Ignore 规则作用目录不属于当前工作副本",
+            Some(format!(
+                "当前工作副本：{}。作用目录所属工作副本：{}。",
+                canonical_root.display(),
+                canonical_parent_root.display()
+            )),
+            true,
+        ));
+    }
+    let properties = get_svn_properties(GetSvnPropertiesRequest {
+        working_copy_root: request.working_copy_root.clone(),
+        file_path: parent_path.clone(),
+        svn_executable: Some(executable.clone()),
+    })?;
+    let current_value = properties
+        .properties
+        .iter()
+        .find(|property| property.name == "svn:ignore")
+        .map(|property| property.value.as_str())
+        .unwrap_or("");
+    if current_value.lines().any(|line| line == pattern) {
+        return Err(NovaError::command(
+            "SVN_IGNORE_RULE_EXISTS",
+            "父目录已经包含相同的 Ignore 规则",
+            Some(format!("作用目录：{}；规则：{pattern}", properties.target)),
+            true,
+        ));
+    }
+    let value = if current_value.is_empty() {
+        pattern
+    } else if current_value.ends_with('\n') {
+        format!("{current_value}{pattern}")
+    } else {
+        format!("{current_value}\n{pattern}")
+    };
+
+    set_svn_property(SetSvnPropertyRequest {
+        working_copy_root: request.working_copy_root,
+        file_path: parent_path,
+        name: "svn:ignore".to_string(),
+        value,
         svn_executable: Some(executable),
     })
 }
@@ -2587,6 +2776,60 @@ mod tests {
         );
     }
 
+    fn svn_test_tools_available() -> bool {
+        Command::new("svn")
+            .arg("--version")
+            .arg("--quiet")
+            .output()
+            .is_ok()
+            && Command::new("svnadmin")
+                .arg("--version")
+                .arg("--quiet")
+                .output()
+                .is_ok()
+    }
+
+    fn create_ignore_test_working_copy(test_name: &str) -> (PathBuf, PathBuf) {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-ignore-{test_name}-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(import_dir.join("tracked")).expect("create ignore import tree");
+        fs::write(import_dir.join("tracked/versioned.txt"), "versioned")
+            .expect("write versioned ignore fixture");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+
+        (root, working_copy)
+    }
+
+    fn assert_command_error_code(error: NovaError, expected: &str) {
+        match error {
+            NovaError::Command { code, .. } => assert_eq!(code, expected),
+        }
+    }
+
     fn find_workspace_node<'a>(
         nodes: &'a [WorkspaceFileNode],
         path: &str,
@@ -3113,6 +3356,114 @@ mod tests {
             .is_some_and(|node| node.status == "external" && !node.versioned));
         assert!(find_workspace_node(&tree.nodes, "external/nested.txt")
             .is_some_and(|node| node.status == "normal" && !node.versioned));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn appends_ignore_rule_and_returns_its_versioned_parent() {
+        if !svn_test_tools_available() {
+            return;
+        }
+
+        let (root, working_copy) = create_ignore_test_working_copy("append");
+        let tracked = working_copy.join("tracked");
+        run_test_command(
+            Command::new("svn")
+                .args(["propset", "svn:ignore", "build\n*.log\n"])
+                .arg(&tracked),
+        );
+        fs::write(tracked.join("cache.tmp"), "cache").expect("write ignore target");
+
+        let properties = ignore_workspace_path(IgnoreWorkspacePathRequest {
+            working_copy_root: working_copy.display().to_string(),
+            file_path: "tracked/cache.tmp".to_string(),
+            svn_executable: None,
+        })
+        .expect("ignore rule writes");
+
+        assert_eq!(properties.target, "tracked");
+        assert_eq!(
+            properties
+                .properties
+                .iter()
+                .find(|property| property.name == "svn:ignore")
+                .map(|property| property.value.as_str()),
+            Some("build\n*.log\ncache.tmp")
+        );
+        let status = Command::new("svn")
+            .args(["status", "--xml", "--no-ignore"])
+            .arg(tracked.join("cache.tmp"))
+            .output()
+            .expect("ignored target status runs");
+        assert!(status.status.success());
+        assert!(String::from_utf8_lossy(&status.stdout).contains("item=\"ignored\""));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_invalid_ignore_targets_with_stable_errors() {
+        if !svn_test_tools_available() {
+            return;
+        }
+
+        let (root, working_copy) = create_ignore_test_working_copy("errors");
+        fs::write(working_copy.join("ignored.tmp"), "ignored").expect("write ignored target");
+        ignore_workspace_path(IgnoreWorkspacePathRequest {
+            working_copy_root: working_copy.display().to_string(),
+            file_path: "ignored.tmp".to_string(),
+            svn_executable: None,
+        })
+        .expect("first ignore writes");
+
+        let repeated = ignore_workspace_path(IgnoreWorkspacePathRequest {
+            working_copy_root: working_copy.display().to_string(),
+            file_path: "ignored.tmp".to_string(),
+            svn_executable: None,
+        })
+        .expect_err("repeated ignore must fail");
+        assert_command_error_code(repeated, "SVN_IGNORE_ALREADY_IGNORED");
+
+        let versioned = ignore_workspace_path(IgnoreWorkspacePathRequest {
+            working_copy_root: working_copy.display().to_string(),
+            file_path: "tracked/versioned.txt".to_string(),
+            svn_executable: None,
+        })
+        .expect_err("versioned target must fail");
+        assert_command_error_code(versioned, "SVN_IGNORE_TARGET_NOT_UNVERSIONED");
+
+        fs::create_dir_all(working_copy.join("scratch")).expect("create unversioned parent");
+        fs::write(working_copy.join("scratch/nested.tmp"), "nested")
+            .expect("write nested ignore target");
+        let unversioned_parent = ignore_workspace_path(IgnoreWorkspacePathRequest {
+            working_copy_root: working_copy.display().to_string(),
+            file_path: "scratch/nested.tmp".to_string(),
+            svn_executable: None,
+        })
+        .expect_err("unversioned parent must fail");
+        assert_command_error_code(unversioned_parent, "SVN_IGNORE_PARENT_NOT_VERSIONED");
+
+        let nested_working_copy = working_copy.join("nested-working-copy");
+        let repository_url = format!("file://{}", root.join("repository").display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&nested_working_copy),
+        );
+        fs::write(nested_working_copy.join("foreign.tmp"), "foreign")
+            .expect("write nested working copy ignore target");
+        let outside_working_copy = ignore_workspace_path(IgnoreWorkspacePathRequest {
+            working_copy_root: working_copy.display().to_string(),
+            file_path: "nested-working-copy/foreign.tmp".to_string(),
+            svn_executable: None,
+        })
+        .expect_err("nested working copy parent must fail");
+        assert_command_error_code(
+            outside_working_copy,
+            "SVN_IGNORE_PARENT_OUTSIDE_WORKING_COPY",
+        );
 
         let _ = fs::remove_dir_all(root);
     }
