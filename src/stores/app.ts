@@ -3615,6 +3615,11 @@ function createWorkspaceStore() {
               error instanceof Error ? error.message : "无法打开完整 patch 文件位置",
           }));
         }
+      } else {
+        update((state) => ({
+          ...state,
+          revisionDiffError: "Revision diff 预览已截断，但完整 Patch 文件位置不可用",
+        }));
       }
       return;
     }

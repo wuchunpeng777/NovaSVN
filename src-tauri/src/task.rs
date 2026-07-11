@@ -2836,11 +2836,30 @@ fn run_revision_diff_task(
             let line_count = diff_text.lines().count();
             let truncated = diff_text.len() > REVISION_DIFF_PREVIEW_MAX_BYTES;
             let preview_text = truncate_utf8(&diff_text, REVISION_DIFF_PREVIEW_MAX_BYTES);
-            let patch_file = write_revision_diff_patch(&payload, task_id, &target, &diff_text);
-            if let Err(error) = &patch_file {
-                append_task_log(state, task_id, &format!("完整 patch 文件写入失败：{error}"));
-            }
-            let patch_file = patch_file.ok().flatten();
+            let patch_file = match write_revision_diff_patch(&payload, task_id, &target, &diff_text)
+            {
+                Ok(patch_file) => patch_file,
+                Err(error) if truncated => {
+                    let error = nova_error_message(&error);
+                    append_task_log(state, task_id, &format!("完整 patch 文件写入失败：{error}"));
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "Revision diff 完整 Patch 写入失败",
+                        Some(error),
+                    );
+                    return;
+                }
+                Err(error) => {
+                    append_task_log(
+                        state,
+                        task_id,
+                        &format!("完整 patch 文件写入失败：{}", nova_error_message(&error)),
+                    );
+                    None
+                }
+            };
             let result = RevisionDiffResult {
                 mode: revision_diff_mode_label(&payload.mode).to_string(),
                 target,
@@ -2952,13 +2971,7 @@ fn run_revert_revision_task(
             );
         }
         Err(error) => {
-            let error = match error {
-                NovaError::Command {
-                    message, detail, ..
-                } => detail
-                    .map(|detail| format!("{message}：{detail}"))
-                    .unwrap_or(message),
-            };
+            let error = nova_error_message(&error);
             update_task(
                 state,
                 task_id,
@@ -2967,6 +2980,17 @@ fn run_revert_revision_task(
                 Some(error),
             );
         }
+    }
+}
+
+fn nova_error_message(error: &NovaError) -> String {
+    match error {
+        NovaError::Command {
+            message, detail, ..
+        } => detail
+            .as_ref()
+            .map(|detail| format!("{message}：{detail}"))
+            .unwrap_or_else(|| message.clone()),
     }
 }
 
@@ -8050,6 +8074,39 @@ mod tests {
 
         assert_eq!(truncated, "abc");
         assert!(truncated.is_char_boundary(truncated.len()));
+    }
+
+    #[test]
+    fn writes_complete_revision_diff_patch_beyond_preview_limit() {
+        let output_dir = test_temp_dir("revision-diff-complete-patch");
+        let payload = RevisionDiffTaskPayload {
+            mode: RevisionDiffMode::Revisions,
+            working_copy_root: Some("C:/repo/wc".to_string()),
+            file_path: None,
+            target_url: None,
+            left_revision: Some("10".to_string()),
+            right_revision: Some("12".to_string()),
+            left_url: None,
+            right_url: None,
+            svn_executable: "svn".to_string(),
+            patch_output_dir: output_dir.clone(),
+        };
+        let diff_text = format!(
+            "Index: large.txt\n{}",
+            "a".repeat(REVISION_DIFF_PREVIEW_MAX_BYTES + 1024)
+        );
+
+        let patch = write_revision_diff_patch(&payload, "task-large", "r10:r12", &diff_text)
+            .expect("complete patch should be written")
+            .expect("non-empty diff should create a patch file");
+
+        assert!(diff_text.len() > REVISION_DIFF_PREVIEW_MAX_BYTES);
+        assert_ne!(
+            truncate_utf8(&diff_text, REVISION_DIFF_PREVIEW_MAX_BYTES),
+            diff_text
+        );
+        assert_eq!(fs::read_to_string(&patch.path).unwrap(), diff_text);
+        fs::remove_dir_all(output_dir).ok();
     }
 
     #[test]

@@ -1425,6 +1425,34 @@ textarea {
   font-size: 12px;
 }
 
+.revision-patch-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.revision-patch-location {
+  display: grid;
+  gap: 4px;
+  border-left: 3px solid #4f87b4;
+  background: #e8f1f8;
+  padding: 7px 9px;
+  color: #405264;
+  font-size: 11px;
+}
+
+.revision-patch-location strong {
+  color: #1d5f9c;
+  font-size: 12px;
+}
+
+.revision-patch-location code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
 .revision-files {
   display: grid;
   gap: 8px;
@@ -2170,6 +2198,16 @@ textarea {
 
 .versions-workbench[data-theme="dark"] .timeline-entry p {
   color: #d4dbe2;
+}
+
+.versions-workbench[data-theme="dark"] .revision-patch-location {
+  border-left-color: #78acd5;
+  background: #243545;
+  color: #c0c8d0;
+}
+
+.versions-workbench[data-theme="dark"] .revision-patch-location strong {
+  color: #8bc8f5;
 }
 
 .versions-workbench[data-theme="dark"] .text-diff,

@@ -221,6 +221,18 @@ describe("revisionDiffPatchFileName", () => {
       path: "C:/app/patches/large.patch",
     });
 
+    workspaceStore.applyRevisionDiffResult(
+      makeRevisionDiffResult({
+        diff_text: "Index: src/missing-output.ts\n",
+        truncated: true,
+        patch_file_path: null,
+      }),
+    );
+    await workspaceStore.exportRevisionDiffPatch();
+    expect(get(workspaceStore).revisionDiffError).toBe(
+      "Revision diff 预览已截断，但完整 Patch 文件位置不可用",
+    );
+
     createElement.mockRestore();
     createObjectURL.mockRestore();
     revokeObjectURL.mockRestore();

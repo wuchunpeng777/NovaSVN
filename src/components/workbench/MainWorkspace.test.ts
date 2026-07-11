@@ -505,6 +505,48 @@ describe("MainWorkspace", () => {
     ).toBeDisabled();
   });
 
+  it("shows the complete Patch location when Revision Diff preview is truncated", async () => {
+    const onExportRevisionDiffPatch = vi.fn();
+    const truncatedResult = {
+      mode: "revisions",
+      target: "C:/repo/wc r10:r12",
+      diff_text: "Index: src/large.ts\n...",
+      file_count: 1,
+      line_count: 50000,
+      truncated: true,
+      max_bytes: 2 * 1024 * 1024,
+      patch_file_path: "C:/Users/TU/AppData/Roaming/NovaSVN/revision-diff-patches/full.patch",
+      patch_file_dir: "C:/Users/TU/AppData/Roaming/NovaSVN/revision-diff-patches",
+      patch_file_name: "full.patch",
+    };
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.history,
+        workspace: makeWorkspace(),
+        revisionDiffResult: truncatedResult,
+        onExportRevisionDiffPatch,
+      },
+    });
+
+    const location = screen.getByRole("status");
+    expect(location).toHaveTextContent("界面仅显示截断预览");
+    expect(location).toHaveTextContent("完整 Patch 已保存为 full.patch");
+    expect(location).toHaveTextContent(truncatedResult.patch_file_path);
+    await fireEvent.click(screen.getByRole("button", { name: "显示完整 Patch 位置" }));
+    expect(onExportRevisionDiffPatch).toHaveBeenCalledOnce();
+
+    await rerender({
+      revisionDiffResult: {
+        ...truncatedResult,
+        patch_file_path: null,
+        patch_file_dir: null,
+        patch_file_name: null,
+      },
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("完整 Patch 文件位置不可用");
+    expect(screen.getByRole("button", { name: "显示完整 Patch 位置" })).toBeDisabled();
+  });
+
   it("filters Timeline revisions with inclusive local date controls", async () => {
     const onSvnLogFilterInput = vi.fn();
     const onSvnLogFileOnlyInput = vi.fn();

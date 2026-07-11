@@ -4,6 +4,7 @@
     Download,
     Ellipsis,
     FileUp,
+    FolderOpen,
     GitCompareArrows,
     LoaderCircle,
     PanelLeftClose,
@@ -2319,15 +2320,38 @@
             </button>
             <button
               type="button"
+              class="revision-patch-action"
               on:click={onExportRevisionDiffPatch}
-              disabled={!revisionDiffResult || (!revisionDiffResult.diff_text && !revisionDiffResult.patch_file_path)}
+              disabled={
+                !revisionDiffResult ||
+                (revisionDiffResult.truncated
+                  ? !revisionDiffResult.patch_file_path
+                  : !revisionDiffResult.diff_text && !revisionDiffResult.patch_file_path)
+              }
             >
-              导出 Patch
+              {#if revisionDiffResult?.truncated}
+                <FolderOpen size={15} strokeWidth={2} aria-hidden="true" />
+                显示完整 Patch 位置
+              {:else}
+                <Download size={15} strokeWidth={2} aria-hidden="true" />
+                导出完整 Patch
+              {/if}
             </button>
             <div class="revision-result">
               <span>{revisionDiffResult?.file_count ?? 0} 文件</span>
               <span>{revisionDiffResult?.line_count ?? 0} 行</span>
             </div>
+            {#if revisionDiffResult?.truncated}
+              <div class="revision-patch-location" role="status">
+                <strong>界面仅显示截断预览</strong>
+                {#if revisionDiffResult.patch_file_path}
+                  <span>完整 Patch 已保存为 {revisionDiffResult.patch_file_name ?? "Patch 文件"}</span>
+                  <code title={revisionDiffResult.patch_file_path}>{revisionDiffResult.patch_file_path}</code>
+                {:else}
+                  <span class="inline-error">完整 Patch 文件位置不可用，请查看任务错误。</span>
+                {/if}
+              </div>
+            {/if}
             <pre>{revisionDiffResult?.diff_text || "暂无比较结果"}</pre>
           </aside>
         </div>

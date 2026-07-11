@@ -486,6 +486,18 @@ if (
 }
 
 if (
+  !mainWorkspace.includes('class="revision-patch-location"') ||
+  !mainWorkspace.includes("revisionDiffResult.patch_file_path") ||
+  !mainWorkspace.includes("显示完整 Patch 位置") ||
+  !appStore.includes("完整 Patch 文件位置不可用") ||
+  !taskRs.includes("Err(error) if truncated") ||
+  !taskRs.includes("Revision diff 完整 Patch 写入失败")
+) {
+  console.error("截断的 Revision Diff 必须保留完整 Patch，并在界面明确显示文件位置");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||
