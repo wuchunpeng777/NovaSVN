@@ -243,6 +243,7 @@
   export let onAddFile: (path: string) => void = () => {};
   export let onDeletePath: (path: string) => void = () => {};
   export let onMovePath: (path: string) => void = () => {};
+  export let onCopyPath: (path: string) => void = () => {};
   export let onRevertFile: (path: string) => void = () => {};
   export let onLockFile: (path: string) => void = () => {};
   export let onUnlockFile: (path: string) => void = () => {};
@@ -1855,6 +1856,19 @@
                       <span
                         role="button"
                         tabindex="0"
+                        aria-label={`复制${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
+                        on:click|stopPropagation={() => onCopyPath(node.path)}
+                        on:keydown|stopPropagation={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            onCopyPath(node.path);
+                          }
+                        }}
+                      >
+                        复制
+                      </span>
+                      <span
+                        role="button"
+                        tabindex="0"
                         aria-label={`删除${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
                         on:click|stopPropagation={() => onDeletePath(node.path)}
                         on:keydown|stopPropagation={(event) => {
@@ -1965,6 +1979,13 @@
                       on:click={() => selectedTreeNode && onMovePath(selectedTreeNode.path)}
                     >
                       移动
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`在工作副本中复制 ${selectedTreeNode?.path ?? ""}`}
+                      on:click={() => selectedTreeNode && onCopyPath(selectedTreeNode.path)}
+                    >
+                      复制
                     </button>
                     <button
                       type="button"

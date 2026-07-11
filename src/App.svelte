@@ -859,6 +859,24 @@
     await runSvnOperation("move_path", sourcePath, targetPath);
   }
 
+  async function copyWorkspacePath(sourcePath: string) {
+    const targetPath = window.prompt(
+      "请输入 Copy 目标路径（相对于当前工作副本）",
+      sourcePath,
+    );
+    if (targetPath === null || !targetPath.trim()) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `确定复制工作副本路径吗？\n\n源：${sourcePath}\n目标：${targetPath}\n\n源内容保持不变，目标会成为带历史的 SVN 新增项并进入提交目标。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    await runSvnOperation("copy_path", sourcePath, targetPath);
+  }
+
   $: consumePendingTask($workspaceStore.pendingCommitTaskId, $taskStore.snapshot, (task) => {
     if (task.status === "success") {
       const committedPaths = $workspaceStore.commitFiles.map((file) => file.path);
@@ -1303,6 +1321,7 @@
   onAddFile={(path) => runSvnOperation("add_file", path)}
   onDeletePath={(path) => runSvnOperation("delete_path", path)}
   onMovePath={moveWorkspacePath}
+  onCopyPath={copyWorkspacePath}
   onRevertFile={(path) => runSvnOperation("revert_file", path)}
   onLockFile={(path) => runSvnOperation("lock_file", path)}
   onUnlockFile={(path) => runSvnOperation("unlock_file", path)}

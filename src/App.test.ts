@@ -290,6 +290,34 @@ describe("App SVN operation completion", () => {
 
     expect(createSvnOperationTaskMock).not.toHaveBeenCalled();
   });
+
+  it("确认源和目标后创建工作副本 Copy 任务", async () => {
+    await showMoveableSource();
+    vi.spyOn(window, "prompt").mockReturnValue("copied.txt");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const copyTask = makeTask({ task_id: "copy-task", status: "pending" });
+    createSvnOperationTaskMock.mockResolvedValue(copyTask);
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([makeTaskSummary({ task_id: "copy-task", status: "pending" })]),
+    );
+    getTaskMock.mockResolvedValue(copyTask);
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "复制文件 source.txt" }));
+
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:/repo/wc",
+        kind: "copy_path",
+        file_path: "source.txt",
+        target_path: "copied.txt",
+        svn_executable: undefined,
+      });
+    });
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringContaining("源：source.txt\n目标：copied.txt"),
+    );
+  });
 });
 
 async function showMoveableSource() {

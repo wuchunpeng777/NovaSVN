@@ -105,6 +105,7 @@ pub enum SvnOperationKind {
     AddFile,
     DeletePath,
     MovePath,
+    CopyPath,
     RevertFile,
     LockFile,
     UnlockFile,
@@ -318,11 +319,11 @@ struct SvnOperationTaskPayload {
     target_path: Option<String>,
     svn_executable: String,
     delete_target_identity: Option<Box<DeleteTargetIdentity>>,
-    move_destination_identity: Option<Box<MoveDestinationIdentity>>,
+    destination_identity: Option<Box<WorkingCopyDestinationIdentity>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct MoveDestinationIdentity {
+struct WorkingCopyDestinationIdentity {
     parent_path: Option<String>,
     parent_identity: Option<DeleteTargetIdentity>,
 }
@@ -542,6 +543,11 @@ impl TaskQueue {
                 "MOVE_SOURCE_PATH_INVALID",
                 "Move 源路径无效",
             )?),
+            SvnOperationKind::CopyPath => Some(normalize_move_path(
+                request.file_path.as_deref().unwrap_or_default(),
+                "COPY_SOURCE_PATH_INVALID",
+                "Copy 源路径无效",
+            )?),
             SvnOperationKind::RevertFile => Some(normalize_relative_file_path(
                 request.file_path.as_deref().unwrap_or_default(),
                 "REVERT_FILE_PATH_INVALID",
@@ -568,26 +574,40 @@ impl TaskQueue {
             )?),
             SvnOperationKind::Update | SvnOperationKind::Cleanup => None,
         };
-        let target_path = if matches!(&request.kind, SvnOperationKind::MovePath) {
-            Some(normalize_move_path(
+        let target_path = match &request.kind {
+            SvnOperationKind::MovePath => Some(normalize_move_path(
                 request.target_path.as_deref().unwrap_or_default(),
                 "MOVE_TARGET_PATH_INVALID",
                 "Move 目标路径无效",
-            )?)
-        } else {
-            None
+            )?),
+            SvnOperationKind::CopyPath => Some(normalize_move_path(
+                request.target_path.as_deref().unwrap_or_default(),
+                "COPY_TARGET_PATH_INVALID",
+                "Copy 目标路径无效",
+            )?),
+            _ => None,
         };
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let delete_target_identity = if matches!(
             &request.kind,
-            SvnOperationKind::DeletePath | SvnOperationKind::MovePath
+            SvnOperationKind::DeletePath | SvnOperationKind::MovePath | SvnOperationKind::CopyPath
         ) {
             working_copy_root = canonicalize_delete_working_copy_root(&working_copy_root)?;
-            let identity = if matches!(&request.kind, SvnOperationKind::MovePath) {
-                validate_move_source(
+            let identity = if matches!(
+                &request.kind,
+                SvnOperationKind::MovePath | SvnOperationKind::CopyPath
+            ) {
+                let (code_prefix, label) = match &request.kind {
+                    SvnOperationKind::MovePath => ("MOVE", "Move"),
+                    SvnOperationKind::CopyPath => ("COPY", "Copy"),
+                    _ => unreachable!(),
+                };
+                validate_working_copy_transfer_source(
                     &svn_executable,
                     &working_copy_root,
                     file_path.as_deref().unwrap_or_default(),
+                    code_prefix,
+                    label,
                 )?
             } else {
                 validate_delete_target(
@@ -600,15 +620,30 @@ impl TaskQueue {
         } else {
             None
         };
-        let move_destination_identity = if matches!(&request.kind, SvnOperationKind::MovePath) {
-            Some(Box::new(validate_move_destination(
+        let destination_identity = if matches!(
+            &request.kind,
+            SvnOperationKind::MovePath | SvnOperationKind::CopyPath
+        ) {
+            let (code_prefix, label) = match &request.kind {
+                SvnOperationKind::MovePath => ("MOVE", "Move"),
+                SvnOperationKind::CopyPath => ("COPY", "Copy"),
+                _ => unreachable!(),
+            };
+            Some(Box::new(validate_working_copy_destination(
                 &svn_executable,
                 &working_copy_root,
                 file_path.as_deref().unwrap_or_default(),
                 delete_target_identity.as_deref().ok_or_else(|| {
-                    NovaError::command("MOVE_SOURCE_INVALID", "Move 源路径身份缺失", None, true)
+                    NovaError::command(
+                        format!("{code_prefix}_SOURCE_INVALID"),
+                        format!("{label} 源路径身份缺失"),
+                        None,
+                        true,
+                    )
                 })?,
                 target_path.as_deref().unwrap_or_default(),
+                code_prefix,
+                label,
             )?))
         } else {
             None
@@ -635,7 +670,7 @@ impl TaskQueue {
                 target_path,
                 svn_executable,
                 delete_target_identity,
-                move_destination_identity,
+                destination_identity,
             }),
         };
 
@@ -1464,7 +1499,12 @@ fn run_svn_operation_task(
                 &format!("执行 svn delete --force：{file_path}"),
             );
         }
-        SvnOperationKind::MovePath => {
+        SvnOperationKind::MovePath | SvnOperationKind::CopyPath => {
+            let (command_name, code_prefix, label) = match &payload.kind {
+                SvnOperationKind::MovePath => ("move", "MOVE", "Move"),
+                SvnOperationKind::CopyPath => ("copy", "COPY", "Copy"),
+                _ => unreachable!(),
+            };
             let (Some(source_path), Some(target_path)) =
                 (payload.file_path.as_deref(), payload.target_path.as_deref())
             else {
@@ -1472,8 +1512,8 @@ fn run_svn_operation_task(
                     state,
                     task_id,
                     TaskStatus::Failed,
-                    "Move 参数缺失",
-                    Some("缺少 Move 源路径或目标路径。".to_string()),
+                    &format!("{label} 参数缺失"),
+                    Some(format!("缺少 {label} 源路径或目标路径。")),
                 );
                 return;
             };
@@ -1484,7 +1524,7 @@ fn run_svn_operation_task(
                         state,
                         task_id,
                         TaskStatus::Failed,
-                        "Move 安全校验失败",
+                        &format!("{label} 安全校验失败"),
                         Some(format!(
                             "工作副本根目录在任务排队后发生变化：{}",
                             canonical_root.display()
@@ -1497,7 +1537,7 @@ fn run_svn_operation_task(
                         state,
                         task_id,
                         TaskStatus::Failed,
-                        "Move 安全校验失败",
+                        &format!("{label} 安全校验失败"),
                         Some(nova_error_text(&error)),
                     );
                     return;
@@ -1505,50 +1545,23 @@ fn run_svn_operation_task(
             };
             let (Some(expected_source), Some(expected_destination)) = (
                 payload.delete_target_identity.as_deref(),
-                payload.move_destination_identity.as_deref(),
+                payload.destination_identity.as_deref(),
             ) else {
                 update_task(
                     state,
                     task_id,
                     TaskStatus::Failed,
-                    "Move 安全校验失败",
-                    Some("Move 任务缺少源或目标身份快照。".to_string()),
+                    &format!("{label} 安全校验失败"),
+                    Some(format!("{label} 任务缺少源或目标身份快照。")),
                 );
                 return;
             };
-            let current_source =
-                match validate_move_source(&payload.svn_executable, &canonical_root, source_path) {
-                    Ok(identity) => identity,
-                    Err(error) => {
-                        update_task(
-                            state,
-                            task_id,
-                            TaskStatus::Failed,
-                            "Move 源路径校验失败",
-                            Some(nova_error_text(&error)),
-                        );
-                        return;
-                    }
-                };
-            if &current_source != expected_source {
-                update_task(
-                    state,
-                    task_id,
-                    TaskStatus::Failed,
-                    "Move 源路径已发生变化",
-                    Some(nova_error_text(&delete_target_changed_error(
-                        expected_source,
-                        &current_source,
-                    ))),
-                );
-                return;
-            }
-            let current_destination = match validate_move_destination(
+            let current_source = match validate_working_copy_transfer_source(
                 &payload.svn_executable,
                 &canonical_root,
                 source_path,
-                &current_source,
-                target_path,
+                code_prefix,
+                label,
             ) {
                 Ok(identity) => identity,
                 Err(error) => {
@@ -1556,7 +1569,41 @@ fn run_svn_operation_task(
                         state,
                         task_id,
                         TaskStatus::Failed,
-                        "Move 目标路径校验失败",
+                        &format!("{label} 源路径校验失败"),
+                        Some(nova_error_text(&error)),
+                    );
+                    return;
+                }
+            };
+            if &current_source != expected_source {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    &format!("{label} 源路径已发生变化"),
+                    Some(nova_error_text(&delete_target_changed_error(
+                        expected_source,
+                        &current_source,
+                    ))),
+                );
+                return;
+            }
+            let current_destination = match validate_working_copy_destination(
+                &payload.svn_executable,
+                &canonical_root,
+                source_path,
+                &current_source,
+                target_path,
+                code_prefix,
+                label,
+            ) {
+                Ok(identity) => identity,
+                Err(error) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        &format!("{label} 目标路径校验失败"),
                         Some(nova_error_text(&error)),
                     );
                     return;
@@ -1567,19 +1614,19 @@ fn run_svn_operation_task(
                     state,
                     task_id,
                     TaskStatus::Failed,
-                    "Move 目标路径已发生变化",
+                    &format!("{label} 目标路径已发生变化"),
                     Some("目标父目录在任务排队后发生变化。".to_string()),
                 );
                 return;
             }
             command
-                .arg("move")
+                .arg(command_name)
                 .arg(canonical_root.join(source_path))
                 .arg(canonical_root.join(target_path));
             append_task_log(
                 state,
                 task_id,
-                &format!("执行 svn move：{source_path} -> {target_path}"),
+                &format!("执行 svn {command_name}：{source_path} -> {target_path}"),
             );
         }
         SvnOperationKind::RevertFile => {
@@ -3873,17 +3920,19 @@ fn validate_delete_target(
     })
 }
 
-fn validate_move_destination(
+fn validate_working_copy_destination(
     svn_executable: &str,
     working_copy_root: &Path,
     source_path: &str,
     source_identity: &DeleteTargetIdentity,
     target_path: &str,
-) -> Result<MoveDestinationIdentity, NovaError> {
+    code_prefix: &str,
+    label: &str,
+) -> Result<WorkingCopyDestinationIdentity, NovaError> {
     if source_path == target_path {
         return Err(NovaError::command(
-            "MOVE_TARGET_SAME_AS_SOURCE",
-            "Move 目标路径不能与源路径相同",
+            format!("{code_prefix}_TARGET_SAME_AS_SOURCE"),
+            format!("{label} 目标路径不能与源路径相同"),
             Some(format!("路径：{source_path}")),
             true,
         ));
@@ -3894,8 +3943,8 @@ fn validate_move_destination(
             .is_some_and(|suffix| suffix.starts_with('/'))
     {
         return Err(NovaError::command(
-            "MOVE_TARGET_INSIDE_SOURCE",
-            "目录不能移动到自身内部",
+            format!("{code_prefix}_TARGET_INSIDE_SOURCE"),
+            format!("目录不能 {label} 到自身内部"),
             Some(format!("源：{source_path}；目标：{target_path}")),
             true,
         ));
@@ -3903,8 +3952,8 @@ fn validate_move_destination(
 
     validate_delete_target_ancestors(working_copy_root, target_path).map_err(|error| {
         NovaError::command(
-            "MOVE_TARGET_UNSAFE",
-            "Move 目标路径不安全",
+            format!("{code_prefix}_TARGET_UNSAFE"),
+            format!("{label} 目标路径不安全"),
             Some(nova_error_text(&error)),
             true,
         )
@@ -3914,16 +3963,16 @@ fn validate_move_destination(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Ok(_) => {
             return Err(NovaError::command(
-                "MOVE_TARGET_EXISTS",
-                "Move 目标路径已存在",
+                format!("{code_prefix}_TARGET_EXISTS"),
+                format!("{label} 目标路径已存在"),
                 Some(format!("路径：{}", target.display())),
                 true,
             ));
         }
         Err(error) => {
             return Err(NovaError::command(
-                "MOVE_TARGET_UNSAFE",
-                "无法检查 Move 目标路径",
+                format!("{code_prefix}_TARGET_UNSAFE"),
+                format!("无法检查 {label} 目标路径"),
                 Some(format!("路径：{}；错误：{error}", target.display())),
                 true,
             ));
@@ -3937,16 +3986,16 @@ fn validate_move_destination(
         let identity = validate_delete_target(svn_executable, working_copy_root, parent_path)
             .map_err(|error| {
                 NovaError::command(
-                    "MOVE_TARGET_PARENT_INVALID",
-                    "Move 目标父目录不是当前工作副本中的版本控制目录",
+                    format!("{code_prefix}_TARGET_PARENT_INVALID"),
+                    format!("{label} 目标父目录不是当前工作副本中的版本控制目录"),
                     Some(nova_error_text(&error)),
                     true,
                 )
             })?;
         if identity.entry_kind != "dir" {
             return Err(NovaError::command(
-                "MOVE_TARGET_PARENT_INVALID",
-                "Move 目标父路径不是版本控制目录",
+                format!("{code_prefix}_TARGET_PARENT_INVALID"),
+                format!("{label} 目标父路径不是版本控制目录"),
                 Some(format!("父路径：{parent_path}")),
                 true,
             ));
@@ -3956,21 +4005,23 @@ fn validate_move_destination(
         None
     };
 
-    Ok(MoveDestinationIdentity {
+    Ok(WorkingCopyDestinationIdentity {
         parent_path,
         parent_identity,
     })
 }
 
-fn validate_move_source(
+fn validate_working_copy_transfer_source(
     svn_executable: &str,
     working_copy_root: &Path,
     source_path: &str,
+    code_prefix: &str,
+    label: &str,
 ) -> Result<DeleteTargetIdentity, NovaError> {
     validate_delete_target(svn_executable, working_copy_root, source_path).map_err(|error| {
         NovaError::command(
-            "MOVE_SOURCE_INVALID",
-            "Move 源路径不是当前工作副本中的安全版本控制项目",
+            format!("{code_prefix}_SOURCE_INVALID"),
+            format!("{label} 源路径不是当前工作副本中的安全版本控制项目"),
             Some(nova_error_text(&error)),
             true,
         )
@@ -4149,6 +4200,11 @@ fn operation_title(
         }
         SvnOperationKind::MovePath => format!(
             "移动 {} 到 {}",
+            file_path.unwrap_or_default(),
+            target_path.unwrap_or_default()
+        ),
+        SvnOperationKind::CopyPath => format!(
+            "复制 {} 到 {}",
             file_path.unwrap_or_default(),
             target_path.unwrap_or_default()
         ),
@@ -5140,6 +5196,7 @@ mod tests {
             (SvnOperationKind::AddFile, "ADD_FILE_PATH_INVALID"),
             (SvnOperationKind::DeletePath, "DELETE_PATH_INVALID"),
             (SvnOperationKind::MovePath, "MOVE_SOURCE_PATH_INVALID"),
+            (SvnOperationKind::CopyPath, "COPY_SOURCE_PATH_INVALID"),
             (SvnOperationKind::LockFile, "LOCK_FILE_PATH_INVALID"),
             (SvnOperationKind::UnlockFile, "UNLOCK_FILE_PATH_INVALID"),
             (
@@ -5343,6 +5400,112 @@ mod tests {
         assert!(xml.contains("renamed.txt"));
         assert!(xml.contains("target-parent"));
         assert!(xml.contains("moved-dir"));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn copies_versioned_file_and_directory_in_real_working_copy() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-copy-integration");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("source.txt"), "source\n").expect("write source file");
+        fs::create_dir_all(working_copy.join("source-dir/nested")).expect("create source dir");
+        fs::write(working_copy.join("source-dir/nested/child.txt"), "child\n")
+            .expect("write child file");
+        fs::create_dir_all(working_copy.join("target-parent")).expect("create target parent");
+        run_test_command(
+            Command::new("svn")
+                .arg("add")
+                .arg("--force")
+                .arg(&working_copy),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "初始化 Copy 测试"]),
+        );
+
+        let queue = TaskQueue::new();
+        let file_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::CopyPath,
+                file_path: Some("source.txt".to_string()),
+                target_path: Some("copied.txt".to_string()),
+                svn_executable: None,
+            })
+            .expect("file Copy task should be created");
+        assert_eq!(file_task.title, "复制 source.txt 到 copied.txt");
+        let file_task = wait_for_test_task(&queue, &file_task.task_id);
+        assert!(
+            matches!(file_task.status, TaskStatus::Success),
+            "文件 Copy 任务失败：{:?}",
+            file_task.error
+        );
+        assert!(working_copy.join("source.txt").is_file());
+        assert!(working_copy.join("copied.txt").is_file());
+
+        for (target_path, expected_code) in [
+            ("source-dir", "COPY_TARGET_SAME_AS_SOURCE"),
+            ("source-dir/nested/copied", "COPY_TARGET_INSIDE_SOURCE"),
+            ("target-parent", "COPY_TARGET_EXISTS"),
+        ] {
+            let error = queue
+                .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                    working_copy_root: working_copy.display().to_string(),
+                    kind: SvnOperationKind::CopyPath,
+                    file_path: Some("source-dir".to_string()),
+                    target_path: Some(target_path.to_string()),
+                    svn_executable: None,
+                })
+                .expect_err("unsafe Copy target must be rejected");
+            assert!(matches!(
+                error,
+                NovaError::Command { ref code, .. } if code == expected_code
+            ));
+        }
+
+        let directory_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::CopyPath,
+                file_path: Some("source-dir".to_string()),
+                target_path: Some("target-parent/copied-dir".to_string()),
+                svn_executable: None,
+            })
+            .expect("directory Copy task should be created");
+        let directory_task = wait_for_test_task(&queue, &directory_task.task_id);
+        assert!(
+            matches!(directory_task.status, TaskStatus::Success),
+            "目录 Copy 任务失败：{:?}",
+            directory_task.error
+        );
+        assert!(working_copy.join("source-dir/nested/child.txt").is_file());
+        assert!(working_copy
+            .join("target-parent/copied-dir/nested/child.txt")
+            .is_file());
+
+        let output = run_test_command(
+            Command::new("svn")
+                .args(["status", "--xml"])
+                .arg(&working_copy),
+        );
+        let xml = String::from_utf8_lossy(&output.stdout);
+        assert!(xml.contains("copied.txt"));
+        assert!(xml.contains("copied-dir"));
         fs::remove_dir_all(root).ok();
     }
 

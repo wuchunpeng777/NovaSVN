@@ -78,6 +78,7 @@ export type SvnOperationKind =
   | "add_file"
   | "delete_path"
   | "move_path"
+  | "copy_path"
   | "revert_file"
   | "lock_file"
   | "unlock_file"
