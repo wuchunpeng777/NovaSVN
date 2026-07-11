@@ -582,6 +582,7 @@ describe("MainWorkspace", () => {
       ],
     };
     const onSelectFile = vi.fn();
+    const onActiveWorkspacePathChange = vi.fn();
     render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
@@ -589,11 +590,13 @@ describe("MainWorkspace", () => {
         workingCopyStatus: makeStatus([alpha, beta, omega]),
         workspaceFileTree: tree,
         onSelectFile,
+        onActiveWorkspacePathChange,
       },
     });
 
     const treegrid = screen.getByRole("treegrid", { name: "工作副本文件树" });
     expect(treegrid).toHaveAttribute("aria-activedescendant", "workspace-row-src");
+    expect(onActiveWorkspacePathChange).toHaveBeenLastCalledWith("src");
     treegrid.focus();
 
     await fireEvent.keyDown(treegrid, { key: "ArrowRight" });
@@ -602,6 +605,7 @@ describe("MainWorkspace", () => {
       "workspace-row-src%2Falpha.txt",
     );
     expect(onSelectFile).toHaveBeenLastCalledWith("src/alpha.txt");
+    expect(onActiveWorkspacePathChange).toHaveBeenLastCalledWith("src/alpha.txt");
 
     await fireEvent.keyDown(treegrid, { key: "ArrowDown", shiftKey: true });
     expect(treegrid).toHaveAttribute(
@@ -651,6 +655,7 @@ describe("MainWorkspace", () => {
 
     await fireEvent.keyDown(treegrid, { key: "End" });
     expect(treegrid).toHaveAttribute("aria-activedescendant", "workspace-row-omega.txt");
+    expect(onActiveWorkspacePathChange).toHaveBeenLastCalledWith("omega.txt");
     await fireEvent.keyDown(treegrid, { key: " " });
     expect(screen.getByRole("checkbox", { name: "选择文件 omega.txt" })).toBeChecked();
     await fireEvent.keyDown(treegrid, { key: "a", ctrlKey: true });

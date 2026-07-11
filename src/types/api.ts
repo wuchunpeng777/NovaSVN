@@ -463,6 +463,25 @@ export interface WorkspaceFileNode {
   children: WorkspaceFileNode[];
 }
 
+export interface AppMenuState {
+  workspace_open: boolean;
+  workspace_busy: boolean;
+  active_path: string | null;
+  active_label: string | null;
+  commit_selected: boolean;
+  can_open: boolean;
+  can_show: boolean;
+  can_commit: boolean;
+  can_update: boolean;
+  can_add: boolean;
+  can_resolve: boolean;
+  can_revert: boolean;
+  can_move: boolean;
+  can_copy: boolean;
+  can_ignore: boolean;
+  can_delete: boolean;
+}
+
 export type ChangeScope = "none" | "local" | "remote" | "both";
 
 export interface GetFileDiffRequest {

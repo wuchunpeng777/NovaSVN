@@ -42,6 +42,167 @@ use workspace::{
     WorkspaceSummary,
 };
 
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct AppMenuState {
+    workspace_open: bool,
+    workspace_busy: bool,
+    active_path: Option<String>,
+    active_label: Option<String>,
+    commit_selected: bool,
+    can_open: bool,
+    can_show: bool,
+    can_commit: bool,
+    can_update: bool,
+    can_add: bool,
+    can_resolve: bool,
+    can_revert: bool,
+    can_move: bool,
+    can_copy: bool,
+    can_ignore: bool,
+    can_delete: bool,
+}
+
+fn app_menu_error(message: impl Into<String>, detail: impl Into<String>) -> NovaError {
+    NovaError::command("APP_MENU_UPDATE_FAILED", message, Some(detail.into()), true)
+}
+
+fn app_submenu<R: tauri::Runtime>(
+    parent: &tauri::menu::Menu<R>,
+    id: &str,
+) -> Result<tauri::menu::Submenu<R>, NovaError> {
+    parent
+        .get(id)
+        .and_then(|item| item.as_submenu().cloned())
+        .ok_or_else(|| app_menu_error("无法更新应用菜单", format!("缺少原生子菜单：{id}")))
+}
+
+fn nested_submenu<R: tauri::Runtime>(
+    parent: &tauri::menu::Submenu<R>,
+    id: &str,
+) -> Result<tauri::menu::Submenu<R>, NovaError> {
+    parent
+        .get(id)
+        .and_then(|item| item.as_submenu().cloned())
+        .ok_or_else(|| app_menu_error("无法更新应用菜单", format!("缺少原生子菜单：{id}")))
+}
+
+fn set_menu_item_enabled<R: tauri::Runtime>(
+    menu: &tauri::menu::Submenu<R>,
+    id: &str,
+    enabled: bool,
+) -> Result<(), NovaError> {
+    let item = menu
+        .get(id)
+        .and_then(|item| item.as_menuitem().cloned())
+        .ok_or_else(|| app_menu_error("无法更新应用菜单", format!("缺少原生菜单项：{id}")))?;
+    item.set_enabled(enabled)
+        .map_err(|error| app_menu_error("无法更新应用菜单状态", error.to_string()))
+}
+
+fn set_menu_item_text<R: tauri::Runtime>(
+    menu: &tauri::menu::Submenu<R>,
+    id: &str,
+    text: &str,
+) -> Result<(), NovaError> {
+    let item = menu
+        .get(id)
+        .and_then(|item| item.as_menuitem().cloned())
+        .ok_or_else(|| app_menu_error("无法更新应用菜单", format!("缺少原生菜单项：{id}")))?;
+    item.set_text(text)
+        .map_err(|error| app_menu_error("无法更新应用菜单文本", error.to_string()))
+}
+
+fn normalized_menu_path_label(label: Option<&str>) -> String {
+    let cleaned = label
+        .unwrap_or("未选择路径")
+        .replace(['\r', '\n'], " ")
+        .replace('&', "&&");
+    let mut chars = cleaned.chars();
+    let visible: String = chars.by_ref().take(64).collect();
+    if chars.next().is_some() {
+        format!("当前：{visible}...")
+    } else {
+        format!("当前：{visible}")
+    }
+}
+
+#[cfg(test)]
+mod app_menu_tests {
+    use super::normalized_menu_path_label;
+
+    #[test]
+    fn path_label_escapes_mnemonics_and_limits_length() {
+        assert_eq!(
+            normalized_menu_path_label(Some("release&notes.txt\nnext")),
+            "当前：release&&notes.txt next"
+        );
+        let long_label = "a".repeat(80);
+        let normalized = normalized_menu_path_label(Some(&long_label));
+        assert!(normalized.ends_with("..."));
+        assert_eq!(normalized.chars().count(), 70);
+    }
+}
+
+fn apply_app_menu_state<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppMenuState,
+) -> Result<(), NovaError> {
+    let app_menu = app
+        .menu()
+        .ok_or_else(|| app_menu_error("无法更新应用菜单", "应用菜单尚未创建"))?;
+    let file_menu = app_submenu(&app_menu, "file_menu")?;
+    let working_copy_menu = app_submenu(&app_menu, "working_copy_menu")?;
+    let current_path_menu = nested_submenu(&working_copy_menu, "current_path_menu")?;
+    let workspace_available = state.workspace_open && !state.workspace_busy;
+
+    set_menu_item_enabled(&file_menu, "refresh_status", workspace_available)?;
+    for id in [
+        "update_workspace",
+        "cleanup_workspace",
+        "refresh_log",
+        "prepare_commit",
+    ] {
+        set_menu_item_enabled(&working_copy_menu, id, workspace_available)?;
+    }
+
+    let has_active_path = state.active_path.is_some();
+    current_path_menu
+        .set_enabled(has_active_path)
+        .map_err(|error| app_menu_error("无法更新当前路径菜单状态", error.to_string()))?;
+    set_menu_item_text(
+        &current_path_menu,
+        "path_label",
+        &normalized_menu_path_label(state.active_label.as_deref()),
+    )?;
+    set_menu_item_text(
+        &current_path_menu,
+        "path_commit",
+        if state.commit_selected {
+            "移出 Commit(&M)"
+        } else {
+            "加入 Commit(&M)"
+        },
+    )?;
+
+    for (id, enabled) in [
+        ("path_open", state.can_open),
+        ("path_show", state.can_show),
+        ("path_commit", state.can_commit),
+        ("path_update", state.can_update),
+        ("path_add", state.can_add),
+        ("path_resolve", state.can_resolve),
+        ("path_revert", state.can_revert),
+        ("path_move", state.can_move),
+        ("path_copy", state.can_copy),
+        ("path_ignore", state.can_ignore),
+        ("path_delete", state.can_delete),
+    ] {
+        set_menu_item_enabled(&current_path_menu, id, has_active_path && enabled)?;
+    }
+    Ok(())
+}
+
 fn create_app_menu<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> tauri::Result<tauri::menu::Menu<R>> {
@@ -55,7 +216,7 @@ fn create_app_menu<R: tauri::Runtime>(
         Some("Ctrl+O"),
     )?;
     let refresh_status =
-        MenuItem::with_id(app, "refresh_status", "刷新状态(&R)", true, Some("Ctrl+R"))?;
+        MenuItem::with_id(app, "refresh_status", "刷新状态(&R)", false, Some("Ctrl+R"))?;
     let export_diagnostics = MenuItem::with_id(
         app,
         "export_diagnostics",
@@ -66,8 +227,9 @@ fn create_app_menu<R: tauri::Runtime>(
     let quit = MenuItem::with_id(app, "quit", "退出(&X)", true, Some("Alt+F4"))?;
     let file_separator_a = PredefinedMenuItem::separator(app)?;
     let file_separator_b = PredefinedMenuItem::separator(app)?;
-    let file_menu = Submenu::with_items(
+    let file_menu = Submenu::with_id_and_items(
         app,
+        "file_menu",
         "文件(&F)",
         true,
         &[
@@ -126,14 +288,54 @@ fn create_app_menu<R: tauri::Runtime>(
     )?;
 
     let update_workspace =
-        MenuItem::with_id(app, "update_workspace", "更新(&U)", true, Some("Ctrl+U"))?;
+        MenuItem::with_id(app, "update_workspace", "更新(&U)", false, Some("Ctrl+U"))?;
     let cleanup_workspace =
-        MenuItem::with_id(app, "cleanup_workspace", "清理(&C)", true, None::<&str>)?;
-    let refresh_log = MenuItem::with_id(app, "refresh_log", "刷新日志(&L)", true, Some("Ctrl+L"))?;
-    let prepare_commit = MenuItem::with_id(app, "prepare_commit", "提交(&M)", true, None::<&str>)?;
+        MenuItem::with_id(app, "cleanup_workspace", "清理(&C)", false, None::<&str>)?;
+    let refresh_log = MenuItem::with_id(app, "refresh_log", "刷新日志(&L)", false, Some("Ctrl+L"))?;
+    let prepare_commit = MenuItem::with_id(app, "prepare_commit", "提交(&M)", false, None::<&str>)?;
     let working_copy_separator = PredefinedMenuItem::separator(app)?;
-    let working_copy_menu = Submenu::with_items(
+    let path_label = MenuItem::with_id(app, "path_label", "当前：未选择路径", false, None::<&str>)?;
+    let path_open = MenuItem::with_id(app, "path_open", "打开(&O)", false, None::<&str>)?;
+    let path_show = MenuItem::with_id(app, "path_show", "在文件夹中显示(&F)", false, None::<&str>)?;
+    let path_commit =
+        MenuItem::with_id(app, "path_commit", "加入 Commit(&M)", false, None::<&str>)?;
+    let path_update = MenuItem::with_id(app, "path_update", "Update(&U)", false, None::<&str>)?;
+    let path_add = MenuItem::with_id(app, "path_add", "Add(&A)", false, None::<&str>)?;
+    let path_resolve = MenuItem::with_id(app, "path_resolve", "Resolve(&S)", false, None::<&str>)?;
+    let path_revert = MenuItem::with_id(app, "path_revert", "Revert(&R)", false, None::<&str>)?;
+    let path_move = MenuItem::with_id(app, "path_move", "Move(&V)", false, None::<&str>)?;
+    let path_copy = MenuItem::with_id(app, "path_copy", "Copy(&C)", false, None::<&str>)?;
+    let path_ignore = MenuItem::with_id(app, "path_ignore", "Ignore(&I)", false, None::<&str>)?;
+    let path_delete = MenuItem::with_id(app, "path_delete", "Delete(&D)", false, None::<&str>)?;
+    let path_separator_a = PredefinedMenuItem::separator(app)?;
+    let path_separator_b = PredefinedMenuItem::separator(app)?;
+    let path_separator_c = PredefinedMenuItem::separator(app)?;
+    let current_path_menu = Submenu::with_id_and_items(
         app,
+        "current_path_menu",
+        "当前路径(&P)",
+        false,
+        &[
+            &path_label,
+            &path_separator_a,
+            &path_open,
+            &path_show,
+            &path_separator_b,
+            &path_commit,
+            &path_update,
+            &path_add,
+            &path_resolve,
+            &path_separator_c,
+            &path_revert,
+            &path_move,
+            &path_copy,
+            &path_ignore,
+            &path_delete,
+        ],
+    )?;
+    let working_copy_menu = Submenu::with_id_and_items(
+        app,
+        "working_copy_menu",
         "工作副本(&W)",
         true,
         &[
@@ -142,6 +344,7 @@ fn create_app_menu<R: tauri::Runtime>(
             &working_copy_separator,
             &refresh_log,
             &prepare_commit,
+            &current_path_menu,
         ],
     )?;
 
@@ -158,6 +361,12 @@ fn create_app_menu<R: tauri::Runtime>(
             &help_menu,
         ],
     )
+}
+
+#[tauri::command]
+fn sync_app_menu_state(app: tauri::AppHandle, state: AppMenuState) -> CommandResult<()> {
+    apply_app_menu_state(&app, &state)?;
+    Ok(CommandResponse::success(()))
 }
 
 #[tauri::command]
@@ -596,6 +805,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ping,
             fail_for_preview,
+            sync_app_menu_state,
             get_startup_intent,
             launch_external_tool,
             open_file_location,

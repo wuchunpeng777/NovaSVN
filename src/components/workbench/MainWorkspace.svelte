@@ -254,6 +254,7 @@
   export let onRefreshSvnBlame: () => void = () => {};
   export let onSelectFile: (path: string) => void = () => {};
   export let onSelectWorkspacePath: (path: string) => void = () => {};
+  export let onActiveWorkspacePathChange: (path: string | null) => void = () => {};
   export let onSelectCommitFile: (path: string) => void = () => {};
   export let onUnselectCommitFile: (path: string) => void = () => {};
   export let onSelectCommitFiles: (paths: string[]) => void = () => {};
@@ -420,6 +421,7 @@
   let contextMenuY = 0;
   let fileBrowserElement: HTMLElement | null = null;
   let contextMenuElement: HTMLElement | null = null;
+  let reportedActiveWorkspacePath: string | null | undefined;
   let selectionWorkspaceRoot: string | null = null;
   let selectionFileTree: WorkspaceFileTree | null = null;
   const inspectorMinWidth = 300;
@@ -859,6 +861,14 @@
     }
     activeRowPath =
       rows.find((row) => row.path === inspectedPath)?.path ?? rows[0]?.path ?? null;
+  }
+
+  function reportActiveWorkspacePath(path: string | null) {
+    if (reportedActiveWorkspacePath === path) {
+      return;
+    }
+    reportedActiveWorkspacePath = path;
+    onActiveWorkspacePathChange(path);
   }
 
   function scrollActiveRowIntoView(path: string) {
@@ -1448,6 +1458,7 @@
   $: treeRows = flattenTreeNodes(filteredTreeNodes, 0, collapsedTreePaths);
   $: reconcileRowSelection(workspace?.working_copy_root ?? null, workspaceFileTree);
   $: reconcileActiveRow(treeRows, selectedFilePath);
+  $: reportActiveWorkspacePath(activeRowPath);
   $: selectedRowNodes = [...selectedRowPaths]
     .map((path) => treeNodeForPath(path))
     .filter((node): node is WorkspaceFileNode => node !== null);

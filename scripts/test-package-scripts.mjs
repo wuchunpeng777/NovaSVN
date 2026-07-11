@@ -64,6 +64,7 @@ const e2eSmokeSpec = fs.readFileSync(
 const appSvelte = fs.readFileSync(path.join(root, "src", "App.svelte"), "utf8");
 const appCss = fs.readFileSync(path.join(root, "src", "styles", "app.css"), "utf8");
 const frontendApi = fs.readFileSync(path.join(root, "src", "lib", "api.ts"), "utf8");
+const appMenuSource = fs.readFileSync(path.join(root, "src", "lib", "app-menu.ts"), "utf8");
 const mainWorkspace = fs.readFileSync(
   path.join(root, "src", "components", "workbench", "MainWorkspace.svelte"),
   "utf8",
@@ -386,6 +387,20 @@ if (
   !mainWorkspace.includes('{ id: "blame", label: "Blame" }')
 ) {
   console.error("Versions 检查器必须使用可访问标签组织 Information、Properties、Diff 和 Blame");
+  failed = true;
+}
+
+if (
+  !tauriLib.includes('"current_path_menu"') ||
+  !tauriLib.includes('fn sync_app_menu_state(') ||
+  !tauriLib.includes('set_menu_item_enabled(&current_path_menu') ||
+  !appMenuSource.includes('case "path_open"') ||
+  !appMenuSource.includes('case "path_delete"') ||
+  !appSvelte.includes("dispatchAppMenuPathCommand") ||
+  !mainWorkspace.includes("onActiveWorkspacePathChange(path)") ||
+  !appMenuSource.includes("export function buildAppMenuState")
+) {
+  console.error("应用原生菜单必须提供当前路径操作、活动行同步和动态禁用状态");
   failed = true;
 }
 

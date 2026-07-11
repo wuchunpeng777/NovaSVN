@@ -14,6 +14,7 @@
     consumePendingSvnOperationCompletion,
     createSvnOperationCreationCoordinator,
   } from "./lib/svn-operation-completion";
+  import { buildAppMenuState, dispatchAppMenuPathCommand } from "./lib/app-menu";
   import { createPendingTaskCompletionCoordinator } from "./lib/pending-task-completion";
   import { workbenchViews } from "./lib/workbench";
   import {
@@ -28,6 +29,7 @@
     workspaceStore,
   } from "./stores/app";
   import type {
+    AppMenuState,
     ChangedFile,
     CommandError,
     ExternalToolKind,
@@ -42,6 +44,11 @@
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
   let unlistenAppMenu: UnlistenFn | null = null;
+  let activeWorkspacePath: string | null = null;
+  let appMenuState: AppMenuState;
+  let queuedAppMenuState: AppMenuState | null = null;
+  let appMenuStateSignature = "";
+  let appMenuSyncRunning = false;
   const repositoryLayoutTaskChecks = new Set<string>();
   const applyPatchTaskChecks = new Set<string>();
   const missingSvnOperationTaskChecks = new Set<string>();
@@ -72,6 +79,21 @@
               item.fileDigest === selectedFile.content_digest,
           )
           .map((item) => item.hunkId);
+  $: appMenuState = buildAppMenuState({
+    viewId: activeView.id,
+    workspaceOpen: $workspaceStore.current !== null,
+    activePath: activeWorkspacePath,
+    fileTree: $workspaceStore.fileTree,
+    status: $workspaceStore.status,
+    commitFiles: $workspaceStore.commitFiles,
+    statusLoading: $workspaceStore.statusLoading,
+    workspaceLocked:
+      $taskStore.snapshot.running_task_id !== null ||
+      $workspaceStore.pendingSvnOperationKind !== null ||
+      $workspaceStore.applyPatchCreating ||
+      $workspaceStore.pendingApplyPatchTaskId !== null,
+  });
+  $: queueAppMenuStateSync(appMenuState);
 
   async function pingBackend() {
     commandError = null;
@@ -105,6 +127,36 @@
 
   function preventNativeContextMenu(event: MouseEvent) {
     event.preventDefault();
+  }
+
+  function queueAppMenuStateSync(state: AppMenuState) {
+    if (!hasTauriRuntime()) {
+      return;
+    }
+    const signature = JSON.stringify(state);
+    if (signature === appMenuStateSignature) {
+      return;
+    }
+    appMenuStateSignature = signature;
+    queuedAppMenuState = state;
+    if (!appMenuSyncRunning) {
+      void flushAppMenuStateSync();
+    }
+  }
+
+  async function flushAppMenuStateSync() {
+    appMenuSyncRunning = true;
+    while (queuedAppMenuState) {
+      const state = queuedAppMenuState;
+      queuedAppMenuState = null;
+      try {
+        await callBackend<void>("sync_app_menu_state", { state });
+      } catch (error) {
+        commandError = error as CommandError;
+        appMenuStateSignature = "";
+      }
+    }
+    appMenuSyncRunning = false;
   }
 
   async function refreshStatusAndSyncBranchPool(
@@ -796,6 +848,33 @@
       return;
     }
 
+    const handledPathCommand = await dispatchAppMenuPathCommand(command, appMenuState, {
+      open: openSelectedFile,
+      show: openSelectedFileLocation,
+      commit: (path, selected) => {
+        setCurrentView("changes");
+        if (selected) {
+          workspaceStore.unselectCommitFile(path);
+        } else {
+          workspaceStore.selectCommitFile(path);
+        }
+      },
+      update: (path) => runSvnOperation("update_path", path),
+      add: (path) => runSvnOperation("add_file", path),
+      resolve: async (path) => {
+        setCurrentView("changes");
+        await workspaceStore.selectFile(path, currentSvnExecutable());
+      },
+      revert: (path) => runSvnOperation("revert_file", path),
+      move: moveWorkspacePath,
+      copy: copyWorkspacePath,
+      ignore: ignoreWorkspacePath,
+      delete: (path) => runSvnOperation("delete_path", path),
+    });
+    if (handledPathCommand) {
+      return;
+    }
+
     switch (command) {
       case "open_workspace":
         await workspaceStore.chooseAndOpen(currentSvnExecutable());
@@ -1424,6 +1503,7 @@
   onRefreshSvnBlame={() => workspaceStore.refreshSvnBlame(currentSvnExecutable())}
   onSelectFile={(path) => workspaceStore.selectFile(path, currentSvnExecutable())}
   onSelectWorkspacePath={workspaceStore.selectPathOnly}
+  onActiveWorkspacePathChange={(path) => (activeWorkspacePath = path)}
   onSelectCommitFile={workspaceStore.selectCommitFile}
   onUnselectCommitFile={workspaceStore.unselectCommitFile}
   onSelectCommitFiles={workspaceStore.selectCommitFiles}
