@@ -63,6 +63,15 @@ for ($i = 0; $i -lt [Math]::Min($ChangedCount, $FileCount); $i++) {
 
 $results = @()
 $results += Measure-Step "svn status --xml" { & $SvnExe status --xml $wcPath | Out-Null }
+$results += Measure-Step "svn info --xml --depth infinity" {
+  Push-Location -LiteralPath $wcPath
+  try {
+    & $SvnExe info --xml --depth infinity . | Out-Null
+  }
+  finally {
+    Pop-Location
+  }
+}
 $results += Measure-Step "svn diff first file" {
   & $SvnExe diff (Join-Path $dataDir "file-00000.txt") | Out-Null
 }
@@ -126,7 +135,7 @@ $summaryLines = @(
   "- Created at: $($payload.created_at)",
   "- File count: $FileCount",
   "- Changed count: $ChangedCount",
-  "- Working copy: `$wcPath`",
+  ('- Working copy: `{0}`' -f $wcPath),
   "",
   "| Step | Elapsed ms |",
   "| --- | ---: |"

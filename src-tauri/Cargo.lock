@@ -1777,6 +1777,7 @@ name = "novasvn"
 version = "0.1.0"
 dependencies = [
  "log",
+ "quick-xml",
  "roxmltree",
  "serde",
  "serde_json",

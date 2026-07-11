@@ -25,6 +25,8 @@
 - 隔离并发的工作副本打开、状态扫描和文件树刷新请求，避免旧请求覆盖新工作副本。
 - 后端重启导致 pending 任务消失时解除操作锁定并提示用户刷新重试。
 - Commit、Partial Commit、Repository、Checkout、Switch、Revision Diff 和 Merge 完成状态不再依赖任务面板当前选中项。
+- 文件树改为流式解析递归 `svn info`，并限制版本化路径数量、单路径和错误输出大小，避免完整 XML 与 DOM 的无界内存占用。
+- 修复 Windows PowerShell 性能基准脚本的 Markdown 转义，并记录递归 `svn info` 耗时。
 
 ### 发布
 

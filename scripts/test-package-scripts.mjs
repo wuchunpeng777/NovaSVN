@@ -78,6 +78,10 @@ const systemIntegrationRs = fs.readFileSync(
   path.join(root, "src-tauri", "src", "system_integration.rs"),
   "utf8",
 );
+const workspaceRs = fs.readFileSync(
+  path.join(root, "src-tauri", "src", "workspace.rs"),
+  "utf8",
+);
 const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 
 const releaseScripts = ["release:windows", "release:macos"];
@@ -234,6 +238,20 @@ if (!benchmarkDoc.includes("benchmark-results.md")) {
 
 if (!benchmarkDoc.includes("svn revert -R")) {
   console.error("性能基准文档必须说明脚本会在每次运行前还原工作副本");
+  failed = true;
+}
+
+if (!benchmarkScript.includes('Measure-Step "svn info --xml --depth infinity"')) {
+  console.error("性能基准必须记录递归 svn info 耗时");
+  failed = true;
+}
+
+if (
+  !workspaceRs.includes("parse_versioned_workspace_paths_reader") ||
+  !workspaceRs.includes("MAX_VERSIONED_WORKSPACE_PATHS") ||
+  !workspaceRs.includes(".stdout(Stdio::piped())")
+) {
+  console.error("工作副本文件树必须流式读取 svn info 并限制版本控制路径数量");
   failed = true;
 }
 
