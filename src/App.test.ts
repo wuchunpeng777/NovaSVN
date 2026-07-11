@@ -367,6 +367,7 @@ describe("App SVN operation completion", () => {
       result: {
         repository_list: {
           url: "https://example.com/svn/trunk/src",
+          revision: null,
           entries: [],
         },
         revision_diff: null,

@@ -177,6 +177,7 @@ export interface CreatePartialCommitTaskRequest {
 
 export interface CreateRepositoryListTaskRequest {
   url: string;
+  revision?: string;
   svn_executable?: string;
 }
 
@@ -299,6 +300,7 @@ export interface TaskResult {
 
 export interface RepositoryListResult {
   url: string;
+  revision: string | null;
   entries: RepositoryListEntry[];
 }
 

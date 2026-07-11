@@ -498,6 +498,18 @@ if (
 }
 
 if (
+  !mainWorkspace.includes('aria-label="仓库 Revision"') ||
+  !mainWorkspace.includes('class="repository-revision-status"') ||
+  !appSvelte.includes("revision: $workspaceStore.repositoryRevisionInput") ||
+  !appStore.includes("repositoryRevisionInput") ||
+  !taskRs.includes('command.args(["-r", revision])') ||
+  !taskRs.includes("revision: revision.map(ToString::to_string)")
+) {
+  console.error("Repository 浏览必须把指定 Revision 贯穿 URL 导航和真实 svn list 请求");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||

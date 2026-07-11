@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../lib/api", () => ({
   createApplyPatchTask: vi.fn(),
   createMergeTask: vi.fn(),
+  createRepositoryListTask: vi.fn(),
   createRevertRevisionTask: vi.fn(),
   createRevisionDiffTask: vi.fn(),
   createSvnBatchOperationTask: vi.fn(),
@@ -30,6 +31,7 @@ import { get } from "svelte/store";
 import {
   createApplyPatchTask,
   createMergeTask,
+  createRepositoryListTask,
   createRevertRevisionTask,
   createRevisionDiffTask,
   createSvnBatchOperationTask,
@@ -78,6 +80,7 @@ import {
 
 const createApplyPatchTaskMock = vi.mocked(createApplyPatchTask);
 const createMergeTaskMock = vi.mocked(createMergeTask);
+const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
 const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
@@ -102,6 +105,7 @@ const setSvnPropertyMock = vi.mocked(setSvnProperty);
 beforeEach(() => {
   createApplyPatchTaskMock.mockReset();
   createMergeTaskMock.mockReset();
+  createRepositoryListTaskMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
   createRevisionDiffTaskMock.mockReset();
   createSvnBatchOperationTaskMock.mockReset();
@@ -839,6 +843,41 @@ describe("workspaceStore svn log", () => {
       svnLogAuthorFilter: "alice",
       svnLogKeywordFilter: "feature",
     });
+  });
+});
+
+describe("taskStore repository list tasks", () => {
+  it("forwards an explicit repository revision", async () => {
+    createRepositoryListTaskMock.mockResolvedValue(makeTask({ task_id: "repository-r10" }));
+
+    const task = await taskStore.createRepositoryList({
+      url: "https://example.com/svn/trunk/src",
+      revision: "10",
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(task?.task_id).toBe("repository-r10");
+    expect(createRepositoryListTaskMock).toHaveBeenCalledWith({
+      url: "https://example.com/svn/trunk/src",
+      revision: "10",
+      svn_executable: "C:/svn/svn.exe",
+    });
+  });
+
+  it("keeps the applied repository revision in navigation state", () => {
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk/src",
+      revision: "8",
+      entries: [],
+    });
+
+    expect(get(workspaceStore)).toMatchObject({
+      repositoryUrlInput: "https://example.com/svn/trunk/src",
+      repositoryRevisionInput: "8",
+      repositoryCurrentUrl: "https://example.com/svn/trunk/src",
+    });
+    workspaceStore.setRepositoryRevisionInput("");
+    expect(get(workspaceStore).repositoryRevisionInput).toBe("");
   });
 });
 

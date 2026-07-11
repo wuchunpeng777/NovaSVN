@@ -547,6 +547,55 @@ describe("MainWorkspace", () => {
     expect(screen.getByRole("button", { name: "显示完整 Patch 位置" })).toBeDisabled();
   });
 
+  it("browses repository URLs at an explicit revision and keeps it while navigating", async () => {
+    const onRepositoryRevisionInput = vi.fn();
+    const onLoadRepositoryUrl = vi.fn();
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.repository,
+        workspace: makeWorkspace(),
+        repositoryUrlInput: "https://example.com/svn/trunk",
+        repositoryRevisionInput: "10",
+        repositoryList: {
+          url: "https://example.com/svn/trunk",
+          revision: "10",
+          entries: [
+            {
+              name: "src",
+              kind: "dir",
+              revision: "9",
+              author: "alice",
+              date: "2026-07-10T10:00:00Z",
+            },
+          ],
+        },
+        onRepositoryRevisionInput,
+        onLoadRepositoryUrl,
+      },
+    });
+
+    const revisionInput = screen.getByLabelText("仓库 Revision");
+    expect(revisionInput).toHaveValue(10);
+    expect(screen.getByText("@r10")).toBeInTheDocument();
+    await fireEvent.input(revisionInput, { target: { value: "8" } });
+    expect(onRepositoryRevisionInput).toHaveBeenCalledWith("8");
+    await fireEvent.keyDown(revisionInput, { key: "Enter" });
+    expect(onLoadRepositoryUrl).toHaveBeenCalledWith();
+
+    await fireEvent.click(screen.getByText("src", { exact: true }).closest("button") as HTMLElement);
+    expect(onLoadRepositoryUrl).toHaveBeenLastCalledWith("https://example.com/svn/trunk/src");
+
+    await rerender({
+      repositoryRevisionInput: "",
+      repositoryList: {
+        url: "https://example.com/svn/trunk",
+        revision: null,
+        entries: [],
+      },
+    });
+    expect(screen.getByText("@HEAD")).toBeInTheDocument();
+  });
+
   it("filters Timeline revisions with inclusive local date controls", async () => {
     const onSvnLogFilterInput = vi.fn();
     const onSvnLogFileOnlyInput = vi.fn();

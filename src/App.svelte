@@ -452,6 +452,7 @@
 
     const task = await taskStore.createRepositoryList({
       url: targetUrl,
+      revision: $workspaceStore.repositoryRevisionInput,
       svnExecutable: currentSvnExecutable(),
     });
 
@@ -486,6 +487,7 @@
       const url = joinRepositoryUrl(root, target.path);
       const task = await taskStore.createRepositoryList({
         url,
+        revision: $workspaceStore.repositoryRevisionInput,
         svnExecutable: currentSvnExecutable(),
       });
 
@@ -1431,6 +1433,7 @@
   statusLoading={$workspaceStore.statusLoading}
   statusError={$workspaceStore.statusError}
   repositoryUrlInput={$workspaceStore.repositoryUrlInput}
+  repositoryRevisionInput={$workspaceStore.repositoryRevisionInput}
   repositoryList={$workspaceStore.repositoryList}
   repositoryLoading={$workspaceStore.repositoryLoading}
   repositoryError={$workspaceStore.repositoryError}
@@ -1578,6 +1581,7 @@
   onUsePropertyForEdit={workspaceStore.usePropertyForEdit}
   onSaveSvnProperty={saveSvnPropertyWithConfirm}
   onRepositoryUrlInput={workspaceStore.setRepositoryUrlInput}
+  onRepositoryRevisionInput={workspaceStore.setRepositoryRevisionInput}
   onUseWorkspaceRepositoryRoot={workspaceStore.useWorkspaceRepositoryRoot}
   onLoadRepositoryUrl={loadRepositoryUrl}
   onRepositoryLayoutPathInput={workspaceStore.setRepositoryLayoutPath}

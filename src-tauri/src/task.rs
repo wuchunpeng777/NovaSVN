@@ -177,6 +177,7 @@ pub struct CreatePartialCommitTaskRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateRepositoryListTaskRequest {
     pub url: String,
+    pub revision: Option<String>,
     pub svn_executable: Option<String>,
 }
 
@@ -271,6 +272,7 @@ pub struct TaskResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct RepositoryListResult {
     pub url: String,
+    pub revision: Option<String>,
     pub entries: Vec<RepositoryListEntry>,
 }
 
@@ -418,6 +420,7 @@ struct PartialCommitTaskPayload {
 #[derive(Debug, Clone)]
 struct RepositoryListTaskPayload {
     url: String,
+    revision: Option<String>,
     svn_executable: String,
 }
 
@@ -999,6 +1002,7 @@ impl TaskQueue {
         request: CreateRepositoryListTaskRequest,
     ) -> Result<Task, NovaError> {
         let url = normalize_repository_url(&request.url)?;
+        let revision = normalize_repository_list_revision(request.revision.as_deref())?;
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
@@ -1016,6 +1020,7 @@ impl TaskQueue {
             updated_at: now,
             payload: TaskPayload::RepositoryList(RepositoryListTaskPayload {
                 url,
+                revision,
                 svn_executable,
             }),
         };
@@ -2615,22 +2620,25 @@ fn run_repository_list_task(
         "仓库目录加载开始执行",
         None,
     );
+    let revision_label = payload.revision.as_deref().unwrap_or("HEAD");
     append_task_log(
         state,
         task_id,
-        &format!("执行 svn list --xml：{}", payload.url),
+        &format!("执行 svn list --xml -r {revision_label}：{}", payload.url),
     );
 
-    let output = Command::new(&payload.svn_executable)
-        .args(["list", "--xml"])
-        .arg(&payload.url)
-        .output();
+    let mut command = Command::new(&payload.svn_executable);
+    command.args(["list", "--xml"]);
+    if let Some(revision) = payload.revision.as_deref() {
+        command.args(["-r", revision]);
+    }
+    let output = command.arg(&payload.url).output();
 
     match output {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             let xml = String::from_utf8_lossy(&output.stdout);
-            match parse_repository_list_xml(&xml, &payload.url) {
+            match parse_repository_list_xml(&xml, &payload.url, payload.revision.as_deref()) {
                 Ok(result) => {
                     let count = result.entries.len();
                     set_task_result(
@@ -5346,6 +5354,32 @@ fn normalize_revert_target_revision(revision: &str) -> Result<String, NovaError>
     Ok(value.to_string())
 }
 
+fn normalize_repository_list_revision(revision: Option<&str>) -> Result<Option<String>, NovaError> {
+    let Some(value) = revision.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if value.eq_ignore_ascii_case("HEAD") {
+        return Ok(None);
+    }
+    if !value.chars().all(|character| character.is_ascii_digit()) {
+        return Err(NovaError::command(
+            "REPOSITORY_LIST_REVISION_INVALID",
+            "仓库浏览 Revision 无效",
+            Some("Revision 必须是单个数字版本号，留空表示 HEAD。".to_string()),
+            true,
+        ));
+    }
+    let value = value.parse::<u64>().map_err(|error| {
+        NovaError::command(
+            "REPOSITORY_LIST_REVISION_INVALID",
+            "仓库浏览 Revision 无效",
+            Some(error.to_string()),
+            true,
+        )
+    })?;
+    Ok(Some(value.to_string()))
+}
+
 fn normalize_optional_revision_value(
     revision: Option<&str>,
     code: &'static str,
@@ -6061,6 +6095,27 @@ mod tests {
             assert!(matches!(
                 error,
                 NovaError::Command { ref code, .. } if code == "REVERT_REVISION_TARGET_INVALID"
+            ));
+        }
+    }
+
+    #[test]
+    fn validates_repository_list_revision_values() {
+        assert_eq!(normalize_repository_list_revision(None).unwrap(), None);
+        assert_eq!(
+            normalize_repository_list_revision(Some(" HEAD ")).unwrap(),
+            None
+        );
+        assert_eq!(
+            normalize_repository_list_revision(Some(" 0010 ")).unwrap(),
+            Some("10".to_string())
+        );
+        for invalid in ["1:2", "-1", "BASE", "1\n2"] {
+            let error = normalize_repository_list_revision(Some(invalid))
+                .expect_err("Repository revision 必须是单个数字");
+            assert!(matches!(
+                error,
+                NovaError::Command { ref code, .. } if code == "REPOSITORY_LIST_REVISION_INVALID"
             ));
         }
     }
@@ -8130,10 +8185,11 @@ mod tests {
 </lists>
 "#;
 
-        let result =
-            parse_repository_list_xml(xml, "https://example.com/svn").expect("list parses");
+        let result = parse_repository_list_xml(xml, "https://example.com/svn", Some("8"))
+            .expect("list parses");
 
         assert_eq!(result.url, "https://example.com/svn");
+        assert_eq!(result.revision.as_deref(), Some("8"));
         assert_eq!(result.entries.len(), 3);
         assert_eq!(result.entries[0].name, "branches");
         assert_eq!(result.entries[1].name, "trunk");
@@ -8162,7 +8218,11 @@ fn compact_repository_url(url: &str) -> String {
     format!("...{tail}")
 }
 
-fn parse_repository_list_xml(xml: &str, url: &str) -> Result<RepositoryListResult, NovaError> {
+fn parse_repository_list_xml(
+    xml: &str,
+    url: &str,
+    revision: Option<&str>,
+) -> Result<RepositoryListResult, NovaError> {
     let document = Document::parse(xml).map_err(|error| {
         NovaError::command(
             "SVN_LIST_XML_PARSE_FAILED",
@@ -8210,6 +8270,7 @@ fn parse_repository_list_xml(xml: &str, url: &str) -> Result<RepositoryListResul
 
     Ok(RepositoryListResult {
         url: url.to_string(),
+        revision: revision.map(ToString::to_string),
         entries,
     })
 }

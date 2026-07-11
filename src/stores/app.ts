@@ -378,6 +378,7 @@ function createTaskStore() {
 
   async function createRepositoryList(request: {
     url: string;
+    revision?: string | null;
     svnExecutable?: string | null;
   }) {
     update((state) => ({ ...state, loading: true, error: null }));
@@ -385,6 +386,7 @@ function createTaskStore() {
     try {
       const task = await createRepositoryListTask({
         url: request.url,
+        revision: request.revision || undefined,
         svn_executable: request.svnExecutable || undefined,
       });
       selectedTaskId = task.task_id;
@@ -1324,6 +1326,7 @@ export interface WorkspaceStoreState {
   pendingSvnOperationKind: PendingSvnOperationKind | null;
   pendingSvnOperationWorkingCopyRoot: string | null;
   repositoryUrlInput: string;
+  repositoryRevisionInput: string;
   repositoryCurrentUrl: string;
   repositoryList: RepositoryListResult | null;
   pendingRepositoryListTaskId: string | null;
@@ -1457,6 +1460,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   pendingSvnOperationKind: null,
   pendingSvnOperationWorkingCopyRoot: null,
   repositoryUrlInput: "",
+  repositoryRevisionInput: "",
   repositoryCurrentUrl: "",
   repositoryList: null,
   pendingRepositoryListTaskId: null,
@@ -2366,6 +2370,14 @@ function createWorkspaceStore() {
     }));
   }
 
+  function setRepositoryRevisionInput(value: string) {
+    update((state) => ({
+      ...state,
+      repositoryRevisionInput: value,
+      repositoryError: null,
+    }));
+  }
+
   function useWorkspaceRepositoryRoot() {
     update((state) => ({
       ...state,
@@ -2388,6 +2400,7 @@ function createWorkspaceStore() {
     update((state) => ({
       ...state,
       repositoryUrlInput: result.url,
+      repositoryRevisionInput: result.revision ?? "",
       repositoryCurrentUrl: result.url,
       repositoryList: result,
       pendingRepositoryListTaskId: null,
@@ -3796,6 +3809,7 @@ function createWorkspaceStore() {
     markSvnOperationTask,
     failSvnOperationTask,
     setRepositoryUrlInput,
+    setRepositoryRevisionInput,
     useWorkspaceRepositoryRoot,
     markRepositoryListTask,
     applyRepositoryListResult,

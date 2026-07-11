@@ -35,6 +35,7 @@
 - Timeline 可将当前选中的版本化文件与任意 Revision 比较，后端把真实 `svn diff` 限定到该工作副本文件。
 - Timeline 可将干净且已 Update 到 HEAD 的工作副本恢复到指定旧 Revision，通过反向 Merge 生成可审查、可提交的本地改动。
 - Revision Diff 可导出完整 Patch；预览截断时显示完整文件名和路径，完整文件写入失败会使任务失败。
+- Repository 可浏览任意 SVN URL 的 HEAD 或指定数字 Revision，目录导航保持当前历史快照。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。

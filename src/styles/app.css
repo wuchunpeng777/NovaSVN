@@ -502,6 +502,26 @@ textarea {
   flex: 1;
 }
 
+.repository-revision-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #536070;
+  font-size: 12px;
+}
+
+.repository-revision-field input {
+  flex: 0 0 92px;
+  width: 92px;
+}
+
+.repository-revision-status {
+  flex: 0 0 72px;
+  color: #687482;
+  font-size: 12px;
+  text-align: right;
+}
+
 .segmented-control.compact button {
   height: 24px;
   padding: 0 8px;
@@ -2049,7 +2069,9 @@ textarea {
 .versions-workbench[data-theme="dark"] .timeline-date-filter,
 .versions-workbench[data-theme="dark"] .timeline-number-filter,
 .versions-workbench[data-theme="dark"] .timeline-file-filter,
-.versions-workbench[data-theme="dark"] .timeline-filter-summary {
+.versions-workbench[data-theme="dark"] .timeline-filter-summary,
+.versions-workbench[data-theme="dark"] .repository-revision-field,
+.versions-workbench[data-theme="dark"] .repository-revision-status {
   color: #aeb8c2;
 }
 

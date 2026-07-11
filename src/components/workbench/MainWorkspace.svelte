@@ -72,6 +72,7 @@
   export let statusError: CommandError | null = null;
 
   export let repositoryUrlInput = "";
+  export let repositoryRevisionInput = "";
   export let repositoryList: RepositoryListResult | null = null;
   export let repositoryLoading = false;
   export let repositoryError: string | null = null;
@@ -298,6 +299,7 @@
   export let onSaveSvnProperty: () => void = () => {};
 
   export let onRepositoryUrlInput: (value: string) => void = () => {};
+  export let onRepositoryRevisionInput: (value: string) => void = () => {};
   export let onUseWorkspaceRepositoryRoot: () => void = () => {};
   export let onLoadRepositoryUrl: (url?: string) => void = () => {};
   export let onRepositoryLayoutPathInput: (
@@ -2384,6 +2386,27 @@
               }
             }}
           />
+          <label class="repository-revision-field">
+            <span>Revision</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={repositoryRevisionInput}
+              placeholder="HEAD"
+              aria-label="仓库 Revision"
+              on:input={(event) =>
+                onRepositoryRevisionInput((event.currentTarget as HTMLInputElement).value)}
+              on:keydown={(event) => {
+                if (event.key === "Enter") {
+                  onLoadRepositoryUrl();
+                }
+              }}
+            />
+          </label>
+          <span class="repository-revision-status" aria-live="polite">
+            @{repositoryList?.revision ? `r${repositoryList.revision}` : "HEAD"}
+          </span>
         </section>
 
         {#if repositoryError}
