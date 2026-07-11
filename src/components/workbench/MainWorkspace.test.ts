@@ -562,6 +562,10 @@ describe("MainWorkspace", () => {
     const onChooseRepositoryCheckoutParent = vi.fn();
     const onCreateRepositoryCheckout = vi.fn();
     const onRepositoryCheckoutFormInput = vi.fn();
+    const onPrepareRepositoryExport = vi.fn();
+    const onChooseRepositoryExportParent = vi.fn();
+    const onCreateRepositoryExport = vi.fn();
+    const onRepositoryExportFormInput = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.repository,
@@ -593,6 +597,11 @@ describe("MainWorkspace", () => {
           localPath: "/Users/me/checkouts/trunk",
           revision: "10",
         },
+        repositoryExportForm: {
+          url: "https://example.com/svn/trunk",
+          localPath: "/Users/me/exports/trunk",
+          revision: "10",
+        },
         onRepositoryRevisionInput,
         onLoadRepositoryUrl,
         onOpenRepositoryFile,
@@ -607,6 +616,10 @@ describe("MainWorkspace", () => {
         onChooseRepositoryCheckoutParent,
         onCreateRepositoryCheckout,
         onRepositoryCheckoutFormInput,
+        onPrepareRepositoryExport,
+        onChooseRepositoryExportParent,
+        onCreateRepositoryExport,
+        onRepositoryExportFormInput,
       },
     });
 
@@ -614,7 +627,9 @@ describe("MainWorkspace", () => {
     expect(revisionInput).toHaveValue(10);
     expect(screen.getByText("@r10")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "准备 Checkout" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "准备 Export" })).toBeInTheDocument();
     expect(screen.getByLabelText("仓库 Checkout")).toBeInTheDocument();
+    expect(screen.getByLabelText("仓库 Export")).toBeInTheDocument();
     expect(screen.getByLabelText("Checkout 仓库 URL")).toHaveValue(
       "https://example.com/svn/trunk",
     );
@@ -622,13 +637,22 @@ describe("MainWorkspace", () => {
       "/Users/me/checkouts/trunk",
     );
     expect(screen.getByLabelText("Checkout Revision")).toHaveValue("10");
+    expect(screen.getByLabelText("Export 仓库 URL")).toHaveValue(
+      "https://example.com/svn/trunk",
+    );
+    expect(screen.getByLabelText("Export 本地路径")).toHaveValue(
+      "/Users/me/exports/trunk",
+    );
+    expect(screen.getByLabelText("Export Revision")).toHaveValue("10");
 
     await fireEvent.click(screen.getByRole("button", { name: "准备 Checkout" }));
     expect(onPrepareRepositoryCheckout).toHaveBeenCalled();
-    await fireEvent.click(screen.getByRole("button", { name: "选择父目录" }));
-    expect(onChooseRepositoryCheckoutParent).toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "准备 Export" }));
+    expect(onPrepareRepositoryExport).toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
     expect(onCreateRepositoryCheckout).toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    expect(onCreateRepositoryExport).toHaveBeenCalled();
 
     const repositoryTable = screen.getByLabelText("仓库目录");
     expect(within(repositoryTable).getByText("Last Revision")).toBeInTheDocument();

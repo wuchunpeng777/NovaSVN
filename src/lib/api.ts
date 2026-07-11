@@ -12,6 +12,7 @@ import type {
   CreatePartialCommitTaskRequest,
   CreateRepositoryCheckoutTaskRequest,
   CreateRepositoryCopyTaskRequest,
+  CreateRepositoryExportTaskRequest,
   CreateRepositoryFileTaskRequest,
   CreateRepositoryListTaskRequest,
   CreateRevertRevisionTaskRequest,
@@ -41,6 +42,8 @@ import type {
   OpenFileLocationRequest,
   OpenGeneratedFileLocation,
   OpenGeneratedFileLocationRequest,
+  OpenLocalPathLocation,
+  OpenLocalPathLocationRequest,
   OpenRepositoryTempFile,
   OpenRepositoryTempFileRequest,
   OpenWorkspaceFile,
@@ -134,6 +137,12 @@ export function openGeneratedFileLocation(
   return callBackend<OpenGeneratedFileLocation>("open_generated_file_location", { request });
 }
 
+export function openLocalPathLocation(
+  request: OpenLocalPathLocationRequest,
+): Promise<OpenLocalPathLocation> {
+  return callBackend<OpenLocalPathLocation>("open_local_path_location", { request });
+}
+
 export function exportDiagnostics(): Promise<DiagnosticExport> {
   return callBackend<DiagnosticExport>("export_diagnostics");
 }
@@ -204,6 +213,12 @@ export function createRepositoryCheckoutTask(
   request: CreateRepositoryCheckoutTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_repository_checkout_task", { request });
+}
+
+export function createRepositoryExportTask(
+  request: CreateRepositoryExportTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_repository_export_task", { request });
 }
 
 export function createRepositoryFileTask(
@@ -383,6 +398,16 @@ export async function chooseCheckoutDirectory(): Promise<string | null> {
     directory: true,
     multiple: false,
     title: "选择 Checkout 父目录",
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function chooseExportDirectory(): Promise<string | null> {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "选择 Export 父目录",
   });
 
   return typeof selected === "string" ? selected : null;

@@ -9,6 +9,7 @@
     getStartupIntent,
     launchExternalTool,
     openFileLocation,
+    openLocalPathLocation,
     openRepositoryTempFile,
     openWorkspaceFile,
   } from "./lib/api";
@@ -646,6 +647,37 @@
     }
 
     workspaceStore.markRepositoryCheckoutTask(task.task_id, form.localPath);
+  }
+
+  async function createRepositoryExport() {
+    const form = $workspaceStore.repositoryExportForm;
+    if (!form.url.trim()) {
+      workspaceStore.failRepositoryExportTask("请输入仓库 URL");
+      return;
+    }
+    if (!form.localPath.trim()) {
+      workspaceStore.failRepositoryExportTask("请输入本地导出路径");
+      return;
+    }
+    if ($workspaceStore.pendingRepositoryExportTaskId !== null) {
+      return;
+    }
+
+    const task = await taskStore.createRepositoryExport({
+      url: form.url,
+      localPath: form.localPath,
+      revision: form.revision,
+      svnExecutable: currentSvnExecutable(),
+    });
+
+    if (!task) {
+      workspaceStore.failRepositoryExportTask(
+        $taskStore.error?.message ?? "仓库 Export 任务创建失败",
+      );
+      return;
+    }
+
+    workspaceStore.markRepositoryExportTask(task.task_id, form.localPath);
   }
 
   async function checkoutBranchPoolEntry() {
@@ -1366,6 +1398,31 @@
   );
 
   $: consumePendingTask(
+    $workspaceStore.pendingRepositoryExportTaskId,
+    $taskStore.snapshot,
+    async (task) => {
+      if (task.status !== "success") {
+        workspaceStore.failRepositoryExportTask(task.error ?? "仓库 Export 失败");
+        return;
+      }
+
+      const localPath = get(workspaceStore).pendingRepositoryExportLocalPath;
+      workspaceStore.completeRepositoryExportTask();
+      if (!localPath) {
+        return;
+      }
+
+      try {
+        await openLocalPathLocation({ path: localPath });
+      } catch (error) {
+        workspaceStore.failRepositoryExportTask(
+          (error as CommandError).message ?? "导出成功，但无法打开本地路径位置",
+        );
+      }
+    },
+  );
+
+  $: consumePendingTask(
     $branchPoolStore.pendingCheckoutTaskId,
     $taskStore.snapshot,
     (task) => {
@@ -1613,6 +1670,9 @@
   repositoryCheckoutForm={$workspaceStore.repositoryCheckoutForm}
   repositoryCheckoutError={$workspaceStore.repositoryCheckoutError}
   repositoryCheckoutRunning={$workspaceStore.pendingRepositoryCheckoutTaskId !== null}
+  repositoryExportForm={$workspaceStore.repositoryExportForm}
+  repositoryExportError={$workspaceStore.repositoryExportError}
+  repositoryExportRunning={$workspaceStore.pendingRepositoryExportTaskId !== null}
   svnLog={$workspaceStore.svnLog}
   svnLogLoading={$workspaceStore.svnLogLoading}
   svnLogError={$workspaceStore.svnLogError}
@@ -1771,6 +1831,10 @@
   onPrepareRepositoryCheckout={workspaceStore.prepareRepositoryCheckout}
   onChooseRepositoryCheckoutParent={workspaceStore.chooseRepositoryCheckoutParent}
   onCreateRepositoryCheckout={createRepositoryCheckout}
+  onRepositoryExportFormInput={workspaceStore.setRepositoryExportForm}
+  onPrepareRepositoryExport={workspaceStore.prepareRepositoryExport}
+  onChooseRepositoryExportParent={workspaceStore.chooseRepositoryExportParent}
+  onCreateRepositoryExport={createRepositoryExport}
   onRefreshSvnLog={() => workspaceStore.refreshSvnLog(currentSvnExecutable())}
   onSvnLogFilterInput={workspaceStore.setSvnLogFilter}
   onSvnLogFileOnlyInput={setSvnLogFileOnlyAndRefresh}

@@ -16,6 +16,7 @@ vi.mock("./lib/api", async (importOriginal) => {
   return {
     ...actual,
     createRepositoryCheckoutTask: vi.fn(),
+    createRepositoryExportTask: vi.fn(),
     createRepositoryFileTask: vi.fn(),
     createRevertRevisionTask: vi.fn(),
     createSvnBatchOperationTask: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     getRepositoryFileProperties: vi.fn(),
     listTasks: vi.fn(),
     listWorkspaceFiles: vi.fn(),
+    openLocalPathLocation: vi.fn(),
     openRepositoryTempFile: vi.fn(),
     openWorkspaceFile: vi.fn(),
     openWorkspace: vi.fn(),
@@ -38,6 +40,7 @@ vi.mock("./lib/api", async (importOriginal) => {
 import { get } from "svelte/store";
 import {
   createRepositoryCheckoutTask,
+  createRepositoryExportTask,
   createRepositoryFileTask,
   createRevertRevisionTask,
   createSvnOperationTask,
@@ -50,6 +53,7 @@ import {
   getRepositoryFileProperties,
   listTasks,
   listWorkspaceFiles,
+  openLocalPathLocation,
   openRepositoryTempFile,
   openWorkspaceFile,
   openWorkspace,
@@ -68,6 +72,7 @@ import App from "./App.svelte";
 
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
+const createRepositoryExportTaskMock = vi.mocked(createRepositoryExportTask);
 const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
@@ -79,6 +84,7 @@ const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const getRepositoryFilePropertiesMock = vi.mocked(getRepositoryFileProperties);
 const listTasksMock = vi.mocked(listTasks);
 const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
+const openLocalPathLocationMock = vi.mocked(openLocalPathLocation);
 const openRepositoryTempFileMock = vi.mocked(openRepositoryTempFile);
 const openWorkspaceFileMock = vi.mocked(openWorkspaceFile);
 const openWorkspaceMock = vi.mocked(openWorkspace);
@@ -87,6 +93,7 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 beforeEach(async () => {
   createSvnOperationTaskMock.mockReset();
   createRepositoryCheckoutTaskMock.mockReset();
+  createRepositoryExportTaskMock.mockReset();
   createRepositoryFileTaskMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
   createSvnBatchOperationTaskMock.mockReset();
@@ -98,6 +105,7 @@ beforeEach(async () => {
   getRepositoryFilePropertiesMock.mockReset();
   listTasksMock.mockReset();
   listWorkspaceFilesMock.mockReset();
+  openLocalPathLocationMock.mockReset();
   openRepositoryTempFileMock.mockReset();
   openWorkspaceFileMock.mockReset();
   openWorkspaceMock.mockReset();
@@ -593,6 +601,63 @@ describe("App SVN operation completion", () => {
       });
       expect(get(workspaceStore).pendingRepositoryCheckoutTaskId).toBeNull();
       expect(get(workspaceStore).repositoryCheckoutError).toBeNull();
+    });
+  });
+
+  it("仓库 Export 完成后按 pending 本地路径打开位置且不打开工作副本", async () => {
+    setCurrentView("repository");
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk",
+      revision: "10",
+      entries: [],
+    });
+    workspaceStore.setRepositoryExportForm("url", "https://example.com/svn/trunk");
+    workspaceStore.setRepositoryExportForm("localPath", "C:/exports/trunk");
+    workspaceStore.setRepositoryExportForm("revision", "10");
+
+    const pendingTask = makeTask({ task_id: "repository-export", status: "pending" });
+    createRepositoryExportTaskMock.mockResolvedValue(pendingTask);
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-export", status: "pending" }),
+      ]),
+    );
+    openLocalPathLocationMock.mockResolvedValue({ target_path: "C:/exports/trunk" });
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Export" }));
+
+    await waitFor(() => {
+      expect(createRepositoryExportTaskMock).toHaveBeenCalledWith({
+        url: "https://example.com/svn/trunk",
+        local_path: "C:/exports/trunk",
+        revision: "10",
+        svn_executable: undefined,
+      });
+      expect(get(workspaceStore).pendingRepositoryExportTaskId).toBe("repository-export");
+      expect(get(workspaceStore).pendingRepositoryExportLocalPath).toBe("C:/exports/trunk");
+    });
+
+    const completedTask = makeTask({
+      task_id: "repository-export",
+      status: "success",
+    });
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-export", status: "success" }),
+      ]),
+    );
+    getTaskMock.mockResolvedValue(completedTask);
+    openWorkspaceMock.mockClear();
+    await taskStore.refresh();
+
+    await waitFor(() => {
+      expect(openLocalPathLocationMock).toHaveBeenCalledWith({
+        path: "C:/exports/trunk",
+      });
+      expect(openWorkspaceMock).not.toHaveBeenCalled();
+      expect(get(workspaceStore).pendingRepositoryExportTaskId).toBeNull();
+      expect(get(workspaceStore).repositoryExportError).toBeNull();
     });
   });
 

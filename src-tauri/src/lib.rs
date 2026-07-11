@@ -18,8 +18,9 @@ use diff::{GenerateSelectedPatchRequest, ParsedDiff, SelectedPatch};
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
 use external_tool::{
     ExternalToolLaunch, LaunchExternalToolRequest, OpenFileLocation, OpenFileLocationRequest,
-    OpenGeneratedFileLocation, OpenGeneratedFileLocationRequest, OpenRepositoryTempFile,
-    OpenRepositoryTempFileRequest, OpenWorkspaceFile, OpenWorkspaceFileRequest,
+    OpenGeneratedFileLocation, OpenGeneratedFileLocationRequest, OpenLocalPathLocation,
+    OpenLocalPathLocationRequest, OpenRepositoryTempFile, OpenRepositoryTempFileRequest,
+    OpenWorkspaceFile, OpenWorkspaceFileRequest,
 };
 use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
 use svn::{DetectSvnRequest, SvnClient, SvnDetection};
@@ -28,10 +29,11 @@ use task::{
     CreateApplyPatchTaskRequest, CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest,
     CreateMergeTaskRequest, CreateMockTaskRequest, CreatePartialCommitTaskRequest,
     CreateRepositoryCheckoutTaskRequest, CreateRepositoryCopyTaskRequest,
-    CreateRepositoryFileTaskRequest, CreateRepositoryListTaskRequest,
-    CreateRevertRevisionTaskRequest, CreateRevisionDiffTaskRequest,
-    CreateShadowWorkspaceTaskRequest, CreateSvnBatchOperationTaskRequest,
-    CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest, Task, TaskQueue, TaskSnapshot,
+    CreateRepositoryExportTaskRequest, CreateRepositoryFileTaskRequest,
+    CreateRepositoryListTaskRequest, CreateRevertRevisionTaskRequest,
+    CreateRevisionDiffTaskRequest, CreateShadowWorkspaceTaskRequest,
+    CreateSvnBatchOperationTaskRequest, CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest,
+    Task, TaskQueue, TaskSnapshot,
 };
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use tauri::{Emitter, Manager};
@@ -446,6 +448,16 @@ fn open_generated_file_location(
 }
 
 #[tauri::command]
+fn open_local_path_location(
+    request: OpenLocalPathLocationRequest,
+) -> CommandResult<OpenLocalPathLocation> {
+    println!("[NovaSVN] open_local_path_location command received");
+    Ok(CommandResponse::success(
+        external_tool::open_local_path_location(request)?,
+    ))
+}
+
+#[tauri::command]
 fn open_repository_temp_file(
     app: tauri::AppHandle,
     request: OpenRepositoryTempFileRequest,
@@ -585,6 +597,17 @@ fn create_repository_checkout_task(
     println!("[NovaSVN] create_repository_checkout_task command received");
     Ok(CommandResponse::success(
         queue.create_repository_checkout_task(request)?,
+    ))
+}
+
+#[tauri::command]
+fn create_repository_export_task(
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateRepositoryExportTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_repository_export_task command received");
+    Ok(CommandResponse::success(
+        queue.create_repository_export_task(request)?,
     ))
 }
 
@@ -896,6 +919,7 @@ pub fn run() {
             open_file_location,
             open_workspace_file,
             open_generated_file_location,
+            open_local_path_location,
             open_repository_temp_file,
             create_mock_task,
             create_commit_task,
@@ -908,6 +932,7 @@ pub fn run() {
             create_repository_copy_task,
             create_branch_checkout_task,
             create_repository_checkout_task,
+            create_repository_export_task,
             create_svn_switch_task,
             create_revision_diff_task,
             create_revert_revision_task,

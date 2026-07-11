@@ -599,6 +599,28 @@ if (
 }
 
 if (
+  !mainWorkspace.includes('aria-label="仓库 Export"') ||
+  !mainWorkspace.includes("准备 Export") ||
+  !appSvelte.includes("pendingRepositoryExportTaskId") ||
+  !appSvelte.includes("createRepositoryExport") ||
+  !appSvelte.includes("openLocalPathLocation({ path: localPath })") ||
+  !appStore.includes("function markRepositoryExportTask(") ||
+  !appStore.includes("function prepareRepositoryExport(") ||
+  !frontendApi.includes('callBackend<Task>("create_repository_export_task"') ||
+  !frontendApi.includes("chooseExportDirectory") ||
+  !frontendApi.includes('callBackend<OpenLocalPathLocation>("open_local_path_location"') ||
+  !tauriLib.includes("create_repository_export_task,") ||
+  !tauriLib.includes("open_local_path_location,") ||
+  !taskRs.includes("TaskPayload::RepositoryExport") ||
+  !taskRs.includes("fn run_repository_export_task(") ||
+  !taskRs.includes('command.arg("export")') ||
+  !taskRs.includes("validate_export_destination(Path::new(&payload.local_path))")
+) {
+  console.error("Repository Export 必须执行真实 svn export，成功后打开本地路径位置且不打开工作副本");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||

@@ -42,6 +42,7 @@
 - Repository 文件可查看当前历史快照的逐行 Blame，显示每行 Revision、作者、行号和 UTF-8 文本内容。
 - Repository 文件可查看当前历史快照的只读 Properties，支持 HEAD 已删除文件、多行值和二进制属性标记。
 - Repository 可将当前 URL 按指定 Revision Checkout 到本地空目录，成功后自动打开工作副本。
+- Repository 可将当前 URL 按指定 Revision Export 到本地空目录，导出结果不含 `.svn`，成功后在文件管理器中显示。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。

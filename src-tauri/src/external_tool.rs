@@ -1,5 +1,5 @@
 use std::{
-    env,
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -41,6 +41,11 @@ pub struct OpenGeneratedFileLocationRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct OpenLocalPathLocationRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct OpenRepositoryTempFileRequest {
     pub path: String,
 }
@@ -64,6 +69,11 @@ pub struct OpenWorkspaceFile {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OpenGeneratedFileLocation {
+    pub target_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenLocalPathLocation {
     pub target_path: String,
 }
 
@@ -185,6 +195,29 @@ pub fn open_generated_file_location(
     })
 }
 
+pub fn open_local_path_location(
+    request: OpenLocalPathLocationRequest,
+) -> Result<OpenLocalPathLocation, NovaError> {
+    let target = normalize_existing_local_path(&request.path)?;
+    let root = target.parent().unwrap_or_else(|| Path::new("."));
+    let (program, args) = open_file_location_command(root, &target);
+    let mut command = Command::new(program);
+    command.args(args);
+
+    command.spawn().map_err(|error| {
+        NovaError::command(
+            "OPEN_LOCAL_PATH_LOCATION_FAILED",
+            "无法打开本地路径位置",
+            Some(format!("目标：{}。错误：{error}", target.display())),
+            true,
+        )
+    })?;
+
+    Ok(OpenLocalPathLocation {
+        target_path: target.display().to_string(),
+    })
+}
+
 fn open_file_location_command(root: &Path, target: &Path) -> (&'static str, Vec<String>) {
     if cfg!(target_os = "windows") {
         return ("explorer", vec![format!("/select,{}", target.display())]);
@@ -282,6 +315,47 @@ fn normalize_root(path: &str) -> Result<PathBuf, NovaError> {
     }
 
     Ok(PathBuf::from(trimmed))
+}
+
+fn normalize_existing_local_path(path: &str) -> Result<PathBuf, NovaError> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(NovaError::command(
+            "LOCAL_PATH_REQUIRED",
+            "请提供要打开的本地路径",
+            None,
+            true,
+        ));
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "LOCAL_PATH_INVALID",
+            "本地路径无效",
+            Some("本地路径不能包含控制字符。".to_string()),
+            true,
+        ));
+    }
+
+    let expanded = expand_home_path(trimmed);
+    if !path_utils::is_absolute_or_home_path(&expanded, trimmed) {
+        return Err(NovaError::command(
+            "LOCAL_PATH_INVALID",
+            "本地路径无效",
+            Some("本地路径必须是绝对路径或 ~/ 开头路径。".to_string()),
+            true,
+        ));
+    }
+
+    let canonical = fs::canonicalize(&expanded).map_err(|error| {
+        NovaError::command(
+            "LOCAL_PATH_MISSING",
+            "本地路径不存在",
+            Some(format!("读取路径 `{}` 失败：{error}", expanded.display())),
+            true,
+        )
+    })?;
+
+    Ok(canonical)
 }
 
 fn normalize_file_path(root: &Path, file_path: &str) -> Result<PathBuf, NovaError> {

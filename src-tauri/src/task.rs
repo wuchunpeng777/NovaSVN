@@ -222,6 +222,14 @@ pub struct CreateRepositoryCheckoutTaskRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct CreateRepositoryExportTaskRequest {
+    pub url: String,
+    pub local_path: String,
+    pub revision: Option<String>,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateSvnSwitchTaskRequest {
     pub working_copy_root: String,
     pub target_url: String,
@@ -359,6 +367,7 @@ enum TaskPayload {
     RepositoryCopy(RepositoryCopyTaskPayload),
     BranchCheckout(BranchCheckoutTaskPayload),
     RepositoryCheckout(RepositoryCheckoutTaskPayload),
+    RepositoryExport(RepositoryExportTaskPayload),
     SvnSwitch(SvnSwitchTaskPayload),
     RevisionDiff(RevisionDiffTaskPayload),
     RevertRevision(RevertRevisionTaskPayload),
@@ -479,6 +488,14 @@ struct BranchCheckoutTaskPayload {
 
 #[derive(Debug, Clone)]
 struct RepositoryCheckoutTaskPayload {
+    url: String,
+    local_path: String,
+    revision: Option<String>,
+    svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct RepositoryExportTaskPayload {
     url: String,
     local_path: String,
     revision: Option<String>,
@@ -1262,6 +1279,45 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_repository_export_task(
+        &self,
+        request: CreateRepositoryExportTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let url = normalize_repository_url(&request.url)?;
+        let local_path = normalize_export_path(&request.local_path)?;
+        validate_export_destination(Path::new(&local_path))?;
+        let revision = normalize_optional_revision_value(
+            request.revision.as_deref(),
+            "REPOSITORY_EXPORT_REVISION_INVALID",
+            "仓库 Export Revision 无效",
+        )?;
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!("Export {}", compact_repository_url(&url)),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "仓库 Export 任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::RepositoryExport(RepositoryExportTaskPayload {
+                url,
+                local_path,
+                revision,
+                svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn create_svn_switch_task(
         &self,
         request: CreateSvnSwitchTaskRequest,
@@ -1658,6 +1714,9 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             }
             TaskPayload::RepositoryCheckout(payload) => {
                 run_repository_checkout_task(&state, &task_id, payload)
+            }
+            TaskPayload::RepositoryExport(payload) => {
+                run_repository_export_task(&state, &task_id, payload)
             }
             TaskPayload::SvnSwitch(payload) => run_svn_switch_task(&state, &task_id, payload),
             TaskPayload::RevisionDiff(payload) => run_revision_diff_task(&state, &task_id, payload),
@@ -4003,6 +4062,79 @@ fn run_repository_checkout_task(
     }
 }
 
+fn run_repository_export_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: RepositoryExportTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "仓库 Export 开始执行",
+        None,
+    );
+    if let Err(error) = validate_export_destination(Path::new(&payload.local_path)) {
+        update_task(
+            state,
+            task_id,
+            TaskStatus::Failed,
+            "仓库 Export 目标不可用",
+            Some(error.to_string()),
+        );
+        return;
+    }
+
+    let command_target =
+        repository_url_with_peg_revision(&payload.url, payload.revision.as_deref());
+    append_task_log(
+        state,
+        task_id,
+        &format!("执行 svn export：{} -> {}", payload.url, payload.local_path),
+    );
+    let mut command = Command::new(&payload.svn_executable);
+    command.arg("export");
+    if let Some(revision) = payload.revision.as_deref() {
+        command.arg("-r").arg(revision);
+    }
+    command
+        .arg("--")
+        .arg(command_target)
+        .arg(&payload.local_path);
+
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                "仓库 Export 成功",
+                None,
+            );
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "仓库 Export 失败",
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
 fn run_svn_switch_task(
     state: &Arc<Mutex<TaskQueueState>>,
     task_id: &str,
@@ -5635,11 +5767,23 @@ pub(crate) fn normalize_repository_url(url: &str) -> Result<String, NovaError> {
 }
 
 fn normalize_checkout_path(path: &str) -> Result<String, NovaError> {
+    normalize_repository_local_path(path, "CHECKOUT_PATH", "本地工作副本路径")
+}
+
+fn normalize_export_path(path: &str) -> Result<String, NovaError> {
+    normalize_repository_local_path(path, "EXPORT_PATH", "本地导出路径")
+}
+
+fn normalize_repository_local_path(
+    path: &str,
+    code_prefix: &str,
+    label: &str,
+) -> Result<String, NovaError> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err(NovaError::command(
-            "CHECKOUT_PATH_REQUIRED",
-            "请输入本地工作副本路径",
+            &format!("{code_prefix}_REQUIRED"),
+            &format!("请输入{label}"),
             None,
             true,
         ));
@@ -5647,9 +5791,9 @@ fn normalize_checkout_path(path: &str) -> Result<String, NovaError> {
 
     if trimmed.chars().any(char::is_control) {
         return Err(NovaError::command(
-            "CHECKOUT_PATH_INVALID",
-            "本地工作副本路径无效",
-            Some("本地路径不能包含控制字符。".to_string()),
+            &format!("{code_prefix}_INVALID"),
+            &format!("{label}无效"),
+            Some(format!("{label}不能包含控制字符。")),
             true,
         ));
     }
@@ -5657,9 +5801,9 @@ fn normalize_checkout_path(path: &str) -> Result<String, NovaError> {
     let path = Path::new(trimmed);
     if !path_utils::is_absolute_or_home_path(path, trimmed) {
         return Err(NovaError::command(
-            "CHECKOUT_PATH_INVALID",
-            "本地工作副本路径无效",
-            Some("本地路径必须是绝对路径或 ~/ 开头路径。".to_string()),
+            &format!("{code_prefix}_INVALID"),
+            &format!("{label}无效"),
+            Some(format!("{label}必须是绝对路径或 ~/ 开头路径。")),
             true,
         ));
     }
@@ -5668,28 +5812,40 @@ fn normalize_checkout_path(path: &str) -> Result<String, NovaError> {
 }
 
 fn validate_checkout_destination(path: &Path) -> Result<(), NovaError> {
+    validate_repository_local_destination(path, "REPOSITORY_CHECKOUT", "Checkout")
+}
+
+fn validate_export_destination(path: &Path) -> Result<(), NovaError> {
+    validate_repository_local_destination(path, "REPOSITORY_EXPORT", "Export")
+}
+
+fn validate_repository_local_destination(
+    path: &Path,
+    code_prefix: &str,
+    operation: &str,
+) -> Result<(), NovaError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() || metadata_is_reparse_point(&metadata) {
                 return Err(NovaError::command(
-                    "REPOSITORY_CHECKOUT_DESTINATION_UNSAFE",
-                    "Checkout 本地目标不可用",
+                    &format!("{code_prefix}_DESTINATION_UNSAFE"),
+                    &format!("{operation} 本地目标不可用"),
                     Some("目标目录不能是符号链接或 reparse point。".to_string()),
                     true,
                 ));
             }
             if !metadata.is_dir() {
                 return Err(NovaError::command(
-                    "REPOSITORY_CHECKOUT_DESTINATION_NOT_DIRECTORY",
-                    "Checkout 本地目标不可用",
+                    &format!("{code_prefix}_DESTINATION_NOT_DIRECTORY"),
+                    &format!("{operation} 本地目标不可用"),
                     Some("目标路径已存在且不是目录。".to_string()),
                     true,
                 ));
             }
             let mut entries = fs::read_dir(path).map_err(|error| {
                 NovaError::command(
-                    "REPOSITORY_CHECKOUT_DESTINATION_UNREADABLE",
-                    "无法检查 Checkout 本地目标",
+                    &format!("{code_prefix}_DESTINATION_UNREADABLE"),
+                    &format!("无法检查 {operation} 本地目标"),
                     Some(format!("读取目录 `{}` 失败：{error}", path.display())),
                     true,
                 )
@@ -5699,8 +5855,8 @@ fn validate_checkout_destination(path: &Path) -> Result<(), NovaError> {
                 .transpose()
                 .map_err(|error| {
                     NovaError::command(
-                        "REPOSITORY_CHECKOUT_DESTINATION_UNREADABLE",
-                        "无法检查 Checkout 本地目标",
+                        &format!("{code_prefix}_DESTINATION_UNREADABLE"),
+                        &format!("无法检查 {operation} 本地目标"),
                         Some(format!("读取目录 `{}` 失败：{error}", path.display())),
                         true,
                     )
@@ -5708,8 +5864,8 @@ fn validate_checkout_destination(path: &Path) -> Result<(), NovaError> {
                 .is_some()
             {
                 return Err(NovaError::command(
-                    "REPOSITORY_CHECKOUT_DESTINATION_NOT_EMPTY",
-                    "Checkout 本地目标必须为空",
+                    &format!("{code_prefix}_DESTINATION_NOT_EMPTY"),
+                    &format!("{operation} 本地目标必须为空"),
                     Some(format!("目录 `{}` 已包含文件。", path.display())),
                     true,
                 ));
@@ -5722,24 +5878,24 @@ fn validate_checkout_destination(path: &Path) -> Result<(), NovaError> {
                 .filter(|parent| !parent.as_os_str().is_empty())
                 .ok_or_else(|| {
                     NovaError::command(
-                        "REPOSITORY_CHECKOUT_PARENT_REQUIRED",
-                        "Checkout 本地目标不可用",
+                        &format!("{code_prefix}_PARENT_REQUIRED"),
+                        &format!("{operation} 本地目标不可用"),
                         Some("目标路径必须包含已存在的父目录。".to_string()),
                         true,
                     )
                 })?;
             let parent_metadata = fs::metadata(parent).map_err(|error| {
                 NovaError::command(
-                    "REPOSITORY_CHECKOUT_PARENT_UNAVAILABLE",
-                    "Checkout 父目录不可用",
+                    &format!("{code_prefix}_PARENT_UNAVAILABLE"),
+                    &format!("{operation} 父目录不可用"),
                     Some(format!("读取父目录 `{}` 失败：{error}", parent.display())),
                     true,
                 )
             })?;
             if !parent_metadata.is_dir() {
                 return Err(NovaError::command(
-                    "REPOSITORY_CHECKOUT_PARENT_NOT_DIRECTORY",
-                    "Checkout 父目录不可用",
+                    &format!("{code_prefix}_PARENT_NOT_DIRECTORY"),
+                    &format!("{operation} 父目录不可用"),
                     Some(format!("`{}` 不是目录。", parent.display())),
                     true,
                 ));
@@ -5747,8 +5903,8 @@ fn validate_checkout_destination(path: &Path) -> Result<(), NovaError> {
             Ok(())
         }
         Err(error) => Err(NovaError::command(
-            "REPOSITORY_CHECKOUT_DESTINATION_UNAVAILABLE",
-            "无法检查 Checkout 本地目标",
+            &format!("{code_prefix}_DESTINATION_UNAVAILABLE"),
+            &format!("无法检查 {operation} 本地目标"),
             Some(format!("读取路径 `{}` 失败：{error}", path.display())),
             true,
         )),
@@ -6741,6 +6897,102 @@ mod tests {
         assert!(checkout_target.join("note.txt").is_file());
         assert_eq!(
             fs::read_to_string(checkout_target.join("note.txt")).expect("read checked out note"),
+            "revision one"
+        );
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn validates_export_paths() {
+        assert!(normalize_export_path("C:\\exports\\trunk").is_ok());
+        assert!(normalize_export_path("~/NovaSVN/export").is_ok());
+        assert!(normalize_export_path("relative\\export").is_err());
+        assert!(normalize_export_path("C:\\exports\ntrunk").is_err());
+    }
+
+    #[test]
+    fn validates_export_destination_empty_or_missing() {
+        let root = test_temp_dir("export-destination");
+        let missing = root.join("missing-target");
+        let empty = root.join("empty-target");
+        let occupied = root.join("occupied-target");
+        fs::create_dir_all(&empty).expect("create empty destination");
+        fs::create_dir_all(&occupied).expect("create occupied destination");
+        fs::write(occupied.join("keep.txt"), "keep").expect("write occupied file");
+
+        assert!(validate_export_destination(&missing).is_ok());
+        assert!(validate_export_destination(&empty).is_ok());
+        let occupied_error = validate_export_destination(&occupied).expect_err("非空目录应被拒绝");
+        assert!(matches!(
+            occupied_error,
+            NovaError::Command { ref code, .. } if code == "REPOSITORY_EXPORT_DESTINATION_NOT_EMPTY"
+        ));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn exports_repository_url_at_historical_revision_without_metadata() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("repository-export-integration");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        let export_target = root.join("export-target");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+
+        let history_dir = working_copy.join("history");
+        fs::create_dir_all(&history_dir).expect("create history dir");
+        fs::write(history_dir.join("note.txt"), "revision one").expect("write note");
+        run_test_command(Command::new("svn").arg("add").arg(&history_dir));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "add history"]),
+        );
+        fs::write(history_dir.join("note.txt"), "revision two").expect("update note");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "update history"]),
+        );
+        run_test_command(Command::new("svn").arg("update").arg(&working_copy));
+        run_test_command(Command::new("svn").arg("delete").arg(&history_dir));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "delete history at head"]),
+        );
+
+        let state = repository_file_test_state("repository-export");
+        run_repository_export_task(
+            &state,
+            "repository-export",
+            RepositoryExportTaskPayload {
+                url: format!("{repository_url}/history"),
+                local_path: export_target.display().to_string(),
+                revision: Some("1".to_string()),
+                svn_executable: "svn".to_string(),
+            },
+        );
+
+        let task = state.lock().unwrap().tasks[0].clone();
+        assert!(matches!(task.status, TaskStatus::Success));
+        assert!(export_target.join("note.txt").is_file());
+        assert!(!export_target.join(".svn").exists());
+        assert_eq!(
+            fs::read_to_string(export_target.join("note.txt")).expect("read exported note"),
             "revision one"
         );
         fs::remove_dir_all(root).ok();

@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
   chooseCheckoutDirectory: vi.fn(),
+  chooseExportDirectory: vi.fn(),
   createApplyPatchTask: vi.fn(),
   createMergeTask: vi.fn(),
   createRepositoryCheckoutTask: vi.fn(),
+  createRepositoryExportTask: vi.fn(),
   createRepositoryFileTask: vi.fn(),
   createRepositoryListTask: vi.fn(),
   createRevertRevisionTask: vi.fn(),
@@ -36,9 +38,11 @@ import { get } from "svelte/store";
 
 import {
   chooseCheckoutDirectory,
+  chooseExportDirectory,
   createApplyPatchTask,
   createMergeTask,
   createRepositoryCheckoutTask,
+  createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
   createRevertRevisionTask,
@@ -92,9 +96,11 @@ import {
 } from "./app";
 
 const chooseCheckoutDirectoryMock = vi.mocked(chooseCheckoutDirectory);
+const chooseExportDirectoryMock = vi.mocked(chooseExportDirectory);
 const createApplyPatchTaskMock = vi.mocked(createApplyPatchTask);
 const createMergeTaskMock = vi.mocked(createMergeTask);
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
+const createRepositoryExportTaskMock = vi.mocked(createRepositoryExportTask);
 const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
@@ -123,9 +129,11 @@ const setSvnPropertyMock = vi.mocked(setSvnProperty);
 
 beforeEach(() => {
   chooseCheckoutDirectoryMock.mockReset();
+  chooseExportDirectoryMock.mockReset();
   createApplyPatchTaskMock.mockReset();
   createMergeTaskMock.mockReset();
   createRepositoryCheckoutTaskMock.mockReset();
+  createRepositoryExportTaskMock.mockReset();
   createRepositoryFileTaskMock.mockReset();
   createRepositoryListTaskMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
@@ -1018,6 +1026,72 @@ describe("taskStore repository list tasks", () => {
       pendingRepositoryCheckoutTaskId: null,
       pendingRepositoryCheckoutLocalPath: null,
       repositoryCheckoutError: "目标目录非空",
+    });
+  });
+
+  it("prepares repository export form and tracks pending local path", async () => {
+    appSettingsStore.setField("branchPoolBasePath", "/Users/me/exports");
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk",
+      revision: "12",
+      entries: [],
+    });
+
+    workspaceStore.prepareRepositoryExport();
+    expect(get(workspaceStore).repositoryExportForm).toEqual({
+      url: "https://example.com/svn/trunk",
+      localPath: "/Users/me/exports/svn-trunk",
+      revision: "12",
+    });
+
+    chooseExportDirectoryMock.mockResolvedValue("/Users/me/out");
+    await workspaceStore.chooseRepositoryExportParent();
+    expect(get(workspaceStore).repositoryExportForm.localPath).toBe(
+      "/Users/me/out/svn-trunk",
+    );
+
+    createRepositoryExportTaskMock.mockResolvedValue(
+      makeTask({ task_id: "repository-export" }),
+    );
+    const task = await taskStore.createRepositoryExport({
+      url: "https://example.com/svn/trunk",
+      localPath: "/Users/me/out/svn-trunk",
+      revision: "12",
+      svnExecutable: "svn",
+    });
+    expect(task?.task_id).toBe("repository-export");
+    expect(createRepositoryExportTaskMock).toHaveBeenCalledWith({
+      url: "https://example.com/svn/trunk",
+      local_path: "/Users/me/out/svn-trunk",
+      revision: "12",
+      svn_executable: "svn",
+    });
+
+    workspaceStore.markRepositoryExportTask("repository-export", "/Users/me/out/svn-trunk");
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryExportTaskId: "repository-export",
+      pendingRepositoryExportLocalPath: "/Users/me/out/svn-trunk",
+      repositoryExportError: null,
+    });
+
+    workspaceStore.completeRepositoryExportTask();
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryExportTaskId: null,
+      pendingRepositoryExportLocalPath: null,
+      repositoryExportForm: {
+        url: "https://example.com/svn/trunk",
+        localPath: "",
+        revision: "12",
+      },
+      repositoryExportError: null,
+    });
+
+    workspaceStore.markRepositoryExportTask("repository-export-failed", "/tmp/fail");
+    workspaceStore.failRepositoryExportTask("目标目录非空");
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryExportTaskId: null,
+      pendingRepositoryExportLocalPath: null,
+      repositoryExportError: "目标目录非空",
     });
   });
 });

@@ -137,6 +137,10 @@ export interface OpenGeneratedFileLocationRequest {
   path: string;
 }
 
+export interface OpenLocalPathLocationRequest {
+  path: string;
+}
+
 export interface OpenRepositoryTempFileRequest {
   path: string;
 }
@@ -156,6 +160,10 @@ export interface OpenWorkspaceFile {
 }
 
 export interface OpenGeneratedFileLocation {
+  target_path: string;
+}
+
+export interface OpenLocalPathLocation {
   target_path: string;
 }
 
@@ -486,6 +494,13 @@ export interface WorkspaceFileNode {
 }
 
 export interface CreateRepositoryCheckoutTaskRequest {
+  url: string;
+  local_path: string;
+  revision?: string;
+  svn_executable?: string;
+}
+
+export interface CreateRepositoryExportTaskRequest {
   url: string;
   local_path: string;
   revision?: string;

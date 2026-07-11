@@ -143,6 +143,17 @@
   };
   export let repositoryCheckoutError: string | null = null;
   export let repositoryCheckoutRunning = false;
+  export let repositoryExportForm: {
+    url: string;
+    localPath: string;
+    revision: string;
+  } = {
+    url: "",
+    localPath: "",
+    revision: "",
+  };
+  export let repositoryExportError: string | null = null;
+  export let repositoryExportRunning = false;
 
   export let svnLog: SvnLog | null = null;
   export let svnLogLoading = false;
@@ -362,6 +373,16 @@
   ) => void = () => {};
   export let onChooseRepositoryCheckoutParent: () => void = () => {};
   export let onCreateRepositoryCheckout: () => void = () => {};
+  export let onRepositoryExportFormInput: (
+    field: keyof typeof repositoryExportForm,
+    value: string,
+  ) => void = () => {};
+  export let onPrepareRepositoryExport: (
+    url?: string | null,
+    revision?: string | null,
+  ) => void = () => {};
+  export let onChooseRepositoryExportParent: () => void = () => {};
+  export let onCreateRepositoryExport: () => void = () => {};
 
   export let onRefreshSvnLog: () => void = () => {};
   export let onSvnLogFilterInput: (
@@ -2430,6 +2451,13 @@
             >
               准备 Checkout
             </button>
+            <button
+              type="button"
+              on:click={() => onPrepareRepositoryExport()}
+              disabled={!repositoryCurrentUrl && !repositoryUrlInput && !repositoryList}
+            >
+              准备 Export
+            </button>
             <button type="button" class="primary" on:click={chooseDefaultRepositoryUrl} disabled={repositoryLoading}>
               {repositoryLoading ? "加载中" : "浏览"}
             </button>
@@ -2874,6 +2902,71 @@
               disabled={repositoryCheckoutRunning}
             >
               {repositoryCheckoutRunning ? "Checkout 中" : "Checkout"}
+            </button>
+          </div>
+        </details>
+
+        <details class="advanced-section" open={Boolean(repositoryExportForm.url || repositoryExportForm.localPath)}>
+          <summary>Export 到本地</summary>
+          <div class="copy-form" aria-label="仓库 Export">
+            <button
+              type="button"
+              on:click={() =>
+                onPrepareRepositoryExport(
+                  repositoryCurrentUrl || repositoryList?.url || repositoryUrlInput,
+                  repositoryList?.revision ?? repositoryRevisionInput,
+                )}
+            >
+              使用当前 URL
+            </button>
+            <input
+              type="url"
+              value={repositoryExportForm.url}
+              placeholder="仓库 URL"
+              aria-label="Export 仓库 URL"
+              on:input={(event) =>
+                onRepositoryExportFormInput(
+                  "url",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            <div class="button-row">
+              <input
+                type="text"
+                value={repositoryExportForm.localPath}
+                placeholder="本地导出路径"
+                aria-label="Export 本地路径"
+                on:input={(event) =>
+                  onRepositoryExportFormInput(
+                    "localPath",
+                    (event.currentTarget as HTMLInputElement).value,
+                  )}
+              />
+              <button type="button" on:click={onChooseRepositoryExportParent}>
+                选择父目录
+              </button>
+            </div>
+            <input
+              type="text"
+              value={repositoryExportForm.revision}
+              placeholder="Revision，留空为 HEAD"
+              aria-label="Export Revision"
+              on:input={(event) =>
+                onRepositoryExportFormInput(
+                  "revision",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            {#if repositoryExportError}
+              <p class="inline-error">{repositoryExportError}</p>
+            {/if}
+            <button
+              type="button"
+              class="primary"
+              on:click={onCreateRepositoryExport}
+              disabled={repositoryExportRunning}
+            >
+              {repositoryExportRunning ? "Export 中" : "Export"}
             </button>
           </div>
         </details>

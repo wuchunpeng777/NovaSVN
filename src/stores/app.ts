@@ -2,6 +2,7 @@ import { get, writable } from "svelte/store";
 import {
   cancelTask,
   chooseCheckoutDirectory,
+  chooseExportDirectory,
   chooseWorkspaceDirectory,
   createApplyPatchTask,
   createBranchCheckoutTask,
@@ -11,6 +12,7 @@ import {
   createPartialCommitTask,
   createRepositoryCheckoutTask,
   createRepositoryCopyTask,
+  createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
   createRevertRevisionTask,
@@ -497,6 +499,34 @@ function createTaskStore() {
     }
   }
 
+  async function createRepositoryExport(request: {
+    url: string;
+    localPath: string;
+    revision?: string | null;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createRepositoryExportTask({
+        url: request.url,
+        local_path: request.localPath,
+        revision: request.revision || undefined,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function createSvnSwitch(request: {
     workingCopyRoot: string;
     targetUrl: string;
@@ -782,6 +812,7 @@ function createTaskStore() {
     createRepositoryCopy,
     createBranchCheckout,
     createRepositoryCheckout,
+    createRepositoryExport,
     createSvnSwitch,
     createRevisionDiff,
     createRevertRevision,
@@ -1446,6 +1477,14 @@ export interface WorkspaceStoreState {
   pendingRepositoryCheckoutTaskId: string | null;
   pendingRepositoryCheckoutLocalPath: string | null;
   repositoryCheckoutError: string | null;
+  repositoryExportForm: {
+    url: string;
+    localPath: string;
+    revision: string;
+  };
+  pendingRepositoryExportTaskId: string | null;
+  pendingRepositoryExportLocalPath: string | null;
+  repositoryExportError: string | null;
   svnSwitchTargetUrl: string;
   pendingSvnSwitchTaskId: string | null;
   svnSwitchError: string | null;
@@ -1603,6 +1642,14 @@ const initialWorkspaceState: WorkspaceStoreState = {
   pendingRepositoryCheckoutTaskId: null,
   pendingRepositoryCheckoutLocalPath: null,
   repositoryCheckoutError: null,
+  repositoryExportForm: {
+    url: "",
+    localPath: "",
+    revision: "",
+  },
+  pendingRepositoryExportTaskId: null,
+  pendingRepositoryExportLocalPath: null,
+  repositoryExportError: null,
   svnSwitchTargetUrl: "",
   pendingSvnSwitchTaskId: null,
   svnSwitchError: null,
@@ -1743,6 +1790,14 @@ function createWorkspaceStore() {
         pendingRepositoryCheckoutTaskId: null,
         pendingRepositoryCheckoutLocalPath: null,
         repositoryCheckoutError: null,
+        repositoryExportForm: {
+          ...emptyRepositoryExportForm(),
+          url: recent.workspace?.repository_url ?? "",
+          revision: recent.workspace?.revision ?? "",
+        },
+        pendingRepositoryExportTaskId: null,
+        pendingRepositoryExportLocalPath: null,
+        repositoryExportError: null,
         svnSwitchTargetUrl: recent.workspace?.repository_url ?? "",
         pendingSvnSwitchTaskId: null,
         svnSwitchError: null,
@@ -1861,6 +1916,14 @@ function createWorkspaceStore() {
         pendingRepositoryCheckoutTaskId: null,
         pendingRepositoryCheckoutLocalPath: null,
         repositoryCheckoutError: null,
+        repositoryExportForm: {
+          ...emptyRepositoryExportForm(),
+          url: current.repository_url,
+          revision: current.revision,
+        },
+        pendingRepositoryExportTaskId: null,
+        pendingRepositoryExportLocalPath: null,
+        repositoryExportError: null,
         svnSwitchTargetUrl: current.repository_url,
         pendingSvnSwitchTaskId: null,
         svnSwitchError: null,
@@ -2844,6 +2907,105 @@ function createWorkspaceStore() {
       pendingRepositoryCheckoutTaskId: null,
       pendingRepositoryCheckoutLocalPath: null,
       repositoryCheckoutError: message ?? "仓库 Checkout 失败",
+    }));
+  }
+
+  function setRepositoryExportForm(
+    field: keyof WorkspaceStoreState["repositoryExportForm"],
+    value: string,
+  ) {
+    update((state) => ({
+      ...state,
+      repositoryExportForm: {
+        ...state.repositoryExportForm,
+        [field]: value,
+      },
+      repositoryExportError: null,
+    }));
+  }
+
+  function prepareRepositoryExport(url?: string | null, revision?: string | null) {
+    update((state) => {
+      const nextUrl = (
+        url ||
+        state.repositoryCurrentUrl ||
+        state.repositoryList?.url ||
+        state.repositoryUrlInput ||
+        state.current?.repository_url ||
+        ""
+      ).trim();
+      const nextRevision = (
+        revision ??
+        state.repositoryList?.revision ??
+        state.repositoryRevisionInput ??
+        ""
+      ).toString();
+      const nextLocalPath =
+        state.repositoryExportForm.localPath.trim() ||
+        suggestCheckoutLocalPath(nextUrl, loadAppSettings().branchPoolBasePath);
+
+      return {
+        ...state,
+        repositoryExportForm: {
+          url: nextUrl,
+          localPath: nextLocalPath,
+          revision: nextRevision,
+        },
+        repositoryExportError: null,
+      };
+    });
+  }
+
+  async function chooseRepositoryExportParent() {
+    const selected = await chooseExportDirectory();
+    if (!selected) {
+      return;
+    }
+
+    update((state) => {
+      const url = state.repositoryExportForm.url.trim();
+      const suggested = suggestCheckoutLocalPath(url, selected);
+      return {
+        ...state,
+        repositoryExportForm: {
+          ...state.repositoryExportForm,
+          localPath: suggested || selected,
+        },
+        repositoryExportError: null,
+      };
+    });
+  }
+
+  function markRepositoryExportTask(taskId: string | null, localPath?: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryExportTaskId: taskId,
+      pendingRepositoryExportLocalPath: taskId
+        ? (localPath ?? state.repositoryExportForm.localPath).trim() || null
+        : null,
+      repositoryExportError: null,
+    }));
+  }
+
+  function completeRepositoryExportTask() {
+    update((state) => ({
+      ...state,
+      pendingRepositoryExportTaskId: null,
+      pendingRepositoryExportLocalPath: null,
+      repositoryExportForm: {
+        ...state.repositoryExportForm,
+        localPath: "",
+      },
+      repositoryExportError: null,
+    }));
+  }
+
+  function failRepositoryExportTask(message: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryExportTaskId: null,
+      pendingRepositoryExportLocalPath: null,
+      repositoryExportError: message ?? "仓库 Export 失败",
     }));
   }
 
@@ -4396,6 +4558,12 @@ function createWorkspaceStore() {
     markRepositoryCheckoutTask,
     completeRepositoryCheckoutTask,
     failRepositoryCheckoutTask,
+    setRepositoryExportForm,
+    prepareRepositoryExport,
+    chooseRepositoryExportParent,
+    markRepositoryExportTask,
+    completeRepositoryExportTask,
+    failRepositoryExportTask,
     setSvnSwitchTargetUrl,
     markSvnSwitchTask,
     failSvnSwitchTask,
@@ -4755,6 +4923,14 @@ function emptyRepositoryCopyForm() {
 }
 
 function emptyRepositoryCheckoutForm() {
+  return {
+    url: "",
+    localPath: "",
+    revision: "",
+  };
+}
+
+function emptyRepositoryExportForm() {
   return {
     url: "",
     localPath: "",
