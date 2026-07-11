@@ -564,6 +564,31 @@
     return changedFileForPath(path) !== null;
   }
 
+  function groupTimelineEntries(entries: SvnLog["entries"]) {
+    const groups = new Map<
+      string,
+      { key: string; label: string; entries: SvnLog["entries"] }
+    >();
+    for (const entry of entries) {
+      const date = new Date(entry.date);
+      const valid = !Number.isNaN(date.getTime());
+      const year = valid ? date.getFullYear() : 0;
+      const month = valid ? date.getMonth() + 1 : 0;
+      const day = valid ? date.getDate() : 0;
+      const key = valid
+        ? `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+        : "unknown";
+      const label = valid ? `${year}年${month}月${day}日` : "日期未知";
+      const group = groups.get(key);
+      if (group) {
+        group.entries.push(entry);
+      } else {
+        groups.set(key, { key, label, entries: [entry] });
+      }
+    }
+    return [...groups.values()];
+  }
+
   function selectInspectorTab(tab: InspectorTab, focus = false) {
     activeInspectorTab = tab;
     if (focus) {
@@ -1493,6 +1518,7 @@
   $: tagEntries =
     repositoryLayoutResults.tags?.entries.filter((entry) => entry.kind === "dir") ?? [];
   $: filteredLogEntries = filterLogEntries(svnLog?.entries ?? []);
+  $: timelineGroups = groupTimelineEntries(filteredLogEntries);
   $: selectedLogEntry =
     filteredLogEntries.find((entry) => entry.revision === selectedLogRevision) ??
     filteredLogEntries[0] ??
@@ -1793,20 +1819,28 @@
 
         <div class="timeline-layout">
           <section class="timeline-list" aria-label="Revision 列表">
-            {#if filteredLogEntries.length > 0}
-              {#each filteredLogEntries as entry (entry.revision)}
-                <article class="timeline-entry">
-                  <button
-                    type="button"
-                    class:active={selectedLogEntry?.revision === entry.revision}
-                    on:click={() => selectLogEntry(entry.revision)}
-                  >
-                    <strong>r{entry.revision}</strong>
-                    <span>{entry.author || "-"}</span>
-                    <time>{formatDate(entry.date)}</time>
-                  </button>
-                  <p>{entry.message || "无提交信息"}</p>
-                </article>
+            {#if timelineGroups.length > 0}
+              {#each timelineGroups as group (group.key)}
+                <section class="timeline-day-group" role="group" aria-label={group.label}>
+                  <header class="timeline-day-header">
+                    <h2>{group.label}</h2>
+                    <span>{group.entries.length} revision{group.entries.length === 1 ? "" : "s"}</span>
+                  </header>
+                  {#each group.entries as entry (entry.revision)}
+                    <article class="timeline-entry">
+                      <button
+                        type="button"
+                        class:active={selectedLogEntry?.revision === entry.revision}
+                        on:click={() => selectLogEntry(entry.revision)}
+                      >
+                        <strong>r{entry.revision}</strong>
+                        <span>{entry.author || "-"}</span>
+                        <time>{formatDate(entry.date)}</time>
+                      </button>
+                      <p>{entry.message || "无提交信息"}</p>
+                    </article>
+                  {/each}
+                </section>
               {/each}
             {:else if svnLogLoading}
               <article class="empty-state">正在读取日志</article>

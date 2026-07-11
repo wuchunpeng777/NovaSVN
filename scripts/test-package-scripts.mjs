@@ -405,6 +405,15 @@ if (
 }
 
 if (
+  !mainWorkspace.includes("groupTimelineEntries") ||
+  !mainWorkspace.includes('class="timeline-day-group"') ||
+  !mainWorkspace.includes('class="timeline-day-header"')
+) {
+  console.error("Timeline 必须按本地日期分组 revision，并保留未知日期组");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||

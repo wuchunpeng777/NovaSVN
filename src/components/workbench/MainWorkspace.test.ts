@@ -310,6 +310,40 @@ describe("MainWorkspace", () => {
     }
   });
 
+  it("groups filtered Timeline revisions by local calendar date", async () => {
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.history,
+        workspace: makeWorkspace(),
+        svnLog: {
+          target: "https://svn.example.test/repo/trunk",
+          has_more: false,
+          next_start_revision: null,
+          entries: [
+            makeLogEntry("12", "2026-07-11T15:20:00", "alice", "完成菜单"),
+            makeLogEntry("11", "2026-07-11T09:10:00", "bob", "补充测试"),
+            makeLogEntry("10", "2026-07-10T18:30:00", "alice", "更新文档"),
+            makeLogEntry("9", "invalid-date", "carol", "旧数据"),
+          ],
+        },
+      },
+    });
+
+    const timeline = screen.getByLabelText("Revision 列表");
+    const newestDay = within(timeline).getByRole("group", { name: "2026年7月11日" });
+    expect(newestDay).toHaveTextContent("2 revisions");
+    expect(within(newestDay).getByText("r12")).toBeInTheDocument();
+    expect(within(newestDay).getByText("r11")).toBeInTheDocument();
+
+    const priorDay = within(timeline).getByRole("group", { name: "2026年7月10日" });
+    expect(priorDay).toHaveTextContent("1 revision");
+    expect(within(priorDay).getByText("r10")).toBeInTheDocument();
+    expect(within(timeline).getByRole("group", { name: "日期未知" })).toHaveTextContent("r9");
+
+    await fireEvent.click(within(priorDay).getByRole("button"));
+    expect(within(screen.getByLabelText("Revision 比较")).getByText("r10")).toBeInTheDocument();
+  });
+
   it("uses current commit targets and excludes unversioned files", async () => {
     const onUnselectCommitFile = vi.fn();
     const onSelectAllCommitFiles = vi.fn();
@@ -1268,5 +1302,23 @@ function makeNodeMetadata(
     last_revision: lastRevision,
     last_changed_date: baseRevision ? "2026-07-11T01:02:03Z" : null,
     last_changed_author: baseRevision ? author : null,
+  };
+}
+
+function makeLogEntry(revision: string, date: string, author: string, message: string) {
+  return {
+    revision,
+    author,
+    date,
+    message,
+    changed_paths: [
+      {
+        path: `/trunk/file-${revision}.txt`,
+        action: "M",
+        kind: "file",
+        copy_from_path: null,
+        copy_from_revision: null,
+      },
+    ],
   };
 }

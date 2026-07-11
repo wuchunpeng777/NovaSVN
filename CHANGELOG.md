@@ -26,6 +26,7 @@
 - 工作副本路径提供状态化右键菜单，保留多选批量语义，并支持菜单键、Shift+F10、方向键和 Escape。
 - 工作副本检查器使用 Information、Properties、Diff、Blame、Commit 和 Tasks 标签组织文件详情与操作，并支持完整键盘切换。
 - 应用原生菜单增加当前路径子菜单，按活动文件或目录状态动态提供 Open、Show in Folder、Commit、Update、Add、Resolve、Revert、Move、Copy、Ignore 和 Delete。
+- Timeline 按本地日历日期分组显示 revision，并为未知日期提供稳定分组。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。
