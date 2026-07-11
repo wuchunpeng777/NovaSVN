@@ -1,6 +1,7 @@
 import { get, writable } from "svelte/store";
 import {
   cancelTask,
+  chooseCheckoutDirectory,
   chooseWorkspaceDirectory,
   createApplyPatchTask,
   createBranchCheckoutTask,
@@ -8,6 +9,7 @@ import {
   createMergeTask,
   createMockTask,
   createPartialCommitTask,
+  createRepositoryCheckoutTask,
   createRepositoryCopyTask,
   createRepositoryFileTask,
   createRepositoryListTask,
@@ -467,6 +469,34 @@ function createTaskStore() {
     }
   }
 
+  async function createRepositoryCheckout(request: {
+    url: string;
+    localPath: string;
+    revision?: string | null;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createRepositoryCheckoutTask({
+        url: request.url,
+        local_path: request.localPath,
+        revision: request.revision || undefined,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function createSvnSwitch(request: {
     workingCopyRoot: string;
     targetUrl: string;
@@ -751,6 +781,7 @@ function createTaskStore() {
     createRepositoryFile,
     createRepositoryCopy,
     createBranchCheckout,
+    createRepositoryCheckout,
     createSvnSwitch,
     createRevisionDiff,
     createRevertRevision,
@@ -1407,6 +1438,14 @@ export interface WorkspaceStoreState {
   };
   pendingRepositoryCopyTaskId: string | null;
   repositoryCopyError: string | null;
+  repositoryCheckoutForm: {
+    url: string;
+    localPath: string;
+    revision: string;
+  };
+  pendingRepositoryCheckoutTaskId: string | null;
+  pendingRepositoryCheckoutLocalPath: string | null;
+  repositoryCheckoutError: string | null;
   svnSwitchTargetUrl: string;
   pendingSvnSwitchTaskId: string | null;
   svnSwitchError: string | null;
@@ -1556,6 +1595,14 @@ const initialWorkspaceState: WorkspaceStoreState = {
   },
   pendingRepositoryCopyTaskId: null,
   repositoryCopyError: null,
+  repositoryCheckoutForm: {
+    url: "",
+    localPath: "",
+    revision: "",
+  },
+  pendingRepositoryCheckoutTaskId: null,
+  pendingRepositoryCheckoutLocalPath: null,
+  repositoryCheckoutError: null,
   svnSwitchTargetUrl: "",
   pendingSvnSwitchTaskId: null,
   svnSwitchError: null,
@@ -1688,6 +1735,14 @@ function createWorkspaceStore() {
         },
         pendingRepositoryCopyTaskId: null,
         repositoryCopyError: null,
+        repositoryCheckoutForm: {
+          ...emptyRepositoryCheckoutForm(),
+          url: recent.workspace?.repository_url ?? "",
+          revision: recent.workspace?.revision ?? "",
+        },
+        pendingRepositoryCheckoutTaskId: null,
+        pendingRepositoryCheckoutLocalPath: null,
+        repositoryCheckoutError: null,
         svnSwitchTargetUrl: recent.workspace?.repository_url ?? "",
         pendingSvnSwitchTaskId: null,
         svnSwitchError: null,
@@ -1798,6 +1853,14 @@ function createWorkspaceStore() {
         },
         pendingRepositoryCopyTaskId: null,
         repositoryCopyError: null,
+        repositoryCheckoutForm: {
+          ...emptyRepositoryCheckoutForm(),
+          url: current.repository_url,
+          revision: current.revision,
+        },
+        pendingRepositoryCheckoutTaskId: null,
+        pendingRepositoryCheckoutLocalPath: null,
+        repositoryCheckoutError: null,
         svnSwitchTargetUrl: current.repository_url,
         pendingSvnSwitchTaskId: null,
         svnSwitchError: null,
@@ -2682,6 +2745,105 @@ function createWorkspaceStore() {
       ...state,
       pendingRepositoryCopyTaskId: null,
       repositoryCopyError: message ?? "创建分支或标签失败",
+    }));
+  }
+
+  function setRepositoryCheckoutForm(
+    field: keyof WorkspaceStoreState["repositoryCheckoutForm"],
+    value: string,
+  ) {
+    update((state) => ({
+      ...state,
+      repositoryCheckoutForm: {
+        ...state.repositoryCheckoutForm,
+        [field]: value,
+      },
+      repositoryCheckoutError: null,
+    }));
+  }
+
+  function prepareRepositoryCheckout(url?: string | null, revision?: string | null) {
+    update((state) => {
+      const nextUrl = (
+        url ||
+        state.repositoryCurrentUrl ||
+        state.repositoryList?.url ||
+        state.repositoryUrlInput ||
+        state.current?.repository_url ||
+        ""
+      ).trim();
+      const nextRevision = (
+        revision ??
+        state.repositoryList?.revision ??
+        state.repositoryRevisionInput ??
+        ""
+      ).toString();
+      const nextLocalPath =
+        state.repositoryCheckoutForm.localPath.trim() ||
+        suggestCheckoutLocalPath(nextUrl, loadAppSettings().branchPoolBasePath);
+
+      return {
+        ...state,
+        repositoryCheckoutForm: {
+          url: nextUrl,
+          localPath: nextLocalPath,
+          revision: nextRevision,
+        },
+        repositoryCheckoutError: null,
+      };
+    });
+  }
+
+  async function chooseRepositoryCheckoutParent() {
+    const selected = await chooseCheckoutDirectory();
+    if (!selected) {
+      return;
+    }
+
+    update((state) => {
+      const url = state.repositoryCheckoutForm.url.trim();
+      const suggested = suggestCheckoutLocalPath(url, selected);
+      return {
+        ...state,
+        repositoryCheckoutForm: {
+          ...state.repositoryCheckoutForm,
+          localPath: suggested || selected,
+        },
+        repositoryCheckoutError: null,
+      };
+    });
+  }
+
+  function markRepositoryCheckoutTask(taskId: string | null, localPath?: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryCheckoutTaskId: taskId,
+      pendingRepositoryCheckoutLocalPath: taskId
+        ? (localPath ?? state.repositoryCheckoutForm.localPath).trim() || null
+        : null,
+      repositoryCheckoutError: null,
+    }));
+  }
+
+  function completeRepositoryCheckoutTask() {
+    update((state) => ({
+      ...state,
+      pendingRepositoryCheckoutTaskId: null,
+      pendingRepositoryCheckoutLocalPath: null,
+      repositoryCheckoutForm: {
+        ...state.repositoryCheckoutForm,
+        localPath: "",
+      },
+      repositoryCheckoutError: null,
+    }));
+  }
+
+  function failRepositoryCheckoutTask(message: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryCheckoutTaskId: null,
+      pendingRepositoryCheckoutLocalPath: null,
+      repositoryCheckoutError: message ?? "仓库 Checkout 失败",
     }));
   }
 
@@ -4228,6 +4390,12 @@ function createWorkspaceStore() {
     markRepositoryCopyTask,
     completeRepositoryCopyTask,
     failRepositoryCopyTask,
+    setRepositoryCheckoutForm,
+    prepareRepositoryCheckout,
+    chooseRepositoryCheckoutParent,
+    markRepositoryCheckoutTask,
+    completeRepositoryCheckoutTask,
+    failRepositoryCheckoutTask,
     setSvnSwitchTargetUrl,
     markSvnSwitchTask,
     failSvnSwitchTask,
@@ -4503,26 +4671,30 @@ function validateAbsoluteOrHomePath(value: string, label: string) {
 }
 
 function suggestBranchPoolLocalPath(branchUrl: string, basePath: string) {
+  return suggestCheckoutLocalPath(branchUrl, basePath);
+}
+
+function suggestCheckoutLocalPath(repositoryUrl: string, basePath: string) {
   const base = basePath.trim();
   const localPathError = validateOptionalAbsoluteOrHomePath(base, "工作副本池路径");
-  if (!branchUrl.trim() || !base || localPathError) {
+  if (!repositoryUrl.trim() || !base || localPathError) {
     return "";
   }
 
-  const pathSegments = branchUrl
+  const pathSegments = repositoryUrl
     .trim()
     .replace(/[?#].*$/, "")
     .replace(/\/+$/, "")
     .split("/")
     .filter(Boolean);
-  const branchName = pathSegments.at(-1) ?? "branch";
+  const branchName = pathSegments.at(-1) ?? "checkout";
   const parentName = pathSegments.at(-2);
   const rawDirectoryName =
     parentName && !["branches", "tags", "trunk"].includes(parentName.toLowerCase())
       ? `${parentName}-${branchName}`
       : branchName;
   const safeName = rawDirectoryName.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  const directoryName = safeName || "branch";
+  const directoryName = safeName || "checkout";
   const separator = base.includes("\\") && !base.includes("/") ? "\\" : "/";
   return `${base.replace(/[\\/]+$/, "")}${separator}${directoryName}`;
 }
@@ -4579,6 +4751,14 @@ function emptyRepositoryCopyForm() {
     targetUrl: "",
     revision: "",
     message: "",
+  };
+}
+
+function emptyRepositoryCheckoutForm() {
+  return {
+    url: "",
+    localPath: "",
+    revision: "",
   };
 }
 

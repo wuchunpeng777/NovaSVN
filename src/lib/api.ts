@@ -378,6 +378,16 @@ export async function chooseWorkspaceDirectory(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+export async function chooseCheckoutDirectory(): Promise<string | null> {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "选择 Checkout 父目录",
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
 export async function choosePatchFile(): Promise<string | null> {
   const selected = await open({
     directory: false,

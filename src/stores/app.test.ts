@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
+  chooseCheckoutDirectory: vi.fn(),
   createApplyPatchTask: vi.fn(),
   createMergeTask: vi.fn(),
+  createRepositoryCheckoutTask: vi.fn(),
   createRepositoryFileTask: vi.fn(),
   createRepositoryListTask: vi.fn(),
   createRevertRevisionTask: vi.fn(),
@@ -33,8 +35,10 @@ vi.mock("../lib/api", () => ({
 import { get } from "svelte/store";
 
 import {
+  chooseCheckoutDirectory,
   createApplyPatchTask,
   createMergeTask,
+  createRepositoryCheckoutTask,
   createRepositoryFileTask,
   createRepositoryListTask,
   createRevertRevisionTask,
@@ -87,8 +91,10 @@ import {
   workspaceStore,
 } from "./app";
 
+const chooseCheckoutDirectoryMock = vi.mocked(chooseCheckoutDirectory);
 const createApplyPatchTaskMock = vi.mocked(createApplyPatchTask);
 const createMergeTaskMock = vi.mocked(createMergeTask);
+const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
 const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
@@ -116,8 +122,10 @@ const saveTaskWorkspaceMock = vi.mocked(saveTaskWorkspace);
 const setSvnPropertyMock = vi.mocked(setSvnProperty);
 
 beforeEach(() => {
+  chooseCheckoutDirectoryMock.mockReset();
   createApplyPatchTaskMock.mockReset();
   createMergeTaskMock.mockReset();
+  createRepositoryCheckoutTaskMock.mockReset();
   createRepositoryFileTaskMock.mockReset();
   createRepositoryListTaskMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
@@ -942,6 +950,75 @@ describe("taskStore repository list tasks", () => {
     });
     workspaceStore.setRepositoryRevisionInput("");
     expect(get(workspaceStore).repositoryRevisionInput).toBe("");
+  });
+
+  it("prepares repository checkout form and tracks pending local path", async () => {
+    appSettingsStore.setField("branchPoolBasePath", "/Users/me/wc-pool");
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk",
+      revision: "12",
+      entries: [],
+    });
+
+    workspaceStore.prepareRepositoryCheckout();
+    expect(get(workspaceStore).repositoryCheckoutForm).toEqual({
+      url: "https://example.com/svn/trunk",
+      localPath: "/Users/me/wc-pool/svn-trunk",
+      revision: "12",
+    });
+
+    chooseCheckoutDirectoryMock.mockResolvedValue("/Users/me/checkouts");
+    await workspaceStore.chooseRepositoryCheckoutParent();
+    expect(get(workspaceStore).repositoryCheckoutForm.localPath).toBe(
+      "/Users/me/checkouts/svn-trunk",
+    );
+
+    createRepositoryCheckoutTaskMock.mockResolvedValue(
+      makeTask({ task_id: "repository-checkout" }),
+    );
+    const task = await taskStore.createRepositoryCheckout({
+      url: "https://example.com/svn/trunk",
+      localPath: "/Users/me/checkouts/svn-trunk",
+      revision: "12",
+      svnExecutable: "svn",
+    });
+    expect(task?.task_id).toBe("repository-checkout");
+    expect(createRepositoryCheckoutTaskMock).toHaveBeenCalledWith({
+      url: "https://example.com/svn/trunk",
+      local_path: "/Users/me/checkouts/svn-trunk",
+      revision: "12",
+      svn_executable: "svn",
+    });
+
+    workspaceStore.markRepositoryCheckoutTask(
+      "repository-checkout",
+      "/Users/me/checkouts/svn-trunk",
+    );
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryCheckoutTaskId: "repository-checkout",
+      pendingRepositoryCheckoutLocalPath: "/Users/me/checkouts/svn-trunk",
+      repositoryCheckoutError: null,
+    });
+
+    workspaceStore.completeRepositoryCheckoutTask();
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryCheckoutTaskId: null,
+      pendingRepositoryCheckoutLocalPath: null,
+      repositoryCheckoutForm: {
+        url: "https://example.com/svn/trunk",
+        localPath: "",
+        revision: "12",
+      },
+      repositoryCheckoutError: null,
+    });
+
+    workspaceStore.markRepositoryCheckoutTask("repository-checkout-failed", "/tmp/fail");
+    workspaceStore.failRepositoryCheckoutTask("目标目录非空");
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryCheckoutTaskId: null,
+      pendingRepositoryCheckoutLocalPath: null,
+      repositoryCheckoutError: "目标目录非空",
+    });
   });
 });
 

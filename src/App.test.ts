@@ -15,6 +15,7 @@ vi.mock("./lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/api")>();
   return {
     ...actual,
+    createRepositoryCheckoutTask: vi.fn(),
     createRepositoryFileTask: vi.fn(),
     createRevertRevisionTask: vi.fn(),
     createSvnBatchOperationTask: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock("./lib/api", async (importOriginal) => {
 
 import { get } from "svelte/store";
 import {
+  createRepositoryCheckoutTask,
   createRepositoryFileTask,
   createRevertRevisionTask,
   createSvnOperationTask,
@@ -65,6 +67,7 @@ import type {
 import App from "./App.svelte";
 
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
+const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
 const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
@@ -83,6 +86,7 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(async () => {
   createSvnOperationTaskMock.mockReset();
+  createRepositoryCheckoutTaskMock.mockReset();
   createRepositoryFileTaskMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
   createSvnBatchOperationTaskMock.mockReset();
@@ -526,6 +530,69 @@ describe("App SVN operation completion", () => {
     await waitFor(() => {
       expect(get(workspaceStore).pendingRepositoryFileTaskId).toBeNull();
       expect(get(workspaceStore).repositoryFileError).toBe("没有可用的默认应用");
+    });
+  });
+
+  it("仓库 Checkout 完成后按 pending 本地路径打开工作副本", async () => {
+    setCurrentView("repository");
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk",
+      revision: "10",
+      entries: [],
+    });
+    workspaceStore.setRepositoryCheckoutForm("url", "https://example.com/svn/trunk");
+    workspaceStore.setRepositoryCheckoutForm("localPath", "C:/checkouts/trunk");
+    workspaceStore.setRepositoryCheckoutForm("revision", "10");
+
+    const pendingTask = makeTask({ task_id: "repository-checkout", status: "pending" });
+    createRepositoryCheckoutTaskMock.mockResolvedValue(pendingTask);
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-checkout", status: "pending" }),
+      ]),
+    );
+    openWorkspaceMock.mockResolvedValue({
+      local_path: "C:/checkouts/trunk",
+      working_copy_root: "C:/checkouts/trunk",
+      repository_url: "https://example.com/svn/trunk",
+      repository_root: "https://example.com/svn",
+      revision: "10",
+    });
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
+
+    await waitFor(() => {
+      expect(createRepositoryCheckoutTaskMock).toHaveBeenCalledWith({
+        url: "https://example.com/svn/trunk",
+        local_path: "C:/checkouts/trunk",
+        revision: "10",
+        svn_executable: undefined,
+      });
+      expect(get(workspaceStore).pendingRepositoryCheckoutTaskId).toBe("repository-checkout");
+      expect(get(workspaceStore).pendingRepositoryCheckoutLocalPath).toBe("C:/checkouts/trunk");
+    });
+
+    const completedTask = makeTask({
+      task_id: "repository-checkout",
+      status: "success",
+    });
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-checkout", status: "success" }),
+      ]),
+    );
+    getTaskMock.mockResolvedValue(completedTask);
+    openWorkspaceMock.mockClear();
+    await taskStore.refresh();
+
+    await waitFor(() => {
+      expect(openWorkspaceMock).toHaveBeenCalledWith({
+        path: "C:/checkouts/trunk",
+        svn_executable: undefined,
+      });
+      expect(get(workspaceStore).pendingRepositoryCheckoutTaskId).toBeNull();
+      expect(get(workspaceStore).repositoryCheckoutError).toBeNull();
     });
   });
 

@@ -6659,6 +6659,94 @@ mod tests {
     }
 
     #[test]
+    fn validates_checkout_destination_empty_or_missing() {
+        let root = test_temp_dir("checkout-destination");
+        let missing = root.join("missing-target");
+        let empty = root.join("empty-target");
+        let occupied = root.join("occupied-target");
+        fs::create_dir_all(&empty).expect("create empty destination");
+        fs::create_dir_all(&occupied).expect("create occupied destination");
+        fs::write(occupied.join("keep.txt"), "keep").expect("write occupied file");
+
+        assert!(validate_checkout_destination(&missing).is_ok());
+        assert!(validate_checkout_destination(&empty).is_ok());
+        let occupied_error =
+            validate_checkout_destination(&occupied).expect_err("非空目录应被拒绝");
+        assert!(matches!(
+            occupied_error,
+            NovaError::Command { ref code, .. } if code == "REPOSITORY_CHECKOUT_DESTINATION_NOT_EMPTY"
+        ));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn checks_out_repository_url_at_historical_revision() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("repository-checkout-integration");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        let checkout_target = root.join("checkout-target");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+
+        let history_dir = working_copy.join("history");
+        fs::create_dir_all(&history_dir).expect("create history dir");
+        fs::write(history_dir.join("note.txt"), "revision one").expect("write note");
+        run_test_command(Command::new("svn").arg("add").arg(&history_dir));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "add history"]),
+        );
+        fs::write(history_dir.join("note.txt"), "revision two").expect("update note");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "update history"]),
+        );
+        run_test_command(Command::new("svn").arg("update").arg(&working_copy));
+        run_test_command(Command::new("svn").arg("delete").arg(&history_dir));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "delete history at head"]),
+        );
+
+        let state = repository_file_test_state("repository-checkout");
+        run_repository_checkout_task(
+            &state,
+            "repository-checkout",
+            RepositoryCheckoutTaskPayload {
+                url: format!("{repository_url}/history"),
+                local_path: checkout_target.display().to_string(),
+                revision: Some("1".to_string()),
+                svn_executable: "svn".to_string(),
+            },
+        );
+
+        let task = state.lock().unwrap().tasks[0].clone();
+        assert!(matches!(task.status, TaskStatus::Success));
+        assert!(checkout_target.join("note.txt").is_file());
+        assert_eq!(
+            fs::read_to_string(checkout_target.join("note.txt")).expect("read checked out note"),
+            "revision one"
+        );
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn validates_optional_revision_values() {
         assert_eq!(
             normalize_optional_revision_value(Some(" 42 "), "INVALID", "invalid").unwrap(),

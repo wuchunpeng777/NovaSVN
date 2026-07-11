@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { get } from "svelte/store";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
   import {
@@ -614,6 +615,37 @@
     }
 
     workspaceStore.markRepositoryCopyTask(task.task_id);
+  }
+
+  async function createRepositoryCheckout() {
+    const form = $workspaceStore.repositoryCheckoutForm;
+    if (!form.url.trim()) {
+      workspaceStore.failRepositoryCheckoutTask("请输入仓库 URL");
+      return;
+    }
+    if (!form.localPath.trim()) {
+      workspaceStore.failRepositoryCheckoutTask("请输入本地工作副本路径");
+      return;
+    }
+    if ($workspaceStore.pendingRepositoryCheckoutTaskId !== null) {
+      return;
+    }
+
+    const task = await taskStore.createRepositoryCheckout({
+      url: form.url,
+      localPath: form.localPath,
+      revision: form.revision,
+      svnExecutable: currentSvnExecutable(),
+    });
+
+    if (!task) {
+      workspaceStore.failRepositoryCheckoutTask(
+        $taskStore.error?.message ?? "仓库 Checkout 任务创建失败",
+      );
+      return;
+    }
+
+    workspaceStore.markRepositoryCheckoutTask(task.task_id, form.localPath);
   }
 
   async function checkoutBranchPoolEntry() {
@@ -1316,6 +1348,24 @@
   );
 
   $: consumePendingTask(
+    $workspaceStore.pendingRepositoryCheckoutTaskId,
+    $taskStore.snapshot,
+    (task) => {
+      if (task.status !== "success") {
+        workspaceStore.failRepositoryCheckoutTask(task.error ?? "仓库 Checkout 失败");
+        return;
+      }
+
+      const localPath = get(workspaceStore).pendingRepositoryCheckoutLocalPath;
+      workspaceStore.completeRepositoryCheckoutTask();
+      if (localPath) {
+        void workspaceStore.openPath(currentSvnExecutable(), localPath);
+        setCurrentView("changes");
+      }
+    },
+  );
+
+  $: consumePendingTask(
     $branchPoolStore.pendingCheckoutTaskId,
     $taskStore.snapshot,
     (task) => {
@@ -1560,6 +1610,9 @@
   repositoryCopyForm={$workspaceStore.repositoryCopyForm}
   repositoryCopyError={$workspaceStore.repositoryCopyError}
   repositoryCopyRunning={$workspaceStore.pendingRepositoryCopyTaskId !== null}
+  repositoryCheckoutForm={$workspaceStore.repositoryCheckoutForm}
+  repositoryCheckoutError={$workspaceStore.repositoryCheckoutError}
+  repositoryCheckoutRunning={$workspaceStore.pendingRepositoryCheckoutTaskId !== null}
   svnLog={$workspaceStore.svnLog}
   svnLogLoading={$workspaceStore.svnLogLoading}
   svnLogError={$workspaceStore.svnLogError}
@@ -1714,6 +1767,10 @@
   onRepositoryCopyFormInput={workspaceStore.setRepositoryCopyForm}
   onPrepareRepositoryCopyTarget={workspaceStore.prepareRepositoryCopyTarget}
   onCreateRepositoryCopy={createRepositoryCopy}
+  onRepositoryCheckoutFormInput={workspaceStore.setRepositoryCheckoutForm}
+  onPrepareRepositoryCheckout={workspaceStore.prepareRepositoryCheckout}
+  onChooseRepositoryCheckoutParent={workspaceStore.chooseRepositoryCheckoutParent}
+  onCreateRepositoryCheckout={createRepositoryCheckout}
   onRefreshSvnLog={() => workspaceStore.refreshSvnLog(currentSvnExecutable())}
   onSvnLogFilterInput={workspaceStore.setSvnLogFilter}
   onSvnLogFileOnlyInput={setSvnLogFileOnlyAndRefresh}

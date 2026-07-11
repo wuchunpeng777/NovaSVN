@@ -132,6 +132,17 @@
   };
   export let repositoryCopyError: string | null = null;
   export let repositoryCopyRunning = false;
+  export let repositoryCheckoutForm: {
+    url: string;
+    localPath: string;
+    revision: string;
+  } = {
+    url: "",
+    localPath: "",
+    revision: "",
+  };
+  export let repositoryCheckoutError: string | null = null;
+  export let repositoryCheckoutRunning = false;
 
   export let svnLog: SvnLog | null = null;
   export let svnLogLoading = false;
@@ -341,6 +352,16 @@
     targetBaseUrl?: string | null,
   ) => void = () => {};
   export let onCreateRepositoryCopy: () => void = () => {};
+  export let onRepositoryCheckoutFormInput: (
+    field: keyof typeof repositoryCheckoutForm,
+    value: string,
+  ) => void = () => {};
+  export let onPrepareRepositoryCheckout: (
+    url?: string | null,
+    revision?: string | null,
+  ) => void = () => {};
+  export let onChooseRepositoryCheckoutParent: () => void = () => {};
+  export let onCreateRepositoryCheckout: () => void = () => {};
 
   export let onRefreshSvnLog: () => void = () => {};
   export let onSvnLogFilterInput: (
@@ -2402,6 +2423,13 @@
             <button type="button" on:click={onUseWorkspaceRepositoryRoot} disabled={!workspace}>
               使用 Root
             </button>
+            <button
+              type="button"
+              on:click={() => onPrepareRepositoryCheckout()}
+              disabled={!repositoryCurrentUrl && !repositoryUrlInput && !repositoryList}
+            >
+              准备 Checkout
+            </button>
             <button type="button" class="primary" on:click={chooseDefaultRepositoryUrl} disabled={repositoryLoading}>
               {repositoryLoading ? "加载中" : "浏览"}
             </button>
@@ -2782,6 +2810,71 @@
                 </button>
               {/each}
             </section>
+          </div>
+        </details>
+
+        <details class="advanced-section" open={Boolean(repositoryCheckoutForm.url || repositoryCheckoutForm.localPath)}>
+          <summary>Checkout 到本地</summary>
+          <div class="copy-form" aria-label="仓库 Checkout">
+            <button
+              type="button"
+              on:click={() =>
+                onPrepareRepositoryCheckout(
+                  repositoryCurrentUrl || repositoryList?.url || repositoryUrlInput,
+                  repositoryList?.revision ?? repositoryRevisionInput,
+                )}
+            >
+              使用当前 URL
+            </button>
+            <input
+              type="url"
+              value={repositoryCheckoutForm.url}
+              placeholder="仓库 URL"
+              aria-label="Checkout 仓库 URL"
+              on:input={(event) =>
+                onRepositoryCheckoutFormInput(
+                  "url",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            <div class="button-row">
+              <input
+                type="text"
+                value={repositoryCheckoutForm.localPath}
+                placeholder="本地工作副本路径"
+                aria-label="Checkout 本地路径"
+                on:input={(event) =>
+                  onRepositoryCheckoutFormInput(
+                    "localPath",
+                    (event.currentTarget as HTMLInputElement).value,
+                  )}
+              />
+              <button type="button" on:click={onChooseRepositoryCheckoutParent}>
+                选择父目录
+              </button>
+            </div>
+            <input
+              type="text"
+              value={repositoryCheckoutForm.revision}
+              placeholder="Revision，留空为 HEAD"
+              aria-label="Checkout Revision"
+              on:input={(event) =>
+                onRepositoryCheckoutFormInput(
+                  "revision",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            {#if repositoryCheckoutError}
+              <p class="inline-error">{repositoryCheckoutError}</p>
+            {/if}
+            <button
+              type="button"
+              class="primary"
+              on:click={onCreateRepositoryCheckout}
+              disabled={repositoryCheckoutRunning}
+            >
+              {repositoryCheckoutRunning ? "Checkout 中" : "Checkout"}
+            </button>
           </div>
         </details>
 

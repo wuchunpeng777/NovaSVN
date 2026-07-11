@@ -579,6 +579,26 @@ if (
 }
 
 if (
+  !mainWorkspace.includes('aria-label="仓库 Checkout"') ||
+  !mainWorkspace.includes("准备 Checkout") ||
+  !mainWorkspace.includes("选择父目录") ||
+  !appSvelte.includes("pendingRepositoryCheckoutTaskId") ||
+  !appSvelte.includes("createRepositoryCheckout") ||
+  !appStore.includes("function markRepositoryCheckoutTask(") ||
+  !appStore.includes("function prepareRepositoryCheckout(") ||
+  !frontendApi.includes('callBackend<Task>("create_repository_checkout_task"') ||
+  !frontendApi.includes("chooseCheckoutDirectory") ||
+  !tauriLib.includes("create_repository_checkout_task,") ||
+  !taskRs.includes("TaskPayload::RepositoryCheckout") ||
+  !taskRs.includes("fn run_repository_checkout_task(") ||
+  !taskRs.includes("validate_checkout_destination(Path::new(&payload.local_path))") ||
+  !taskRs.includes("repository_url_with_peg_revision(&payload.url, payload.revision.as_deref())")
+) {
+  console.error("Repository Checkout 必须映射 URL/Revision/本地路径，执行真实 svn checkout，并按 pending 打开工作副本");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||
