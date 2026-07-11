@@ -2711,7 +2711,9 @@ fn run_repository_list_task(
     if let Some(revision) = payload.revision.as_deref() {
         command.args(["-r", revision]);
     }
-    let output = command.arg(&payload.url).output();
+    let command_target =
+        repository_url_with_peg_revision(&payload.url, payload.revision.as_deref());
+    let output = command.arg(command_target).output();
 
     match output {
         Ok(output) if output.status.success() => {
@@ -2837,8 +2839,10 @@ fn run_repository_file_task(
     if let Some(revision) = payload.revision.as_deref() {
         command.args(["-r", revision]);
     }
+    let command_target =
+        repository_url_with_peg_revision(&payload.url, payload.revision.as_deref());
     let output = command
-        .arg(&payload.url)
+        .arg(command_target)
         .stdout(std::process::Stdio::from(file))
         .output();
     match output {
@@ -2939,6 +2943,14 @@ fn repository_temp_file_name(url: &str, task_id: &str) -> String {
         .unwrap_or_default();
     let name = format!("{stem}{extension}");
     format!("{}-{name}", sanitize_patch_file_part(task_id))
+}
+
+pub(crate) fn repository_url_with_peg_revision(url: &str, revision: Option<&str>) -> String {
+    match revision {
+        Some(revision) => format!("{url}@{revision}"),
+        None if url.contains('@') => format!("{url}@"),
+        None => url.to_string(),
+    }
 }
 
 fn normalize_repository_output_dir(output_dir: &Path) -> Result<PathBuf, NovaError> {
@@ -8407,6 +8419,25 @@ mod tests {
     }
 
     #[test]
+    fn appends_repository_peg_revision_for_historical_and_at_sign_urls() {
+        assert_eq!(
+            repository_url_with_peg_revision(
+                "https://example.com/svn/trunk/deleted.txt",
+                Some("10")
+            ),
+            "https://example.com/svn/trunk/deleted.txt@10"
+        );
+        assert_eq!(
+            repository_url_with_peg_revision("https://example.com/svn/trunk/name@domain.txt", None),
+            "https://example.com/svn/trunk/name@domain.txt@"
+        );
+        assert_eq!(
+            repository_url_with_peg_revision("https://example.com/svn/trunk/readme.txt", None),
+            "https://example.com/svn/trunk/readme.txt"
+        );
+    }
+
+    #[test]
     fn creates_unique_repository_temp_files_without_overwriting() {
         let root = test_temp_dir("repository-temp-file-unique");
         let output_dir = root.join("repository-files");
@@ -8493,6 +8524,13 @@ mod tests {
                 .arg("commit")
                 .arg(&working_copy)
                 .args(["-m", "binary revision two"]),
+        );
+        run_test_command(Command::new("svn").arg("delete").arg(&file));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "delete binary at head"]),
         );
 
         let file_url = format!("{repository_url}/binary.bin");
