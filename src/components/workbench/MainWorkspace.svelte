@@ -388,11 +388,22 @@
   };
 
   type WorkingCopyTreeFilter = "all" | "local" | "remote" | "unversioned";
+  type InspectorTab = "information" | "properties" | "diff" | "blame" | "commit" | "tasks";
   type WorkspaceTreeRow = WorkspaceFileNode & {
     depth: number;
   };
 
+  const inspectorTabs: Array<{ id: InspectorTab; label: string }> = [
+    { id: "information", label: "Information" },
+    { id: "properties", label: "Properties" },
+    { id: "diff", label: "Diff" },
+    { id: "blame", label: "Blame" },
+    { id: "commit", label: "Commit" },
+    { id: "tasks", label: "Tasks" },
+  ];
+
   let selectedCommitHistoryMessage = "";
+  let activeInspectorTab: InspectorTab = "information";
   let diffInline = false;
   let showWhitespace = false;
   let workingCopyTreeFilter: WorkingCopyTreeFilter = "all";
@@ -549,6 +560,36 @@
 
   function isChangedPath(path: string) {
     return changedFileForPath(path) !== null;
+  }
+
+  function selectInspectorTab(tab: InspectorTab, focus = false) {
+    activeInspectorTab = tab;
+    if (focus) {
+      queueMicrotask(() => document.getElementById(`inspector-tab-${tab}`)?.focus());
+    }
+  }
+
+  function handleInspectorTabKeydown(event: KeyboardEvent, tab: InspectorTab) {
+    const currentIndex = inspectorTabs.findIndex((item) => item.id === tab);
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowRight") {
+      nextIndex = (currentIndex + 1) % inspectorTabs.length;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex = (currentIndex - 1 + inspectorTabs.length) % inspectorTabs.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = inspectorTabs.length - 1;
+    } else {
+      return;
+    }
+    selectInspectorTab(inspectorTabs[nextIndex].id, true);
+    event.preventDefault();
+  }
+
+  function openBlameInspector() {
+    selectInspectorTab("blame");
+    onRefreshSvnBlame();
   }
 
   function isLocalChangedPath(path: string) {
@@ -2904,8 +2945,34 @@
             ></div>
 
             <aside class="inspector" aria-label="详情和提交">
+            <div class="inspector-tabs" role="tablist" aria-label="检查器面板">
+              {#each inspectorTabs as tab (tab.id)}
+                <button
+                  id={`inspector-tab-${tab.id}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeInspectorTab === tab.id}
+                  aria-controls="inspector-panel"
+                  tabindex={activeInspectorTab === tab.id ? 0 : -1}
+                  class:active={activeInspectorTab === tab.id}
+                  on:click={() => selectInspectorTab(tab.id)}
+                  on:keydown={(event) => handleInspectorTabKeydown(event, tab.id)}
+                >
+                  {tab.label}
+                </button>
+              {/each}
+            </div>
+
+            <div
+              id="inspector-panel"
+              class="inspector-tab-panel"
+              role="tabpanel"
+              tabindex="0"
+              aria-labelledby={`inspector-tab-${activeInspectorTab}`}
+            >
+            {#if activeInspectorTab === "information"}
             <section class="inspector-section">
-              <h2>文件</h2>
+              <h2>Information</h2>
               {#if selectedFile || selectedTreeNode}
                 <div class="file-card">
                   <strong>{basename(selectedFile?.path ?? selectedTreeNode?.path ?? "")}</strong>
@@ -2915,6 +2982,32 @@
                     {formatBytes(selectedFile?.file_size ?? selectedTreeNode?.file_size ?? null)}
                   </small>
                 </div>
+                <dl class="information-list">
+                  <div>
+                    <dt>Type</dt>
+                    <dd>{selectedTreeNode?.kind === "dir" ? "目录" : "文件"}</dd>
+                  </div>
+                  <div>
+                    <dt>Base</dt>
+                    <dd>{selectedTreeNode?.base_revision ?? selectedTreeNode?.revision ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Last</dt>
+                    <dd>{selectedTreeNode?.last_revision ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Author</dt>
+                    <dd>{selectedTreeNode?.last_changed_author ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Date</dt>
+                    <dd>{formatSvnDate(selectedTreeNode?.last_changed_date ?? null)}</dd>
+                  </div>
+                  <div>
+                    <dt>Lock</dt>
+                    <dd>{selectedFile?.lock_owner ?? (selectedFile?.lock_state === "none" ? "未锁定" : selectedFile?.lock_state ?? "-")}</dd>
+                  </div>
+                </dl>
                 <div class="button-row wrap">
                   <button
                     type="button"
@@ -2934,11 +3027,11 @@
                   </button>
                   {#if selectedFile?.status === "unversioned"}
                     <button type="button" on:click={() => onAddFile(selectedFile.path)}>Add</button>
-                  {:else}
+                  {:else if selectedTreeNode?.kind === "file" && selectedTreeNode.versioned}
                     <button
                       type="button"
                       title="查看逐行修改作者"
-                      on:click={onRefreshSvnBlame}
+                      on:click={openBlameInspector}
                     >
                       Blame
                     </button>
@@ -3021,12 +3114,17 @@
                 <p class="muted">选择文件后显示操作。</p>
               {/if}
             </section>
+            {/if}
 
-            {#if svnBlameLoading || svnBlameError || svnBlame}
+            {#if activeInspectorTab === "blame"}
               <section class="inspector-section blame-section" aria-label="Blame 逐行历史">
                 <div class="section-title">
-                  <h2>逐行历史</h2>
-                  <button type="button" on:click={onRefreshSvnBlame} disabled={svnBlameLoading}>
+                  <h2>Blame</h2>
+                  <button
+                    type="button"
+                    on:click={onRefreshSvnBlame}
+                    disabled={svnBlameLoading || !selectedFilePath || selectedTreeNode?.kind !== "file" || !selectedTreeNode?.versioned}
+                  >
                     {svnBlameLoading ? "读取中" : "刷新"}
                   </button>
                 </div>
@@ -3056,13 +3154,16 @@
                   {#if svnBlame.truncated}
                     <p class="muted">仅显示前 {svnBlame.lines.length} 行。</p>
                   {/if}
+                {:else if !svnBlameLoading && !svnBlameError}
+                  <p class="muted">选择版本控制文件并读取逐行历史。</p>
                 {/if}
               </section>
             {/if}
 
+            {#if activeInspectorTab === "diff"}
             <section class="inspector-section diff-section">
               <div class="section-title">
-                <h2>比较</h2>
+                <h2>Diff</h2>
                 <div class="segmented-control compact">
                   <button type="button" class:active={!diffInline} on:click={() => (diffInline = false)}>
                     双栏
@@ -3093,7 +3194,7 @@
             </section>
 
             {#if selectedFileParsedDiff}
-              <section class="inspector-section">
+              <section class="inspector-section hunk-section">
                 <div class="section-title">
                   <h2>Hunk</h2>
                   <button type="button" on:click={onPreviewSelectedPatch} disabled={selectedPatchLoading}>
@@ -3126,10 +3227,12 @@
                 {/if}
               </section>
             {/if}
+            {/if}
 
+            {#if activeInspectorTab === "properties"}
             <section class="inspector-section">
               <div class="section-title">
-                <h2>属性</h2>
+                <h2>Properties</h2>
                 <button type="button" on:click={onRefreshSvnProperties} disabled={!workspace || svnPropertiesLoading}>
                   {svnPropertiesLoading ? "读取中" : "读取"}
                 </button>
@@ -3167,10 +3270,12 @@
                 保存属性
               </button>
             </section>
+            {/if}
 
+            {#if activeInspectorTab === "commit"}
             <section class="inspector-section commit-section">
               <div class="section-title">
-                <h2>提交</h2>
+                <h2>Commit</h2>
                 <div class="button-row">
                   <button type="button" on:click={onSelectAllCommitFiles}>全选改动</button>
                   <button type="button" on:click={onClearCommitFiles}>清除选择</button>
@@ -3226,10 +3331,12 @@
                 提交
               </button>
             </section>
+            {/if}
 
+            {#if activeInspectorTab === "tasks"}
             <section class="inspector-section task-section">
               <div class="section-title">
-                <h2>任务</h2>
+                <h2>Tasks</h2>
                 <span>{tasks.length}</span>
               </div>
               <ErrorNotice error={taskError} />
@@ -3269,6 +3376,8 @@
                 {/each}
               </div>
             </section>
+            {/if}
+            </div>
             </aside>
           {/if}
         </section>

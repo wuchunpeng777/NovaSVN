@@ -24,6 +24,7 @@
 - 工作副本文件表支持 treegrid 键盘导航、目录展开收起、范围选择、活动行自动滚动和明确焦点状态。
 - 双击工作副本文件可使用系统默认应用安全打开；真实路径会限制在工作副本内，Windows 文件名不再经过命令解释器。
 - 工作副本路径提供状态化右键菜单，保留多选批量语义，并支持菜单键、Shift+F10、方向键和 Escape。
+- 工作副本检查器使用 Information、Properties、Diff、Blame、Commit 和 Tasks 标签组织文件详情与操作，并支持完整键盘切换。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。

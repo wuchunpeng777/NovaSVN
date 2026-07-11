@@ -221,7 +221,7 @@ describe("App SVN operation completion", () => {
         file_path: "source.txt",
       });
     });
-    expect(screen.getAllByText("已打开文件：C:/repo/wc/source.txt")).toHaveLength(2);
+    expect(screen.getByText("已打开文件：C:/repo/wc/source.txt")).toBeInTheDocument();
   });
 
   it("选中其他任务时仍按 pending id 消费成功操作", async () => {

@@ -129,6 +129,80 @@ describe("MainWorkspace", () => {
     }
   });
 
+  it("organizes inspector content into keyboard-accessible tabs", async () => {
+    const file = makeFile("src/main.ts", "modified", "main-digest");
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([file]),
+        workspaceFileTree: makeFileTree(),
+        selectedFilePath: file.path,
+        selectedFile: file,
+        commitFiles: [{ path: file.path, status: file.status }],
+        selectedFileDiff: {
+          path: file.path,
+          text: "-before\n+after",
+          binary: false,
+          empty: false,
+        },
+        svnProperties: {
+          target: file.path,
+          properties: [{ name: "svn:mime-type", value: "text/plain" }],
+          externals: null,
+        },
+        svnBlame: {
+          target: file.path,
+          total_lines: 1,
+          truncated: false,
+          lines: [
+            {
+              line_number: 1,
+              revision: "11",
+              author: "alice",
+              date: "2026-07-11T01:02:03Z",
+              content: "const ready = true;",
+            },
+          ],
+        },
+        backendMessage: "后台任务就绪",
+      },
+    });
+
+    const tablist = screen.getByRole("tablist", { name: "检查器面板" });
+    const informationTab = within(tablist).getByRole("tab", { name: "Information" });
+    expect(informationTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Information" })).toHaveTextContent("main.ts");
+    expect(screen.queryByText("svn:mime-type")).not.toBeInTheDocument();
+
+    informationTab.focus();
+    await fireEvent.keyDown(informationTab, { key: "ArrowRight" });
+    const propertiesTab = within(tablist).getByRole("tab", { name: "Properties" });
+    expect(propertiesTab).toHaveFocus();
+    expect(propertiesTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Properties" })).toHaveTextContent(
+      "svn:mime-type",
+    );
+
+    await fireEvent.click(within(tablist).getByRole("tab", { name: "Diff" }));
+    expect(screen.getByRole("tabpanel", { name: "Diff" })).toHaveTextContent("-before +after");
+
+    await fireEvent.click(within(tablist).getByRole("tab", { name: "Blame" }));
+    expect(screen.getByRole("tabpanel", { name: "Blame" })).toHaveTextContent(
+      "const ready = true;",
+    );
+
+    await fireEvent.click(within(tablist).getByRole("tab", { name: "Commit" }));
+    expect(screen.getByRole("tabpanel", { name: "Commit" })).toHaveTextContent(
+      "本次将提交 1 个文件",
+    );
+
+    const commitTab = within(tablist).getByRole("tab", { name: "Commit" });
+    await fireEvent.keyDown(commitTab, { key: "End" });
+    expect(within(tablist).getByRole("tab", { name: "Tasks" })).toHaveFocus();
+    expect(screen.getByRole("tabpanel", { name: "Tasks" })).toHaveTextContent("后台任务就绪");
+  });
+
   it("persists sidebar and inspector visibility through app settings", async () => {
     const onAppSettingInput = vi.fn();
     const { container, rerender } = render(MainWorkspace, {
@@ -285,6 +359,7 @@ describe("MainWorkspace", () => {
     expect(mainFileRow).toHaveTextContent("alice");
 
     await fireEvent.click(screen.getByRole("button", { name: "取消 Commit src/main.ts" }));
+    await fireEvent.click(screen.getByRole("tab", { name: "Commit" }));
     await fireEvent.click(screen.getByRole("button", { name: "全选改动" }));
     await fireEvent.click(screen.getByRole("button", { name: "清除选择" }));
 
@@ -299,6 +374,7 @@ describe("MainWorkspace", () => {
     await fireEvent.click(screen.getByRole("menuitem", { name: "Ignore 文件 notes/new.txt" }));
     expect(onAddFile).toHaveBeenCalledWith("notes/new.txt");
     expect(onIgnorePath).toHaveBeenCalledWith("notes/new.txt");
+    await fireEvent.click(screen.getByRole("tab", { name: "Properties" }));
     expect(screen.getByText("作用目录：notes", { exact: true })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "删除文件 notes/new.txt" }),

@@ -377,6 +377,19 @@ if (
 }
 
 if (
+  !mainWorkspace.includes('role="tablist"') ||
+  !mainWorkspace.includes('role="tab"') ||
+  !mainWorkspace.includes('role="tabpanel"') ||
+  !mainWorkspace.includes('{ id: "information", label: "Information" }') ||
+  !mainWorkspace.includes('{ id: "properties", label: "Properties" }') ||
+  !mainWorkspace.includes('{ id: "diff", label: "Diff" }') ||
+  !mainWorkspace.includes('{ id: "blame", label: "Blame" }')
+) {
+  console.error("Versions 检查器必须使用可访问标签组织 Information、Properties、Diff 和 Blame");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||
