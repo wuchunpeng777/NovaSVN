@@ -872,6 +872,18 @@ describe("taskStore SVN operation tasks", () => {
       svn_executable: "C:/svn/svn.exe",
     });
   });
+
+  it("persists source list and inspector visibility", () => {
+    appSettingsStore.setField("showSourceList", false);
+    appSettingsStore.setField("showInspector", false);
+
+    appSettingsStore.load();
+
+    expect(get(appSettingsStore)).toMatchObject({
+      showSourceList: false,
+      showInspector: false,
+    });
+  });
 });
 
 describe("workspaceStore SVN operation state", () => {

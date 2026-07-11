@@ -175,6 +175,14 @@ button {
   outline-offset: 1px;
 }
 
+.toolbar-divider {
+  flex: 0 0 1px;
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--layout-divider-color);
+}
+
 .toolbar-spinner {
   animation: toolbar-spin 900ms linear infinite;
 }
@@ -236,6 +244,10 @@ textarea {
   display: grid;
   grid-template-columns: var(--source-list-width) minmax(0, 1fr);
   min-height: 0;
+}
+
+.versions-layout.source-list-hidden {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .source-list {
@@ -421,6 +433,10 @@ textarea {
 .work-copy-grid.resizing {
   cursor: col-resize;
   user-select: none;
+}
+
+.work-copy-grid.inspector-hidden {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .file-browser {

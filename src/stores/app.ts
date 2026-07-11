@@ -91,6 +91,8 @@ const initialAppSettings: AppSettingsState = {
   svnExecutable: "",
   diffMode: "side_by_side",
   showWhitespace: false,
+  showSourceList: true,
+  showInspector: true,
   commitTemplate: "",
   branchPoolBasePath: "",
   largeFileThresholdMb: 20,
@@ -3705,6 +3707,10 @@ function loadAppSettings(): AppSettingsState {
           : "side_by_side",
       showWhitespace:
         typeof parsed.showWhitespace === "boolean" ? parsed.showWhitespace : false,
+      showSourceList:
+        typeof parsed.showSourceList === "boolean" ? parsed.showSourceList : true,
+      showInspector:
+        typeof parsed.showInspector === "boolean" ? parsed.showInspector : true,
       commitTemplate:
         typeof parsed.commitTemplate === "string" ? parsed.commitTemplate : "",
       branchPoolBasePath:

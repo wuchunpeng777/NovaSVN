@@ -49,6 +49,8 @@ export interface AppSettingsState {
   svnExecutable: string;
   diffMode: "side_by_side" | "inline";
   showWhitespace: boolean;
+  showSourceList: boolean;
+  showInspector: boolean;
   commitTemplate: string;
   branchPoolBasePath: string;
   largeFileThresholdMb: number;

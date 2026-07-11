@@ -12,6 +12,7 @@ vi.mock("./MonacoDiffViewer.svelte", () => ({
 }));
 
 import { workbenchViews } from "../../lib/workbench";
+import type { AppSettingsState } from "../../types/app";
 import type {
   ChangedFile,
   WorkingCopyStatus,
@@ -43,7 +44,13 @@ describe("MainWorkspace", () => {
     const patchButton = within(toolbar).getByRole("button", { name: "应用 Patch" });
     const cleanupButton = within(toolbar).getByRole("button", { name: "清理工作副本" });
 
-    expect(toolbar.querySelectorAll("svg")).toHaveLength(4);
+    expect(toolbar.querySelectorAll("svg")).toHaveLength(6);
+    expect(
+      within(toolbar).getByRole("button", { name: "隐藏项目侧栏" }),
+    ).toHaveAttribute("title", "隐藏项目侧栏");
+    expect(
+      within(toolbar).getByRole("button", { name: "隐藏检查器" }),
+    ).toHaveAttribute("title", "隐藏检查器");
     expect(refreshButton).toHaveAttribute("title", "刷新工作副本状态");
     expect(updateButton).toHaveAttribute("title", "更新工作副本");
     expect(patchButton).toHaveAttribute("title", "应用 Patch");
@@ -62,11 +69,11 @@ describe("MainWorkspace", () => {
     expect(
       within(toolbar).getByRole("button", { name: "正在刷新工作副本状态" }),
     ).toBeDisabled();
-    expect(
-      within(toolbar)
-        .getAllByRole("button")
-        .every((button) => button.hasAttribute("disabled")),
-    ).toBe(true);
+    expect(within(toolbar).getByRole("button", { name: "隐藏项目侧栏" })).toBeEnabled();
+    expect(within(toolbar).getByRole("button", { name: "隐藏检查器" })).toBeEnabled();
+    for (const name of ["更新工作副本", "应用 Patch", "清理工作副本"]) {
+      expect(within(toolbar).getByRole("button", { name })).toBeDisabled();
+    }
 
     await rerender({ statusLoading: false, pendingSvnOperationKind: "update" });
     expect(
@@ -120,6 +127,55 @@ describe("MainWorkspace", () => {
       });
       window.dispatchEvent(new Event("resize"));
     }
+  });
+
+  it("persists sidebar and inspector visibility through app settings", async () => {
+    const onAppSettingInput = vi.fn();
+    const { container, rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        appSettings: makeAppSettings(),
+        onAppSettingInput,
+      },
+    });
+
+    expect(screen.getByLabelText("项目列表")).toBeInTheDocument();
+    expect(screen.getByLabelText("详情和提交")).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "调整右侧面板宽度" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "隐藏项目侧栏" }));
+    expect(onAppSettingInput).toHaveBeenLastCalledWith("showSourceList", false);
+    await rerender({ appSettings: makeAppSettings({ showSourceList: false }) });
+    expect(screen.queryByLabelText("项目列表")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "显示项目侧栏" })).toBeInTheDocument();
+    expect(container.querySelector(".versions-layout")).toHaveClass("source-list-hidden");
+    expect(screen.getByRole("slider", { name: "调整右侧面板宽度" })).toHaveAttribute(
+      "aria-valuemax",
+      "658",
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: "隐藏检查器" }));
+    expect(onAppSettingInput).toHaveBeenLastCalledWith("showInspector", false);
+    await rerender({
+      appSettings: makeAppSettings({ showSourceList: false, showInspector: false }),
+    });
+    expect(screen.queryByLabelText("详情和提交")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("slider", { name: "调整右侧面板宽度" }),
+    ).not.toBeInTheDocument();
+    expect(container.querySelector(".work-copy-grid")).toHaveClass("inspector-hidden");
+    expect(screen.getByLabelText("工作副本文件树")).toBeInTheDocument();
+
+    await rerender({
+      view: workbenchViews.history,
+      appSettings: makeAppSettings({ showInspector: true }),
+    });
+    expect(screen.getByRole("button", { name: "隐藏检查器" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "隐藏检查器" })).toHaveAttribute(
+      "title",
+      "检查器仅用于工作副本视图",
+    );
   });
 
   it("uses current commit targets and excludes unversioned files", async () => {
@@ -389,6 +445,31 @@ function makeWorkspace(): WorkspaceSummary {
     repository_url: "https://example.com/svn/trunk",
     repository_root: "https://example.com/svn",
     revision: "12",
+  };
+}
+
+function makeAppSettings(settings: Partial<AppSettingsState> = {}): AppSettingsState {
+  return {
+    svnExecutable: "",
+    diffMode: "side_by_side",
+    showWhitespace: false,
+    showSourceList: true,
+    showInspector: true,
+    commitTemplate: "",
+    branchPoolBasePath: "",
+    largeFileThresholdMb: 20,
+    externalDiffTool: "",
+    externalMergeTool: "",
+    diagnosticExportPath: "",
+    diagnosticExportError: null,
+    validationErrors: {
+      svnExecutable: null,
+      branchPoolBasePath: null,
+      externalDiffTool: null,
+      externalMergeTool: null,
+    },
+    loading: false,
+    ...settings,
   };
 }
 

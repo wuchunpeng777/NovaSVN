@@ -1,6 +1,16 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { Download, FileUp, LoaderCircle, RefreshCw, Wrench } from "@lucide/svelte";
+  import {
+    Download,
+    FileUp,
+    LoaderCircle,
+    PanelLeftClose,
+    PanelLeftOpen,
+    PanelRightClose,
+    PanelRightOpen,
+    RefreshCw,
+    Wrench,
+  } from "@lucide/svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
   import type {
@@ -207,6 +217,8 @@
     svnExecutable: "",
     diffMode: "side_by_side",
     showWhitespace: false,
+    showSourceList: true,
+    showInspector: true,
     commitTemplate: "",
     branchPoolBasePath: "",
     largeFileThresholdMb: 20,
@@ -384,12 +396,16 @@
   const inspectorDividerWidth = 6;
   const fileBrowserMinWidth = 360;
   let inspectorWidth = 400;
+  let inspectorMaximumWidth = inspectorMaxWidth;
   let resizingInspector = false;
 
   $: if (appSettings.diffMode) {
     diffInline = appSettings.diffMode === "inline";
   }
   $: showWhitespace = appSettings.showWhitespace;
+  $: if (typeof window !== "undefined" && appSettings.showSourceList !== undefined) {
+    syncInspectorWidthToWindow();
+  }
 
   function labelStatus(status: string) {
     return statusLabels[status] ?? status;
@@ -745,22 +761,38 @@
     inspectorWidth = constrainInspectorWidth(inspectorWidth + delta);
   }
 
-  function currentInspectorMaxWidth() {
+  function calculateInspectorMaxWidth() {
+    const occupiedSourceWidth = appSettings.showSourceList ? sourceListWidth : 0;
     return Math.max(
       inspectorMinWidth,
       Math.min(
         inspectorMaxWidth,
-        window.innerWidth - sourceListWidth - inspectorDividerWidth - fileBrowserMinWidth,
+        window.innerWidth - occupiedSourceWidth - inspectorDividerWidth - fileBrowserMinWidth,
       ),
     );
   }
 
   function constrainInspectorWidth(width: number) {
-    return Math.min(Math.max(width, inspectorMinWidth), currentInspectorMaxWidth());
+    return Math.min(Math.max(width, inspectorMinWidth), inspectorMaximumWidth);
   }
 
-  function constrainInspectorToWindow() {
+  function syncInspectorWidthToWindow() {
+    inspectorMaximumWidth = calculateInspectorMaxWidth();
     inspectorWidth = constrainInspectorWidth(inspectorWidth);
+  }
+
+  function toggleSourceList() {
+    onAppSettingInput("showSourceList", !appSettings.showSourceList);
+  }
+
+  function toggleInspector() {
+    if (view.id !== "changes") {
+      return;
+    }
+    if (appSettings.showInspector) {
+      stopInspectorResize();
+    }
+    onAppSettingInput("showInspector", !appSettings.showInspector);
   }
 
   function focusPatchDialog(node: HTMLElement) {
@@ -777,12 +809,12 @@
 
   onDestroy(() => {
     stopInspectorResize();
-    window.removeEventListener("resize", constrainInspectorToWindow);
+    window.removeEventListener("resize", syncInspectorWidthToWindow);
   });
 
   onMount(() => {
-    constrainInspectorToWindow();
-    window.addEventListener("resize", constrainInspectorToWindow);
+    syncInspectorWidthToWindow();
+    window.addEventListener("resize", syncInspectorWidthToWindow);
   });
 
   $: files = workingCopyStatus?.files ?? [];
@@ -871,6 +903,38 @@
       <button
         type="button"
         class="icon-button"
+        aria-label={appSettings.showSourceList ? "隐藏项目侧栏" : "显示项目侧栏"}
+        title={appSettings.showSourceList ? "隐藏项目侧栏" : "显示项目侧栏"}
+        on:click={toggleSourceList}
+      >
+        {#if appSettings.showSourceList}
+          <PanelLeftClose size={17} strokeWidth={1.8} aria-hidden="true" />
+        {:else}
+          <PanelLeftOpen size={17} strokeWidth={1.8} aria-hidden="true" />
+        {/if}
+      </button>
+      <button
+        type="button"
+        class="icon-button"
+        aria-label={appSettings.showInspector ? "隐藏检查器" : "显示检查器"}
+        title={view.id === "changes"
+          ? appSettings.showInspector
+            ? "隐藏检查器"
+            : "显示检查器"
+          : "检查器仅用于工作副本视图"}
+        on:click={toggleInspector}
+        disabled={view.id !== "changes"}
+      >
+        {#if appSettings.showInspector}
+          <PanelRightClose size={17} strokeWidth={1.8} aria-hidden="true" />
+        {:else}
+          <PanelRightOpen size={17} strokeWidth={1.8} aria-hidden="true" />
+        {/if}
+      </button>
+      <span class="toolbar-divider" aria-hidden="true"></span>
+      <button
+        type="button"
+        class="icon-button"
         aria-label={statusLoading ? "正在刷新工作副本状态" : "刷新工作副本状态"}
         aria-busy={statusLoading}
         title={statusLoading ? "正在刷新工作副本状态" : "刷新工作副本状态"}
@@ -952,8 +1016,13 @@
     </button>
   </div>
 
-  <div class="versions-layout" inert={applyPatchDialogOpen}>
-    <aside class="source-list" aria-label="项目列表">
+  <div
+    class="versions-layout"
+    class:source-list-hidden={!appSettings.showSourceList}
+    inert={applyPatchDialogOpen}
+  >
+    {#if appSettings.showSourceList}
+      <aside class="source-list" aria-label="项目列表">
       <section>
         <h2>项目</h2>
         <button
@@ -991,7 +1060,8 @@
         <h2>状态</h2>
         <p>{backendMessage}</p>
       </section>
-    </aside>
+      </aside>
+    {/if}
 
     <main class="content-pane" aria-label={view.title}>
       <ErrorNotice error={workspaceError} />
@@ -1830,6 +1900,7 @@
         <section
           class="work-copy-grid"
           class:resizing={resizingInspector}
+          class:inspector-hidden={!appSettings.showInspector}
           style={`--inspector-width: ${inspectorWidth}px`}
         >
           <div class="file-browser" aria-label="工作副本文件树">
@@ -1995,37 +2066,38 @@
             {/if}
           </div>
 
-          <div
-            role="slider"
-            tabindex="0"
-            class="inspector-resizer"
-            aria-label="调整右侧面板宽度"
-            aria-orientation="horizontal"
-            aria-valuemin={inspectorMinWidth}
-            aria-valuemax={currentInspectorMaxWidth()}
-            aria-valuenow={inspectorWidth}
-            on:mousedown={startInspectorResize}
-            on:keydown={(event) => {
-              if (event.key === "ArrowLeft") {
-                adjustInspectorWidth(-24);
-                event.preventDefault();
-              }
-              if (event.key === "ArrowRight") {
-                adjustInspectorWidth(24);
-                event.preventDefault();
-              }
-              if (event.key === "Home") {
-                inspectorWidth = inspectorMinWidth;
-                event.preventDefault();
-              }
-              if (event.key === "End") {
-                inspectorWidth = currentInspectorMaxWidth();
-                event.preventDefault();
-              }
-            }}
-          ></div>
+          {#if appSettings.showInspector}
+            <div
+              role="slider"
+              tabindex="0"
+              class="inspector-resizer"
+              aria-label="调整右侧面板宽度"
+              aria-orientation="horizontal"
+              aria-valuemin={inspectorMinWidth}
+              aria-valuemax={inspectorMaximumWidth}
+              aria-valuenow={inspectorWidth}
+              on:mousedown={startInspectorResize}
+              on:keydown={(event) => {
+                if (event.key === "ArrowLeft") {
+                  adjustInspectorWidth(-24);
+                  event.preventDefault();
+                }
+                if (event.key === "ArrowRight") {
+                  adjustInspectorWidth(24);
+                  event.preventDefault();
+                }
+                if (event.key === "Home") {
+                  inspectorWidth = inspectorMinWidth;
+                  event.preventDefault();
+                }
+                if (event.key === "End") {
+                  inspectorWidth = inspectorMaximumWidth;
+                  event.preventDefault();
+                }
+              }}
+            ></div>
 
-          <aside class="inspector" aria-label="详情和提交">
+            <aside class="inspector" aria-label="详情和提交">
             <section class="inspector-section">
               <h2>文件</h2>
               {#if selectedFile || selectedTreeNode}
@@ -2386,7 +2458,8 @@
                 {/each}
               </div>
             </section>
-          </aside>
+            </aside>
+          {/if}
         </section>
       {/if}
     </main>
