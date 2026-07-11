@@ -225,6 +225,7 @@ pub enum RevisionDiffMode {
 pub struct CreateRevisionDiffTaskRequest {
     pub mode: RevisionDiffMode,
     pub working_copy_root: Option<String>,
+    pub file_path: Option<String>,
     pub target_url: Option<String>,
     pub left_revision: Option<String>,
     pub right_revision: Option<String>,
@@ -441,6 +442,7 @@ struct SvnSwitchTaskPayload {
 struct RevisionDiffTaskPayload {
     mode: RevisionDiffMode,
     working_copy_root: Option<String>,
+    file_path: Option<String>,
     target_url: Option<String>,
     left_revision: Option<String>,
     right_revision: Option<String>,
@@ -2751,8 +2753,17 @@ fn run_revision_diff_task(
                 .right_revision
                 .as_deref()
                 .expect("目标 revision 已校验");
-            command.arg("-r").arg(revision).arg(root);
-            format!("{root} ↔ r{revision}")
+            let command_target = payload
+                .file_path
+                .as_deref()
+                .map(|file_path| Path::new(root).join(file_path))
+                .unwrap_or_else(|| PathBuf::from(root));
+            command.arg("-r").arg(revision).arg(&command_target);
+            payload
+                .file_path
+                .as_deref()
+                .map(|file_path| format!("{file_path} ↔ r{revision}"))
+                .unwrap_or_else(|| format!("{root} ↔ r{revision}"))
         }
         RevisionDiffMode::Urls => {
             let left_url = payload.left_url.as_deref().expect("左 URL 已校验");
@@ -4944,6 +4955,7 @@ fn normalize_revision_diff_payload(
             Ok(RevisionDiffTaskPayload {
                 mode: RevisionDiffMode::Revisions,
                 working_copy_root: Some(working_copy_root.display().to_string()),
+                file_path: None,
                 target_url,
                 left_revision: Some(left_revision),
                 right_revision: Some(right_revision),
@@ -4964,10 +4976,23 @@ fn normalize_revision_diff_payload(
                 "REVISION_DIFF_TARGET_REQUIRED",
                 "请输入要比较的 revision",
             )?;
+            let file_path = request
+                .file_path
+                .as_deref()
+                .filter(|path| !path.is_empty())
+                .map(|path| {
+                    normalize_strict_working_copy_path(
+                        path,
+                        "REVISION_DIFF_FILE_PATH_INVALID",
+                        "工作副本比较文件路径无效",
+                    )
+                })
+                .transpose()?;
 
             Ok(RevisionDiffTaskPayload {
                 mode: RevisionDiffMode::WorkingCopyToRevision,
                 working_copy_root: Some(working_copy_root.display().to_string()),
+                file_path,
                 target_url: None,
                 left_revision: None,
                 right_revision: Some(right_revision),
@@ -4992,6 +5017,7 @@ fn normalize_revision_diff_payload(
             Ok(RevisionDiffTaskPayload {
                 mode: RevisionDiffMode::Urls,
                 working_copy_root: None,
+                file_path: None,
                 target_url: None,
                 left_revision: None,
                 right_revision: None,
@@ -7469,6 +7495,7 @@ mod tests {
             CreateRevisionDiffTaskRequest {
                 mode: RevisionDiffMode::Urls,
                 working_copy_root: None,
+                file_path: None,
                 target_url: None,
                 left_revision: None,
                 right_revision: None,
@@ -7495,6 +7522,7 @@ mod tests {
             CreateRevisionDiffTaskRequest {
                 mode: RevisionDiffMode::Revisions,
                 working_copy_root: Some(dir.display().to_string()),
+                file_path: None,
                 target_url: None,
                 left_revision: Some(" 42 ".to_string()),
                 right_revision: Some("42".to_string()),
@@ -7523,6 +7551,7 @@ mod tests {
             CreateRevisionDiffTaskRequest {
                 mode: RevisionDiffMode::Revisions,
                 working_copy_root: Some(dir.display().to_string()),
+                file_path: None,
                 target_url: Some(" https://example.com/svn/trunk/src/main.ts/ ".to_string()),
                 left_revision: Some("41".to_string()),
                 right_revision: Some("42".to_string()),
@@ -7539,6 +7568,56 @@ mod tests {
             payload.target_url.as_deref(),
             Some("https://example.com/svn/trunk/src/main.ts")
         );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validates_working_copy_file_revision_diff_target() {
+        let dir = test_temp_dir("revision-diff-working-copy-file");
+        let payload = normalize_revision_diff_payload(
+            CreateRevisionDiffTaskRequest {
+                mode: RevisionDiffMode::WorkingCopyToRevision,
+                working_copy_root: Some(dir.display().to_string()),
+                file_path: Some("src/main.rs".to_string()),
+                target_url: None,
+                left_revision: None,
+                right_revision: Some("10".to_string()),
+                left_url: None,
+                right_url: None,
+                svn_executable: None,
+            },
+            "svn".to_string(),
+            dir.join("output"),
+        )
+        .expect("working-copy file target should be accepted");
+
+        assert_eq!(payload.file_path.as_deref(), Some("src/main.rs"));
+        assert_eq!(payload.right_revision.as_deref(), Some("10"));
+
+        for invalid_path in ["../secret.txt", "/tmp/secret.txt", "src/main.rs\nnext"] {
+            let error = normalize_revision_diff_payload(
+                CreateRevisionDiffTaskRequest {
+                    mode: RevisionDiffMode::WorkingCopyToRevision,
+                    working_copy_root: Some(dir.display().to_string()),
+                    file_path: Some(invalid_path.to_string()),
+                    target_url: None,
+                    left_revision: None,
+                    right_revision: Some("10".to_string()),
+                    left_url: None,
+                    right_url: None,
+                    svn_executable: None,
+                },
+                "svn".to_string(),
+                dir.join("invalid-output"),
+            )
+            .expect_err("unsafe working-copy file target must be rejected");
+            match error {
+                NovaError::Command { code, .. } => {
+                    assert_eq!(code, "REVISION_DIFF_FILE_PATH_INVALID");
+                }
+            }
+        }
+
         fs::remove_dir_all(dir).ok();
     }
 

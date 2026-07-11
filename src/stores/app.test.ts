@@ -868,9 +868,35 @@ describe("taskStore revision diff tasks", () => {
     expect(createRevisionDiffTaskMock).toHaveBeenCalledWith({
       mode: "revisions",
       working_copy_root: "C:/repo/wc",
+      file_path: undefined,
       target_url: "https://example.com/svn/trunk/src/main.ts",
       left_revision: "41",
       right_revision: "42",
+      left_url: undefined,
+      right_url: undefined,
+      svn_executable: "C:/svn/svn.exe",
+    });
+  });
+
+  it("forwards a working-copy file target", async () => {
+    createRevisionDiffTaskMock.mockResolvedValue(makeTask({ task_id: "revision-diff-file-1" }));
+
+    const task = await taskStore.createRevisionDiff({
+      mode: "working_copy_to_revision",
+      workingCopyRoot: "C:/repo/wc",
+      filePath: "src/main.ts",
+      rightRevision: "10",
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(task?.task_id).toBe("revision-diff-file-1");
+    expect(createRevisionDiffTaskMock).toHaveBeenCalledWith({
+      mode: "working_copy_to_revision",
+      working_copy_root: "C:/repo/wc",
+      file_path: "src/main.ts",
+      target_url: undefined,
+      left_revision: undefined,
+      right_revision: "10",
       left_url: undefined,
       right_url: undefined,
       svn_executable: "C:/svn/svn.exe",
@@ -1031,6 +1057,25 @@ describe("revision path targets", () => {
 
     expect(workspaceStore.prepareRevisionDiffRange("revision-10", "12")).toBe(false);
     expect(get(workspaceStore).revisionDiffError).toBe("请选择两个有效的数字 revision");
+  });
+
+  it("prepares and validates a working-copy file revision comparison", () => {
+    expect(workspaceStore.prepareWorkingCopyFileRevisionDiff("src/main.ts", " 10 ")).toBe(true);
+    expect(get(workspaceStore)).toMatchObject({
+      revisionDiffForm: {
+        mode: "working_copy_to_revision",
+        filePath: "src/main.ts",
+        targetUrl: "",
+        leftRevision: "",
+        rightRevision: "10",
+      },
+      revisionDiffError: null,
+    });
+
+    expect(workspaceStore.prepareWorkingCopyFileRevisionDiff("", "10")).toBe(false);
+    expect(get(workspaceStore).revisionDiffError).toBe("请先选择一个有效的工作副本文件");
+    expect(workspaceStore.prepareWorkingCopyFileRevisionDiff("src/main.ts", "HEAD")).toBe(false);
+    expect(get(workspaceStore).revisionDiffError).toBe("请选择有效的数字 revision");
   });
 });
 

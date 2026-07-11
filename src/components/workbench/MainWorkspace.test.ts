@@ -448,6 +448,54 @@ describe("MainWorkspace", () => {
     expect(screen.queryByRole("toolbar", { name: "Revision 比较选择" })).not.toBeInTheDocument();
   });
 
+  it("compares the selected versioned file with any Timeline revision", async () => {
+    const onPrepareWorkingCopyFileRevisionDiff = vi.fn(() => true);
+    const onRunRevisionDiff = vi.fn();
+    const onRevisionDiffFormInput = vi.fn();
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.history,
+        workspace: makeWorkspace(),
+        workspaceFileTree: makeFileTree(),
+        selectedFilePath: "src/main.ts",
+        svnLog: {
+          target: "https://svn.example.test/repo/trunk",
+          has_more: false,
+          next_start_revision: null,
+          entries: [makeLogEntry("12", "2026-07-11T12:00:00", "alice", "latest")],
+        },
+        onPrepareWorkingCopyFileRevisionDiff,
+        onRunRevisionDiff,
+        onRevisionDiffFormInput,
+      },
+    });
+
+    const compareFile = screen.getByRole("button", {
+      name: "比较 src/main.ts 的工作副本与 r12",
+    });
+    expect(compareFile).toHaveAttribute("title", "比较 src/main.ts 的工作副本与 r12");
+    await fireEvent.click(compareFile);
+    expect(onPrepareWorkingCopyFileRevisionDiff).toHaveBeenCalledWith("src/main.ts", "12");
+    expect(onRunRevisionDiff).toHaveBeenCalledOnce();
+
+    await fireEvent.click(
+      within(screen.getByLabelText("Revision 比较")).getByRole("button", {
+        name: "工作副本",
+      }),
+    );
+    expect(onRevisionDiffFormInput).toHaveBeenCalledWith("mode", "working_copy_to_revision");
+    expect(onRevisionDiffFormInput).toHaveBeenCalledWith("filePath", "src/main.ts");
+
+    await rerender({ selectedFilePath: "notes/new.txt" });
+    expect(
+      screen.getByRole("button", { name: "比较工作副本文件与 r12" }),
+    ).toBeDisabled();
+    await rerender({ selectedFilePath: "src" });
+    expect(
+      screen.getByRole("button", { name: "比较工作副本文件与 r12" }),
+    ).toBeDisabled();
+  });
+
   it("filters Timeline revisions with inclusive local date controls", async () => {
     const onSvnLogFilterInput = vi.fn();
     const onSvnLogFileOnlyInput = vi.fn();

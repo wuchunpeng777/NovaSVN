@@ -4,6 +4,7 @@
     Download,
     Ellipsis,
     FileUp,
+    GitCompareArrows,
     LoaderCircle,
     PanelLeftClose,
     PanelLeftOpen,
@@ -123,6 +124,7 @@
   export let svnLogLimit = 50;
   export let revisionDiffForm: {
     mode: RevisionDiffMode;
+    filePath: string;
     targetUrl: string;
     leftRevision: string;
     rightRevision: string;
@@ -130,6 +132,7 @@
     rightUrl: string;
   } = {
     mode: "revisions",
+    filePath: "",
     targetUrl: "",
     leftRevision: "",
     rightRevision: "",
@@ -334,6 +337,10 @@
   export let onPrepareRevisionDiffRange: (
     leftRevision: string,
     rightRevision: string,
+  ) => boolean = () => false;
+  export let onPrepareWorkingCopyFileRevisionDiff: (
+    filePath: string,
+    revision: string,
   ) => boolean = () => false;
   export let onExportRevisionDiffPatch: () => void = () => {};
 
@@ -1488,6 +1495,20 @@
     }
   }
 
+  function selectWorkingCopyRevisionDiffMode() {
+    onRevisionDiffFormInput("mode", "working_copy_to_revision");
+    onRevisionDiffFormInput("filePath", selectedRevisionComparisonFile ?? "");
+  }
+
+  function compareSelectedFileWithRevision(revision: string) {
+    if (
+      selectedRevisionComparisonFile &&
+      onPrepareWorkingCopyFileRevisionDiff(selectedRevisionComparisonFile, revision)
+    ) {
+      onRunRevisionDiff();
+    }
+  }
+
   function openChangedPathRevisionDiff(revision: string, repositoryPath: string) {
     selectedLogRevision = revision;
     if (onPrepareRevisionDiffFromLog(revision, repositoryPath)) {
@@ -1669,6 +1690,10 @@
     filteredLogEntries[0] ??
     null;
   $: selectedTreeNode = treeNodeForPath(selectedFilePath);
+  $: selectedRevisionComparisonFile =
+    selectedTreeNode?.kind === "file" && selectedTreeNode.versioned
+      ? selectedTreeNode.path
+      : null;
   $: contextMenuNode = treeNodeForPath(contextMenuPath);
   $: unconfirmedWarningCount = safetyCheck.warnings.filter(
     (item) => !safetyCheck.confirmedWarningIds.includes(item.id),
@@ -2081,6 +2106,20 @@
                           <time title={entry.date}>{formatTimelineTime(entry.date)}</time>
                           <span class="timeline-path-count">{entry.changed_paths.length} paths</span>
                         </button>
+                        <button
+                          type="button"
+                          class="timeline-working-copy-compare"
+                          aria-label={selectedRevisionComparisonFile
+                            ? `比较 ${selectedRevisionComparisonFile} 的工作副本与 r${entry.revision}`
+                            : `比较工作副本文件与 r${entry.revision}`}
+                          title={selectedRevisionComparisonFile
+                            ? `比较 ${selectedRevisionComparisonFile} 的工作副本与 r${entry.revision}`
+                            : "先在工作副本中选择版本化文件"}
+                          disabled={!selectedRevisionComparisonFile || revisionDiffLoading}
+                          on:click={() => compareSelectedFileWithRevision(entry.revision)}
+                        >
+                          <GitCompareArrows size={15} strokeWidth={2} aria-hidden="true" />
+                        </button>
                       </header>
                       <p class="timeline-message">{entry.message || "无提交信息"}</p>
                       {#if entry.changed_paths.length > 0}
@@ -2178,7 +2217,7 @@
               <button
                 type="button"
                 class:active={revisionDiffForm.mode === "working_copy_to_revision"}
-                on:click={() => onRevisionDiffFormInput("mode", "working_copy_to_revision")}
+                on:click={selectWorkingCopyRevisionDiffMode}
               >
                 工作副本
               </button>
@@ -2213,6 +2252,16 @@
                   )}
               />
             {:else}
+              {#if revisionDiffForm.mode === "working_copy_to_revision"}
+                <input
+                  type="text"
+                  value={revisionDiffForm.filePath}
+                  placeholder="未选择文件时比较整个工作副本"
+                  aria-label="工作副本比较文件"
+                  readonly
+                  title={revisionDiffForm.filePath || "未选择文件时比较整个工作副本"}
+                />
+              {/if}
               {#if revisionDiffForm.mode === "revisions"}
                 <input
                   type="url"

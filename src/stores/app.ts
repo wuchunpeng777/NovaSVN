@@ -490,6 +490,7 @@ function createTaskStore() {
   async function createRevisionDiff(request: {
     mode: RevisionDiffMode;
     workingCopyRoot?: string | null;
+    filePath?: string | null;
     targetUrl?: string | null;
     leftRevision?: string | null;
     rightRevision?: string | null;
@@ -503,6 +504,7 @@ function createTaskStore() {
       const task = await createRevisionDiffTask({
         mode: request.mode,
         working_copy_root: request.workingCopyRoot || undefined,
+        file_path: request.filePath || undefined,
         target_url: request.targetUrl || undefined,
         left_revision: request.leftRevision || undefined,
         right_revision: request.rightRevision || undefined,
@@ -1358,6 +1360,7 @@ export interface WorkspaceStoreState {
   svnLogLimit: number;
   revisionDiffForm: {
     mode: RevisionDiffMode;
+    filePath: string;
     targetUrl: string;
     leftRevision: string;
     rightRevision: string;
@@ -1490,6 +1493,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
   svnLogLimit: 50,
   revisionDiffForm: {
     mode: "revisions",
+    filePath: "",
     targetUrl: "",
     leftRevision: "",
     rightRevision: "",
@@ -3504,6 +3508,40 @@ function createWorkspaceStore() {
     return true;
   }
 
+  function prepareWorkingCopyFileRevisionDiff(filePath: string, revision: string) {
+    const normalizedRevision = revision.trim();
+    const filePathInvalid =
+      !filePath ||
+      Array.from(filePath).some((character) => /[\u0000-\u001f\u007f]/.test(character));
+    if (filePathInvalid) {
+      update((state) => ({
+        ...state,
+        revisionDiffError: "请先选择一个有效的工作副本文件",
+      }));
+      return false;
+    }
+    if (!/^\d+$/.test(normalizedRevision)) {
+      update((state) => ({
+        ...state,
+        revisionDiffError: "请选择有效的数字 revision",
+      }));
+      return false;
+    }
+    update((state) => ({
+      ...state,
+      revisionDiffForm: {
+        ...state.revisionDiffForm,
+        mode: "working_copy_to_revision",
+        filePath,
+        targetUrl: "",
+        leftRevision: "",
+        rightRevision: normalizedRevision,
+      },
+      revisionDiffError: null,
+    }));
+    return true;
+  }
+
   function markRevisionDiffTask(taskId: string | null) {
     update((state) => ({
       ...state,
@@ -3768,6 +3806,7 @@ function createWorkspaceStore() {
     setRevisionDiffForm,
     prepareRevisionDiffFromLog,
     prepareRevisionDiffRange,
+    prepareWorkingCopyFileRevisionDiff,
     markRevisionDiffTask,
     applyRevisionDiffResult,
     failRevisionDiffTask,

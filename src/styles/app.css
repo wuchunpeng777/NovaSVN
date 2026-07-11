@@ -1277,7 +1277,7 @@ textarea {
 
 .timeline-entry-header {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: 24px minmax(0, 1fr) 28px;
   align-items: center;
   gap: 6px;
 }
@@ -1325,6 +1325,15 @@ textarea {
 .timeline-entry-summary.active {
   color: #1d5f9c;
   font-weight: 700;
+}
+
+.timeline-working-copy-compare {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
 }
 
 .timeline-message {

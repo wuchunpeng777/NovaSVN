@@ -651,6 +651,7 @@
     const task = await taskStore.createRevisionDiff({
       mode: form.mode,
       workingCopyRoot: $workspaceStore.current?.working_copy_root,
+      filePath: form.filePath,
       targetUrl: form.targetUrl,
       leftRevision: form.leftRevision,
       rightRevision: form.rightRevision,
@@ -1559,6 +1560,7 @@
   onRunRevisionDiff={runRevisionDiff}
   onPrepareRevisionDiffFromLog={workspaceStore.prepareRevisionDiffFromLog}
   onPrepareRevisionDiffRange={workspaceStore.prepareRevisionDiffRange}
+  onPrepareWorkingCopyFileRevisionDiff={workspaceStore.prepareWorkingCopyFileRevisionDiff}
   onExportRevisionDiffPatch={workspaceStore.exportRevisionDiffPatch}
   onCommitMessageInput={workspaceStore.setCommitMessage}
   onCommitTemplateInput={workspaceStore.setCommitTemplate}

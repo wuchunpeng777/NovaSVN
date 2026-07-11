@@ -460,6 +460,19 @@ if (
 }
 
 if (
+  !mainWorkspace.includes("compareSelectedFileWithRevision") ||
+  !mainWorkspace.includes('class="timeline-working-copy-compare"') ||
+  !mainWorkspace.includes("onPrepareWorkingCopyFileRevisionDiff") ||
+  !appStore.includes("function prepareWorkingCopyFileRevisionDiff(") ||
+  !appSvelte.includes("filePath: form.filePath") ||
+  !taskRs.includes("request.file_path") ||
+  !taskRs.includes("Path::new(root).join(file_path)")
+) {
+  console.error("Timeline 必须把选中文件和任意 revision 传给真实工作副本 Revision Diff");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||
