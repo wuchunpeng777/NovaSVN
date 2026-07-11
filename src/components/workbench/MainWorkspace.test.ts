@@ -554,6 +554,8 @@ describe("MainWorkspace", () => {
     const onLoadRepositoryFileLog = vi.fn();
     const onLoadMoreRepositoryFileLog = vi.fn();
     const onCloseRepositoryFileLog = vi.fn();
+    const onLoadRepositoryFileBlame = vi.fn();
+    const onCloseRepositoryFileBlame = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.repository,
@@ -586,6 +588,8 @@ describe("MainWorkspace", () => {
         onLoadRepositoryFileLog,
         onLoadMoreRepositoryFileLog,
         onCloseRepositoryFileLog,
+        onLoadRepositoryFileBlame,
+        onCloseRepositoryFileBlame,
       },
     });
 
@@ -617,6 +621,12 @@ describe("MainWorkspace", () => {
     expect(logButton).toHaveAttribute("title", "查看 README.md 的 Log");
     await fireEvent.click(logButton);
     expect(onLoadRepositoryFileLog).toHaveBeenCalledWith("README.md");
+    const blameButton = screen.getByRole("button", {
+      name: "查看仓库文件 README.md 的 Blame",
+    });
+    expect(blameButton).toHaveAttribute("title", "查看 README.md 的 Blame");
+    await fireEvent.click(blameButton);
+    expect(onLoadRepositoryFileBlame).toHaveBeenCalledWith("README.md");
     await fireEvent.input(revisionInput, { target: { value: "8" } });
     expect(onRepositoryRevisionInput).toHaveBeenCalledWith("8");
     await fireEvent.keyDown(revisionInput, { key: "Enter" });
@@ -659,6 +669,34 @@ describe("MainWorkspace", () => {
       within(logPanel).getByRole("button", { name: "关闭仓库文件 Log" }),
     );
     expect(onCloseRepositoryFileLog).toHaveBeenCalledOnce();
+
+    await rerender({
+      repositoryFileLog: null,
+      repositoryFileLogRevision: null,
+      repositoryFileBlameRevision: "10",
+      repositoryFileBlame: {
+        target: "https://example.com/svn/trunk/README.md",
+        total_lines: 2,
+        truncated: true,
+        lines: [
+          {
+            line_number: 1,
+            revision: "8",
+            author: "bob",
+            date: "2026-07-09T09:00:00Z",
+            content: "README title",
+          },
+        ],
+      },
+    });
+    const blamePanel = screen.getByLabelText("仓库文件 Blame");
+    expect(within(blamePanel).getByRole("columnheader", { name: "Revision" })).toBeInTheDocument();
+    expect(within(blamePanel).getByText("README title")).toBeInTheDocument();
+    expect(within(blamePanel).getByText("2 行 · 仅显示前 1 行")).toBeInTheDocument();
+    await fireEvent.click(
+      within(blamePanel).getByRole("button", { name: "关闭仓库文件 Blame" }),
+    );
+    expect(onCloseRepositoryFileBlame).toHaveBeenCalledOnce();
 
     await rerender({
       repositoryRevisionInput: "",

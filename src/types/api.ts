@@ -556,6 +556,13 @@ export interface SetSvnPropertyRequest {
   svn_executable?: string;
 }
 
+export interface GetRepositoryFileBlameRequest {
+  url: string;
+  revision?: string;
+  svn_executable?: string;
+  max_lines?: number;
+}
+
 export interface GetRepositoryFileLogRequest {
   url: string;
   revision?: string;

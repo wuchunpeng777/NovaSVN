@@ -6,6 +6,7 @@
     FileUp,
     FolderOpen,
     GitCompareArrows,
+    GitCommitHorizontal,
     History,
     LoaderCircle,
     PanelLeftClose,
@@ -83,6 +84,10 @@
   export let repositoryFileLogRevision: string | null = null;
   export let repositoryFileLogLoading = false;
   export let repositoryFileLogError: CommandError | null = null;
+  export let repositoryFileBlame: SvnBlame | null = null;
+  export let repositoryFileBlameRevision: string | null = null;
+  export let repositoryFileBlameLoading = false;
+  export let repositoryFileBlameError: CommandError | null = null;
   export let repositoryLayout = {
     trunkPath: "trunk",
     branchesPath: "branches",
@@ -313,6 +318,8 @@
   export let onLoadRepositoryFileLog: (fileName: string) => void = () => {};
   export let onLoadMoreRepositoryFileLog: () => void = () => {};
   export let onCloseRepositoryFileLog: () => void = () => {};
+  export let onLoadRepositoryFileBlame: (fileName: string) => void = () => {};
+  export let onCloseRepositoryFileBlame: () => void = () => {};
   export let onRepositoryLayoutPathInput: (
     kind: "trunk" | "branches" | "tags",
     value: string,
@@ -2518,6 +2525,16 @@
                     >
                       <History size={15} strokeWidth={2} aria-hidden="true" />
                     </button>
+                    <button
+                      type="button"
+                      class="repository-row-action"
+                      aria-label={`查看仓库文件 ${entry.name} 的 Blame`}
+                      title={`查看 ${entry.name} 的 Blame`}
+                      disabled={repositoryFileBlameLoading}
+                      on:click={() => onLoadRepositoryFileBlame(entry.name)}
+                    >
+                      <GitCommitHorizontal size={15} strokeWidth={2} aria-hidden="true" />
+                    </button>
                   </div>
                 {/if}
               </div>
@@ -2573,6 +2590,56 @@
               <article class="empty-state">正在读取文件 Log</article>
             {:else if repositoryFileLog}
               <article class="empty-state">当前快照之前没有文件日志</article>
+            {/if}
+          </section>
+        {/if}
+
+        {#if repositoryFileBlame || repositoryFileBlameLoading || repositoryFileBlameError}
+          <section class="repository-file-blame-panel" aria-label="仓库文件 Blame">
+            <header>
+              <div>
+                <h2>文件 Blame</h2>
+                <code title={repositoryFileBlame?.target}>{repositoryFileBlame?.target ?? "正在读取仓库文件 Blame"}</code>
+                <span>@{repositoryFileBlameRevision ? `r${repositoryFileBlameRevision}` : "HEAD"}</span>
+              </div>
+              <div class="repository-file-blame-actions">
+                <button
+                  type="button"
+                  class="icon-button"
+                  aria-label="关闭仓库文件 Blame"
+                  title="关闭仓库文件 Blame"
+                  on:click={onCloseRepositoryFileBlame}
+                >
+                  <X size={15} strokeWidth={2} aria-hidden="true" />
+                </button>
+              </div>
+            </header>
+            <ErrorNotice error={repositoryFileBlameError} />
+            {#if repositoryFileBlame}
+              <p class="repository-file-blame-summary">
+                {repositoryFileBlame.total_lines} 行
+                {repositoryFileBlame.truncated ? ` · 仅显示前 ${repositoryFileBlame.lines.length} 行` : ""}
+              </p>
+              <div class="blame-table repository-file-blame-table" role="table" aria-label={`${repositoryFileBlame.target} Repository Blame`}>
+                <div class="blame-row blame-head" role="row">
+                  <span role="columnheader">Revision</span>
+                  <span role="columnheader">作者</span>
+                  <span role="columnheader">行</span>
+                  <span role="columnheader">内容</span>
+                </div>
+                {#each repositoryFileBlame.lines as line (line.line_number)}
+                  <div class="blame-row" role="row" title={formatDate(line.date)}>
+                    <span role="cell">{line.revision ? `r${line.revision}` : "-"}</span>
+                    <span role="cell">{line.author || "-"}</span>
+                    <span role="cell" class="blame-line-number">{line.line_number}</span>
+                    <span role="cell" class="blame-content">
+                      <code title={line.content}>{line.content || " "}</code>
+                    </span>
+                  </div>
+                {/each}
+              </div>
+            {:else if repositoryFileBlameLoading}
+              <article class="empty-state">正在读取文件 Blame</article>
             {/if}
           </section>
         {/if}

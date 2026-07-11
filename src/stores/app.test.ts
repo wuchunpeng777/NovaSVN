@@ -12,6 +12,7 @@ vi.mock("../lib/api", () => ({
   detectSvn: vi.fn(),
   getFileContentDiff: vi.fn(),
   getFileDiff: vi.fn(),
+  getRepositoryFileBlame: vi.fn(),
   getRepositoryFileLog: vi.fn(),
   getSvnBlame: vi.fn(),
   getSvnLog: vi.fn(),
@@ -42,6 +43,7 @@ import {
   detectSvn,
   getFileContentDiff,
   getFileDiff,
+  getRepositoryFileBlame,
   getRepositoryFileLog,
   getSvnBlame,
   getSvnLog,
@@ -61,6 +63,7 @@ import type {
   BranchPoolEntry,
   ChangedFile,
   RevisionDiffResult,
+  SvnBlame,
   SvnProperties,
   SvnLog,
   SvnLogEntry,
@@ -93,6 +96,7 @@ const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
 const detectSvnMock = vi.mocked(detectSvn);
 const getFileContentDiffMock = vi.mocked(getFileContentDiff);
 const getFileDiffMock = vi.mocked(getFileDiff);
+const getRepositoryFileBlameMock = vi.mocked(getRepositoryFileBlame);
 const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const getSvnBlameMock = vi.mocked(getSvnBlame);
 const getSvnLogMock = vi.mocked(getSvnLog);
@@ -120,6 +124,7 @@ beforeEach(() => {
   detectSvnMock.mockReset();
   getFileContentDiffMock.mockReset();
   getFileDiffMock.mockReset();
+  getRepositoryFileBlameMock.mockReset();
   getRepositoryFileLogMock.mockReset();
   getSvnBlameMock.mockReset();
   getSvnLogMock.mockReset();
@@ -141,6 +146,7 @@ beforeEach(() => {
   workspaceStore.setCommitMessage("");
   workspaceStore.setSvnLogFileOnly(false);
   workspaceStore.clearRepositoryFileLog();
+  workspaceStore.clearRepositoryFileBlame();
   workspaceStore.setSvnLogFilter("svnLogAuthorFilter", "");
   workspaceStore.setSvnLogFilter("svnLogKeywordFilter", "");
   workspaceStore.setSvnLogFilter("svnLogDateFromFilter", "");
@@ -1012,6 +1018,90 @@ describe("workspaceStore repository file log", () => {
       repositoryFileLogLoading: false,
       repositoryFileLogError: null,
     });
+  });
+});
+
+describe("workspaceStore repository file blame", () => {
+  it("loads the selected file at the current repository revision", async () => {
+    const target = "https://example.com/svn/trunk/README.md";
+    getRepositoryFileBlameMock.mockResolvedValue({
+      target,
+      total_lines: 2,
+      truncated: false,
+      lines: [
+        {
+          line_number: 1,
+          revision: "8",
+          author: "alice",
+          date: "2026-07-10T00:00:00Z",
+          content: "first line",
+        },
+        {
+          line_number: 2,
+          revision: "10",
+          author: "bob",
+          date: "2026-07-11T00:00:00Z",
+          content: "second line",
+        },
+      ],
+    });
+
+    await workspaceStore.loadRepositoryFileBlame({
+      url: target,
+      revision: "10",
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(getRepositoryFileBlameMock).toHaveBeenCalledWith({
+      url: target,
+      revision: "10",
+      svn_executable: "C:/svn/svn.exe",
+      max_lines: 5000,
+    });
+    expect(get(workspaceStore)).toMatchObject({
+      repositoryFileBlameRevision: "10",
+      repositoryFileBlameLoading: false,
+      repositoryFileBlameError: null,
+    });
+    expect(get(workspaceStore).repositoryFileBlame?.lines[1].content).toBe("second line");
+    expect(get(workspaceStore).repositoryFileLog).toBeNull();
+  });
+
+  it("ignores a stale Blame response after switching to file Log", async () => {
+    const blamePending = deferred<SvnBlame>();
+    getRepositoryFileBlameMock.mockReturnValue(blamePending.promise);
+    getRepositoryFileLogMock.mockResolvedValue(
+      makeSvnLog([makeSvnLogEntry({ revision: "10", message: "log wins" })], {
+        target: "https://example.com/svn/trunk/README.md",
+      }),
+    );
+
+    const blameLoading = workspaceStore.loadRepositoryFileBlame({
+      url: "https://example.com/svn/trunk/README.md",
+      revision: "10",
+    });
+    await workspaceStore.loadRepositoryFileLog({
+      url: "https://example.com/svn/trunk/README.md",
+      revision: "10",
+    });
+    blamePending.resolve({
+      target: "https://example.com/svn/trunk/README.md",
+      total_lines: 1,
+      truncated: false,
+      lines: [
+        {
+          line_number: 1,
+          revision: "10",
+          author: "dev",
+          date: "2026-07-11T00:00:00Z",
+          content: "stale",
+        },
+      ],
+    });
+    await blameLoading;
+
+    expect(get(workspaceStore).repositoryFileBlame).toBeNull();
+    expect(get(workspaceStore).repositoryFileLog?.entries[0].message).toBe("log wins");
   });
 });
 

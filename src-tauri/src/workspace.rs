@@ -203,6 +203,14 @@ pub struct GetSvnBlameRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct GetRepositoryFileBlameRequest {
+    pub url: String,
+    pub revision: Option<String>,
+    pub svn_executable: Option<String>,
+    pub max_lines: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct GetSvnPropertiesRequest {
     pub working_copy_root: String,
     pub file_path: Option<String>,
@@ -526,6 +534,87 @@ pub fn get_svn_blame(request: GetSvnBlameRequest) -> Result<SvnBlame, NovaError>
     })?;
 
     parse_svn_blame_xml(&xml, &content, &file_path, max_lines)
+}
+
+pub fn get_repository_file_blame(
+    request: GetRepositoryFileBlameRequest,
+) -> Result<SvnBlame, NovaError> {
+    let url = normalize_repository_url(&request.url)?;
+    let revision = normalize_repository_list_revision(request.revision.as_deref())?;
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let max_lines = request.max_lines.unwrap_or(5000).clamp(1, 20000);
+    let command_target = repository_url_with_peg_revision(&url, revision.as_deref());
+
+    let mut blame_command = Command::new(&executable);
+    blame_command.args(["blame", "--xml"]);
+    if let Some(revision) = revision.as_deref() {
+        blame_command.arg("-r").arg(format!("1:{revision}"));
+    }
+    let blame_output = blame_command
+        .arg("--")
+        .arg(&command_target)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "REPOSITORY_FILE_BLAME_FAILED",
+                "无法读取仓库文件 Blame",
+                Some(format!("执行 `{executable} blame --xml` 失败：{error}")),
+                true,
+            )
+        })?;
+    if !blame_output.status.success() {
+        return Err(NovaError::command(
+            "REPOSITORY_FILE_BLAME_COMMAND_FAILED",
+            "仓库文件 Blame 读取失败",
+            Some(command_error_detail(&executable, "blame", &blame_output)),
+            true,
+        ));
+    }
+
+    let mut content_command = Command::new(&executable);
+    content_command.arg("cat");
+    if let Some(revision) = revision.as_deref() {
+        content_command.args(["-r", revision]);
+    }
+    let content_output = content_command
+        .arg("--")
+        .arg(&command_target)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "REPOSITORY_FILE_BLAME_CAT_FAILED",
+                "无法读取仓库 Blame 对应的文件内容",
+                Some(format!("执行 `{executable} cat` 失败：{error}")),
+                true,
+            )
+        })?;
+    if !content_output.status.success() {
+        return Err(NovaError::command(
+            "REPOSITORY_FILE_BLAME_CAT_COMMAND_FAILED",
+            "仓库 Blame 文件内容读取失败",
+            Some(command_error_detail(&executable, "cat", &content_output)),
+            true,
+        ));
+    }
+
+    let xml = String::from_utf8(blame_output.stdout).map_err(|error| {
+        NovaError::command(
+            "REPOSITORY_FILE_BLAME_XML_ENCODING_INVALID",
+            "解析仓库文件 Blame 失败",
+            Some(format!("svn blame --xml 返回了无效 UTF-8：{error}")),
+            true,
+        )
+    })?;
+    let content = String::from_utf8(content_output.stdout).map_err(|_| {
+        NovaError::command(
+            "REPOSITORY_FILE_BLAME_BINARY_UNSUPPORTED",
+            "该仓库文件不是可显示的 UTF-8 文本",
+            Some("Repository Blame 目前仅支持 UTF-8 文本文件。".to_string()),
+            true,
+        )
+    })?;
+
+    parse_svn_blame_xml(&xml, &content, &url, max_lines)
 }
 
 pub fn get_svn_properties(request: GetSvnPropertiesRequest) -> Result<SvnProperties, NovaError> {
@@ -3415,6 +3504,85 @@ mod tests {
         .expect_err("repository log pagination must remain within snapshot");
 
         assert_command_error_code(error, "REPOSITORY_FILE_LOG_START_AFTER_REVISION");
+    }
+
+    #[test]
+    fn reads_deleted_repository_file_blame_at_revision() {
+        if !svn_test_tools_available() {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-repository-file-blame-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(&root).unwrap();
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        let file = working_copy.join("blame.txt");
+        fs::write(&file, "alpha\nbeta\n").unwrap();
+        run_test_command(Command::new("svn").arg("add").arg(&file));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "blame revision one"]),
+        );
+        fs::write(&file, "alpha\nbeta changed\n").unwrap();
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "blame revision two"]),
+        );
+        run_test_command(Command::new("svn").arg("delete").arg(&file));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "delete blame file at head"]),
+        );
+
+        let file_url = format!("{repository_url}/blame.txt");
+        let blame = get_repository_file_blame(GetRepositoryFileBlameRequest {
+            url: file_url.clone(),
+            revision: Some("2".to_string()),
+            svn_executable: None,
+            max_lines: Some(10),
+        })
+        .expect("historical repository file blame");
+        assert_eq!(blame.target, file_url);
+        assert_eq!(blame.total_lines, 2);
+        assert!(!blame.truncated);
+        assert_eq!(blame.lines[0].revision, "1");
+        assert_eq!(blame.lines[0].content, "alpha");
+        assert_eq!(blame.lines[1].revision, "2");
+        assert_eq!(blame.lines[1].content, "beta changed");
+
+        let truncated = get_repository_file_blame(GetRepositoryFileBlameRequest {
+            url: file_url,
+            revision: Some("2".to_string()),
+            svn_executable: None,
+            max_lines: Some(1),
+        })
+        .expect("truncated repository file blame");
+        assert_eq!(truncated.lines.len(), 1);
+        assert_eq!(truncated.total_lines, 2);
+        assert!(truncated.truncated);
+
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

@@ -27,6 +27,7 @@ import type {
   GetFileContentDiffRequest,
   GetFileDiffRequest,
   GetRepositoryFileLogRequest,
+  GetRepositoryFileBlameRequest,
   GetSvnBlameRequest,
   GetSvnLogRequest,
   GetSvnPropertiesRequest,
@@ -317,6 +318,12 @@ export function setSvnProperty(
   request: SetSvnPropertyRequest,
 ): Promise<SvnProperties> {
   return callBackend<SvnProperties>("set_svn_property", { request });
+}
+
+export function getRepositoryFileBlame(
+  request: GetRepositoryFileBlameRequest,
+): Promise<SvnBlame> {
+  return callBackend<SvnBlame>("get_repository_file_blame", { request });
 }
 
 export function getRepositoryFileLog(

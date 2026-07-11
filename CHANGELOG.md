@@ -39,6 +39,7 @@
 - Repository 目录表明确显示条目类型、Last Revision、作者和日期，并为完整元数据提供 tooltip。
 - Repository 文件可按当前历史 Revision 通过真实 `svn cat` 下载二进制安全的临时副本，并使用系统默认应用打开。
 - Repository 文件可查看当前历史快照之前的 Log，并连续分页加载作者、时间和提交信息。
+- Repository 文件可查看当前历史快照的逐行 Blame，显示每行 Revision、作者、行号和 UTF-8 文本内容。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。

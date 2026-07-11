@@ -37,10 +37,11 @@ use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskW
 use tauri::{Emitter, Manager};
 use workspace::{
     FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest,
-    GetRepositoryFileLogRequest, GetSvnBlameRequest, GetSvnLogRequest, GetSvnPropertiesRequest,
-    IgnoreWorkspacePathRequest, ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace,
-    ScanWorkspaceStatusRequest, SetSvnPropertyRequest, SvnBlame, SvnLog, SvnProperties,
-    WorkingCopyStatus, WorkspaceFileTree, WorkspaceSummary,
+    GetRepositoryFileBlameRequest, GetRepositoryFileLogRequest, GetSvnBlameRequest,
+    GetSvnLogRequest, GetSvnPropertiesRequest, IgnoreWorkspacePathRequest,
+    ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace, ScanWorkspaceStatusRequest,
+    SetSvnPropertyRequest, SvnBlame, SvnLog, SvnProperties, WorkingCopyStatus, WorkspaceFileTree,
+    WorkspaceSummary,
 };
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -774,6 +775,14 @@ fn get_svn_blame(request: GetSvnBlameRequest) -> CommandResult<SvnBlame> {
 }
 
 #[tauri::command]
+fn get_repository_file_blame(request: GetRepositoryFileBlameRequest) -> CommandResult<SvnBlame> {
+    println!("[NovaSVN] get_repository_file_blame command received");
+    Ok(CommandResponse::success(
+        workspace::get_repository_file_blame(request)?,
+    ))
+}
+
+#[tauri::command]
 fn get_svn_properties(request: GetSvnPropertiesRequest) -> CommandResult<SvnProperties> {
     println!("[NovaSVN] get_svn_properties command received");
     Ok(CommandResponse::success(workspace::get_svn_properties(
@@ -901,6 +910,7 @@ pub fn run() {
             get_svn_log,
             get_repository_file_log,
             get_svn_blame,
+            get_repository_file_blame,
             get_svn_properties,
             set_svn_property,
             ignore_workspace_path,

@@ -551,6 +551,19 @@ if (
 }
 
 if (
+  !mainWorkspace.includes("查看仓库文件 ${entry.name} 的 Blame") ||
+  !mainWorkspace.includes('aria-label="仓库文件 Blame"') ||
+  !appSvelte.includes("workspaceStore.loadRepositoryFileBlame({") ||
+  !appStore.includes("function loadRepositoryFileBlame(") ||
+  !workspaceRs.includes("pub fn get_repository_file_blame(") ||
+  !workspaceRs.includes('blame_command.args(["blame", "--xml"])') ||
+  !workspaceRs.includes("parse_svn_blame_xml(&xml, &content, &url, max_lines)")
+) {
+  console.error("Repository 文件 Blame 必须在同一历史 Revision 执行真实 blame 与 cat，并使用独立逐行状态");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||
