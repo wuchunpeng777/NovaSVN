@@ -408,6 +408,43 @@ textarea {
   padding: 8px 12px;
 }
 
+.timeline-filters {
+  flex-wrap: wrap;
+}
+
+.timeline-filters > input[type="search"]:first-of-type {
+  flex: 1 1 240px;
+}
+
+.timeline-filters > input[type="search"]:not(:first-of-type) {
+  flex: 0 1 150px;
+  min-width: 110px;
+}
+
+.timeline-filters > input[type="number"] {
+  flex: 0 0 72px;
+  width: 72px;
+}
+
+.timeline-date-filter {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #586573;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.timeline-date-filter input {
+  width: 132px;
+}
+
+.timeline-filter-error {
+  flex: 1 0 100%;
+  color: #a33b3b;
+  font-size: 12px;
+}
+
 .changes-toolbar {
   flex-wrap: wrap;
 }
@@ -1887,6 +1924,14 @@ textarea {
 
 .versions-workbench[data-theme="dark"] .timeline-day-header span {
   color: #aeb8c2;
+}
+
+.versions-workbench[data-theme="dark"] .timeline-date-filter {
+  color: #aeb8c2;
+}
+
+.versions-workbench[data-theme="dark"] .timeline-filter-error {
+  color: #ffaaa7;
 }
 
 .versions-workbench[data-theme="dark"] .timeline-path-count,

@@ -1300,10 +1300,12 @@
   function filterLogEntries(entries: SvnLog["entries"]) {
     const author = svnLogAuthorFilter.trim().toLowerCase();
     const keyword = svnLogKeywordFilter.trim().toLowerCase();
-    const fromTime = svnLogDateFromFilter ? new Date(svnLogDateFromFilter).getTime() : null;
-    const toTime = svnLogDateToFilter
-      ? new Date(`${svnLogDateToFilter}T23:59:59`).getTime()
-      : null;
+    const fromTime = localDateBoundary(svnLogDateFromFilter);
+    const toDate = localDateBoundary(svnLogDateToFilter);
+    const toExclusive = toDate === null ? null : nextLocalDay(toDate);
+    if (fromTime !== null && toExclusive !== null && fromTime >= toExclusive) {
+      return [];
+    }
 
     return entries.filter((entry) => {
       const entryTime = new Date(entry.date).getTime();
@@ -1320,14 +1322,50 @@
       ) {
         return false;
       }
-      if (fromTime !== null && !Number.isNaN(entryTime) && entryTime < fromTime) {
+      if ((fromTime !== null || toExclusive !== null) && Number.isNaN(entryTime)) {
         return false;
       }
-      if (toTime !== null && !Number.isNaN(entryTime) && entryTime > toTime) {
+      if (fromTime !== null && entryTime < fromTime) {
+        return false;
+      }
+      if (toExclusive !== null && entryTime >= toExclusive) {
         return false;
       }
       return true;
     });
+  }
+
+  function localDateBoundary(value: string) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) {
+      return null;
+    }
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(year, month - 1, day);
+    if (
+      date.getFullYear() !== year ||
+      date.getMonth() !== month - 1 ||
+      date.getDate() !== day
+    ) {
+      return null;
+    }
+    return date.getTime();
+  }
+
+  function nextLocalDay(timestamp: number) {
+    const date = new Date(timestamp);
+    date.setDate(date.getDate() + 1);
+    return date.getTime();
+  }
+
+  function clearTimelineFilters() {
+    onSvnLogFilterInput("svnLogKeywordFilter", "");
+    onSvnLogFilterInput("svnLogAuthorFilter", "");
+    onSvnLogFilterInput("svnLogDateFromFilter", "");
+    onSvnLogFilterInput("svnLogDateToFilter", "");
+    onSvnLogFileOnlyInput(false);
   }
 
   function joinRepositoryUrl(baseUrl: string, name: string) {
@@ -1563,6 +1601,16 @@
   $: tagEntries =
     repositoryLayoutResults.tags?.entries.filter((entry) => entry.kind === "dir") ?? [];
   $: filteredLogEntries = filterLogEntries(svnLog?.entries ?? []);
+  $: svnLogDateRangeInvalid =
+    localDateBoundary(svnLogDateFromFilter) !== null &&
+    localDateBoundary(svnLogDateToFilter) !== null &&
+    localDateBoundary(svnLogDateFromFilter)! > localDateBoundary(svnLogDateToFilter)!;
+  $: timelineHasFilters =
+    !!svnLogKeywordFilter ||
+    !!svnLogAuthorFilter ||
+    !!svnLogDateFromFilter ||
+    !!svnLogDateToFilter ||
+    svnLogFileOnly;
   $: timelineGroups = groupTimelineEntries(filteredLogEntries);
   $: selectedLogEntry =
     filteredLogEntries.find((entry) => entry.revision === selectedLogRevision) ??
@@ -1824,6 +1872,7 @@
         <section class="timeline-filters" aria-label="日志过滤">
           <input
             type="search"
+            aria-label="Timeline 关键字"
             value={svnLogKeywordFilter}
             placeholder="搜索 revision、路径或提交信息"
             on:input={(event) =>
@@ -1834,6 +1883,7 @@
           />
           <input
             type="search"
+            aria-label="Timeline 作者"
             value={svnLogAuthorFilter}
             placeholder="作者"
             on:input={(event) =>
@@ -1842,8 +1892,37 @@
                 (event.currentTarget as HTMLInputElement).value,
               )}
           />
+          <label class="timeline-date-filter">
+            <span>开始</span>
+            <input
+              type="date"
+              value={svnLogDateFromFilter}
+              max={svnLogDateToFilter || undefined}
+              aria-label="Timeline 开始日期"
+              on:input={(event) =>
+                onSvnLogFilterInput(
+                  "svnLogDateFromFilter",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+          </label>
+          <label class="timeline-date-filter">
+            <span>结束</span>
+            <input
+              type="date"
+              value={svnLogDateToFilter}
+              min={svnLogDateFromFilter || undefined}
+              aria-label="Timeline 结束日期"
+              on:input={(event) =>
+                onSvnLogFilterInput(
+                  "svnLogDateToFilter",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+          </label>
           <input
             type="number"
+            aria-label="Timeline 日志数量"
             min="1"
             max="200"
             value={svnLogLimit}
@@ -1859,6 +1938,12 @@
             />
             <span>选中文件</span>
           </label>
+          <button type="button" on:click={clearTimelineFilters} disabled={!timelineHasFilters}>
+            清除过滤
+          </button>
+          {#if svnLogDateRangeInvalid}
+            <span class="timeline-filter-error" role="status">开始日期不能晚于结束日期</span>
+          {/if}
         </section>
         <ErrorNotice error={svnLogError} />
 
@@ -1926,6 +2011,8 @@
               {/each}
             {:else if svnLogLoading}
               <article class="empty-state">正在读取日志</article>
+            {:else if svnLog && svnLog.entries.length > 0}
+              <article class="empty-state">没有符合当前过滤条件的 revision</article>
             {:else}
               <article class="empty-state">点击“读取日志”查看修订历史</article>
             {/if}

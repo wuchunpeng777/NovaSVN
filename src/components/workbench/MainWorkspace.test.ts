@@ -371,6 +371,58 @@ describe("MainWorkspace", () => {
     expect(within(screen.getByLabelText("Revision 比较")).getByText("r10")).toBeInTheDocument();
   });
 
+  it("filters Timeline revisions with inclusive local date controls", async () => {
+    const onSvnLogFilterInput = vi.fn();
+    const onSvnLogFileOnlyInput = vi.fn();
+    const svnLog = {
+      target: "https://svn.example.test/repo/trunk",
+      has_more: false,
+      next_start_revision: null,
+      entries: [
+        makeLogEntry("3", "2026-07-11T23:59:59.900", "alice", "当天末尾"),
+        makeLogEntry("2", "2026-07-10T12:00:00", "bob", "前一天"),
+        makeLogEntry("1", "invalid-date", "carol", "未知日期"),
+      ],
+    };
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.history,
+        workspace: makeWorkspace(),
+        svnLog,
+        onSvnLogFilterInput,
+        onSvnLogFileOnlyInput,
+      },
+    });
+
+    const startInput = screen.getByLabelText("Timeline 开始日期");
+    await fireEvent.input(startInput, { target: { value: "2026-07-11" } });
+    expect(onSvnLogFilterInput).toHaveBeenLastCalledWith(
+      "svnLogDateFromFilter",
+      "2026-07-11",
+    );
+    await rerender({ svnLogDateFromFilter: "2026-07-11" });
+    const timeline = screen.getByLabelText("Revision 列表");
+    expect(within(timeline).getByText("r3")).toBeInTheDocument();
+    expect(within(timeline).queryByText("r2")).not.toBeInTheDocument();
+    expect(within(timeline).queryByText("r1")).not.toBeInTheDocument();
+
+    const endInput = screen.getByLabelText("Timeline 结束日期");
+    await fireEvent.input(endInput, { target: { value: "2026-07-11" } });
+    await rerender({ svnLogDateFromFilter: "2026-07-11", svnLogDateToFilter: "2026-07-11" });
+    expect(within(timeline).getByText("r3")).toBeInTheDocument();
+
+    await rerender({ svnLogDateFromFilter: "2026-07-12", svnLogDateToFilter: "2026-07-11" });
+    expect(screen.getByRole("status")).toHaveTextContent("开始日期不能晚于结束日期");
+    expect(within(timeline).getByText("没有符合当前过滤条件的 revision")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "清除过滤" }));
+    expect(onSvnLogFilterInput).toHaveBeenCalledWith("svnLogKeywordFilter", "");
+    expect(onSvnLogFilterInput).toHaveBeenCalledWith("svnLogAuthorFilter", "");
+    expect(onSvnLogFilterInput).toHaveBeenCalledWith("svnLogDateFromFilter", "");
+    expect(onSvnLogFilterInput).toHaveBeenCalledWith("svnLogDateToFilter", "");
+    expect(onSvnLogFileOnlyInput).toHaveBeenCalledWith(false);
+  });
+
   it("uses current commit targets and excludes unversioned files", async () => {
     const onUnselectCommitFile = vi.fn();
     const onSelectAllCommitFiles = vi.fn();

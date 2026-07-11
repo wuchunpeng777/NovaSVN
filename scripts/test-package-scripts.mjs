@@ -427,6 +427,16 @@ if (
 }
 
 if (
+  !mainWorkspace.includes('aria-label="Timeline 开始日期"') ||
+  !mainWorkspace.includes('aria-label="Timeline 结束日期"') ||
+  !mainWorkspace.includes("nextLocalDay") ||
+  !mainWorkspace.includes("clearTimelineFilters")
+) {
+  console.error("Timeline 必须提供包含结束日全天的日期范围过滤和清除入口");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||
