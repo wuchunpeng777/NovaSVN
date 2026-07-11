@@ -8,6 +8,7 @@
     GitCompareArrows,
     GitCommitHorizontal,
     History,
+    ListChecks,
     LoaderCircle,
     PanelLeftClose,
     PanelLeftOpen,
@@ -88,6 +89,10 @@
   export let repositoryFileBlameRevision: string | null = null;
   export let repositoryFileBlameLoading = false;
   export let repositoryFileBlameError: CommandError | null = null;
+  export let repositoryFileProperties: SvnProperties | null = null;
+  export let repositoryFilePropertiesRevision: string | null = null;
+  export let repositoryFilePropertiesLoading = false;
+  export let repositoryFilePropertiesError: CommandError | null = null;
   export let repositoryLayout = {
     trunkPath: "trunk",
     branchesPath: "branches",
@@ -320,6 +325,8 @@
   export let onCloseRepositoryFileLog: () => void = () => {};
   export let onLoadRepositoryFileBlame: (fileName: string) => void = () => {};
   export let onCloseRepositoryFileBlame: () => void = () => {};
+  export let onLoadRepositoryFileProperties: (fileName: string) => void = () => {};
+  export let onCloseRepositoryFileProperties: () => void = () => {};
   export let onRepositoryLayoutPathInput: (
     kind: "trunk" | "branches" | "tags",
     value: string,
@@ -2535,6 +2542,16 @@
                     >
                       <GitCommitHorizontal size={15} strokeWidth={2} aria-hidden="true" />
                     </button>
+                    <button
+                      type="button"
+                      class="repository-row-action"
+                      aria-label={`查看仓库文件 ${entry.name} 的 Properties`}
+                      title={`查看 ${entry.name} 的 Properties`}
+                      disabled={repositoryFilePropertiesLoading}
+                      on:click={() => onLoadRepositoryFileProperties(entry.name)}
+                    >
+                      <ListChecks size={15} strokeWidth={2} aria-hidden="true" />
+                    </button>
                   </div>
                 {/if}
               </div>
@@ -2640,6 +2657,45 @@
               </div>
             {:else if repositoryFileBlameLoading}
               <article class="empty-state">正在读取文件 Blame</article>
+            {/if}
+          </section>
+        {/if}
+
+        {#if repositoryFileProperties || repositoryFilePropertiesLoading || repositoryFilePropertiesError}
+          <section class="repository-file-properties-panel" aria-label="仓库文件 Properties">
+            <header>
+              <div>
+                <h2>文件 Properties</h2>
+                <code title={repositoryFileProperties?.target}>{repositoryFileProperties?.target ?? "正在读取仓库文件 Properties"}</code>
+                <span>@{repositoryFilePropertiesRevision ? `r${repositoryFilePropertiesRevision}` : "HEAD"}</span>
+              </div>
+              <div class="repository-file-properties-actions">
+                <button
+                  type="button"
+                  class="icon-button"
+                  aria-label="关闭仓库文件 Properties"
+                  title="关闭仓库文件 Properties"
+                  on:click={onCloseRepositoryFileProperties}
+                >
+                  <X size={15} strokeWidth={2} aria-hidden="true" />
+                </button>
+              </div>
+            </header>
+            <ErrorNotice error={repositoryFilePropertiesError} />
+            {#if repositoryFileProperties}
+              <div class="repository-file-properties-list">
+                {#each repositoryFileProperties.properties as property (property.name)}
+                  <article>
+                    <strong>{property.name}</strong>
+                    <pre>{property.value || " "}</pre>
+                  </article>
+                {/each}
+                {#if repositoryFileProperties.properties.length === 0}
+                  <article class="empty-state">当前文件没有显式 Properties</article>
+                {/if}
+              </div>
+            {:else if repositoryFilePropertiesLoading}
+              <article class="empty-state">正在读取文件 Properties</article>
             {/if}
           </section>
         {/if}

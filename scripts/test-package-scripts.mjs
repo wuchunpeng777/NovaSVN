@@ -564,6 +564,21 @@ if (
 }
 
 if (
+  !mainWorkspace.includes("查看仓库文件 ${entry.name} 的 Properties") ||
+  !mainWorkspace.includes('aria-label="仓库文件 Properties"') ||
+  !appSvelte.includes("workspaceStore.loadRepositoryFileProperties({") ||
+  !appStore.includes("function loadRepositoryFileProperties(") ||
+  !frontendApi.includes('callBackend<SvnProperties>("get_repository_file_properties"') ||
+  !tauriLib.includes("get_repository_file_properties,") ||
+  !workspaceRs.includes("pub fn get_repository_file_properties(") ||
+  !workspaceRs.includes('command.args(["proplist", "--xml", "--verbose"])') ||
+  !workspaceRs.includes("repository_url_with_peg_revision(&url")
+) {
+  console.error("Repository 文件 Properties 必须在当前历史 Revision 执行真实 svn proplist，并使用独立只读状态");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||

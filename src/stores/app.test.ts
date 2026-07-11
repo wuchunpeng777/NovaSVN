@@ -14,6 +14,7 @@ vi.mock("../lib/api", () => ({
   getFileDiff: vi.fn(),
   getRepositoryFileBlame: vi.fn(),
   getRepositoryFileLog: vi.fn(),
+  getRepositoryFileProperties: vi.fn(),
   getSvnBlame: vi.fn(),
   getSvnLog: vi.fn(),
   getSvnProperties: vi.fn(),
@@ -45,6 +46,7 @@ import {
   getFileDiff,
   getRepositoryFileBlame,
   getRepositoryFileLog,
+  getRepositoryFileProperties,
   getSvnBlame,
   getSvnLog,
   getSvnProperties,
@@ -98,6 +100,7 @@ const getFileContentDiffMock = vi.mocked(getFileContentDiff);
 const getFileDiffMock = vi.mocked(getFileDiff);
 const getRepositoryFileBlameMock = vi.mocked(getRepositoryFileBlame);
 const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
+const getRepositoryFilePropertiesMock = vi.mocked(getRepositoryFileProperties);
 const getSvnBlameMock = vi.mocked(getSvnBlame);
 const getSvnLogMock = vi.mocked(getSvnLog);
 const getSvnPropertiesMock = vi.mocked(getSvnProperties);
@@ -126,6 +129,7 @@ beforeEach(() => {
   getFileDiffMock.mockReset();
   getRepositoryFileBlameMock.mockReset();
   getRepositoryFileLogMock.mockReset();
+  getRepositoryFilePropertiesMock.mockReset();
   getSvnBlameMock.mockReset();
   getSvnLogMock.mockReset();
   getSvnPropertiesMock.mockReset();
@@ -147,6 +151,7 @@ beforeEach(() => {
   workspaceStore.setSvnLogFileOnly(false);
   workspaceStore.clearRepositoryFileLog();
   workspaceStore.clearRepositoryFileBlame();
+  workspaceStore.clearRepositoryFileProperties();
   workspaceStore.setSvnLogFilter("svnLogAuthorFilter", "");
   workspaceStore.setSvnLogFilter("svnLogKeywordFilter", "");
   workspaceStore.setSvnLogFilter("svnLogDateFromFilter", "");
@@ -1102,6 +1107,79 @@ describe("workspaceStore repository file blame", () => {
 
     expect(get(workspaceStore).repositoryFileBlame).toBeNull();
     expect(get(workspaceStore).repositoryFileLog?.entries[0].message).toBe("log wins");
+  });
+});
+
+describe("workspaceStore repository file properties", () => {
+  it("loads read-only properties at the current repository revision", async () => {
+    const target = "https://example.com/svn/trunk/README.md";
+    getRepositoryFilePropertiesMock.mockResolvedValue({
+      target,
+      properties: [
+        { name: "custom:note", value: "line one\nline two" },
+        { name: "svn:mime-type", value: "text/plain" },
+      ],
+      externals: null,
+    });
+
+    await workspaceStore.loadRepositoryFileProperties({
+      url: target,
+      revision: "10",
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(getRepositoryFilePropertiesMock).toHaveBeenCalledWith({
+      url: target,
+      revision: "10",
+      svn_executable: "C:/svn/svn.exe",
+    });
+    expect(get(workspaceStore)).toMatchObject({
+      repositoryFilePropertiesRevision: "10",
+      repositoryFilePropertiesLoading: false,
+      repositoryFilePropertiesError: null,
+      repositoryFileLog: null,
+      repositoryFileBlame: null,
+    });
+    expect(get(workspaceStore).repositoryFileProperties?.properties[0].value).toBe(
+      "line one\nline two",
+    );
+  });
+
+  it("ignores a stale Properties response after switching to Blame", async () => {
+    const propertiesPending = deferred<SvnProperties>();
+    getRepositoryFilePropertiesMock.mockReturnValue(propertiesPending.promise);
+    getRepositoryFileBlameMock.mockResolvedValue({
+      target: "https://example.com/svn/trunk/README.md",
+      total_lines: 1,
+      truncated: false,
+      lines: [
+        {
+          line_number: 1,
+          revision: "10",
+          author: "dev",
+          date: "2026-07-11T00:00:00Z",
+          content: "blame wins",
+        },
+      ],
+    });
+
+    const propertiesLoading = workspaceStore.loadRepositoryFileProperties({
+      url: "https://example.com/svn/trunk/README.md",
+      revision: "10",
+    });
+    await workspaceStore.loadRepositoryFileBlame({
+      url: "https://example.com/svn/trunk/README.md",
+      revision: "10",
+    });
+    propertiesPending.resolve({
+      target: "https://example.com/svn/trunk/README.md",
+      properties: [{ name: "stale", value: "stale" }],
+      externals: null,
+    });
+    await propertiesLoading;
+
+    expect(get(workspaceStore).repositoryFileProperties).toBeNull();
+    expect(get(workspaceStore).repositoryFileBlame?.lines[0].content).toBe("blame wins");
   });
 });
 

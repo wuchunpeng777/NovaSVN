@@ -556,6 +556,8 @@ describe("MainWorkspace", () => {
     const onCloseRepositoryFileLog = vi.fn();
     const onLoadRepositoryFileBlame = vi.fn();
     const onCloseRepositoryFileBlame = vi.fn();
+    const onLoadRepositoryFileProperties = vi.fn();
+    const onCloseRepositoryFileProperties = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.repository,
@@ -590,6 +592,8 @@ describe("MainWorkspace", () => {
         onCloseRepositoryFileLog,
         onLoadRepositoryFileBlame,
         onCloseRepositoryFileBlame,
+        onLoadRepositoryFileProperties,
+        onCloseRepositoryFileProperties,
       },
     });
 
@@ -627,6 +631,12 @@ describe("MainWorkspace", () => {
     expect(blameButton).toHaveAttribute("title", "查看 README.md 的 Blame");
     await fireEvent.click(blameButton);
     expect(onLoadRepositoryFileBlame).toHaveBeenCalledWith("README.md");
+    const propertiesButton = screen.getByRole("button", {
+      name: "查看仓库文件 README.md 的 Properties",
+    });
+    expect(propertiesButton).toHaveAttribute("title", "查看 README.md 的 Properties");
+    await fireEvent.click(propertiesButton);
+    expect(onLoadRepositoryFileProperties).toHaveBeenCalledWith("README.md");
     await fireEvent.input(revisionInput, { target: { value: "8" } });
     expect(onRepositoryRevisionInput).toHaveBeenCalledWith("8");
     await fireEvent.keyDown(revisionInput, { key: "Enter" });
@@ -697,6 +707,28 @@ describe("MainWorkspace", () => {
       within(blamePanel).getByRole("button", { name: "关闭仓库文件 Blame" }),
     );
     expect(onCloseRepositoryFileBlame).toHaveBeenCalledOnce();
+
+    await rerender({
+      repositoryFileBlame: null,
+      repositoryFileBlameRevision: null,
+      repositoryFilePropertiesRevision: "10",
+      repositoryFileProperties: {
+        target: "https://example.com/svn/trunk/README.md",
+        properties: [
+          { name: "custom:note", value: "line one\nline two" },
+          { name: "svn:mime-type", value: "text/plain" },
+        ],
+        externals: null,
+      },
+    });
+    const propertiesPanel = screen.getByLabelText("仓库文件 Properties");
+    expect(within(propertiesPanel).getByText("custom:note")).toBeInTheDocument();
+    expect(within(propertiesPanel).getByText("line one line two")).toBeInTheDocument();
+    expect(within(propertiesPanel).getByText("text/plain")).toBeInTheDocument();
+    await fireEvent.click(
+      within(propertiesPanel).getByRole("button", { name: "关闭仓库文件 Properties" }),
+    );
+    expect(onCloseRepositoryFileProperties).toHaveBeenCalledOnce();
 
     await rerender({
       repositoryRevisionInput: "",

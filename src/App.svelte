@@ -520,6 +520,18 @@
     });
   }
 
+  function loadRepositoryFileProperties(fileName: string) {
+    const repositoryList = $workspaceStore.repositoryList;
+    if (!repositoryList || !fileName.trim()) {
+      return;
+    }
+    void workspaceStore.loadRepositoryFileProperties({
+      url: joinRepositoryUrl(repositoryList.url, fileName),
+      revision: repositoryList.revision ?? $workspaceStore.repositoryRevisionInput,
+      svnExecutable: currentSvnExecutable(),
+    });
+  }
+
   async function detectRepositoryLayout() {
     const root = ($workspaceStore.repositoryUrlInput || $workspaceStore.current?.repository_root || "")
       .trim()
@@ -1537,6 +1549,10 @@
   repositoryFileBlameRevision={$workspaceStore.repositoryFileBlameRevision}
   repositoryFileBlameLoading={$workspaceStore.repositoryFileBlameLoading}
   repositoryFileBlameError={$workspaceStore.repositoryFileBlameError}
+  repositoryFileProperties={$workspaceStore.repositoryFileProperties}
+  repositoryFilePropertiesRevision={$workspaceStore.repositoryFilePropertiesRevision}
+  repositoryFilePropertiesLoading={$workspaceStore.repositoryFilePropertiesLoading}
+  repositoryFilePropertiesError={$workspaceStore.repositoryFilePropertiesError}
   repositoryLayout={$workspaceStore.repositoryLayout}
   repositoryLayoutResults={$workspaceStore.repositoryLayoutResults}
   repositoryLayoutErrors={$workspaceStore.repositoryLayoutErrors}
@@ -1691,6 +1707,8 @@
   onCloseRepositoryFileLog={workspaceStore.clearRepositoryFileLog}
   onLoadRepositoryFileBlame={loadRepositoryFileBlame}
   onCloseRepositoryFileBlame={workspaceStore.clearRepositoryFileBlame}
+  onLoadRepositoryFileProperties={loadRepositoryFileProperties}
+  onCloseRepositoryFileProperties={workspaceStore.clearRepositoryFileProperties}
   onRepositoryLayoutPathInput={workspaceStore.setRepositoryLayoutPath}
   onDetectRepositoryLayout={detectRepositoryLayout}
   onRepositoryCopyFormInput={workspaceStore.setRepositoryCopyForm}

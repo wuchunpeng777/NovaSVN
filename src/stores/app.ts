@@ -24,6 +24,7 @@ import {
   getBranchPool,
   getRepositoryFileBlame,
   getRepositoryFileLog,
+  getRepositoryFileProperties,
   getSvnBlame,
   getSvnLog,
   getSvnProperties,
@@ -1372,6 +1373,10 @@ export interface WorkspaceStoreState {
   repositoryFileBlame: SvnBlame | null;
   repositoryFileBlameLoading: boolean;
   repositoryFileBlameError: CommandError | null;
+  repositoryFilePropertiesRevision: string | null;
+  repositoryFileProperties: SvnProperties | null;
+  repositoryFilePropertiesLoading: boolean;
+  repositoryFilePropertiesError: CommandError | null;
   repositoryLayout: {
     trunkPath: string;
     branchesPath: string;
@@ -1517,6 +1522,10 @@ const initialWorkspaceState: WorkspaceStoreState = {
   repositoryFileBlame: null,
   repositoryFileBlameLoading: false,
   repositoryFileBlameError: null,
+  repositoryFilePropertiesRevision: null,
+  repositoryFileProperties: null,
+  repositoryFilePropertiesLoading: false,
+  repositoryFilePropertiesError: null,
   repositoryLayout: {
     trunkPath: "trunk",
     branchesPath: "branches",
@@ -1612,6 +1621,7 @@ function createWorkspaceStore() {
   let fileTreeRefreshGeneration = 0;
   let repositoryFileLogGeneration = 0;
   let repositoryFileBlameGeneration = 0;
+  let repositoryFilePropertiesGeneration = 0;
 
   async function loadRecent() {
     update((state) => ({ ...state, loading: true, error: null }));
@@ -1663,6 +1673,10 @@ function createWorkspaceStore() {
         repositoryFileBlame: null,
         repositoryFileBlameLoading: false,
         repositoryFileBlameError: null,
+        repositoryFilePropertiesRevision: null,
+        repositoryFileProperties: null,
+        repositoryFilePropertiesLoading: false,
+        repositoryFilePropertiesError: null,
         repositoryLayoutTasks: emptyRepositoryLayoutTasks(),
         repositoryLayoutResults: emptyRepositoryLayoutResults(),
         repositoryLayoutErrors: emptyRepositoryLayoutErrors(),
@@ -1769,6 +1783,10 @@ function createWorkspaceStore() {
         repositoryFileBlame: null,
         repositoryFileBlameLoading: false,
         repositoryFileBlameError: null,
+        repositoryFilePropertiesRevision: null,
+        repositoryFileProperties: null,
+        repositoryFilePropertiesLoading: false,
+        repositoryFilePropertiesError: null,
         repositoryLayoutTasks: emptyRepositoryLayoutTasks(),
         repositoryLayoutResults: emptyRepositoryLayoutResults(),
         repositoryLayoutErrors: emptyRepositoryLayoutErrors(),
@@ -2467,6 +2485,7 @@ function createWorkspaceStore() {
     if (taskId) {
       repositoryFileLogGeneration += 1;
       repositoryFileBlameGeneration += 1;
+      repositoryFilePropertiesGeneration += 1;
     }
     update((state) => ({
       ...state,
@@ -2482,6 +2501,14 @@ function createWorkspaceStore() {
       repositoryFileBlame: taskId ? null : state.repositoryFileBlame,
       repositoryFileBlameLoading: taskId ? false : state.repositoryFileBlameLoading,
       repositoryFileBlameError: taskId ? null : state.repositoryFileBlameError,
+      repositoryFilePropertiesRevision: taskId
+        ? null
+        : state.repositoryFilePropertiesRevision,
+      repositoryFileProperties: taskId ? null : state.repositoryFileProperties,
+      repositoryFilePropertiesLoading: taskId
+        ? false
+        : state.repositoryFilePropertiesLoading,
+      repositoryFilePropertiesError: taskId ? null : state.repositoryFilePropertiesError,
     }));
   }
 
@@ -2954,6 +2981,7 @@ function createWorkspaceStore() {
   }) {
     const requestGeneration = ++repositoryFileLogGeneration;
     repositoryFileBlameGeneration += 1;
+    repositoryFilePropertiesGeneration += 1;
     const revision = request.revision || null;
     update((state) => ({
       ...state,
@@ -2965,6 +2993,10 @@ function createWorkspaceStore() {
       repositoryFileBlame: null,
       repositoryFileBlameLoading: false,
       repositoryFileBlameError: null,
+      repositoryFilePropertiesRevision: null,
+      repositoryFileProperties: null,
+      repositoryFilePropertiesLoading: false,
+      repositoryFilePropertiesError: null,
     }));
 
     try {
@@ -3050,6 +3082,7 @@ function createWorkspaceStore() {
 
   function clearRepositoryFileLog() {
     repositoryFileLogGeneration += 1;
+    repositoryFilePropertiesGeneration += 1;
     update((state) => ({
       ...state,
       repositoryFileLogRevision: null,
@@ -3066,6 +3099,7 @@ function createWorkspaceStore() {
   }) {
     const requestGeneration = ++repositoryFileBlameGeneration;
     repositoryFileLogGeneration += 1;
+    repositoryFilePropertiesGeneration += 1;
     const revision = request.revision || null;
     update((state) => ({
       ...state,
@@ -3077,6 +3111,10 @@ function createWorkspaceStore() {
       repositoryFileBlame: null,
       repositoryFileBlameLoading: true,
       repositoryFileBlameError: null,
+      repositoryFilePropertiesRevision: null,
+      repositoryFileProperties: null,
+      repositoryFilePropertiesLoading: false,
+      repositoryFilePropertiesError: null,
     }));
 
     try {
@@ -3118,6 +3156,72 @@ function createWorkspaceStore() {
       repositoryFileBlame: null,
       repositoryFileBlameLoading: false,
       repositoryFileBlameError: null,
+    }));
+  }
+
+  async function loadRepositoryFileProperties(request: {
+    url: string;
+    revision?: string | null;
+    svnExecutable?: string | null;
+  }) {
+    const requestGeneration = ++repositoryFilePropertiesGeneration;
+    repositoryFileLogGeneration += 1;
+    repositoryFileBlameGeneration += 1;
+    const revision = request.revision || null;
+    update((state) => ({
+      ...state,
+      repositoryFileLogRevision: null,
+      repositoryFileLog: null,
+      repositoryFileLogLoading: false,
+      repositoryFileLogError: null,
+      repositoryFileBlameRevision: null,
+      repositoryFileBlame: null,
+      repositoryFileBlameLoading: false,
+      repositoryFileBlameError: null,
+      repositoryFilePropertiesRevision: revision,
+      repositoryFileProperties: null,
+      repositoryFilePropertiesLoading: true,
+      repositoryFilePropertiesError: null,
+    }));
+
+    try {
+      const properties = await getRepositoryFileProperties({
+        url: request.url,
+        revision: revision || undefined,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      if (requestGeneration !== repositoryFilePropertiesGeneration) {
+        return null;
+      }
+      update((state) => ({
+        ...state,
+        repositoryFileProperties: properties,
+        repositoryFilePropertiesLoading: false,
+        repositoryFilePropertiesError: null,
+      }));
+      return properties;
+    } catch (error) {
+      if (requestGeneration !== repositoryFilePropertiesGeneration) {
+        return null;
+      }
+      update((state) => ({
+        ...state,
+        repositoryFileProperties: null,
+        repositoryFilePropertiesLoading: false,
+        repositoryFilePropertiesError: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
+  function clearRepositoryFileProperties() {
+    repositoryFilePropertiesGeneration += 1;
+    update((state) => ({
+      ...state,
+      repositoryFilePropertiesRevision: null,
+      repositoryFileProperties: null,
+      repositoryFilePropertiesLoading: false,
+      repositoryFilePropertiesError: null,
     }));
   }
 
@@ -4113,6 +4217,8 @@ function createWorkspaceStore() {
     clearRepositoryFileLog,
     loadRepositoryFileBlame,
     clearRepositoryFileBlame,
+    loadRepositoryFileProperties,
+    clearRepositoryFileProperties,
     setRepositoryLayoutPath,
     markRepositoryLayoutTask,
     applyRepositoryLayoutResult,

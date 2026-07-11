@@ -218,6 +218,13 @@ pub struct GetSvnPropertiesRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct GetRepositoryFilePropertiesRequest {
+    pub url: String,
+    pub revision: Option<String>,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct SetSvnPropertyRequest {
     pub working_copy_root: String,
     pub file_path: Option<String>,
@@ -668,6 +675,52 @@ pub fn get_svn_properties(request: GetSvnPropertiesRequest) -> Result<SvnPropert
         properties,
         externals,
     })
+}
+
+pub fn get_repository_file_properties(
+    request: GetRepositoryFilePropertiesRequest,
+) -> Result<SvnProperties, NovaError> {
+    let url = normalize_repository_url(&request.url)?;
+    let revision = normalize_repository_list_revision(request.revision.as_deref())?;
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let command_target = repository_url_with_peg_revision(&url, revision.as_deref());
+    let mut command = Command::new(&executable);
+    command.args(["proplist", "--xml", "--verbose"]);
+    if let Some(revision) = revision.as_deref() {
+        command.args(["-r", revision]);
+    }
+    let output = command
+        .arg("--")
+        .arg(command_target)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "REPOSITORY_FILE_PROPERTIES_FAILED",
+                "无法读取仓库文件 Properties",
+                Some(format!(
+                    "执行 `{executable} proplist --xml --verbose` 失败：{error}"
+                )),
+                true,
+            )
+        })?;
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "REPOSITORY_FILE_PROPERTIES_COMMAND_FAILED",
+            "仓库文件 Properties 读取失败",
+            Some(command_error_detail(&executable, "proplist", &output)),
+            true,
+        ));
+    }
+
+    let xml = String::from_utf8(output.stdout).map_err(|error| {
+        NovaError::command(
+            "REPOSITORY_FILE_PROPERTIES_XML_ENCODING_INVALID",
+            "解析仓库文件 Properties 失败",
+            Some(format!("svn proplist --xml 返回了无效 UTF-8：{error}")),
+            true,
+        )
+    })?;
+    parse_repository_properties_xml(&xml, &url)
 }
 
 pub fn set_svn_property(request: SetSvnPropertyRequest) -> Result<SvnProperties, NovaError> {
@@ -3020,6 +3073,44 @@ fn parse_svn_property_names(xml: &str) -> Result<Vec<String>, NovaError> {
         .collect())
 }
 
+fn parse_repository_properties_xml(xml: &str, target: &str) -> Result<SvnProperties, NovaError> {
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "REPOSITORY_FILE_PROPERTIES_XML_PARSE_FAILED",
+            "解析仓库文件 Properties 失败",
+            Some(format!(
+                "svn proplist --xml --verbose 返回了无法解析的 XML：{error}"
+            )),
+            true,
+        )
+    })?;
+    let mut properties = document
+        .descendants()
+        .filter(|node| node.has_tag_name("property"))
+        .filter_map(|node| {
+            let name = node.attribute("name")?.to_string();
+            let raw_value = node.text().unwrap_or_default();
+            let value = if node.attribute("encoding") == Some("base64") {
+                format!("[base64] {raw_value}")
+            } else {
+                raw_value.to_string()
+            };
+            Some(SvnProperty { name, value })
+        })
+        .collect::<Vec<_>>();
+    properties.sort_by(|left, right| left.name.cmp(&right.name));
+    let externals = properties
+        .iter()
+        .find(|property| property.name == "svn:externals")
+        .map(|property| property.value.clone());
+
+    Ok(SvnProperties {
+        target: target.to_string(),
+        properties,
+        externals,
+    })
+}
+
 fn get_svn_property_value(
     executable: &str,
     root: &Path,
@@ -3583,6 +3674,111 @@ mod tests {
         assert!(truncated.truncated);
 
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn reads_deleted_repository_file_properties_at_revision() {
+        if !svn_test_tools_available() {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-repository-file-properties-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(&root).unwrap();
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        let file = working_copy.join("properties.txt");
+        fs::write(&file, "content\n").unwrap();
+        run_test_command(Command::new("svn").arg("add").arg(&file));
+        run_test_command(
+            Command::new("svn")
+                .args(["propset", "custom:note", "revision one"])
+                .arg(&file),
+        );
+        run_test_command(
+            Command::new("svn")
+                .args(["propset", "svn:mime-type", "text/plain"])
+                .arg(&file),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "properties revision one"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .args(["propset", "custom:note", "revision two"])
+                .arg(&file),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "properties revision two"]),
+        );
+        run_test_command(Command::new("svn").arg("delete").arg(&file));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "delete properties file at head"]),
+        );
+
+        let file_url = format!("{repository_url}/properties.txt");
+        let revision_one = get_repository_file_properties(GetRepositoryFilePropertiesRequest {
+            url: file_url.clone(),
+            revision: Some("1".to_string()),
+            svn_executable: None,
+        })
+        .expect("repository file properties revision one");
+        assert_eq!(revision_one.target, file_url);
+        assert_eq!(revision_one.properties.len(), 2);
+        assert_eq!(revision_one.properties[0].name, "custom:note");
+        assert_eq!(revision_one.properties[0].value, "revision one");
+        assert_eq!(revision_one.properties[1].name, "svn:mime-type");
+        assert_eq!(revision_one.properties[1].value, "text/plain");
+
+        let revision_two = get_repository_file_properties(GetRepositoryFilePropertiesRequest {
+            url: file_url,
+            revision: Some("2".to_string()),
+            svn_executable: None,
+        })
+        .expect("repository file properties revision two");
+        assert_eq!(revision_two.properties[0].value, "revision two");
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn parses_repository_properties_values_and_base64_marker() {
+        let xml = r#"<properties><target path="https://example.com/file.txt">
+<property name="custom:multiline">line one&#13;
+line two</property>
+<property name="custom:binary" encoding="base64">AAEC</property>
+</target></properties>"#;
+
+        let result = parse_repository_properties_xml(xml, "https://example.com/svn/trunk/file.txt")
+            .expect("repository properties parse");
+
+        assert_eq!(result.properties[0].name, "custom:binary");
+        assert_eq!(result.properties[0].value, "[base64] AAEC");
+        assert_eq!(result.properties[1].name, "custom:multiline");
+        assert_eq!(result.properties[1].value, "line one\r\nline two");
     }
 
     #[test]
