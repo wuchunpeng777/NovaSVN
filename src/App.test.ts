@@ -153,6 +153,100 @@ describe("App SVN operation completion", () => {
       "SVN_OPERATION_TASK_MISSING",
     );
   });
+
+  it("选中其他任务时仍按 pending id 完成 Commit", async () => {
+    const pendingSummary = makeTaskSummary({
+      task_id: "pending-commit",
+      status: "success",
+    });
+    const pendingTask = makeTask({ task_id: "pending-commit", status: "success" });
+    const selectedTask = makeTask({ task_id: "other-task", status: "running" });
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([selectedTask, pendingSummary], "other-task"),
+    );
+    getTaskMock.mockImplementation(async (taskId) =>
+      taskId === "pending-commit" ? pendingTask : selectedTask,
+    );
+    await taskStore.select("other-task");
+    render(App);
+
+    workspaceStore.markCommitTask("pending-commit");
+
+    await waitFor(() => {
+      expect(get(workspaceStore).pendingCommitTaskId).toBeNull();
+    });
+    expect(get(taskStore).selectedTask?.task_id).toBe("other-task");
+    expect(getTaskMock).toHaveBeenCalledWith("pending-commit");
+  });
+
+  it("选中其他任务时仍应用 Repository List 完整结果", async () => {
+    const pendingSummary = makeTaskSummary({
+      task_id: "repository-list",
+      status: "success",
+    });
+    const pendingTask = makeTask({
+      task_id: "repository-list",
+      status: "success",
+      result: {
+        repository_list: {
+          url: "https://example.com/svn/trunk/src",
+          entries: [],
+        },
+        revision_diff: null,
+        merge_result: null,
+        apply_patch_result: null,
+      },
+    });
+    const selectedTask = makeTask({ task_id: "other-task", status: "running" });
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([selectedTask, pendingSummary], "other-task"),
+    );
+    getTaskMock.mockImplementation(async (taskId) =>
+      taskId === "repository-list" ? pendingTask : selectedTask,
+    );
+    await taskStore.select("other-task");
+    render(App);
+
+    workspaceStore.markRepositoryListTask(
+      "repository-list",
+      "https://example.com/svn/trunk/src",
+    );
+
+    await waitFor(() => {
+      expect(get(workspaceStore).pendingRepositoryListTaskId).toBeNull();
+    });
+    expect(get(workspaceStore).repositoryList?.url).toBe(
+      "https://example.com/svn/trunk/src",
+    );
+  });
+
+  it("按 pending id 处理取消的 Merge", async () => {
+    const pendingSummary = makeTaskSummary({
+      task_id: "merge-task",
+      status: "cancelled",
+    });
+    const pendingTask = makeTask({
+      task_id: "merge-task",
+      status: "cancelled",
+      error: "用户取消 Merge",
+    });
+    const selectedTask = makeTask({ task_id: "other-task", status: "running" });
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([selectedTask, pendingSummary], "other-task"),
+    );
+    getTaskMock.mockImplementation(async (taskId) =>
+      taskId === "merge-task" ? pendingTask : selectedTask,
+    );
+    await taskStore.select("other-task");
+    render(App);
+
+    workspaceStore.markMergeTask("merge-task");
+
+    await waitFor(() => {
+      expect(get(workspaceStore).pendingMergeTaskId).toBeNull();
+    });
+    expect(get(workspaceStore).mergeError).toBe("用户取消 Merge");
+  });
 });
 
 function makeWorkspace(): WorkspaceSummary {

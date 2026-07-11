@@ -14,6 +14,7 @@
     consumePendingSvnOperationCompletion,
     createSvnOperationCreationCoordinator,
   } from "./lib/svn-operation-completion";
+  import { createPendingTaskCompletionCoordinator } from "./lib/pending-task-completion";
   import { workbenchViews } from "./lib/workbench";
   import {
     appSettingsStore,
@@ -32,6 +33,8 @@
     ExternalToolKind,
     HealthPayload,
     SvnOperationKind,
+    Task,
+    TaskSnapshot,
     WorkingCopyStatus,
   } from "./types/api";
 
@@ -42,6 +45,7 @@
   const applyPatchTaskChecks = new Set<string>();
   const missingSvnOperationTaskChecks = new Set<string>();
   const svnOperationCreationCoordinator = createSvnOperationCreationCoordinator();
+  const pendingTaskCompletionCoordinator = createPendingTaskCompletionCoordinator();
 
   $: activeView = workbenchViews[$currentView];
   $: selectedFile =
@@ -819,48 +823,49 @@
     }
   }
 
-  $: if (
-    $workspaceStore.pendingCommitTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
-    $taskStore.selectedTask.status === "success"
+  function consumePendingTask(
+    taskId: string | null,
+    snapshot: TaskSnapshot,
+    handleTask: (task: Task) => void | Promise<void>,
   ) {
-    const committedPaths = $workspaceStore.commitFiles.map((file) => file.path);
-    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
-    workspaceStore.clearCommittedFiles(committedPaths);
-    if (workingCopyRoot) {
-      void refreshStatusAndSyncBranchPool(workingCopyRoot);
-    }
+    void pendingTaskCompletionCoordinator.consume(
+      taskId,
+      snapshot,
+      (pendingTaskId) => taskStore.getTaskById(pendingTaskId),
+      handleTask,
+    );
   }
 
-  $: if (
-    $workspaceStore.pendingCommitTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingCommitTaskId &&
-    ($taskStore.selectedTask.status === "failed" ||
-      $taskStore.selectedTask.status === "cancelled")
-  ) {
+  $: consumePendingTask($workspaceStore.pendingCommitTaskId, $taskStore.snapshot, (task) => {
+    if (task.status === "success") {
+      const committedPaths = $workspaceStore.commitFiles.map((file) => file.path);
+      const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+      workspaceStore.clearCommittedFiles(committedPaths);
+      if (workingCopyRoot) {
+        void refreshStatusAndSyncBranchPool(workingCopyRoot);
+      }
+      return;
+    }
+
     workspaceStore.markCommitTask(null);
-  }
+  });
 
-  $: if (
-    $workspaceStore.pendingPartialCommitTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingPartialCommitTaskId &&
-    $taskStore.selectedTask.status === "success"
-  ) {
-    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
-    workspaceStore.completePartialCommit();
-    if (workingCopyRoot) {
-      void refreshStatusAndSyncBranchPool(workingCopyRoot);
-    }
-  }
+  $: consumePendingTask(
+    $workspaceStore.pendingPartialCommitTaskId,
+    $taskStore.snapshot,
+    (task) => {
+      if (task.status === "success") {
+        const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+        workspaceStore.completePartialCommit();
+        if (workingCopyRoot) {
+          void refreshStatusAndSyncBranchPool(workingCopyRoot);
+        }
+        return;
+      }
 
-  $: if (
-    $workspaceStore.pendingPartialCommitTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingPartialCommitTaskId &&
-    ($taskStore.selectedTask.status === "failed" ||
-      $taskStore.selectedTask.status === "cancelled")
-  ) {
-    workspaceStore.markPartialCommitTask(null);
-  }
+      workspaceStore.markPartialCommitTask(null);
+    },
+  );
 
   $: consumePendingSvnOperationCompletion(
     $workspaceStore.pendingSvnOperationTaskId,
@@ -909,110 +914,95 @@
     void checkMissingSvnOperationTask($workspaceStore.pendingSvnOperationTaskId);
   }
 
-  $: if (
-    $workspaceStore.pendingRepositoryListTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingRepositoryListTaskId &&
-    $taskStore.selectedTask.status === "success"
-  ) {
-    const result = $taskStore.selectedTask.result?.repository_list;
-    if (result) {
-      workspaceStore.applyRepositoryListResult(result);
-    } else {
-      workspaceStore.failRepositoryList("仓库目录任务没有返回结果");
-    }
-  }
+  $: consumePendingTask(
+    $workspaceStore.pendingRepositoryListTaskId,
+    $taskStore.snapshot,
+    (task) => {
+      if (task.status !== "success") {
+        workspaceStore.failRepositoryList(task.error ?? "仓库目录加载失败");
+        return;
+      }
 
-  $: if (
-    $workspaceStore.pendingRepositoryListTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingRepositoryListTaskId &&
-    ($taskStore.selectedTask.status === "failed" ||
-      $taskStore.selectedTask.status === "cancelled")
-  ) {
-    workspaceStore.failRepositoryList($taskStore.selectedTask.error ?? "仓库目录加载失败");
-  }
+      const result = task.result?.repository_list;
+      if (result) {
+        workspaceStore.applyRepositoryListResult(result);
+      } else {
+        workspaceStore.failRepositoryList("仓库目录任务没有返回结果");
+      }
+    },
+  );
 
-  $: if (
-    $workspaceStore.pendingRepositoryCopyTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingRepositoryCopyTaskId &&
-    $taskStore.selectedTask.status === "success"
-  ) {
-    workspaceStore.completeRepositoryCopyTask();
-  }
+  $: consumePendingTask(
+    $workspaceStore.pendingRepositoryCopyTaskId,
+    $taskStore.snapshot,
+    (task) => {
+      if (task.status === "success") {
+        workspaceStore.completeRepositoryCopyTask();
+      } else {
+        workspaceStore.failRepositoryCopyTask(task.error ?? "创建分支或标签失败");
+      }
+    },
+  );
 
-  $: if (
-    $workspaceStore.pendingRepositoryCopyTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingRepositoryCopyTaskId &&
-    ($taskStore.selectedTask.status === "failed" ||
-      $taskStore.selectedTask.status === "cancelled")
-  ) {
-    workspaceStore.failRepositoryCopyTask($taskStore.selectedTask.error ?? "创建分支或标签失败");
-  }
+  $: consumePendingTask(
+    $branchPoolStore.pendingCheckoutTaskId,
+    $taskStore.snapshot,
+    (task) => {
+      if (task.status === "success") {
+        void branchPoolStore.completeCheckoutTask();
+      } else {
+        branchPoolStore.failCheckoutTask(task.error ?? "分支 checkout 失败");
+      }
+    },
+  );
 
-  $: if (
-    $branchPoolStore.pendingCheckoutTaskId &&
-    $taskStore.selectedTask?.task_id === $branchPoolStore.pendingCheckoutTaskId &&
-    $taskStore.selectedTask.status === "success"
-  ) {
-    void branchPoolStore.completeCheckoutTask();
-  }
+  $: consumePendingTask(
+    $workspaceStore.pendingSvnSwitchTaskId,
+    $taskStore.snapshot,
+    (task) => {
+      if (task.status === "success") {
+        workspaceStore.markSvnSwitchTask(null);
+        void workspaceStore.openPath(currentSvnExecutable());
+      } else {
+        workspaceStore.failSvnSwitchTask(task.error ?? "svn switch 失败");
+      }
+    },
+  );
 
-  $: if (
-    $branchPoolStore.pendingCheckoutTaskId &&
-    $taskStore.selectedTask?.task_id === $branchPoolStore.pendingCheckoutTaskId &&
-    ($taskStore.selectedTask.status === "failed" ||
-      $taskStore.selectedTask.status === "cancelled")
-  ) {
-    branchPoolStore.failCheckoutTask($taskStore.selectedTask.error ?? "分支 checkout 失败");
-  }
+  $: consumePendingTask(
+    $workspaceStore.pendingRevisionDiffTaskId,
+    $taskStore.snapshot,
+    (task) => {
+      if (task.status !== "success") {
+        workspaceStore.failRevisionDiffTask(task.error ?? "Revision diff 失败");
+        return;
+      }
 
-  $: if (
-    $workspaceStore.pendingSvnSwitchTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingSvnSwitchTaskId &&
-    $taskStore.selectedTask.status === "success"
-  ) {
-    workspaceStore.markSvnSwitchTask(null);
-    void workspaceStore.openPath(currentSvnExecutable());
-  }
+      const result = task.result?.revision_diff;
+      if (result) {
+        workspaceStore.applyRevisionDiffResult(result);
+      } else {
+        workspaceStore.failRevisionDiffTask("Revision diff 任务没有返回结果");
+      }
+    },
+  );
 
-  $: if (
-    $workspaceStore.pendingSvnSwitchTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingSvnSwitchTaskId &&
-    ($taskStore.selectedTask.status === "failed" ||
-      $taskStore.selectedTask.status === "cancelled")
-  ) {
-    workspaceStore.failSvnSwitchTask($taskStore.selectedTask.error ?? "svn switch 失败");
-  }
+  $: consumePendingTask(
+    $workspaceStore.pendingMergeTaskId,
+    $taskStore.snapshot,
+    (task) => {
+      if (task.status !== "success") {
+        workspaceStore.failMergeTask(task.error ?? "Merge 执行失败");
+        return;
+      }
 
-  $: if (
-    $workspaceStore.pendingRevisionDiffTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingRevisionDiffTaskId &&
-    $taskStore.selectedTask.status === "success"
-  ) {
-    const result = $taskStore.selectedTask.result?.revision_diff;
-    if (result) {
-      workspaceStore.applyRevisionDiffResult(result);
-    } else {
-      workspaceStore.failRevisionDiffTask("Revision diff 任务没有返回结果");
-    }
-  }
+      const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+      const mergeResult = task.result?.merge_result;
+      if (!mergeResult) {
+        workspaceStore.failMergeTask("Merge 任务没有返回结果");
+        return;
+      }
 
-  $: if (
-    $workspaceStore.pendingRevisionDiffTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingRevisionDiffTaskId &&
-    ($taskStore.selectedTask.status === "failed" ||
-      $taskStore.selectedTask.status === "cancelled")
-  ) {
-    workspaceStore.failRevisionDiffTask($taskStore.selectedTask.error ?? "Revision diff 失败");
-  }
-
-  $: if (
-    $workspaceStore.pendingMergeTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingMergeTaskId &&
-    $taskStore.selectedTask.status === "success"
-  ) {
-    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
-    const mergeResult = $taskStore.selectedTask.result?.merge_result;
-    if (mergeResult) {
       workspaceStore.completeMergeTask(mergeResult);
       if (workingCopyRoot && !mergeResult.dry_run) {
         void refreshStatusAndSyncBranchPool(workingCopyRoot).then((status) => {
@@ -1022,19 +1012,8 @@
           }
         });
       }
-    } else {
-      workspaceStore.failMergeTask("Merge 任务没有返回结果");
-    }
-  }
-
-  $: if (
-    $workspaceStore.pendingMergeTaskId &&
-    $taskStore.selectedTask?.task_id === $workspaceStore.pendingMergeTaskId &&
-    ($taskStore.selectedTask.status === "failed" ||
-      $taskStore.selectedTask.status === "cancelled")
-  ) {
-    workspaceStore.failMergeTask($taskStore.selectedTask.error ?? "Merge 执行失败");
-  }
+    },
+  );
 
   async function checkApplyPatchTask(taskId: string) {
     if (applyPatchTaskChecks.has(taskId)) {

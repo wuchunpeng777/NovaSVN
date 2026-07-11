@@ -24,6 +24,7 @@
 - 普通 SVN 操作完成状态改为按 pending task id 处理，切换当前任务或工作副本不再丢失完成监听。
 - 隔离并发的工作副本打开、状态扫描和文件树刷新请求，避免旧请求覆盖新工作副本。
 - 后端重启导致 pending 任务消失时解除操作锁定并提示用户刷新重试。
+- Commit、Partial Commit、Repository、Checkout、Switch、Revision Diff 和 Merge 完成状态不再依赖任务面板当前选中项。
 
 ### 发布
 
