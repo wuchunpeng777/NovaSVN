@@ -6,7 +6,7 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 
 - Type: 跨平台桌面应用。
 - Product: NovaSVN 是一个现代化、高性能、跨平台的完整 SVN 客户端。
-- Goals: 提供完整 SVN 能力、现代化 UI、Git-like 虚拟暂存区、部分提交、多工作副本分支池和大型工作副本优化体验。
+- Goals: 提供完整 SVN 能力、现代化 UI、本次提交目标选择、部分提交、多工作副本分支池和大型工作副本优化体验；不实现 Git 式暂存区。
 
 ## Tech Stack
 
@@ -51,9 +51,9 @@ This file stores durable project knowledge for xflow. Update it with `/xflow:lea
 - Virtual Row Height: 虚拟列表文件行高度固定为 76px，文件行内部视觉高度为 68px；后续修改行高时必须同步虚拟高度常量和 CSS。
 - Virtual Selection: 文件选择状态仍由 `workspaceStore.selectedFilePath` 管理；列表方向键上下选择只移动当前过滤后可见文件，并滚动选中项到可见区域。
 - Selected File: 当前选中文件路径保存在 `workspaceStore.selectedFilePath`，右侧详情区展示选中文件摘要，后续 diff 可复用该选择状态。
-- Virtual Staging: 文件级虚拟暂存由 `workspaceStore.stagedFiles` 保存在前端运行内存中，只记录文件路径和状态，不持久化，也不修改真实 SVN 工作副本或 `.svn` 元数据。
-- Staging Rules: `missing`、`conflicted`、`obstructed` 默认不可暂存；状态刷新后会移除不存在、状态变化或变为不可暂存的 staged 文件。
-- Staging UI: 主工作区列表分为“已暂存”和“未暂存”分区，文件行支持选择、暂存和取消暂存；底部提交区显示已暂存摘要、提交信息输入、校验提示和提交按钮。
+- Commit Targets: `workspaceStore.stagedFiles` 是遗留命名，实际语义仅为当前一次提交的目标选择；状态只保存在前端运行内存，不持久化，也不修改真实 SVN 工作副本或 `.svn` 元数据。
+- Commit Target Rules: `missing`、`conflicted`、`obstructed` 默认不能作为提交目标；状态刷新后会移除不存在、状态变化或变为不可提交的目标。
+- Commit Target UI: 文件勾选只切换当前提交目标；底部提交区显示目标摘要、提交信息输入、校验提示和提交按钮，不使用 Git 式暂存区语义。
 - Commit Task: 文件级提交通过 `create_commit_task` 创建后端任务，由 `src-tauri/src/task.rs` 的任务队列执行 `svn commit <staged paths> -m <message>`，stdout/stderr 写入底部任务日志。
 - Commit State: 提交信息、提交错误和待完成提交任务 ID 保存在 `workspaceStore`；提交成功后刷新状态并清空已提交 staged 文件和提交信息，提交失败保留 staged 文件和提交信息。
 - SVN Operation Task: `create_svn_operation_task` 创建 update、cleanup 和单文件 revert 任务，由后端任务队列执行对应 SVN 命令并记录 stdout/stderr。
