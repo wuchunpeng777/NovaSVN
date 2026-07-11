@@ -371,6 +371,83 @@ describe("MainWorkspace", () => {
     expect(within(screen.getByLabelText("Revision 比较")).getByText("r10")).toBeInTheDocument();
   });
 
+  it("selects, orders, preserves, and compares two Timeline revisions", async () => {
+    const onPrepareRevisionDiffRange = vi.fn(() => true);
+    const onRunRevisionDiff = vi.fn();
+    const initialLog = {
+      target: "https://svn.example.test/repo/trunk",
+      has_more: true,
+      next_start_revision: "9",
+      entries: [
+        makeLogEntry("12", "2026-07-11T12:00:00", "alice", "newest"),
+        makeLogEntry("11", "2026-07-11T11:00:00", "alice", "middle"),
+        makeLogEntry("10", "2026-07-11T10:00:00", "alice", "oldest"),
+      ],
+    };
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.history,
+        workspace: makeWorkspace(),
+        svnLog: initialLog,
+        onPrepareRevisionDiffRange,
+        onRunRevisionDiff,
+      },
+    });
+
+    const revision12 = screen.getByRole("checkbox", { name: "选择 r12 进行比较" });
+    const revision11 = screen.getByRole("checkbox", { name: "选择 r11 进行比较" });
+    const revision10 = screen.getByRole("checkbox", { name: "选择 r10 进行比较" });
+    await fireEvent.click(revision12);
+    expect(screen.getByRole("toolbar", { name: "Revision 比较选择" })).toHaveTextContent(
+      "已选择 r12",
+    );
+    await fireEvent.click(revision10);
+
+    const selectionToolbar = screen.getByRole("toolbar", { name: "Revision 比较选择" });
+    expect(selectionToolbar).toHaveTextContent("r10 → r12");
+    expect(revision11).toBeDisabled();
+    expect(onPrepareRevisionDiffRange).toHaveBeenLastCalledWith("10", "12");
+
+    await fireEvent.click(revision12);
+    expect(revision11).toBeEnabled();
+    await fireEvent.click(revision11);
+    expect(selectionToolbar).toHaveTextContent("r10 → r11");
+    await fireEvent.click(
+      within(selectionToolbar).getByRole("button", { name: "比较选中 Revision" }),
+    );
+    expect(onPrepareRevisionDiffRange).toHaveBeenLastCalledWith("10", "11");
+    expect(onRunRevisionDiff).toHaveBeenCalledOnce();
+
+    await rerender({
+      svnLog: {
+        ...initialLog,
+        has_more: false,
+        next_start_revision: null,
+        entries: [...initialLog.entries, makeLogEntry("9", "2026-07-10T09:00:00", "bob", "more")],
+      },
+    });
+    expect(screen.getByRole("checkbox", { name: "选择 r10 进行比较" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "选择 r11 进行比较" })).toBeChecked();
+
+    await rerender({
+      svnLog: {
+        ...initialLog,
+        has_more: false,
+        next_start_revision: null,
+        entries: initialLog.entries.filter((entry) => entry.revision !== "10"),
+      },
+    });
+    await waitFor(() => expect(selectionToolbar).toHaveTextContent("已选择 r11"));
+    expect(
+      within(selectionToolbar).getByRole("button", { name: "比较选中 Revision" }),
+    ).toBeDisabled();
+
+    await fireEvent.click(
+      within(selectionToolbar).getByRole("button", { name: "清除 Revision 比较选择" }),
+    );
+    expect(screen.queryByRole("toolbar", { name: "Revision 比较选择" })).not.toBeInTheDocument();
+  });
+
   it("filters Timeline revisions with inclusive local date controls", async () => {
     const onSvnLogFilterInput = vi.fn();
     const onSvnLogFileOnlyInput = vi.fn();

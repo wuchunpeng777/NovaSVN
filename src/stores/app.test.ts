@@ -1013,6 +1013,25 @@ describe("revision path targets", () => {
       targetUrl: "https://example.com/svn/trunk/first.txt",
     });
   });
+
+  it("prepares and validates a two-revision comparison range", () => {
+    expect(workspaceStore.prepareRevisionDiffRange("10", "12")).toBe(true);
+    expect(get(workspaceStore)).toMatchObject({
+      revisionDiffForm: {
+        mode: "revisions",
+        targetUrl: "",
+        leftRevision: "10",
+        rightRevision: "12",
+      },
+      revisionDiffError: null,
+    });
+
+    expect(workspaceStore.prepareRevisionDiffRange("10", "10")).toBe(false);
+    expect(get(workspaceStore).revisionDiffError).toBe("请选择两个不同的 revision");
+
+    expect(workspaceStore.prepareRevisionDiffRange("revision-10", "12")).toBe(false);
+    expect(get(workspaceStore).revisionDiffError).toBe("请选择两个有效的数字 revision");
+  });
 });
 
 describe("workspaceStore SVN operation state", () => {

@@ -447,6 +447,19 @@ if (
 }
 
 if (
+  !mainWorkspace.includes("selectedComparisonRevisions") ||
+  !mainWorkspace.includes('aria-label="Revision 比较选择"') ||
+  !mainWorkspace.includes('class="timeline-entry-summary"') ||
+  !mainWorkspace.includes("onPrepareRevisionDiffRange(range[0], range[1])") ||
+  !mainWorkspace.includes("onRunRevisionDiff()") ||
+  !appStore.includes("function prepareRevisionDiffRange(") ||
+  !appSvelte.includes("onPrepareRevisionDiffRange={workspaceStore.prepareRevisionDiffRange}")
+) {
+  console.error("Timeline 双 Revision 选择必须准备有序范围并执行真实 Revision Diff 任务");
+  failed = true;
+}
+
+if (
   !workspaceRs.includes('node.has_tag_name("repos-status")') ||
   !workspaceRs.includes('node.has_tag_name("against")') ||
   !workspaceRs.includes("pub enum ChangeScope") ||

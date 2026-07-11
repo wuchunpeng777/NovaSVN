@@ -1558,6 +1558,7 @@
   onRevisionDiffFormInput={workspaceStore.setRevisionDiffForm}
   onRunRevisionDiff={runRevisionDiff}
   onPrepareRevisionDiffFromLog={workspaceStore.prepareRevisionDiffFromLog}
+  onPrepareRevisionDiffRange={workspaceStore.prepareRevisionDiffRange}
   onExportRevisionDiffPatch={workspaceStore.exportRevisionDiffPatch}
   onCommitMessageInput={workspaceStore.setCommitMessage}
   onCommitTemplateInput={workspaceStore.setCommitTemplate}

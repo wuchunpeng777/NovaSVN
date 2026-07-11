@@ -3473,6 +3473,37 @@ function createWorkspaceStore() {
     return prepared;
   }
 
+  function prepareRevisionDiffRange(leftRevision: string, rightRevision: string) {
+    const left = leftRevision.trim();
+    const right = rightRevision.trim();
+    if (!/^\d+$/.test(left) || !/^\d+$/.test(right)) {
+      update((state) => ({
+        ...state,
+        revisionDiffError: "请选择两个有效的数字 revision",
+      }));
+      return false;
+    }
+    if (left === right) {
+      update((state) => ({
+        ...state,
+        revisionDiffError: "请选择两个不同的 revision",
+      }));
+      return false;
+    }
+    update((state) => ({
+      ...state,
+      revisionDiffForm: {
+        ...state.revisionDiffForm,
+        mode: "revisions",
+        targetUrl: "",
+        leftRevision: left,
+        rightRevision: right,
+      },
+      revisionDiffError: null,
+    }));
+    return true;
+  }
+
   function markRevisionDiffTask(taskId: string | null) {
     update((state) => ({
       ...state,
@@ -3736,6 +3767,7 @@ function createWorkspaceStore() {
     setSvnLogLimit,
     setRevisionDiffForm,
     prepareRevisionDiffFromLog,
+    prepareRevisionDiffRange,
     markRevisionDiffTask,
     applyRevisionDiffResult,
     failRevisionDiffTask,

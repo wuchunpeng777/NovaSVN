@@ -11,6 +11,7 @@
     PanelRightOpen,
     RefreshCw,
     Wrench,
+    X,
   } from "@lucide/svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
@@ -330,6 +331,10 @@
     revision: string,
     repositoryPath?: string,
   ) => boolean = () => false;
+  export let onPrepareRevisionDiffRange: (
+    leftRevision: string,
+    rightRevision: string,
+  ) => boolean = () => false;
   export let onExportRevisionDiffPatch: () => void = () => {};
 
   export let onCommitMessageInput: (value: string) => void = () => {};
@@ -415,6 +420,7 @@
   let workingCopyTreeFilter: WorkingCopyTreeFilter = "all";
   let selectedLogRevision: string | null = null;
   let expandedTimelineRevisions = new Set<string>();
+  let selectedComparisonRevisions: string[] = [];
   let collapsedTreePaths = new Set<string>();
   let openRowMenuPath: string | null = null;
   let selectedRowPaths = new Set<string>();
@@ -1438,6 +1444,50 @@
     onPrepareRevisionDiffFromLog(revision);
   }
 
+  function sortComparisonRevisions(revisions: string[]) {
+    return [...revisions].sort((left, right) => {
+      if (/^\d+$/.test(left) && /^\d+$/.test(right)) {
+        const leftValue = BigInt(left);
+        const rightValue = BigInt(right);
+        return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
+      }
+      return left.localeCompare(right, undefined, { numeric: true });
+    });
+  }
+
+  function toggleComparisonRevision(revision: string) {
+    const selected = selectedComparisonRevisions.includes(revision);
+    const next = selected
+      ? selectedComparisonRevisions.filter((item) => item !== revision)
+      : selectedComparisonRevisions.length < 2
+        ? [...selectedComparisonRevisions, revision]
+        : selectedComparisonRevisions;
+    selectedComparisonRevisions = next;
+    const range = sortComparisonRevisions(next);
+    if (range.length === 2) {
+      onPrepareRevisionDiffRange(range[0], range[1]);
+    }
+  }
+
+  function reconcileComparisonRevisions(log: SvnLog | null, selected: string[]) {
+    const available = new Set(log?.entries.map((entry) => entry.revision) ?? []);
+    const next = selected.filter((revision) => available.has(revision));
+    if (next.length !== selected.length) {
+      selectedComparisonRevisions = next;
+    }
+  }
+
+  function clearComparisonRevisions() {
+    selectedComparisonRevisions = [];
+  }
+
+  function runSelectedRevisionComparison() {
+    const range = sortComparisonRevisions(selectedComparisonRevisions);
+    if (range.length === 2 && onPrepareRevisionDiffRange(range[0], range[1])) {
+      onRunRevisionDiff();
+    }
+  }
+
   function openChangedPathRevisionDiff(revision: string, repositoryPath: string) {
     selectedLogRevision = revision;
     if (onPrepareRevisionDiffFromLog(revision, repositoryPath)) {
@@ -1601,6 +1651,8 @@
   $: tagEntries =
     repositoryLayoutResults.tags?.entries.filter((entry) => entry.kind === "dir") ?? [];
   $: filteredLogEntries = filterLogEntries(svnLog?.entries ?? []);
+  $: reconcileComparisonRevisions(svnLog, selectedComparisonRevisions);
+  $: selectedComparisonRange = sortComparisonRevisions(selectedComparisonRevisions);
   $: svnLogDateRangeInvalid =
     localDateBoundary(svnLogDateFromFilter) !== null &&
     localDateBoundary(svnLogDateToFilter) !== null &&
@@ -1958,6 +2010,42 @@
         </section>
         <ErrorNotice error={svnLogError} />
 
+        {#if selectedComparisonRange.length > 0}
+          <div
+            class="timeline-comparison-selection"
+            role="toolbar"
+            aria-label="Revision 比较选择"
+          >
+            <span>
+              已选择
+              <strong>
+                {#if selectedComparisonRange.length === 2}
+                  r{selectedComparisonRange[0]} → r{selectedComparisonRange[1]}
+                {:else}
+                  r{selectedComparisonRange[0]}
+                {/if}
+              </strong>
+            </span>
+            <button
+              type="button"
+              class="primary"
+              disabled={selectedComparisonRange.length !== 2 || revisionDiffLoading}
+              on:click={runSelectedRevisionComparison}
+            >
+              {revisionDiffLoading ? "比较中" : "比较选中 Revision"}
+            </button>
+            <button
+              type="button"
+              class="timeline-comparison-clear"
+              aria-label="清除 Revision 比较选择"
+              title="清除 Revision 比较选择"
+              on:click={clearComparisonRevisions}
+            >
+              <X size={15} strokeWidth={2} aria-hidden="true" />
+            </button>
+          </div>
+        {/if}
+
         <div class="timeline-layout">
           <section class="timeline-list" aria-label="Revision 列表">
             {#if timelineGroups.length > 0}
@@ -1969,16 +2057,31 @@
                   </header>
                   {#each group.entries as entry (entry.revision)}
                     <article class="timeline-entry">
-                      <button
-                        type="button"
-                        class:active={selectedLogEntry?.revision === entry.revision}
-                        on:click={() => selectLogEntry(entry.revision)}
-                      >
-                        <strong>r{entry.revision}</strong>
-                        <span class="timeline-author" title={entry.author || undefined}>{entry.author || "-"}</span>
-                        <time title={entry.date}>{formatTimelineTime(entry.date)}</time>
-                        <span class="timeline-path-count">{entry.changed_paths.length} paths</span>
-                      </button>
+                      <header class="timeline-entry-header">
+                        <span class="timeline-comparison-cell">
+                          <input
+                            type="checkbox"
+                            aria-label={`选择 r${entry.revision} 进行比较`}
+                            checked={selectedComparisonRevisions.includes(entry.revision)}
+                            disabled={
+                              selectedComparisonRevisions.length >= 2 &&
+                              !selectedComparisonRevisions.includes(entry.revision)
+                            }
+                            on:change={() => toggleComparisonRevision(entry.revision)}
+                          />
+                        </span>
+                        <button
+                          type="button"
+                          class="timeline-entry-summary"
+                          class:active={selectedLogEntry?.revision === entry.revision}
+                          on:click={() => selectLogEntry(entry.revision)}
+                        >
+                          <strong>r{entry.revision}</strong>
+                          <span class="timeline-author" title={entry.author || undefined}>{entry.author || "-"}</span>
+                          <time title={entry.date}>{formatTimelineTime(entry.date)}</time>
+                          <span class="timeline-path-count">{entry.changed_paths.length} paths</span>
+                        </button>
+                      </header>
                       <p class="timeline-message">{entry.message || "无提交信息"}</p>
                       {#if entry.changed_paths.length > 0}
                         <div
