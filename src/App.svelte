@@ -32,6 +32,7 @@
     CommandError,
     ExternalToolKind,
     HealthPayload,
+    SvnBatchOperationKind,
     SvnOperationKind,
     Task,
     TaskSnapshot,
@@ -853,6 +854,35 @@
     );
   }
 
+  async function runSvnBatchOperation(
+    kind: SvnBatchOperationKind,
+    filePaths: string[],
+    targetPath?: string,
+  ) {
+    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+    if (
+      !workingCopyRoot ||
+      filePaths.length === 0 ||
+      svnOperationCreationCoordinator.isCreating() ||
+      $workspaceStore.pendingSvnOperationTaskId !== null
+    ) {
+      return false;
+    }
+
+    return svnOperationCreationCoordinator.create(
+      () => $workspaceStore.pendingSvnOperationTaskId !== null,
+      () =>
+        taskStore.createSvnBatchOperation({
+          workingCopyRoot,
+          kind,
+          filePaths,
+          targetPath,
+          svnExecutable: currentSvnExecutable(),
+        }),
+      (task) => workspaceStore.markSvnOperationTask(task.task_id, kind, workingCopyRoot),
+    );
+  }
+
   async function moveWorkspacePath(sourcePath: string) {
     const targetPath = window.prompt(
       "请输入 Move 目标路径（相对于当前工作副本）",
@@ -869,6 +899,51 @@
     }
 
     await runSvnOperation("move_path", sourcePath, targetPath);
+  }
+
+  function formatBatchPathList(paths: string[]) {
+    const visiblePaths = paths.slice(0, 20).map((path) => `- ${path}`);
+    if (paths.length > visiblePaths.length) {
+      visiblePaths.push(`- 以及其他 ${paths.length - visiblePaths.length} 个路径`);
+    }
+    return visiblePaths.join("\n");
+  }
+
+  async function revertWorkspacePaths(paths: string[]) {
+    const confirmed = window.confirm(
+      `确定撤销 ${paths.length} 个工作副本路径的本地改动吗？\n\n${formatBatchPathList(paths)}\n\n这些未提交改动将无法恢复。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+    await runSvnBatchOperation("revert_paths", paths);
+  }
+
+  async function deleteWorkspacePaths(paths: string[]) {
+    const confirmed = window.confirm(
+      `确定从工作副本删除 ${paths.length} 个路径吗？\n\n${formatBatchPathList(paths)}\n\n这会删除本地内容并安排 SVN 删除。目录内未版本控制内容和未提交改动可能丢失。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+    await runSvnBatchOperation("delete_paths", paths);
+  }
+
+  async function moveWorkspacePaths(paths: string[]) {
+    const targetDirectory = window.prompt(
+      "请输入批量 Move 目标目录（相对于当前工作副本，使用 . 表示根目录）",
+      ".",
+    );
+    if (targetDirectory === null || !targetDirectory.trim()) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `确定把 ${paths.length} 个工作副本路径移动到 ${targetDirectory} 吗？\n\n${formatBatchPathList(paths)}\n\n各路径会保留原名称，本地内容和未提交改动会一同移动。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+    await runSvnBatchOperation("move_paths", paths, targetDirectory);
   }
 
   async function copyWorkspacePath(sourcePath: string) {
@@ -1351,6 +1426,8 @@
   onSelectWorkspacePath={workspaceStore.selectPathOnly}
   onSelectCommitFile={workspaceStore.selectCommitFile}
   onUnselectCommitFile={workspaceStore.unselectCommitFile}
+  onSelectCommitFiles={workspaceStore.selectCommitFiles}
+  onUnselectCommitFiles={workspaceStore.unselectCommitFiles}
   onSelectAllCommitFiles={workspaceStore.selectAllCommitFiles}
   onClearCommitFiles={workspaceStore.clearCommitFiles}
   onAddFile={(path) => runSvnOperation("add_file", path)}
@@ -1359,6 +1436,9 @@
   onMovePath={moveWorkspacePath}
   onCopyPath={copyWorkspacePath}
   onRevertFile={(path) => runSvnOperation("revert_file", path)}
+  onRevertPaths={revertWorkspacePaths}
+  onDeletePaths={deleteWorkspacePaths}
+  onMovePaths={moveWorkspacePaths}
   onLockFile={(path) => runSvnOperation("lock_file", path)}
   onUnlockFile={(path) => runSvnOperation("unlock_file", path)}
   onForceUnlockFile={(path) => runSvnOperation("force_unlock_file", path)}

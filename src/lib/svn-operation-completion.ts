@@ -1,5 +1,5 @@
 import type {
-  SvnOperationKind,
+  PendingSvnOperationKind,
   TaskSnapshot,
   TaskStatus,
 } from "../types/api";
@@ -34,7 +34,7 @@ export interface SvnOperationCreationCoordinator {
 
 export function resolvePendingSvnOperationCompletion(
   pendingTaskId: string | null,
-  operationKind: SvnOperationKind | null,
+  operationKind: PendingSvnOperationKind | null,
   pendingWorkingCopyRoot: string | null,
   currentWorkingCopyRoot: string | null,
   taskState: TaskSnapshotSource,
@@ -74,7 +74,7 @@ export function resolvePendingSvnOperationCompletion(
 
 export function consumePendingSvnOperationCompletion(
   pendingTaskId: string | null,
-  operationKind: SvnOperationKind | null,
+  operationKind: PendingSvnOperationKind | null,
   pendingWorkingCopyRoot: string | null,
   currentWorkingCopyRoot: string | null,
   taskState: TaskSnapshotSource,

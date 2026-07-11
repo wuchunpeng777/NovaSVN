@@ -96,6 +96,21 @@ export interface CreateSvnOperationTaskRequest {
   svn_executable?: string;
 }
 
+export type SvnBatchOperationKind =
+  | "revert_paths"
+  | "delete_paths"
+  | "move_paths";
+
+export type PendingSvnOperationKind = SvnOperationKind | SvnBatchOperationKind;
+
+export interface CreateSvnBatchOperationTaskRequest {
+  working_copy_root: string;
+  kind: SvnBatchOperationKind;
+  file_paths: string[];
+  target_path?: string;
+  svn_executable?: string;
+}
+
 export type ExternalToolKind = "diff" | "merge";
 
 export interface LaunchExternalToolRequest {

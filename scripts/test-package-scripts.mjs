@@ -312,6 +312,21 @@ if (
   failed = true;
 }
 
+if (
+  !fileBrowserSource.includes('aria-label="选择当前可见路径"') ||
+  !mainWorkspace.includes('class="batch-action-bar"') ||
+  !mainWorkspace.includes("onRevertPaths(selectedRevertablePaths)") ||
+  !mainWorkspace.includes("onMovePaths(selectedMovablePaths)") ||
+  !mainWorkspace.includes("onDeletePaths(selectedDeletablePaths)") ||
+  !taskRs.includes("MAX_BATCH_OPERATION_PATHS") ||
+  !taskRs.includes("SvnBatchOperationKind::Revert") ||
+  !taskRs.includes("SvnBatchOperationKind::Move") ||
+  !taskRs.includes("SvnBatchOperationKind::Delete")
+) {
+  console.error("工作副本多选必须提供批量提交目标、Revert、Move、Delete 和后端路径边界");
+  failed = true;
+}
+
 for (const column of ["Name", "Base", "Last", "Date", "Author", "Status", "Size"]) {
   if (!mainWorkspace.includes(`<span>${column}</span>`)) {
     console.error(`Versions 工作副本表格缺少栏位：${column}`);

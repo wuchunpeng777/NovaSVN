@@ -408,6 +408,40 @@ textarea {
   padding: 8px 12px;
 }
 
+.changes-toolbar {
+  flex-wrap: wrap;
+}
+
+.batch-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin-left: auto;
+  border-left: 1px solid #d8dde3;
+  padding-left: 8px;
+}
+
+.batch-action-bar strong {
+  flex: 0 0 auto;
+  color: #33404c;
+  font-size: 12px;
+}
+
+.batch-action-bar button {
+  height: 26px;
+  padding: 0 8px;
+}
+
+.batch-action-bar .danger-action:not(:disabled) {
+  border-color: #d0a0a0;
+  color: #9b2f2f;
+}
+
+.batch-action-bar .batch-clear {
+  margin-left: 3px;
+}
+
 .changes-toolbar input,
 .timeline-filters input:first-child,
 .repository-urlbar input {
@@ -458,8 +492,8 @@ textarea {
 
 .file-table-head,
 .file-row {
-  grid-template-columns: minmax(220px, 1fr) 58px 58px 116px 92px 158px 58px 140px;
-  min-width: 940px;
+  grid-template-columns: 24px minmax(220px, 1fr) 58px 58px 116px 92px 158px 58px 140px;
+  min-width: 972px;
 }
 
 .file-table-head,
@@ -501,8 +535,35 @@ textarea {
   background: #d9ecff;
 }
 
+.file-row.inspected {
+  position: relative;
+}
+
+.file-row.inspected::before {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  width: 3px;
+  background: #3f83bd;
+  content: "";
+}
+
 .file-row.abnormal {
   background: #fff4e8;
+}
+
+.selection-cell {
+  display: grid;
+  width: 24px;
+  place-items: center;
+}
+
+.selection-cell input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #397cae;
 }
 
 .file-name {
@@ -1414,6 +1475,14 @@ textarea {
   background: #20242a;
 }
 
+.versions-workbench[data-theme="dark"] .batch-action-bar {
+  border-left-color: #414a55;
+}
+
+.versions-workbench[data-theme="dark"] .batch-action-bar strong {
+  color: #d8dee5;
+}
+
 .versions-workbench[data-theme="dark"] .summary-strip,
 .versions-workbench[data-theme="dark"] .file-table-head,
 .versions-workbench[data-theme="dark"] .table-head,
@@ -1719,7 +1788,7 @@ textarea {
 @media (max-width: 1180px) {
   .file-table-head,
   .file-row {
-    grid-template-columns: minmax(190px, 1fr) 52px 52px 108px 84px 144px 54px 120px;
-    min-width: 860px;
+    grid-template-columns: 24px minmax(190px, 1fr) 52px 52px 108px 84px 144px 54px 120px;
+    min-width: 892px;
   }
 }

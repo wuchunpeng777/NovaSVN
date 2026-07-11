@@ -405,6 +405,67 @@ describe("MainWorkspace", () => {
     expect(summary).toHaveTextContent("远端未检查");
   });
 
+  it("selects multiple visible paths and exposes real batch actions", async () => {
+    const alpha = makeFile("alpha.txt", "modified", "alpha-digest");
+    const beta = makeFile("beta.txt", "modified", "beta-digest");
+    const tree: WorkspaceFileTree = {
+      working_copy_root: "C:/repo/wc",
+      total_files: 2,
+      returned_files: 2,
+      truncated: false,
+      nodes: [
+        makeScopedNode("alpha.txt", "modified", "local"),
+        makeScopedNode("beta.txt", "modified", "local"),
+      ],
+    };
+    const onSelectCommitFiles = vi.fn();
+    const onRevertPaths = vi.fn();
+    const onMovePaths = vi.fn();
+    const onDeletePaths = vi.fn();
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([alpha, beta]),
+        workspaceFileTree: tree,
+        onSelectCommitFiles,
+        onRevertPaths,
+        onMovePaths,
+        onDeletePaths,
+      },
+    });
+
+    const selectVisible = screen.getByRole("checkbox", { name: "选择当前可见路径" });
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择文件 alpha.txt" }));
+    expect(selectVisible).toHaveProperty("indeterminate", true);
+    await fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择文件 beta.txt" }),
+      { shiftKey: true },
+    );
+
+    const batchToolbar = screen.getByRole("toolbar", { name: "所选路径批量操作" });
+    expect(batchToolbar).toHaveTextContent("2 个已选");
+    expect(selectVisible).toBeChecked();
+    await fireEvent.click(within(batchToolbar).getByRole("button", { name: "加入 Commit" }));
+    await fireEvent.click(within(batchToolbar).getByRole("button", { name: "Revert" }));
+    await fireEvent.click(within(batchToolbar).getByRole("button", { name: "Move" }));
+    await fireEvent.click(within(batchToolbar).getByRole("button", { name: "Delete" }));
+
+    expect(onSelectCommitFiles).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
+    expect(onRevertPaths).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
+    expect(onMovePaths).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
+    expect(onDeletePaths).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
+
+    await rerender({
+      workspace: {
+        ...makeWorkspace(),
+        local_path: "C:/repo/other",
+        working_copy_root: "C:/repo/other",
+      },
+    });
+    expect(screen.queryByRole("toolbar", { name: "所选路径批量操作" })).not.toBeInTheDocument();
+  });
+
   it("moves and deletes versioned files and directories from the working copy", async () => {
     const onDeletePath = vi.fn();
     const onMovePath = vi.fn();

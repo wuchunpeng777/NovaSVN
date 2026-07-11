@@ -12,6 +12,7 @@ import {
   createRepositoryListTask,
   createRevisionDiffTask,
   createShadowWorkspaceTask,
+  createSvnBatchOperationTask,
   createSvnOperationTask,
   createSvnSwitchTask,
   detectSvn,
@@ -67,6 +68,8 @@ import type {
   ShadowWorkspaceOperationKind,
   ShadowWorkspaceStatus,
   SvnBlame,
+  PendingSvnOperationKind,
+  SvnBatchOperationKind,
   SvnOperationKind,
   SvnDetection,
   SvnLog,
@@ -610,6 +613,38 @@ function createTaskStore() {
     }
   }
 
+  async function createSvnBatchOperation(request: {
+    workingCopyRoot: string;
+    kind: SvnBatchOperationKind;
+    filePaths: string[];
+    targetPath?: string | null;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createSvnBatchOperationTask({
+        working_copy_root: request.workingCopyRoot,
+        kind: request.kind,
+        file_paths: request.filePaths,
+        ...(request.targetPath !== undefined && request.targetPath !== null
+          ? { target_path: request.targetPath }
+          : {}),
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function confirmTaskMissing(taskId: string) {
     try {
       await getTask(taskId);
@@ -645,6 +680,7 @@ function createTaskStore() {
     create,
     createCommit,
     createSvnOperation,
+    createSvnBatchOperation,
     createShadowWorkspace,
     createPartialCommit,
     createRepositoryList,
@@ -1253,7 +1289,7 @@ export interface WorkspaceStoreState {
   pendingCommitTaskId: string | null;
   pendingPartialCommitTaskId: string | null;
   pendingSvnOperationTaskId: string | null;
-  pendingSvnOperationKind: SvnOperationKind | null;
+  pendingSvnOperationKind: PendingSvnOperationKind | null;
   pendingSvnOperationWorkingCopyRoot: string | null;
   repositoryUrlInput: string;
   repositoryCurrentUrl: string;
@@ -1968,6 +2004,59 @@ function createWorkspaceStore() {
     });
   }
 
+  function selectCommitFiles(paths: string[]) {
+    const requested = new Set(paths);
+    update((state) => {
+      const existing = new Set(state.commitFiles.map((file) => file.path));
+      const additions = (state.status?.files ?? [])
+        .filter(
+          (file) => requested.has(file.path) && isCommittable(file) && !existing.has(file.path),
+        )
+        .map((file) => ({
+          path: file.path,
+          status: file.status,
+          contentDigest: file.content_digest,
+        }));
+      if (additions.length === 0) {
+        return state;
+      }
+      const commitFiles = [...state.commitFiles, ...additions];
+      return {
+        ...state,
+        commitFiles,
+        safetyCheck: buildSafetyCheck(
+          state.status?.files ?? [],
+          commitFiles,
+          state.safetyCheck.confirmedWarningIds,
+          state.status,
+        ),
+        commitError: null,
+      };
+    });
+  }
+
+  function unselectCommitFiles(paths: string[]) {
+    const requested = new Set(paths);
+    update((state) => {
+      const commitFiles = state.commitFiles.filter((file) => !requested.has(file.path));
+      if (commitFiles.length === state.commitFiles.length) {
+        return state;
+      }
+      return {
+        ...state,
+        commitFiles,
+        safetyCheck: buildSafetyCheck(
+          state.status?.files ?? [],
+          commitFiles,
+          reconcileSafetyWarningConfirmations(state.safetyCheck, commitFiles)
+            .confirmedWarningIds,
+          state.status,
+        ),
+        commitError: null,
+      };
+    });
+  }
+
   function selectAllCommitFiles() {
     update((state) => {
       const commitFiles = buildCommitFileSelection(state.status?.files ?? []);
@@ -2207,7 +2296,7 @@ function createWorkspaceStore() {
 
   function markSvnOperationTask(
     taskId: string | null,
-    kind: SvnOperationKind | null,
+    kind: PendingSvnOperationKind | null,
     workingCopyRoot: string | null,
   ) {
     update((state) => ({
@@ -3569,6 +3658,8 @@ function createWorkspaceStore() {
     selectStartupTargetFile,
     selectCommitFile,
     unselectCommitFile,
+    selectCommitFiles,
+    unselectCommitFiles,
     selectAllCommitFiles,
     clearCommitFiles,
     markFileReviewed,

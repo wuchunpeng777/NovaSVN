@@ -33,7 +33,7 @@
     SvnDetection,
     SvnLog,
     SvnProperties,
-    SvnOperationKind,
+    PendingSvnOperationKind,
     Task,
     TaskStatus,
     TaskSummary,
@@ -205,7 +205,7 @@
   export let tasks: TaskSummary[] = [];
   export let selectedTask: Task | null = null;
   export let runningTaskId: string | null = null;
-  export let pendingSvnOperationKind: SvnOperationKind | null = null;
+  export let pendingSvnOperationKind: PendingSvnOperationKind | null = null;
   export let taskError: CommandError | null = null;
   export let backendMessage = "";
   export let commandError: CommandError | null = null;
@@ -256,6 +256,8 @@
   export let onSelectWorkspacePath: (path: string) => void = () => {};
   export let onSelectCommitFile: (path: string) => void = () => {};
   export let onUnselectCommitFile: (path: string) => void = () => {};
+  export let onSelectCommitFiles: (paths: string[]) => void = () => {};
+  export let onUnselectCommitFiles: (paths: string[]) => void = () => {};
   export let onSelectAllCommitFiles: () => void = () => {};
   export let onClearCommitFiles: () => void = () => {};
   export let onAddFile: (path: string) => void = () => {};
@@ -264,6 +266,9 @@
   export let onMovePath: (path: string) => void = () => {};
   export let onCopyPath: (path: string) => void = () => {};
   export let onRevertFile: (path: string) => void = () => {};
+  export let onRevertPaths: (paths: string[]) => void = () => {};
+  export let onDeletePaths: (paths: string[]) => void = () => {};
+  export let onMovePaths: (paths: string[]) => void = () => {};
   export let onLockFile: (path: string) => void = () => {};
   export let onUnlockFile: (path: string) => void = () => {};
   export let onForceUnlockFile: (path: string) => void = () => {};
@@ -394,6 +399,10 @@
   let selectedLogRevision: string | null = null;
   let collapsedTreePaths = new Set<string>();
   let openRowMenuPath: string | null = null;
+  let selectedRowPaths = new Set<string>();
+  let rowSelectionAnchorPath: string | null = null;
+  let selectionWorkspaceRoot: string | null = null;
+  let selectionFileTree: WorkspaceFileTree | null = null;
   const inspectorMinWidth = 300;
   const inspectorMaxWidth = 720;
   const sourceListWidth = 220;
@@ -665,6 +674,114 @@
     onSelectWorkspacePath(node.path);
   }
 
+  function collectTreePaths(nodes: WorkspaceFileNode[], paths = new Set<string>()) {
+    for (const node of nodes) {
+      paths.add(node.path);
+      collectTreePaths(node.children, paths);
+    }
+    return paths;
+  }
+
+  function reconcileRowSelection(
+    workingCopyRoot: string | null,
+    fileTree: WorkspaceFileTree | null,
+  ) {
+    if (selectionWorkspaceRoot !== workingCopyRoot) {
+      selectionWorkspaceRoot = workingCopyRoot;
+      selectedRowPaths = new Set();
+      rowSelectionAnchorPath = null;
+    }
+    if (selectionFileTree === fileTree) {
+      return;
+    }
+    selectionFileTree = fileTree;
+    const availablePaths = collectTreePaths(fileTree?.nodes ?? []);
+    const reconciled = new Set(
+      [...selectedRowPaths].filter((path) => availablePaths.has(path)),
+    );
+    if (reconciled.size !== selectedRowPaths.size) {
+      selectedRowPaths = reconciled;
+    }
+    if (rowSelectionAnchorPath && !availablePaths.has(rowSelectionAnchorPath)) {
+      rowSelectionAnchorPath = null;
+    }
+  }
+
+  function isRowSelected(path: string) {
+    return selectedRowPaths.has(path);
+  }
+
+  function toggleRowSelection(path: string, checked: boolean, extendRange: boolean) {
+    const next = new Set(selectedRowPaths);
+    const currentIndex = treeRows.findIndex((row) => row.path === path);
+    const anchorIndex = rowSelectionAnchorPath
+      ? treeRows.findIndex((row) => row.path === rowSelectionAnchorPath)
+      : -1;
+    if (extendRange && currentIndex >= 0 && anchorIndex >= 0) {
+      const start = Math.min(currentIndex, anchorIndex);
+      const end = Math.max(currentIndex, anchorIndex);
+      for (const row of treeRows.slice(start, end + 1)) {
+        if (checked) {
+          next.add(row.path);
+        } else {
+          next.delete(row.path);
+        }
+      }
+    } else if (checked) {
+      next.add(path);
+    } else {
+      next.delete(path);
+    }
+    selectedRowPaths = next;
+    rowSelectionAnchorPath = path;
+    openRowMenuPath = null;
+  }
+
+  function toggleVisibleRowSelection(checked: boolean) {
+    const next = new Set(selectedRowPaths);
+    for (const row of treeRows) {
+      if (checked) {
+        next.add(row.path);
+      } else {
+        next.delete(row.path);
+      }
+    }
+    selectedRowPaths = next;
+    rowSelectionAnchorPath = checked ? treeRows.at(-1)?.path ?? null : null;
+    openRowMenuPath = null;
+  }
+
+  function clearRowSelection() {
+    selectedRowPaths = new Set();
+    rowSelectionAnchorPath = null;
+    openRowMenuPath = null;
+  }
+
+  function collapseSelectedOperationPaths(paths: string[]) {
+    const selected = new Set(paths);
+    return paths.filter((path) => {
+      let current = path;
+      while (current.includes("/")) {
+        current = current.slice(0, current.lastIndexOf("/"));
+        if (selected.has(current)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  function toggleSelectedCommitPaths() {
+    if (selectedCommittablePaths.length === 0) {
+      return;
+    }
+    if (selectedCommittablePaths.every((path) => isCommitSelected(path))) {
+      onUnselectCommitFiles(selectedCommittablePaths);
+    } else {
+      onSelectCommitFiles(selectedCommittablePaths);
+    }
+  }
+
   function filterTreeNodes(
     nodes: WorkspaceFileNode[],
     filter: WorkingCopyTreeFilter,
@@ -926,6 +1043,28 @@
     searchText,
   );
   $: treeRows = flattenTreeNodes(filteredTreeNodes);
+  $: reconcileRowSelection(workspace?.working_copy_root ?? null, workspaceFileTree);
+  $: selectedRowNodes = [...selectedRowPaths]
+    .map((path) => treeNodeForPath(path))
+    .filter((node): node is WorkspaceFileNode => node !== null);
+  $: selectedCommittablePaths = selectedRowNodes
+    .filter((node) => isLocalChangedPath(node.path) && isCommittablePath(node.path))
+    .map((node) => node.path);
+  $: selectedRevertablePaths = selectedRowNodes
+    .filter((node) => isLocalChangedPath(node.path) && !isUnversionedPath(node.path))
+    .map((node) => node.path);
+  $: selectedMovablePaths = collapseSelectedOperationPaths(
+    selectedRowNodes.filter((node) => canMovePath(node)).map((node) => node.path),
+  );
+  $: selectedDeletablePaths = collapseSelectedOperationPaths(
+    selectedRowNodes.filter((node) => canDeletePath(node)).map((node) => node.path),
+  );
+  $: visibleSelectedRowCount = treeRows.filter((row) => selectedRowPaths.has(row.path)).length;
+  $: allVisibleRowsSelected = treeRows.length > 0 && visibleSelectedRowCount === treeRows.length;
+  $: someVisibleRowsSelected = visibleSelectedRowCount > 0 && !allVisibleRowsSelected;
+  $: allSelectedCommitTargets =
+    selectedCommittablePaths.length > 0 &&
+    selectedCommittablePaths.every((path) => isCommitSelected(path));
   $: commitFileCount = commitFiles.length;
   $: abnormalCount =
     (workingCopyStatus?.missing ?? 0) +
@@ -2073,6 +2212,41 @@
             </button>
           </div>
           <button type="button" on:click={clearWorkingCopyFilters}>清除</button>
+          {#if selectedRowPaths.size > 0}
+            <div class="batch-action-bar" role="toolbar" aria-label="所选路径批量操作">
+            <strong>{selectedRowPaths.size} 个已选</strong>
+            <button
+              type="button"
+              disabled={selectedCommittablePaths.length === 0 || statusLoading}
+              on:click={toggleSelectedCommitPaths}
+            >
+              {allSelectedCommitTargets ? "移出 Commit" : "加入 Commit"}
+            </button>
+            <button
+              type="button"
+              disabled={selectedRevertablePaths.length === 0 || statusLoading || toolbarLocked}
+              on:click={() => onRevertPaths(selectedRevertablePaths)}
+            >
+              Revert
+            </button>
+            <button
+              type="button"
+              disabled={selectedMovablePaths.length === 0 || statusLoading || toolbarLocked}
+              on:click={() => onMovePaths(selectedMovablePaths)}
+            >
+              Move
+            </button>
+            <button
+              type="button"
+              class="danger-action"
+              disabled={selectedDeletablePaths.length === 0 || statusLoading || toolbarLocked}
+              on:click={() => onDeletePaths(selectedDeletablePaths)}
+            >
+              Delete
+            </button>
+            <button type="button" class="batch-clear" on:click={clearRowSelection}>清除选择</button>
+            </div>
+          {/if}
         </section>
 
         <section
@@ -2083,6 +2257,16 @@
         >
           <div class="file-browser" aria-label="工作副本文件树">
             <div class="file-table-head">
+              <span class="selection-cell">
+                <input
+                  type="checkbox"
+                  aria-label="选择当前可见路径"
+                  checked={allVisibleRowsSelected}
+                  indeterminate={someVisibleRowsSelected}
+                  disabled={treeRows.length === 0}
+                  on:click={(event) => toggleVisibleRowSelection(event.currentTarget.checked)}
+                />
+              </span>
               <span>Name</span>
               <span>Base</span>
               <span>Last</span>
@@ -2097,9 +2281,21 @@
                 <div
                   class="file-row"
                   class:directory={node.kind === "dir"}
-                  class:selected={node.kind === "file" && isSelectedPath(node.path)}
+                  class:selected={isRowSelected(node.path)}
+                  class:inspected={node.kind === "file" && isSelectedPath(node.path)}
                   class:abnormal={["missing", "conflicted", "obstructed"].includes(node.status)}
                 >
+                  <span class="selection-cell">
+                    <input
+                      type="checkbox"
+                      aria-label={`选择${node.kind === "dir" ? "目录" : "文件"} ${node.path}`}
+                      checked={isRowSelected(node.path)}
+                      on:click={(event) => {
+                        event.stopPropagation();
+                        toggleRowSelection(node.path, event.currentTarget.checked, event.shiftKey);
+                      }}
+                    />
+                  </span>
                   <button
                     type="button"
                     class="file-name"

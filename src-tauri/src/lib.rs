@@ -28,8 +28,9 @@ use task::{
     CreateApplyPatchTaskRequest, CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest,
     CreateMergeTaskRequest, CreateMockTaskRequest, CreatePartialCommitTaskRequest,
     CreateRepositoryCopyTaskRequest, CreateRepositoryListTaskRequest,
-    CreateRevisionDiffTaskRequest, CreateShadowWorkspaceTaskRequest, CreateSvnOperationTaskRequest,
-    CreateSvnSwitchTaskRequest, Task, TaskQueue, TaskSnapshot,
+    CreateRevisionDiffTaskRequest, CreateShadowWorkspaceTaskRequest,
+    CreateSvnBatchOperationTaskRequest, CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest,
+    Task, TaskQueue, TaskSnapshot,
 };
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use tauri::{Emitter, Manager};
@@ -259,6 +260,17 @@ fn create_svn_operation_task(
     println!("[NovaSVN] create_svn_operation_task command received");
     Ok(CommandResponse::success(
         queue.create_svn_operation_task(request)?,
+    ))
+}
+
+#[tauri::command]
+fn create_svn_batch_operation_task(
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateSvnBatchOperationTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_svn_batch_operation_task command received");
+    Ok(CommandResponse::success(
+        queue.create_svn_batch_operation_task(request)?,
     ))
 }
 
@@ -592,6 +604,7 @@ pub fn run() {
             create_mock_task,
             create_commit_task,
             create_svn_operation_task,
+            create_svn_batch_operation_task,
             create_shadow_workspace_task,
             create_partial_commit_task,
             create_repository_list_task,

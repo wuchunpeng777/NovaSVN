@@ -4,6 +4,7 @@ vi.mock("../lib/api", () => ({
   createApplyPatchTask: vi.fn(),
   createMergeTask: vi.fn(),
   createRevisionDiffTask: vi.fn(),
+  createSvnBatchOperationTask: vi.fn(),
   createSvnOperationTask: vi.fn(),
   detectSvn: vi.fn(),
   getFileContentDiff: vi.fn(),
@@ -29,6 +30,7 @@ import {
   createApplyPatchTask,
   createMergeTask,
   createRevisionDiffTask,
+  createSvnBatchOperationTask,
   createSvnOperationTask,
   detectSvn,
   getFileContentDiff,
@@ -74,6 +76,7 @@ import {
 const createApplyPatchTaskMock = vi.mocked(createApplyPatchTask);
 const createMergeTaskMock = vi.mocked(createMergeTask);
 const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
+const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
 const detectSvnMock = vi.mocked(detectSvn);
 const getFileContentDiffMock = vi.mocked(getFileContentDiff);
@@ -96,6 +99,7 @@ beforeEach(() => {
   createApplyPatchTaskMock.mockReset();
   createMergeTaskMock.mockReset();
   createRevisionDiffTaskMock.mockReset();
+  createSvnBatchOperationTaskMock.mockReset();
   createSvnOperationTaskMock.mockReset();
   detectSvnMock.mockReset();
   getFileContentDiffMock.mockReset();
@@ -396,6 +400,15 @@ describe("workspaceStore safety warnings", () => {
 
     workspaceStore.clearCommitFiles();
     workspaceStore.selectCommitFile("notes/new.txt");
+    expect(get(workspaceStore).commitFiles).toEqual([]);
+
+    workspaceStore.selectCommitFiles([
+      "src/main.ts",
+      "notes/new.txt",
+      "src/conflict.ts",
+    ]);
+    expect(get(workspaceStore).commitFiles.map((file) => file.path)).toEqual(["src/main.ts"]);
+    workspaceStore.unselectCommitFiles(["src/main.ts", "notes/new.txt"]);
     expect(get(workspaceStore).commitFiles).toEqual([]);
 
     workspaceStore.selectAllCommitFiles();
@@ -827,6 +840,27 @@ describe("taskStore SVN operation tasks", () => {
       working_copy_root: "C:/repo/wc",
       kind: "delete_path",
       file_path: "src/legacy",
+      svn_executable: "C:/svn/svn.exe",
+    });
+  });
+
+  it("maps multiple working-copy paths to one batch operation task", async () => {
+    createSvnBatchOperationTaskMock.mockResolvedValue(makeTask({ task_id: "batch-move-1" }));
+
+    const task = await taskStore.createSvnBatchOperation({
+      workingCopyRoot: "C:/repo/wc",
+      kind: "move_paths",
+      filePaths: ["src/a.ts", "src/b.ts"],
+      targetPath: "archive",
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(task?.task_id).toBe("batch-move-1");
+    expect(createSvnBatchOperationTaskMock).toHaveBeenCalledWith({
+      working_copy_root: "C:/repo/wc",
+      kind: "move_paths",
+      file_paths: ["src/a.ts", "src/b.ts"],
+      target_path: "archive",
       svn_executable: "C:/svn/svn.exe",
     });
   });

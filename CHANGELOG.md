@@ -20,6 +20,7 @@
 - 工作副本表格新增 Name、Base、Last、Date、Author、Status 和 Size 栏位，元数据来自流式 `svn info`。
 - 工作副本状态区分本地改动、远端更新和同时变化，支持独立筛选并显示工作副本与仓库 revision。
 - 文件行按状态显示 Commit、Update、Add 或 Resolve；文件级 Update 执行真实 `svn update <path>`，其余操作收纳到可访问菜单。
+- 工作副本文件表支持复选框、Shift 范围多选和表头全选，并可批量切换 Commit 目标或执行真实 Revert、Move、Delete 任务。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。

@@ -28,6 +28,8 @@ use crate::{
 
 const REVISION_DIFF_PREVIEW_MAX_BYTES: usize = 2 * 1024 * 1024;
 const APPLY_PATCH_MAX_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_BATCH_OPERATION_PATHS: usize = 500;
+const MAX_BATCH_OPERATION_PATH_BYTES: usize = 24 * 1024;
 static APPLY_PATCH_SNAPSHOT_NONCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,6 +123,26 @@ pub struct CreateSvnOperationTaskRequest {
     pub working_copy_root: String,
     pub kind: SvnOperationKind,
     pub file_path: Option<String>,
+    pub target_path: Option<String>,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SvnBatchOperationKind {
+    #[serde(rename = "revert_paths")]
+    Revert,
+    #[serde(rename = "delete_paths")]
+    Delete,
+    #[serde(rename = "move_paths")]
+    Move,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateSvnBatchOperationTaskRequest {
+    pub working_copy_root: String,
+    pub kind: SvnBatchOperationKind,
+    pub file_paths: Vec<String>,
     pub target_path: Option<String>,
     pub svn_executable: Option<String>,
 }
@@ -293,6 +315,7 @@ enum TaskPayload {
     Mock(MockTaskOutcome),
     SvnCommit(CommitTaskPayload),
     SvnOperation(SvnOperationTaskPayload),
+    SvnBatchOperation(SvnBatchOperationTaskPayload),
     ShadowWorkspace(ShadowWorkspaceTaskPayload),
     PartialCommit(PartialCommitTaskPayload),
     RepositoryList(RepositoryListTaskPayload),
@@ -321,6 +344,17 @@ struct SvnOperationTaskPayload {
     svn_executable: String,
     delete_target_identity: Option<Box<DeleteTargetIdentity>>,
     destination_identity: Option<Box<WorkingCopyDestinationIdentity>>,
+}
+
+#[derive(Debug, Clone)]
+struct SvnBatchOperationTaskPayload {
+    working_copy_root: String,
+    kind: SvnBatchOperationKind,
+    file_paths: Vec<String>,
+    target_path: Option<String>,
+    svn_executable: String,
+    source_identities: Vec<DeleteTargetIdentity>,
+    destination_identities: Vec<WorkingCopyDestinationIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -677,6 +711,145 @@ impl TaskQueue {
                 svn_executable,
                 delete_target_identity,
                 destination_identity,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
+    pub fn create_svn_batch_operation_task(
+        &self,
+        request: CreateSvnBatchOperationTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let mut working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        let file_paths = match &request.kind {
+            SvnBatchOperationKind::Revert => normalize_batch_operation_paths(
+                &request.file_paths,
+                "BATCH_REVERT_PATHS_INVALID",
+                "批量 Revert 路径无效",
+                |path| {
+                    normalize_relative_file_path(
+                        path,
+                        "BATCH_REVERT_PATH_INVALID",
+                        "批量 Revert 路径无效",
+                    )
+                },
+            )?,
+            SvnBatchOperationKind::Delete => {
+                collapse_descendant_paths(normalize_batch_operation_paths(
+                    &request.file_paths,
+                    "BATCH_DELETE_PATHS_INVALID",
+                    "批量 Delete 路径无效",
+                    normalize_delete_path,
+                )?)
+            }
+            SvnBatchOperationKind::Move => {
+                collapse_descendant_paths(normalize_batch_operation_paths(
+                    &request.file_paths,
+                    "BATCH_MOVE_PATHS_INVALID",
+                    "批量 Move 路径无效",
+                    |path| {
+                        normalize_move_path(
+                            path,
+                            "BATCH_MOVE_SOURCE_PATH_INVALID",
+                            "批量 Move 源路径无效",
+                        )
+                    },
+                )?)
+            }
+        };
+        let target_path = if matches!(&request.kind, SvnBatchOperationKind::Move) {
+            Some(normalize_batch_move_target(
+                request.target_path.as_deref().unwrap_or_default(),
+            )?)
+        } else {
+            None
+        };
+
+        let destructive = matches!(
+            &request.kind,
+            SvnBatchOperationKind::Delete | SvnBatchOperationKind::Move
+        );
+        if destructive {
+            working_copy_root = canonicalize_delete_working_copy_root(&working_copy_root)?;
+        }
+
+        let source_identities = match &request.kind {
+            SvnBatchOperationKind::Delete => file_paths
+                .iter()
+                .map(|path| validate_delete_target(&svn_executable, &working_copy_root, path))
+                .collect::<Result<Vec<_>, _>>()?,
+            SvnBatchOperationKind::Move => file_paths
+                .iter()
+                .map(|path| {
+                    validate_working_copy_transfer_source(
+                        &svn_executable,
+                        &working_copy_root,
+                        path,
+                        "BATCH_MOVE",
+                        "批量 Move",
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            SvnBatchOperationKind::Revert => Vec::new(),
+        };
+        let destination_paths = if matches!(&request.kind, SvnBatchOperationKind::Move) {
+            let target_directory = target_path.as_deref().unwrap_or_default();
+            ensure_unique_batch_move_destinations(
+                file_paths
+                    .iter()
+                    .map(|source_path| batch_move_destination_path(target_directory, source_path))
+                    .collect(),
+            )?
+        } else {
+            Vec::new()
+        };
+        let destination_identities = if matches!(&request.kind, SvnBatchOperationKind::Move) {
+            file_paths
+                .iter()
+                .zip(source_identities.iter())
+                .zip(destination_paths.iter())
+                .map(|((source_path, source_identity), destination_path)| {
+                    validate_working_copy_destination(
+                        &svn_executable,
+                        &working_copy_root,
+                        source_path,
+                        source_identity,
+                        destination_path,
+                        "BATCH_MOVE",
+                        "批量 Move",
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
+
+        let title = batch_operation_title(&request.kind, file_paths.len(), target_path.as_deref());
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title,
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "批量 SVN 操作已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::SvnBatchOperation(SvnBatchOperationTaskPayload {
+                working_copy_root: working_copy_root.display().to_string(),
+                kind: request.kind,
+                file_paths,
+                target_path,
+                svn_executable,
+                source_identities,
+                destination_identities,
             }),
         };
 
@@ -1274,6 +1447,9 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             TaskPayload::Mock(outcome) => run_mock_task(&state, &task_id, outcome),
             TaskPayload::SvnCommit(payload) => run_commit_task(&state, &task_id, payload),
             TaskPayload::SvnOperation(payload) => run_svn_operation_task(&state, &task_id, payload),
+            TaskPayload::SvnBatchOperation(payload) => {
+                run_svn_batch_operation_task(&state, &task_id, payload)
+            }
             TaskPayload::ShadowWorkspace(payload) => {
                 run_shadow_workspace_task(&state, &task_id, payload)
             }
@@ -1764,6 +1940,300 @@ fn run_svn_operation_task(
                 task_id,
                 TaskStatus::Failed,
                 "SVN 命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn run_svn_batch_operation_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: SvnBatchOperationTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "批量 SVN 操作开始执行",
+        None,
+    );
+
+    let root = PathBuf::from(&payload.working_copy_root);
+    let mut command = Command::new(&payload.svn_executable);
+    match &payload.kind {
+        SvnBatchOperationKind::Revert => {
+            command.arg("revert");
+            for file_path in &payload.file_paths {
+                command.arg(root.join(file_path));
+            }
+            append_task_log(
+                state,
+                task_id,
+                &format!("执行 svn revert：{}", payload.file_paths.join(", ")),
+            );
+        }
+        SvnBatchOperationKind::Delete => {
+            let canonical_root = match canonicalize_delete_working_copy_root(&root) {
+                Ok(canonical_root) if canonical_root == root => canonical_root,
+                Ok(canonical_root) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "批量 Delete 安全校验失败",
+                        Some(format!(
+                            "工作副本根目录在任务排队后发生变化：{}",
+                            canonical_root.display()
+                        )),
+                    );
+                    return;
+                }
+                Err(error) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "批量 Delete 安全校验失败",
+                        Some(nova_error_text(&error)),
+                    );
+                    return;
+                }
+            };
+            if payload.source_identities.len() != payload.file_paths.len() {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "批量 Delete 安全校验失败",
+                    Some("批量 Delete 任务缺少完整的目标身份快照。".to_string()),
+                );
+                return;
+            }
+            for (file_path, expected_identity) in payload
+                .file_paths
+                .iter()
+                .zip(payload.source_identities.iter())
+            {
+                let current_identity = match validate_delete_target(
+                    &payload.svn_executable,
+                    &canonical_root,
+                    file_path,
+                ) {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        update_task(
+                            state,
+                            task_id,
+                            TaskStatus::Failed,
+                            "批量 Delete 安全校验失败",
+                            Some(nova_error_text(&error)),
+                        );
+                        return;
+                    }
+                };
+                if &current_identity != expected_identity {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "批量 Delete 目标已发生变化",
+                        Some(nova_error_text(&delete_target_changed_error(
+                            expected_identity,
+                            &current_identity,
+                        ))),
+                    );
+                    return;
+                }
+            }
+
+            command.arg("delete").arg("--force");
+            for file_path in &payload.file_paths {
+                command.arg(canonical_root.join(file_path));
+            }
+            append_task_log(
+                state,
+                task_id,
+                &format!("执行 svn delete --force：{}", payload.file_paths.join(", ")),
+            );
+        }
+        SvnBatchOperationKind::Move => {
+            let canonical_root = match canonicalize_delete_working_copy_root(&root) {
+                Ok(canonical_root) if canonical_root == root => canonical_root,
+                Ok(canonical_root) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "批量 Move 安全校验失败",
+                        Some(format!(
+                            "工作副本根目录在任务排队后发生变化：{}",
+                            canonical_root.display()
+                        )),
+                    );
+                    return;
+                }
+                Err(error) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "批量 Move 安全校验失败",
+                        Some(nova_error_text(&error)),
+                    );
+                    return;
+                }
+            };
+            let Some(target_directory) = payload.target_path.as_deref() else {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "批量 Move 参数缺失",
+                    Some("缺少批量 Move 目标目录。".to_string()),
+                );
+                return;
+            };
+            if payload.source_identities.len() != payload.file_paths.len()
+                || payload.destination_identities.len() != payload.file_paths.len()
+            {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "批量 Move 安全校验失败",
+                    Some("批量 Move 任务缺少完整的源或目标身份快照。".to_string()),
+                );
+                return;
+            }
+
+            for ((source_path, expected_source), expected_destination) in payload
+                .file_paths
+                .iter()
+                .zip(payload.source_identities.iter())
+                .zip(payload.destination_identities.iter())
+            {
+                let current_source = match validate_working_copy_transfer_source(
+                    &payload.svn_executable,
+                    &canonical_root,
+                    source_path,
+                    "BATCH_MOVE",
+                    "批量 Move",
+                ) {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        update_task(
+                            state,
+                            task_id,
+                            TaskStatus::Failed,
+                            "批量 Move 源路径校验失败",
+                            Some(nova_error_text(&error)),
+                        );
+                        return;
+                    }
+                };
+                if &current_source != expected_source {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "批量 Move 源路径已发生变化",
+                        Some(nova_error_text(&delete_target_changed_error(
+                            expected_source,
+                            &current_source,
+                        ))),
+                    );
+                    return;
+                }
+
+                let destination_path = batch_move_destination_path(target_directory, source_path);
+                let current_destination = match validate_working_copy_destination(
+                    &payload.svn_executable,
+                    &canonical_root,
+                    source_path,
+                    &current_source,
+                    &destination_path,
+                    "BATCH_MOVE",
+                    "批量 Move",
+                ) {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        update_task(
+                            state,
+                            task_id,
+                            TaskStatus::Failed,
+                            "批量 Move 目标路径校验失败",
+                            Some(nova_error_text(&error)),
+                        );
+                        return;
+                    }
+                };
+                if &current_destination != expected_destination {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "批量 Move 目标路径已发生变化",
+                        Some("目标目录在任务排队后发生变化。".to_string()),
+                    );
+                    return;
+                }
+            }
+
+            command.arg("move");
+            for source_path in &payload.file_paths {
+                command.arg(canonical_root.join(source_path));
+            }
+            let target = if target_directory.is_empty() {
+                canonical_root.clone()
+            } else {
+                canonical_root.join(target_directory)
+            };
+            command.arg(target);
+            append_task_log(
+                state,
+                task_id,
+                &format!(
+                    "执行 svn move：{} -> {}",
+                    payload.file_paths.join(", "),
+                    if target_directory.is_empty() {
+                        "."
+                    } else {
+                        target_directory
+                    }
+                ),
+            );
+        }
+    }
+    command.current_dir(&root);
+
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                "批量 SVN 操作执行成功",
+                None,
+            );
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "批量 SVN 操作执行失败",
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "批量 SVN 命令启动失败",
                 Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
             );
         }
@@ -3693,6 +4163,102 @@ fn normalize_delete_path(file: &str) -> Result<String, NovaError> {
     normalize_strict_working_copy_path(file, "DELETE_PATH_INVALID", "删除路径无效")
 }
 
+fn normalize_batch_operation_paths<F>(
+    paths: &[String],
+    code: &str,
+    message: &str,
+    mut normalize: F,
+) -> Result<Vec<String>, NovaError>
+where
+    F: FnMut(&str) -> Result<String, NovaError>,
+{
+    if paths.is_empty() || paths.len() > MAX_BATCH_OPERATION_PATHS {
+        return Err(NovaError::command(
+            code,
+            message,
+            Some(format!(
+                "请选择 1 到 {MAX_BATCH_OPERATION_PATHS} 个工作副本路径。"
+            )),
+            true,
+        ));
+    }
+
+    let mut normalized = Vec::with_capacity(paths.len());
+    let mut seen = HashSet::with_capacity(paths.len());
+    let mut total_bytes = 0usize;
+    for path in paths {
+        let path = normalize(path)?;
+        total_bytes = total_bytes.saturating_add(path.len() + 1);
+        if total_bytes > MAX_BATCH_OPERATION_PATH_BYTES {
+            return Err(NovaError::command(
+                code,
+                message,
+                Some(format!(
+                    "所选路径总长度不能超过 {MAX_BATCH_OPERATION_PATH_BYTES} 字节。"
+                )),
+                true,
+            ));
+        }
+        if seen.insert(path.clone()) {
+            normalized.push(path);
+        }
+    }
+
+    Ok(normalized)
+}
+
+fn collapse_descendant_paths(paths: Vec<String>) -> Vec<String> {
+    let selected = paths.iter().cloned().collect::<HashSet<_>>();
+    paths
+        .into_iter()
+        .filter(|path| {
+            let mut current = path.as_str();
+            while let Some((parent, _)) = current.rsplit_once('/') {
+                if selected.contains(parent) {
+                    return false;
+                }
+                current = parent;
+            }
+            true
+        })
+        .collect()
+}
+
+fn normalize_batch_move_target(path: &str) -> Result<String, NovaError> {
+    if path == "." {
+        return Ok(String::new());
+    }
+    normalize_move_path(
+        path,
+        "BATCH_MOVE_TARGET_PATH_INVALID",
+        "批量 Move 目标目录无效",
+    )
+}
+
+fn batch_move_destination_path(target_directory: &str, source_path: &str) -> String {
+    let basename = source_path.rsplit('/').next().unwrap_or(source_path);
+    if target_directory.is_empty() {
+        basename.to_string()
+    } else {
+        format!("{target_directory}/{basename}")
+    }
+}
+
+fn ensure_unique_batch_move_destinations(paths: Vec<String>) -> Result<Vec<String>, NovaError> {
+    let mut seen = HashSet::with_capacity(paths.len());
+    for path in &paths {
+        if !seen.insert(path) {
+            return Err(NovaError::command(
+                "BATCH_MOVE_TARGET_COLLISION",
+                "批量 Move 中存在同名目标",
+                Some(format!("多个源路径会移动到同一目标：{path}")),
+                true,
+            ));
+        }
+    }
+    Ok(paths)
+}
+
 fn normalize_move_path(file: &str, code: &str, message: &str) -> Result<String, NovaError> {
     normalize_strict_working_copy_path(file, code, message)
 }
@@ -4252,6 +4818,23 @@ fn operation_title(
         SvnOperationKind::ResolveTheirsFull => {
             format!("使用 theirs 解决 {}", file_path.unwrap_or(""))
         }
+    }
+}
+
+fn batch_operation_title(
+    kind: &SvnBatchOperationKind,
+    path_count: usize,
+    target_path: Option<&str>,
+) -> String {
+    match kind {
+        SvnBatchOperationKind::Revert => format!("撤销 {path_count} 个路径"),
+        SvnBatchOperationKind::Delete => format!("删除 {path_count} 个路径"),
+        SvnBatchOperationKind::Move => format!(
+            "移动 {path_count} 个路径到 {}",
+            target_path
+                .filter(|path| !path.is_empty())
+                .unwrap_or("工作副本根目录")
+        ),
     }
 }
 
@@ -5229,6 +5812,69 @@ mod tests {
     }
 
     #[test]
+    fn creates_batch_revert_tasks_with_deduplicated_safe_paths() {
+        let queue = TaskQueue::new();
+        let dir = test_temp_dir("svn-batch-operation-paths");
+        let task = queue
+            .create_svn_batch_operation_task(CreateSvnBatchOperationTaskRequest {
+                working_copy_root: dir.display().to_string(),
+                kind: SvnBatchOperationKind::Revert,
+                file_paths: vec![
+                    "src/main.rs".to_string(),
+                    "src/main.rs".to_string(),
+                    "src/lib.rs".to_string(),
+                ],
+                target_path: None,
+                svn_executable: None,
+            })
+            .expect("batch revert task should be created");
+
+        assert_eq!(task.title, "撤销 2 个路径");
+        match task.payload {
+            TaskPayload::SvnBatchOperation(payload) => {
+                assert!(matches!(payload.kind, SvnBatchOperationKind::Revert));
+                assert_eq!(payload.file_paths, vec!["src/main.rs", "src/lib.rs"]);
+            }
+            _ => panic!("expected batch svn operation payload"),
+        }
+
+        for paths in [vec![], vec!["../outside.txt".to_string()]] {
+            assert!(queue
+                .create_svn_batch_operation_task(CreateSvnBatchOperationTaskRequest {
+                    working_copy_root: dir.display().to_string(),
+                    kind: SvnBatchOperationKind::Revert,
+                    file_paths: paths,
+                    target_path: None,
+                    svn_executable: None,
+                })
+                .is_err());
+        }
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn collapses_descendants_for_destructive_batch_operations() {
+        assert_eq!(
+            collapse_descendant_paths(vec![
+                "src/main.rs".to_string(),
+                "src".to_string(),
+                "tests/case.rs".to_string(),
+            ]),
+            vec!["src", "tests/case.rs"]
+        );
+        assert_eq!(
+            batch_move_destination_path("archive", "src/main.rs"),
+            "archive/main.rs"
+        );
+        assert_eq!(batch_move_destination_path("", "src/main.rs"), "main.rs");
+        assert!(ensure_unique_batch_move_destinations(vec![
+            "archive/main.rs".to_string(),
+            "archive/main.rs".to_string(),
+        ])
+        .is_err());
+    }
+
+    #[test]
     fn rejects_lock_unlock_and_resolve_operations_without_file_paths() {
         let queue = TaskQueue::new();
         let dir = test_temp_dir("svn-operation-missing-path");
@@ -5414,6 +6060,114 @@ mod tests {
             fs::read_to_string(local_working_copy.join("untouched.txt")).unwrap(),
             "base"
         );
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn runs_batch_revert_move_and_delete_in_real_working_copy() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-batch-operations-integration");
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(import_dir.join("archive")).expect("create batch import tree");
+        fs::write(import_dir.join("alpha.txt"), "alpha base").expect("write alpha fixture");
+        fs::write(import_dir.join("beta.txt"), "beta base").expect("write beta fixture");
+        fs::write(import_dir.join("archive/keep.txt"), "keep").expect("write archive fixture");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+
+        fs::write(working_copy.join("alpha.txt"), "alpha local").expect("modify alpha fixture");
+        fs::write(working_copy.join("beta.txt"), "beta local").expect("modify beta fixture");
+        let queue = TaskQueue::new();
+        let revert_task = queue
+            .create_svn_batch_operation_task(CreateSvnBatchOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnBatchOperationKind::Revert,
+                file_paths: vec!["alpha.txt".to_string(), "beta.txt".to_string()],
+                target_path: None,
+                svn_executable: None,
+            })
+            .expect("batch revert task should be created");
+        let revert_task = wait_for_test_task(&queue, &revert_task.task_id);
+        assert!(
+            matches!(revert_task.status, TaskStatus::Success),
+            "batch Revert task failed: {:?}",
+            revert_task.error
+        );
+        assert_eq!(
+            fs::read_to_string(working_copy.join("alpha.txt")).unwrap(),
+            "alpha base"
+        );
+        assert_eq!(
+            fs::read_to_string(working_copy.join("beta.txt")).unwrap(),
+            "beta base"
+        );
+
+        let move_task = queue
+            .create_svn_batch_operation_task(CreateSvnBatchOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnBatchOperationKind::Move,
+                file_paths: vec!["alpha.txt".to_string(), "beta.txt".to_string()],
+                target_path: Some("archive".to_string()),
+                svn_executable: None,
+            })
+            .expect("batch move task should be created");
+        let move_task = wait_for_test_task(&queue, &move_task.task_id);
+        assert!(
+            matches!(move_task.status, TaskStatus::Success),
+            "batch Move task failed: {:?}",
+            move_task.error
+        );
+        assert!(working_copy.join("archive/alpha.txt").is_file());
+        assert!(working_copy.join("archive/beta.txt").is_file());
+        assert!(!working_copy.join("alpha.txt").exists());
+        assert!(!working_copy.join("beta.txt").exists());
+
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "batch move"]),
+        );
+        let delete_task = queue
+            .create_svn_batch_operation_task(CreateSvnBatchOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnBatchOperationKind::Delete,
+                file_paths: vec![
+                    "archive/alpha.txt".to_string(),
+                    "archive/beta.txt".to_string(),
+                ],
+                target_path: None,
+                svn_executable: None,
+            })
+            .expect("batch delete task should be created");
+        let delete_task = wait_for_test_task(&queue, &delete_task.task_id);
+        assert!(
+            matches!(delete_task.status, TaskStatus::Success),
+            "batch Delete task failed: {:?}",
+            delete_task.error
+        );
+        assert!(!working_copy.join("archive/alpha.txt").exists());
+        assert!(!working_copy.join("archive/beta.txt").exists());
 
         fs::remove_dir_all(root).ok();
     }

@@ -15,6 +15,7 @@ vi.mock("./lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/api")>();
   return {
     ...actual,
+    createSvnBatchOperationTask: vi.fn(),
     createSvnOperationTask: vi.fn(),
     ignoreWorkspacePath: vi.fn(),
     getTask: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("./lib/api", async (importOriginal) => {
 import { get } from "svelte/store";
 import {
   createSvnOperationTask,
+  createSvnBatchOperationTask,
   ignoreWorkspacePath,
   getTask,
   listTasks,
@@ -47,6 +49,7 @@ import type {
 import App from "./App.svelte";
 
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
+const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
 const ignoreWorkspacePathMock = vi.mocked(ignoreWorkspacePath);
 const getTaskMock = vi.mocked(getTask);
 const listTasksMock = vi.mocked(listTasks);
@@ -56,6 +59,7 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(async () => {
   createSvnOperationTaskMock.mockReset();
+  createSvnBatchOperationTaskMock.mockReset();
   ignoreWorkspacePathMock.mockReset();
   getTaskMock.mockReset();
   listTasksMock.mockReset();
@@ -140,6 +144,62 @@ describe("App SVN operation completion", () => {
 
     expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("可能产生合并或冲突"));
     expect(createSvnOperationTaskMock).not.toHaveBeenCalled();
+  });
+
+  it("多选路径确认后创建单个批量 Revert 任务", async () => {
+    await showBatchOperationSource();
+    const task = makeTask({ task_id: "batch-revert", status: "pending" });
+    createSvnBatchOperationTaskMock.mockResolvedValue(task);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(App);
+
+    await selectBatchOperationFiles();
+    await fireEvent.click(screen.getByRole("button", { name: "Revert" }));
+
+    await waitFor(() => {
+      expect(createSvnBatchOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:/repo/wc",
+        kind: "revert_paths",
+        file_paths: ["alpha.txt", "beta.txt"],
+        svn_executable: undefined,
+      });
+    });
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("alpha.txt"));
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("beta.txt"));
+  });
+
+  it("取消批量 Delete 确认时不创建任务", async () => {
+    await showBatchOperationSource();
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(App);
+
+    await selectBatchOperationFiles();
+    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(createSvnBatchOperationTaskMock).not.toHaveBeenCalled();
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("删除 2 个路径"));
+  });
+
+  it("多选 Move 使用目标目录创建单个批量任务", async () => {
+    await showBatchOperationSource();
+    const task = makeTask({ task_id: "batch-move", status: "pending" });
+    createSvnBatchOperationTaskMock.mockResolvedValue(task);
+    vi.spyOn(window, "prompt").mockReturnValue("archive");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(App);
+
+    await selectBatchOperationFiles();
+    await fireEvent.click(screen.getByRole("button", { name: "Move" }));
+
+    await waitFor(() => {
+      expect(createSvnBatchOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:/repo/wc",
+        kind: "move_paths",
+        file_paths: ["alpha.txt", "beta.txt"],
+        target_path: "archive",
+        svn_executable: undefined,
+      });
+    });
   });
 
   it("选中其他任务时仍按 pending id 消费成功操作", async () => {
@@ -419,6 +479,53 @@ async function showMoveableSource() {
   ];
   listWorkspaceFilesMock.mockResolvedValueOnce(tree);
   await workspaceStore.refreshFileTree();
+}
+
+async function showBatchOperationSource() {
+  const status = makeStatus();
+  status.total = 2;
+  status.returned = 2;
+  status.local_changes = 2;
+  status.files = ["alpha.txt", "beta.txt"].map((path) => ({
+    path,
+    status: "modified",
+    revision: "12",
+    property_status: null,
+    property_changed: false,
+    remote_status: null,
+    remote_property_status: null,
+    change_scope: "local" as const,
+    abnormal: false,
+    lock_state: "none" as const,
+    lock_owner: null,
+    lock_comment: null,
+    conflict_kind: null,
+    file_size: 10,
+    content_digest: `${path}-digest`,
+  }));
+  const tree = makeFileTree();
+  tree.total_files = 2;
+  tree.returned_files = 2;
+  tree.nodes = ["alpha.txt", "beta.txt"].map((path) => ({
+    path,
+    name: path,
+    kind: "file" as const,
+    status: "modified",
+    revision: "12",
+    ...makeNodeMetadata("12", "local"),
+    file_size: 10,
+    changed: true,
+    versioned: true,
+    children: [],
+  }));
+  scanWorkspaceStatusMock.mockResolvedValueOnce(status);
+  listWorkspaceFilesMock.mockResolvedValueOnce(tree);
+  await workspaceStore.refreshStatus();
+}
+
+async function selectBatchOperationFiles() {
+  await fireEvent.click(screen.getByRole("checkbox", { name: "选择文件 alpha.txt" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "选择文件 beta.txt" }));
 }
 
 async function showRemoteUpdateSource(changeScope: "remote" | "both" = "remote") {

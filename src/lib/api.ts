@@ -14,6 +14,7 @@ import type {
   CreateRepositoryListTaskRequest,
   CreateRevisionDiffTaskRequest,
   CreateShadowWorkspaceTaskRequest,
+  CreateSvnBatchOperationTaskRequest,
   CreateSvnOperationTaskRequest,
   CreateSvnSwitchTaskRequest,
   DetectSvnRequest,
@@ -137,6 +138,12 @@ export function createSvnOperationTask(
   request: CreateSvnOperationTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_svn_operation_task", { request });
+}
+
+export function createSvnBatchOperationTask(
+  request: CreateSvnBatchOperationTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_svn_batch_operation_task", { request });
 }
 
 export function createShadowWorkspaceTask(
