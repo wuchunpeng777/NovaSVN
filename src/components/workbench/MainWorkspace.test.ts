@@ -302,6 +302,86 @@ describe("MainWorkspace", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("separates local, remote, and combined working-copy changes", async () => {
+    const local = makeFile("local.txt", "modified", "local-digest");
+    const remote = {
+      ...makeFile("remote.txt", "normal", "remote-digest"),
+      remote_status: "modified",
+      change_scope: "remote" as const,
+    };
+    const both = {
+      ...makeFile("both.txt", "modified", "both-digest"),
+      remote_status: "modified",
+      change_scope: "both" as const,
+    };
+    const remoteProps = {
+      ...makeFile("remote-props.txt", "normal", "remote-props-digest"),
+      remote_property_status: "modified",
+      change_scope: "remote" as const,
+    };
+    const workingCopyStatus = makeStatus([local, remote, both, remoteProps]);
+
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus,
+        workspaceFileTree: {
+          working_copy_root: "C:/repo/wc",
+          total_files: 4,
+          returned_files: 4,
+          truncated: false,
+          nodes: [
+            makeScopedNode("local.txt", "modified", "local"),
+            makeScopedNode("remote.txt", "normal", "remote", "modified"),
+            makeScopedNode("both.txt", "modified", "both", "modified"),
+            makeScopedNode("remote-props.txt", "normal", "remote"),
+          ],
+        },
+      },
+    });
+
+    const summary = screen.getByRole("region", { name: "工作副本摘要" });
+    expect(summary).toHaveTextContent("2 本地改动");
+    expect(summary).toHaveTextContent("3 远端更新");
+    expect(summary).toHaveTextContent("1 同时变化");
+    const localRow = screen.getByText("local.txt", { exact: true }).closest(".file-row");
+    const remoteRow = screen.getByText("remote.txt", { exact: true }).closest(".file-row");
+    const bothRow = screen.getByText("both.txt", { exact: true }).closest(".file-row");
+    const remotePropsRow = screen
+      .getByText("remote-props.txt", { exact: true })
+      .closest(".file-row");
+    expect(localRow).toHaveTextContent("本地 modify");
+    expect(remoteRow).toHaveTextContent("远端 modify");
+    expect(remoteRow).not.toHaveTextContent("选择提交");
+    expect(remoteRow).not.toHaveTextContent("撤销");
+    expect(bothRow).toHaveTextContent("本地 modify");
+    expect(bothRow).toHaveTextContent("远端 modify");
+    expect(remotePropsRow).toHaveTextContent("远端 属性");
+
+    const filters = screen.getByRole("region", { name: "改动过滤" });
+    await fireEvent.click(within(filters).getByRole("button", { name: "远端更新" }));
+    expect(screen.queryByText("local.txt", { exact: true })).not.toBeInTheDocument();
+    expect(screen.getByText("remote.txt", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("both.txt", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("remote-props.txt", { exact: true })).toBeInTheDocument();
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "本地改动" }));
+    expect(screen.getByText("local.txt", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("remote.txt", { exact: true })).not.toBeInTheDocument();
+    expect(screen.getByText("both.txt", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("remote-props.txt", { exact: true })).not.toBeInTheDocument();
+
+    await rerender({
+      workingCopyStatus: {
+        ...workingCopyStatus,
+        remote_updates_checked: false,
+        repository_revision: null,
+      },
+    });
+    expect(summary).toHaveTextContent("远端未检查");
+  });
+
   it("moves and deletes versioned files and directories from the working copy", async () => {
     const onDeletePath = vi.fn();
     const onMovePath = vi.fn();
@@ -394,7 +474,7 @@ describe("MainWorkspace", () => {
         kind: "dir",
         status: "unversioned",
         revision: null,
-        ...makeNodeMetadata(null),
+        ...makeNodeMetadata(null, null, "dev", "local"),
         file_size: null,
         changed: true,
         versioned: false,
@@ -548,6 +628,9 @@ function makeFile(path: string, status: string, contentDigest: string): ChangedF
     revision: "12",
     property_status: null,
     property_changed: false,
+    remote_status: null,
+    remote_property_status: null,
+    change_scope: status === "normal" ? "none" : "local",
     abnormal: false,
     lock_state: "none",
     lock_owner: null,
@@ -567,6 +650,11 @@ function makeStatus(files: ChangedFile[]): WorkingCopyStatus {
     limit: 500,
     revision_range: "12",
     mixed_revision: false,
+    remote_updates_checked: true,
+    repository_revision: "12",
+    local_changes: files.filter((file) => ["local", "both"].includes(file.change_scope)).length,
+    remote_changes: files.filter((file) => ["remote", "both"].includes(file.change_scope)).length,
+    combined_changes: files.filter((file) => file.change_scope === "both").length,
     modified: 1,
     added: 0,
     deleted: 0,
@@ -577,6 +665,27 @@ function makeStatus(files: ChangedFile[]): WorkingCopyStatus {
     property_changed: 0,
     files,
   };
+}
+
+function makeScopedNode(
+  path: string,
+  status: string,
+  changeScope: "none" | "local" | "remote" | "both",
+  remoteStatus: string | null = null,
+) {
+  return {
+    path,
+    name: path,
+    kind: "file",
+    status,
+    revision: "12",
+    ...makeNodeMetadata("12", "11", "alice", changeScope),
+    remote_status: remoteStatus,
+    file_size: 128,
+    changed: changeScope !== "none",
+    versioned: true,
+    children: [],
+  } satisfies WorkspaceFileTree["nodes"][number];
 }
 
 function makeFileTree(): WorkspaceFileTree {
@@ -592,7 +701,7 @@ function makeFileTree(): WorkspaceFileTree {
         kind: "dir",
         status: "normal",
         revision: "12",
-        ...makeNodeMetadata("12"),
+        ...makeNodeMetadata("12", "12", "dev", "local"),
         file_size: null,
         changed: true,
         versioned: true,
@@ -603,7 +712,7 @@ function makeFileTree(): WorkspaceFileTree {
             kind: "file",
             status: "modified",
             revision: "12",
-            ...makeNodeMetadata("12", "11", "alice"),
+            ...makeNodeMetadata("12", "11", "alice", "local"),
             file_size: 128,
             changed: true,
             versioned: true,
@@ -617,7 +726,7 @@ function makeFileTree(): WorkspaceFileTree {
         kind: "file",
         status: "unversioned",
         revision: null,
-        ...makeNodeMetadata(null),
+        ...makeNodeMetadata(null, null, "dev", "local"),
         file_size: 128,
         changed: true,
         versioned: false,
@@ -717,8 +826,12 @@ function makeNodeMetadata(
   baseRevision: string | null,
   lastRevision = baseRevision,
   author = "dev",
+  changeScope: "none" | "local" | "remote" | "both" = "none",
 ) {
   return {
+    remote_status: null,
+    remote_property_status: null,
+    change_scope: changeScope,
     base_revision: baseRevision,
     last_revision: lastRevision,
     last_changed_date: baseRevision ? "2026-07-11T01:02:03Z" : null,

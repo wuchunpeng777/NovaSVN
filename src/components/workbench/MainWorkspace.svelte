@@ -380,7 +380,7 @@
     cancelled: "取消",
   };
 
-  type WorkingCopyTreeFilter = "all" | "changed" | "unversioned";
+  type WorkingCopyTreeFilter = "all" | "local" | "remote" | "unversioned";
   type WorkspaceTreeRow = WorkspaceFileNode & {
     depth: number;
   };
@@ -388,7 +388,7 @@
   let selectedCommitHistoryMessage = "";
   let diffInline = false;
   let showWhitespace = false;
-  let workingCopyTreeFilter: WorkingCopyTreeFilter = "changed";
+  let workingCopyTreeFilter: WorkingCopyTreeFilter = "all";
   let selectedLogRevision: string | null = null;
   let collapsedTreePaths = new Set<string>();
   const inspectorMinWidth = 300;
@@ -531,6 +531,11 @@
     return changedFileForPath(path) !== null;
   }
 
+  function isLocalChangedPath(path: string) {
+    const scope = changedFileForPath(path)?.change_scope;
+    return scope === "local" || scope === "both";
+  }
+
   function isCommittablePath(path: string) {
     const file = changedFileForPath(path);
     return !!file && isCommittable(file);
@@ -538,6 +543,49 @@
 
   function isUnversionedPath(path: string) {
     return changedFileForPath(path)?.status === "unversioned";
+  }
+
+  function localStatusText(node: WorkspaceFileNode) {
+    if (node.kind === "dir") {
+      return "本地";
+    }
+    if (["normal", "none"].includes(node.status)) {
+      return "本地 属性";
+    }
+    return `本地 ${labelStatus(node.status)}`;
+  }
+
+  function remoteStatusText(node: WorkspaceFileNode) {
+    if (node.kind === "dir") {
+      return "远端";
+    }
+    const status = node.remote_status;
+    if (!status || ["normal", "none"].includes(status)) {
+      return "远端 属性";
+    }
+    return `远端 ${labelStatus(status)}`;
+  }
+
+  function selectedStatusText(file: ChangedFile | null, node: WorkspaceFileNode | null) {
+    const scope = file?.change_scope ?? node?.change_scope ?? "none";
+    const localStatus = file?.status ?? node?.status ?? "normal";
+    const remoteStatus = file?.remote_status ?? node?.remote_status;
+    const localLabel = ["normal", "none"].includes(localStatus)
+      ? "属性"
+      : labelStatus(localStatus);
+    const remoteLabel = !remoteStatus || ["normal", "none"].includes(remoteStatus)
+      ? "属性"
+      : labelStatus(remoteStatus);
+    if (scope === "both") {
+      return `本地 ${localLabel} / 远端 ${remoteLabel}`;
+    }
+    if (scope === "local") {
+      return `本地 ${localLabel}`;
+    }
+    if (scope === "remote") {
+      return `远端 ${remoteLabel}`;
+    }
+    return labelStatus(localStatus);
   }
 
   function canDeletePath(node: WorkspaceFileNode | null) {
@@ -610,7 +658,10 @@
       const selfMatchesSearch = !query || node.path.toLowerCase().includes(query);
       const selfMatchesMode =
         filter === "all" ||
-        (filter === "changed" && node.changed && node.status !== "unversioned") ||
+        (filter === "local" &&
+          ["local", "both"].includes(node.change_scope) &&
+          node.status !== "unversioned") ||
+        (filter === "remote" && ["remote", "both"].includes(node.change_scope)) ||
         (filter === "unversioned" && node.status === "unversioned");
       const keepNode =
         children.length > 0 || (selfMatchesSearch && selfMatchesMode);
@@ -745,7 +796,7 @@
   }
 
   function clearWorkingCopyFilters() {
-    workingCopyTreeFilter = "changed";
+    workingCopyTreeFilter = "all";
     onClearFilters();
   }
 
@@ -1942,10 +1993,21 @@
         </section>
 
         <section class="summary-strip" aria-label="工作副本摘要">
-          <span><strong>{workingCopyStatus?.total ?? 0}</strong> 改动</span>
+          <span><strong>{workingCopyStatus?.local_changes ?? 0}</strong> 本地改动</span>
+          <span><strong>{workingCopyStatus?.remote_changes ?? 0}</strong> 远端更新</span>
+          <span><strong>{workingCopyStatus?.combined_changes ?? 0}</strong> 同时变化</span>
           <span><strong>{commitFileCount}</strong> 提交目标</span>
           <span><strong>{abnormalCount}</strong> 异常</span>
-          <span><strong>r{workingCopyStatus?.revision_range ?? workspace?.revision ?? "-"}</strong></span>
+          <span>
+            <strong>r{workingCopyStatus?.revision_range ?? workspace?.revision ?? "-"}</strong>
+            {#if workingCopyStatus}
+              {#if workingCopyStatus.remote_updates_checked}
+                → r{workingCopyStatus.repository_revision ?? "-"}
+              {:else}
+                · 远端未检查
+              {/if}
+            {/if}
+          </span>
         </section>
 
         <section class="changes-toolbar" aria-label="改动过滤">
@@ -1966,10 +2028,17 @@
             </button>
             <button
               type="button"
-              class:active={workingCopyTreeFilter === "changed"}
-              on:click={() => (workingCopyTreeFilter = "changed")}
+              class:active={workingCopyTreeFilter === "local"}
+              on:click={() => (workingCopyTreeFilter = "local")}
             >
-              变化文件
+              本地改动
+            </button>
+            <button
+              type="button"
+              class:active={workingCopyTreeFilter === "remote"}
+              on:click={() => (workingCopyTreeFilter = "remote")}
+            >
+              远端更新
             </button>
             <button
               type="button"
@@ -2035,8 +2104,20 @@
                   <span class="metadata-cell" title={node.last_changed_author ?? undefined}>
                     {node.last_changed_author ?? "-"}
                   </span>
-                  <span class="status-pill {statusClass(node.status)}">
-                    {node.kind === "file" ? labelStatus(node.status) : ""}
+                  <span class="status-stack">
+                    {#if node.change_scope === "local" || node.change_scope === "both"}
+                      <span class="status-pill local-status {statusClass(node.status)}">
+                        {localStatusText(node)}
+                      </span>
+                    {/if}
+                    {#if node.change_scope === "remote" || node.change_scope === "both"}
+                      <span class="status-pill remote-status {statusClass(node.remote_status ?? "modified")}">
+                        {remoteStatusText(node)}
+                      </span>
+                    {/if}
+                    {#if node.change_scope === "none" && node.kind === "file" && !["normal", "none"].includes(node.status)}
+                      <span class="status-pill {statusClass(node.status)}">{labelStatus(node.status)}</span>
+                    {/if}
                   </span>
                   <span>{formatBytes(node.file_size)}</span>
                   <span class="inline-row-actions">
@@ -2066,7 +2147,7 @@
                       >
                         Ignore
                       </span>
-                    {:else if isChangedPath(node.path) && isCommitSelected(node.path)}
+                    {:else if isLocalChangedPath(node.path) && isCommitSelected(node.path)}
                       <em>已选提交</em>
                       <span
                         role="button"
@@ -2080,7 +2161,7 @@
                       >
                         取消选择
                       </span>
-                    {:else if isChangedPath(node.path)}
+                    {:else if isLocalChangedPath(node.path)}
                       <span
                         role="button"
                         tabindex="0"
@@ -2095,7 +2176,7 @@
                         {isCommittablePath(node.path) ? "选择提交" : "需先处理"}
                       </span>
                     {/if}
-                    {#if isChangedPath(node.path) && !isUnversionedPath(node.path)}
+                    {#if isLocalChangedPath(node.path) && !isUnversionedPath(node.path)}
                       <span
                         role="button"
                         tabindex="0"
@@ -2201,7 +2282,7 @@
                   <strong>{basename(selectedFile?.path ?? selectedTreeNode?.path ?? "")}</strong>
                   <span>{dirname(selectedFile?.path ?? selectedTreeNode?.path ?? "")}</span>
                   <small>
-                    {labelStatus(selectedFile?.status ?? selectedTreeNode?.status ?? "normal")} ·
+                    {selectedStatusText(selectedFile, selectedTreeNode)} ·
                     {formatBytes(selectedFile?.file_size ?? selectedTreeNode?.file_size ?? null)}
                   </small>
                 </div>
@@ -2235,9 +2316,11 @@
                     <button type="button" on:click={() => onLaunchExternalTool("diff", selectedFile.path)}>
                       外部 Diff
                     </button>
-                    <button type="button" on:click={() => onRevertFile(selectedFile.path)}>
-                      撤销
-                    </button>
+                    {#if selectedFile.change_scope === "local" || selectedFile.change_scope === "both"}
+                      <button type="button" on:click={() => onRevertFile(selectedFile.path)}>
+                        撤销
+                      </button>
+                    {/if}
                     {#if selectedFileReviewed}
                       <button type="button" on:click={() => onMarkFileUnreviewed(selectedFile.path)}>
                         标为未审

@@ -301,6 +301,18 @@ for (const column of ["Name", "Base", "Last", "Date", "Author", "Status", "Size"
   }
 }
 
+if (
+  !workspaceRs.includes('node.has_tag_name("repos-status")') ||
+  !workspaceRs.includes('node.has_tag_name("against")') ||
+  !workspaceRs.includes("pub enum ChangeScope") ||
+  !workspaceRs.includes("remote_updates_checked") ||
+  !mainWorkspace.includes('workingCopyTreeFilter === "local"') ||
+  !mainWorkspace.includes('workingCopyTreeFilter === "remote"')
+) {
+  console.error("工作副本必须区分本地、远端和组合状态，并提供独立筛选");
+  failed = true;
+}
+
 if (packageJson.scripts?.["test:e2e"] !== "playwright test") {
   console.error("test:e2e 必须执行 Playwright 测试");
   failed = true;

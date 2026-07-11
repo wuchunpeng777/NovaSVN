@@ -384,6 +384,9 @@ export interface ChangedFile {
   revision: string | null;
   property_status: string | null;
   property_changed: boolean;
+  remote_status: string | null;
+  remote_property_status: string | null;
+  change_scope: ChangeScope;
   abnormal: boolean;
   lock_state: string;
   lock_owner: string | null;
@@ -401,6 +404,11 @@ export interface WorkingCopyStatus {
   limit: number;
   revision_range: string | null;
   mixed_revision: boolean;
+  remote_updates_checked: boolean;
+  repository_revision: string | null;
+  local_changes: number;
+  remote_changes: number;
+  combined_changes: number;
   modified: number;
   added: number;
   deleted: number;
@@ -425,6 +433,9 @@ export interface WorkspaceFileNode {
   name: string;
   kind: "dir" | "file" | string;
   status: string;
+  remote_status: string | null;
+  remote_property_status: string | null;
+  change_scope: ChangeScope;
   revision: string | null;
   base_revision: string | null;
   last_revision: string | null;
@@ -435,6 +446,8 @@ export interface WorkspaceFileNode {
   versioned: boolean;
   children: WorkspaceFileNode[];
 }
+
+export type ChangeScope = "none" | "local" | "remote" | "both";
 
 export interface GetFileDiffRequest {
   working_copy_root: string;

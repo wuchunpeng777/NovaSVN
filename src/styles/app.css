@@ -458,8 +458,8 @@ textarea {
 
 .file-table-head,
 .file-row {
-  grid-template-columns: minmax(220px, 1fr) 58px 58px 116px 92px 78px 58px 140px;
-  min-width: 860px;
+  grid-template-columns: minmax(220px, 1fr) 58px 58px 116px 92px 158px 58px 140px;
+  min-width: 940px;
 }
 
 .file-table-head,
@@ -615,6 +615,7 @@ textarea {
 .status-pill {
   justify-self: start;
   min-width: 52px;
+  border: 1px solid #d5dbe2;
   border-radius: 8px;
   background: #e3e8ee;
   padding: 1px 6px;
@@ -625,6 +626,25 @@ textarea {
 
 .status-pill:empty {
   display: none;
+}
+
+.status-stack {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.status-stack .status-pill {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-status {
+  border-color: #8aa9c7;
 }
 
 .status-modified {
@@ -1535,8 +1555,13 @@ textarea {
 }
 
 .versions-workbench[data-theme="dark"] .status-pill {
+  border-color: #4b5560;
   background: #39414a;
   color: #d4dbe2;
+}
+
+.versions-workbench[data-theme="dark"] .remote-status {
+  border-color: #6689aa;
 }
 
 .versions-workbench[data-theme="dark"] .status-modified {
@@ -1600,7 +1625,7 @@ textarea {
 @media (max-width: 1180px) {
   .file-table-head,
   .file-row {
-    grid-template-columns: minmax(190px, 1fr) 52px 52px 108px 84px 72px 54px 120px;
-    min-width: 780px;
+    grid-template-columns: minmax(190px, 1fr) 52px 52px 108px 84px 144px 54px 120px;
+    min-width: 860px;
   }
 }

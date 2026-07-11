@@ -374,7 +374,7 @@ async function showMoveableSource() {
       kind: "file",
       status: "modified",
       revision: "12",
-      ...makeNodeMetadata("12"),
+      ...makeNodeMetadata("12", "local"),
       file_size: 10,
       changed: true,
       versioned: true,
@@ -397,6 +397,9 @@ async function showIgnorableSource() {
       revision: null,
       property_status: null,
       property_changed: false,
+      remote_status: null,
+      remote_property_status: null,
+      change_scope: "local",
       abnormal: false,
       lock_state: "none",
       lock_owner: null,
@@ -416,7 +419,7 @@ async function showIgnorableSource() {
       kind: "file",
       status: "unversioned",
       revision: null,
-      ...makeNodeMetadata(null),
+      ...makeNodeMetadata(null, "local"),
       file_size: 10,
       changed: true,
       versioned: false,
@@ -447,6 +450,11 @@ function makeStatus(): WorkingCopyStatus {
     limit: 500,
     revision_range: "12",
     mixed_revision: false,
+    remote_updates_checked: true,
+    repository_revision: "12",
+    local_changes: 0,
+    remote_changes: 0,
+    combined_changes: 0,
     modified: 0,
     added: 0,
     deleted: 0,
@@ -469,8 +477,14 @@ function makeFileTree(): WorkspaceFileTree {
   };
 }
 
-function makeNodeMetadata(revision: string | null) {
+function makeNodeMetadata(
+  revision: string | null,
+  changeScope: "none" | "local" | "remote" | "both" = "none",
+) {
   return {
+    remote_status: null,
+    remote_property_status: null,
+    change_scope: changeScope,
     base_revision: revision,
     last_revision: revision,
     last_changed_date: revision ? "2026-07-11T01:02:03Z" : null,

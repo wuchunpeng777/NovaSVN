@@ -63,6 +63,11 @@ pub struct WorkingCopyStatus {
     pub limit: usize,
     pub revision_range: Option<String>,
     pub mixed_revision: bool,
+    pub remote_updates_checked: bool,
+    pub repository_revision: Option<String>,
+    pub local_changes: usize,
+    pub remote_changes: usize,
+    pub combined_changes: usize,
     pub modified: usize,
     pub added: usize,
     pub deleted: usize,
@@ -81,6 +86,9 @@ pub struct ChangedFile {
     pub revision: Option<String>,
     pub property_status: Option<String>,
     pub property_changed: bool,
+    pub remote_status: Option<String>,
+    pub remote_property_status: Option<String>,
+    pub change_scope: ChangeScope,
     pub abnormal: bool,
     pub lock_state: String,
     pub lock_owner: Option<String>,
@@ -105,6 +113,9 @@ pub struct WorkspaceFileNode {
     pub name: String,
     pub kind: String,
     pub status: String,
+    pub remote_status: Option<String>,
+    pub remote_property_status: Option<String>,
+    pub change_scope: ChangeScope,
     pub revision: Option<String>,
     pub base_revision: Option<String>,
     pub last_revision: Option<String>,
@@ -114,6 +125,33 @@ pub struct WorkspaceFileNode {
     pub changed: bool,
     pub versioned: bool,
     pub children: Vec<WorkspaceFileNode>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeScope {
+    None,
+    Local,
+    Remote,
+    Both,
+}
+
+impl ChangeScope {
+    fn from_changes(local: bool, remote: bool) -> Self {
+        match (local, remote) {
+            (true, true) => Self::Both,
+            (true, false) => Self::Local,
+            (false, true) => Self::Remote,
+            (false, false) => Self::None,
+        }
+    }
+
+    fn combine(self, other: Self) -> Self {
+        Self::from_changes(
+            matches!(self, Self::Local | Self::Both) || matches!(other, Self::Local | Self::Both),
+            matches!(self, Self::Remote | Self::Both) || matches!(other, Self::Remote | Self::Both),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1785,6 +1823,14 @@ fn parse_svn_status_xml(
         )
     })?;
 
+    let against = document
+        .descendants()
+        .find(|node| node.has_tag_name("against"));
+    let remote_updates_checked = against.is_some();
+    let repository_revision = against
+        .and_then(|node| node.attribute("revision"))
+        .map(ToString::to_string);
+
     let mut files = Vec::new();
     for entry in document
         .descendants()
@@ -1801,15 +1847,35 @@ fn parse_svn_status_xml(
 
         let item = wc_status.attribute("item").unwrap_or("normal").to_string();
         let props = wc_status.attribute("props").map(ToString::to_string);
+        let repos_status = entry
+            .children()
+            .find(|node| node.has_tag_name("repos-status"));
+        let remote_status = repos_status
+            .and_then(|node| node.attribute("item"))
+            .map(ToString::to_string);
+        let remote_property_status = repos_status
+            .and_then(|node| node.attribute("props"))
+            .map(ToString::to_string);
 
         let property_changed = props
             .as_deref()
             .map(|value| value != "none" && value != "normal")
             .unwrap_or(false);
+        let remote_property_changed = remote_property_status
+            .as_deref()
+            .map(|value| value != "none" && value != "normal")
+            .unwrap_or(false);
+        let local_changed = local_status_has_change(&item) || property_changed;
+        let remote_changed = remote_status
+            .as_deref()
+            .is_some_and(repository_status_has_update)
+            || remote_property_changed;
+        let change_scope = ChangeScope::from_changes(local_changed, remote_changed);
         let (lock_state, lock_owner, lock_comment) = parse_lock_info(entry, wc_status);
         let conflict_kind = parse_conflict_kind(entry, wc_status, &item, props.as_deref());
-        if item == "normal"
+        if matches!(item.as_str(), "normal" | "none")
             && props.as_deref().unwrap_or("none") == "none"
+            && !remote_changed
             && lock_state == "none"
             && lock_owner.is_none()
             && lock_comment.is_none()
@@ -1827,6 +1893,9 @@ fn parse_svn_status_xml(
             revision: wc_status.attribute("revision").map(ToString::to_string),
             property_status: props,
             property_changed,
+            remote_status,
+            remote_property_status,
+            change_scope,
             abnormal: is_abnormal_status(&item),
             lock_state,
             lock_owner,
@@ -1855,6 +1924,20 @@ fn parse_svn_status_xml(
         limit: safe_limit,
         revision_range: revision_summary.range,
         mixed_revision: revision_summary.mixed,
+        remote_updates_checked,
+        repository_revision,
+        local_changes: files
+            .iter()
+            .filter(|file| matches!(file.change_scope, ChangeScope::Local | ChangeScope::Both))
+            .count(),
+        remote_changes: files
+            .iter()
+            .filter(|file| matches!(file.change_scope, ChangeScope::Remote | ChangeScope::Both))
+            .count(),
+        combined_changes: files
+            .iter()
+            .filter(|file| file.change_scope == ChangeScope::Both)
+            .count(),
         modified: count_status(&files, "modified"),
         added: count_status(&files, "added"),
         deleted: count_status(&files, "deleted"),
@@ -1882,6 +1965,25 @@ fn normalize_status<'a, 'input>(status: &str, wc_status: roxmltree::Node<'a, 'in
         | "obstructed" => status.to_string(),
         other => other.to_string(),
     }
+}
+
+fn local_status_has_change(status: &str) -> bool {
+    matches!(
+        status,
+        "modified"
+            | "added"
+            | "deleted"
+            | "missing"
+            | "unversioned"
+            | "conflicted"
+            | "obstructed"
+            | "incomplete"
+            | "replaced"
+    )
+}
+
+fn repository_status_has_update(status: &str) -> bool {
+    matches!(status, "modified" | "added" | "deleted" | "replaced")
 }
 
 fn is_abnormal_status(status: &str) -> bool {
@@ -2012,6 +2114,11 @@ fn read_workspace_children(
             }
 
             let changed = status_match.changed || children.iter().any(|child| child.changed);
+            let change_scope = children
+                .iter()
+                .fold(status_match.change_scope, |scope, child| {
+                    scope.combine(child.change_scope)
+                });
             let svn_metadata =
                 versioned_paths.resolve(&normalized_path, status_match.revision.as_deref());
             nodes.push(WorkspaceFileNode {
@@ -2025,6 +2132,9 @@ fn read_workspace_children(
                         "normal".to_string()
                     }
                 }),
+                remote_status: status_match.remote_status,
+                remote_property_status: status_match.remote_property_status,
+                change_scope,
                 revision: svn_metadata.base_revision.clone(),
                 base_revision: svn_metadata.base_revision,
                 last_revision: svn_metadata.last_revision,
@@ -2071,6 +2181,9 @@ fn workspace_file_node(
         name,
         kind: "file".to_string(),
         status: status_match.status.unwrap_or_else(|| "normal".to_string()),
+        remote_status: status_match.remote_status,
+        remote_property_status: status_match.remote_property_status,
+        change_scope: status_match.change_scope,
         revision: svn_metadata.base_revision.clone(),
         base_revision: svn_metadata.base_revision,
         last_revision: svn_metadata.last_revision,
@@ -2086,6 +2199,9 @@ fn workspace_file_node(
 #[derive(Debug, Clone)]
 struct WorkspaceTreeStatusMatch {
     status: Option<String>,
+    remote_status: Option<String>,
+    remote_property_status: Option<String>,
+    change_scope: ChangeScope,
     revision: Option<String>,
     file_size: Option<u64>,
     changed: bool,
@@ -2099,9 +2215,12 @@ fn workspace_tree_status_for_path(
     if let Some(file) = status_by_path.get(&normalized_path) {
         return WorkspaceTreeStatusMatch {
             status: Some(file.status.clone()),
+            remote_status: file.remote_status.clone(),
+            remote_property_status: file.remote_property_status.clone(),
+            change_scope: file.change_scope,
             revision: file.revision.clone(),
             file_size: file.file_size,
-            changed: true,
+            changed: file.change_scope != ChangeScope::None,
         };
     }
 
@@ -2122,6 +2241,13 @@ fn workspace_tree_status_for_path(
 
     WorkspaceTreeStatusMatch {
         status: inside_unversioned_dir.then(|| "unversioned".to_string()),
+        remote_status: None,
+        remote_property_status: None,
+        change_scope: if inside_unversioned_dir {
+            ChangeScope::Local
+        } else {
+            ChangeScope::None
+        },
         revision: None,
         file_size: None,
         changed: inside_unversioned_dir,
@@ -2181,6 +2307,9 @@ fn insert_status_node_segments(
             name: (*segment).to_string(),
             kind: "file".to_string(),
             status: file.status.clone(),
+            remote_status: file.remote_status.clone(),
+            remote_property_status: file.remote_property_status.clone(),
+            change_scope: file.change_scope,
             revision: svn_metadata.base_revision.clone(),
             base_revision: svn_metadata.base_revision,
             last_revision: svn_metadata.last_revision,
@@ -2209,6 +2338,9 @@ fn insert_status_node_segments(
                 name: (*segment).to_string(),
                 kind: "dir".to_string(),
                 status: "changed".to_string(),
+                remote_status: None,
+                remote_property_status: None,
+                change_scope: file.change_scope,
                 revision: svn_metadata.base_revision.clone(),
                 base_revision: svn_metadata.base_revision,
                 last_revision: svn_metadata.last_revision,
@@ -2223,6 +2355,7 @@ fn insert_status_node_segments(
         });
     nodes[index].changed = true;
     nodes[index].status = "changed".to_string();
+    nodes[index].change_scope = nodes[index].change_scope.combine(file.change_scope);
     insert_status_node_segments(
         &mut nodes[index].children,
         full_path,
@@ -3285,9 +3418,10 @@ mod tests {
 <status>
   <target path="C:\wc">
     <entry path="C:\wc\src\main.ts">
-      <wc-status item="modified" props="none">
+      <wc-status item="modified" props="none" revision="42">
         <lock><owner>alice</owner><comment>editing</comment></lock>
       </wc-status>
+      <repos-status item="modified" props="none" />
     </entry>
     <entry path="C:\wc\src\feature.ts">
       <wc-status item="conflicted" props="none" />
@@ -3302,6 +3436,15 @@ mod tests {
         <lock><owner>bob</owner><comment>remote lock</comment></lock>
       </repos-status>
     </entry>
+    <entry path="C:\wc\src\remote.ts">
+      <wc-status item="normal" props="none" revision="42" />
+      <repos-status item="modified" props="none" />
+    </entry>
+    <entry path="C:\wc\src\remote-props.ts">
+      <wc-status item="normal" props="none" revision="42" />
+      <repos-status item="none" props="modified" />
+    </entry>
+    <against revision="44" />
   </target>
 </status>
 "#;
@@ -3315,22 +3458,46 @@ mod tests {
         )
         .expect("status parses");
 
-        assert_eq!(status.total, 4);
+        assert_eq!(status.total, 6);
         assert_eq!(status.revision_range.as_deref(), Some("41:42M"));
         assert!(status.mixed_revision);
+        assert!(status.remote_updates_checked);
+        assert_eq!(status.repository_revision.as_deref(), Some("44"));
+        assert_eq!(status.local_changes, 3);
+        assert_eq!(status.remote_changes, 3);
+        assert_eq!(status.combined_changes, 1);
         assert_eq!(status.modified, 1);
         assert_eq!(status.conflicted, 1);
         assert_eq!(status.obstructed, 1);
         assert_eq!(status.files[0].path, "src/main.ts");
+        assert_eq!(status.files[0].change_scope, ChangeScope::Both);
+        assert_eq!(status.files[0].remote_status.as_deref(), Some("modified"));
         assert_eq!(status.files[0].lock_owner.as_deref(), Some("alice"));
         assert_eq!(
             status.files[1].conflict_kind.as_deref(),
             Some("tree:update")
         );
         assert!(status.files[2].abnormal);
-        assert_eq!(status.files[3].status, "normal");
-        assert_eq!(status.files[3].lock_state, "locked");
-        assert_eq!(status.files[3].lock_owner.as_deref(), Some("bob"));
+        let locked = status
+            .files
+            .iter()
+            .find(|file| file.path == "docs/locked.txt")
+            .expect("remote lock remains visible");
+        assert_eq!(locked.status, "normal");
+        assert_eq!(locked.change_scope, ChangeScope::None);
+        assert_eq!(locked.lock_state, "locked");
+        assert_eq!(locked.lock_owner.as_deref(), Some("bob"));
+        assert!(status.files.iter().any(|file| {
+            file.path == "src/remote.ts"
+                && file.status == "normal"
+                && file.change_scope == ChangeScope::Remote
+        }));
+        assert!(status.files.iter().any(|file| {
+            file.path == "src/remote-props.ts"
+                && file.remote_status.as_deref() == Some("none")
+                && file.remote_property_status.as_deref() == Some("modified")
+                && file.change_scope == ChangeScope::Remote
+        }));
     }
 
     #[test]
@@ -3383,6 +3550,11 @@ mod tests {
         assert_eq!(status.property_changed, 1);
         assert_eq!(status.revision_range.as_deref(), Some("42"));
         assert!(!status.mixed_revision);
+        assert!(!status.remote_updates_checked);
+        assert_eq!(status.repository_revision, None);
+        assert_eq!(status.local_changes, 7);
+        assert_eq!(status.remote_changes, 0);
+        assert_eq!(status.combined_changes, 0);
         assert!(status.files.iter().any(|file| {
             file.path == "src/props.rs"
                 && file.status == "normal"
@@ -3419,10 +3591,16 @@ mod tests {
   <target path="{root}">
     <entry path="{root}/src/main.rs">
       <wc-status item="modified" props="none" />
+      <repos-status item="modified" props="none" />
+    </entry>
+    <entry path="{root}/src/lib.rs">
+      <wc-status item="normal" props="none" revision="42" />
+      <repos-status item="modified" props="none" />
     </entry>
     <entry path="{root}/docs/missing.md">
       <wc-status item="missing" props="none" />
     </entry>
+    <against revision="44" />
   </target>
 </status>
 "#,
@@ -3470,14 +3648,21 @@ mod tests {
         let src = nodes.iter().find(|node| node.name == "src").unwrap();
         assert!(src.changed);
         assert!(src.versioned);
+        assert_eq!(src.change_scope, ChangeScope::Both);
         assert!(src.children.iter().any(|node| {
             node.path == "src/main.rs"
                 && node.status == "modified"
+                && node.change_scope == ChangeScope::Both
                 && node.changed
                 && node.versioned
         }));
         assert!(src.children.iter().any(|node| {
-            node.path == "src/lib.rs" && node.status == "normal" && !node.changed && node.versioned
+            node.path == "src/lib.rs"
+                && node.status == "normal"
+                && node.remote_status.as_deref() == Some("modified")
+                && node.change_scope == ChangeScope::Remote
+                && node.changed
+                && node.versioned
         }));
         assert!(nodes
             .iter()
@@ -3496,6 +3681,87 @@ mod tests {
         }));
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn detects_local_remote_and_combined_changes_in_real_working_copy() {
+        if !svn_test_tools_available() {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-remote-status-integration-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let local_working_copy = root.join("local-working-copy");
+        let remote_working_copy = root.join("remote-working-copy");
+        fs::create_dir_all(&import_dir).expect("create remote status import tree");
+        fs::write(import_dir.join("both.txt"), "base").expect("write combined fixture");
+        fs::write(import_dir.join("remote.txt"), "base").expect("write remote fixture");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&local_working_copy),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&remote_working_copy),
+        );
+        fs::write(remote_working_copy.join("both.txt"), "remote")
+            .expect("write remote combined change");
+        fs::write(remote_working_copy.join("remote.txt"), "remote")
+            .expect("write remote-only change");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&remote_working_copy)
+                .args(["-m", "remote changes"]),
+        );
+        fs::write(local_working_copy.join("both.txt"), "local")
+            .expect("write local combined change");
+
+        let status = scan_workspace_status(ScanWorkspaceStatusRequest {
+            working_copy_root: local_working_copy.display().to_string(),
+            svn_executable: None,
+            offset: Some(0),
+            limit: Some(100),
+        })
+        .expect("real local and remote status reads");
+
+        assert!(status.remote_updates_checked);
+        assert_eq!(status.repository_revision.as_deref(), Some("2"));
+        assert_eq!(status.local_changes, 1);
+        assert_eq!(status.remote_changes, 2);
+        assert_eq!(status.combined_changes, 1);
+        assert!(status
+            .files
+            .iter()
+            .any(|file| { file.path == "both.txt" && file.change_scope == ChangeScope::Both }));
+        assert!(status
+            .files
+            .iter()
+            .any(|file| { file.path == "remote.txt" && file.change_scope == ChangeScope::Remote }));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[cfg(any(unix, windows))]
