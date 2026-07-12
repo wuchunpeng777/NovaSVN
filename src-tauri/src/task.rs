@@ -8711,7 +8711,7 @@ mod tests {
     }
 
     #[test]
-    fn adds_nested_unversioned_file_in_real_working_copy() {
+    fn adds_commits_and_reverts_nested_file_in_real_working_copy() {
         if !svn_tools_available() {
             return;
         }
@@ -8769,6 +8769,54 @@ mod tests {
         assert!(added_paths
             .iter()
             .any(|path| path.ends_with("nested/new.txt")));
+
+        let commit_task = queue
+            .create_commit_task(CreateCommitTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                message: "commit nested file".to_string(),
+                files: vec!["nested".to_string()],
+                svn_executable: None,
+            })
+            .expect("commit task should be created");
+        let commit_task = wait_for_test_task(&queue, &commit_task.task_id);
+        assert!(
+            matches!(commit_task.status, TaskStatus::Success),
+            "Commit 任务失败：{:?}",
+            commit_task.error
+        );
+        let repository_content = run_test_command(
+            Command::new("svn")
+                .arg("cat")
+                .arg(format!("{repository_url}/nested/new.txt")),
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&repository_content.stdout),
+            "new file\n"
+        );
+
+        fs::write(working_copy.join("nested/new.txt"), "local change\n")
+            .expect("modify committed file");
+        let revert_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::RevertFile,
+                file_path: Some("nested/new.txt".to_string()),
+                target_path: None,
+                svn_executable: None,
+            })
+            .expect("revert task should be created");
+        let revert_task = wait_for_test_task(&queue, &revert_task.task_id);
+        assert!(
+            matches!(revert_task.status, TaskStatus::Success),
+            "Revert 任务失败：{:?}",
+            revert_task.error
+        );
+        assert_eq!(
+            fs::read_to_string(working_copy.join("nested/new.txt")).unwrap(),
+            "new file\n"
+        );
+        let clean_status = run_test_command(Command::new("svn").arg("status").arg(&working_copy));
+        assert!(clean_status.stdout.is_empty());
         fs::remove_dir_all(root).ok();
     }
 

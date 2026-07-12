@@ -532,6 +532,15 @@ if (
 }
 
 if (
+  !taskRs.includes("adds_commits_and_reverts_nested_file_in_real_working_copy") ||
+  !taskRs.includes("create_commit_task(CreateCommitTaskRequest") ||
+  !taskRs.includes("kind: SvnOperationKind::RevertFile")
+) {
+  console.error("真实临时 SVN 仓库测试必须覆盖 Add、Commit 和单文件 Revert");
+  failed = true;
+}
+
+if (
   !taskRs.includes("APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES") ||
   !taskRs.includes("APPLY_PATCH_TASK_LOG_MAX_BYTES") ||
   !taskRs.includes("APPLY_PATCH_TASK_LOG_MAX_LINES") ||
