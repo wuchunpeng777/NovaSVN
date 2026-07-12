@@ -706,6 +706,20 @@ if (
   failed = true;
 }
 
+const repositoryWritePermissionCallCount =
+  taskRs.match(/repository_write_command_error_detail\(/g)?.length ?? 0;
+if (
+  repositoryWritePermissionCallCount !== 6 ||
+  !taskRs.includes("仓库写入被拒绝") ||
+  !taskRs.includes('"e175013"') ||
+  !taskRs.includes('"authentication failed"') ||
+  !appSvelte.includes('workspaceStore.setRepositoryRevisionInput("")') ||
+  !appSvelte.includes("void loadRepositoryUrl(url)")
+) {
+  console.error("Repository 写操作必须统一权限错误，并在成功后切回 HEAD 刷新目标目录");
+  failed = true;
+}
+
 if (
   !mainWorkspace.includes('aria-label="仓库 Checkout"') ||
   !mainWorkspace.includes("准备 Checkout") ||

@@ -62,6 +62,7 @@
 
 ### 修复
 
+- Repository 写操作遇到认证失败或无写权限时统一显示可恢复建议并保留 SVN 原始错误，成功后统一切回 HEAD 刷新。
 - 仓库写操作成功后统一切回 HEAD 刷新，不再停留在旧 Revision 而看不到新结果。
 - Repository 历史目录和文件命令附带对应 peg revision，条目在 HEAD 已删除时仍可按旧 Revision 浏览和打开。
 - 普通 SVN 操作完成状态改为按 pending task id 处理，切换当前任务或工作副本不再丢失完成监听。

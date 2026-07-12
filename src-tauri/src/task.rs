@@ -3569,7 +3569,10 @@ fn run_repository_copy_task(
                 task_id,
                 TaskStatus::Failed,
                 &format!("{title}失败"),
-                Some(command_error_detail(&payload.svn_executable, &output)),
+                Some(repository_write_command_error_detail(
+                    &payload.svn_executable,
+                    &output,
+                )),
             );
         }
         Err(error) => {
@@ -3625,7 +3628,10 @@ fn run_repository_mkdir_task(
                 task_id,
                 TaskStatus::Failed,
                 "创建仓库目录失败",
-                Some(command_error_detail(&payload.svn_executable, &output)),
+                Some(repository_write_command_error_detail(
+                    &payload.svn_executable,
+                    &output,
+                )),
             );
         }
         Err(error) => {
@@ -3699,7 +3705,10 @@ fn run_repository_import_task(
                 task_id,
                 TaskStatus::Failed,
                 "Repository Import 失败",
-                Some(command_error_detail(&payload.svn_executable, &output)),
+                Some(repository_write_command_error_detail(
+                    &payload.svn_executable,
+                    &output,
+                )),
             );
         }
         Err(error) => {
@@ -3768,7 +3777,10 @@ fn run_repository_move_task(
                 task_id,
                 TaskStatus::Failed,
                 &format!("{operation} 失败"),
-                Some(command_error_detail(&payload.svn_executable, &output)),
+                Some(repository_write_command_error_detail(
+                    &payload.svn_executable,
+                    &output,
+                )),
             );
         }
         Err(error) => {
@@ -3824,7 +3836,10 @@ fn run_repository_delete_task(
                 task_id,
                 TaskStatus::Failed,
                 "Repository Delete 失败",
-                Some(command_error_detail(&payload.svn_executable, &output)),
+                Some(repository_write_command_error_detail(
+                    &payload.svn_executable,
+                    &output,
+                )),
             );
         }
         Err(error) => {
@@ -4948,8 +4963,45 @@ fn command_error_detail(executable: &str, output: &std::process::Output) -> Stri
     }
 
     format!(
-        "`{executable} commit` 返回退出码 {:?}，但没有输出。",
+        "`{executable}` 返回退出码 {:?}，但没有输出。",
         output.status.code()
+    )
+}
+
+fn repository_write_command_error_detail(
+    executable: &str,
+    output: &std::process::Output,
+) -> String {
+    format_repository_write_error_detail(&command_error_detail(executable, output))
+}
+
+fn format_repository_write_error_detail(detail: &str) -> String {
+    let normalized = detail.to_lowercase();
+    let permission_markers = [
+        "e170001",
+        "e175013",
+        "e215004",
+        "e220004",
+        "authorization failed",
+        "not authorized",
+        "access denied",
+        "forbidden",
+        "authentication failed",
+        "could not authenticate",
+        "认证失败",
+        "拒绝访问",
+        "没有权限",
+        "无权限",
+    ];
+    if !permission_markers
+        .iter()
+        .any(|marker| normalized.contains(marker))
+    {
+        return detail.to_string();
+    }
+
+    format!(
+        "仓库写入被拒绝：当前凭据没有目标路径的写权限，或认证信息已失效。请检查仓库账号、权限和本机 SVN 凭据后重试。\n\nSVN 原始错误：{detail}"
     )
 }
 
@@ -8171,6 +8223,23 @@ mod tests {
             "_CON.txt"
         );
         assert!(normalize_repository_drag_export_name("  ").is_err());
+    }
+
+    #[test]
+    fn explains_repository_write_permission_and_authentication_errors() {
+        for detail in [
+            "svn: E175013: Access to '/svn/trunk' forbidden",
+            "svn: E170001: Authentication failed",
+            "Authorization failed",
+            "服务器拒绝访问：没有权限",
+        ] {
+            let formatted = format_repository_write_error_detail(detail);
+            assert!(formatted.starts_with("仓库写入被拒绝"));
+            assert!(formatted.contains(detail));
+        }
+
+        let unrelated = "svn: E160013: path not found";
+        assert_eq!(format_repository_write_error_detail(unrelated), unrelated);
     }
 
     #[test]

@@ -1177,6 +1177,45 @@ describe("App SVN operation completion", () => {
     });
   });
 
+  it("用户取消确认时所有 Repository 写操作都不会创建任务", async () => {
+    setCurrentView("repository");
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk",
+      revision: "10",
+      entries: [],
+    });
+    workspaceStore.setRepositoryCopyForm("kind", "entry");
+    workspaceStore.setRepositoryCopyForm("sourceUrl", "https://example.com/svn/trunk/source");
+    workspaceStore.setRepositoryCopyForm("targetUrl", "https://example.com/svn/trunk/copy");
+    workspaceStore.setRepositoryCopyForm("message", "复制条目");
+    workspaceStore.setRepositoryMkdirForm("targetUrl", "https://example.com/svn/trunk/new-dir");
+    workspaceStore.setRepositoryMkdirForm("message", "创建目录");
+    workspaceStore.setRepositoryImportForm("sourcePath", "/Users/me/import-source");
+    workspaceStore.setRepositoryImportForm("targetUrl", "https://example.com/svn/trunk/import");
+    workspaceStore.setRepositoryImportForm("message", "导入条目");
+    workspaceStore.setRepositoryMoveForm("sourceUrl", "https://example.com/svn/trunk/move");
+    workspaceStore.setRepositoryMoveForm("targetUrl", "https://example.com/svn/archive/move");
+    workspaceStore.setRepositoryMoveForm("message", "移动条目");
+    workspaceStore.setRepositoryRenameForm("sourceUrl", "https://example.com/svn/trunk/old");
+    workspaceStore.setRepositoryRenameForm("targetUrl", "https://example.com/svn/trunk/new");
+    workspaceStore.setRepositoryRenameForm("message", "重命名条目");
+    workspaceStore.setRepositoryDeleteForm("url", "https://example.com/svn/trunk/delete");
+    workspaceStore.setRepositoryDeleteForm("message", "删除条目");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(App);
+
+    for (const name of ["创建", "创建目录", "Import", "Move", "Rename", "Delete"]) {
+      await fireEvent.click(screen.getByRole("button", { name }));
+    }
+
+    expect(confirm).toHaveBeenCalledTimes(6);
+    expect(createRepositoryCopyTaskMock).not.toHaveBeenCalled();
+    expect(createRepositoryMkdirTaskMock).not.toHaveBeenCalled();
+    expect(createRepositoryImportTaskMock).not.toHaveBeenCalled();
+    expect(createRepositoryMoveTaskMock).not.toHaveBeenCalled();
+    expect(createRepositoryDeleteTaskMock).not.toHaveBeenCalled();
+  });
+
   it("仓库文件 Log、Blame 和 Properties 使用当前 Revision 与编码后的文件 URL", async () => {
     setCurrentView("repository");
     workspaceStore.applyRepositoryListResult({
