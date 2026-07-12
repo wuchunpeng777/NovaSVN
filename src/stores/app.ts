@@ -15,6 +15,7 @@ import {
   createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
+  createRepositoryMkdirTask,
   createRevertRevisionTask,
   createRevisionDiffTask,
   createShadowWorkspaceTask,
@@ -443,6 +444,32 @@ function createTaskStore() {
     }
   }
 
+  async function createRepositoryMkdir(request: {
+    url: string;
+    message: string;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createRepositoryMkdirTask({
+        url: request.url,
+        message: request.message,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function createBranchCheckout(request: {
     branchUrl: string;
     localPath: string;
@@ -810,6 +837,7 @@ function createTaskStore() {
     createRepositoryList,
     createRepositoryFile,
     createRepositoryCopy,
+    createRepositoryMkdir,
     createBranchCheckout,
     createRepositoryCheckout,
     createRepositoryExport,
@@ -1469,6 +1497,13 @@ export interface WorkspaceStoreState {
   };
   pendingRepositoryCopyTaskId: string | null;
   repositoryCopyError: string | null;
+  repositoryMkdirForm: {
+    targetUrl: string;
+    message: string;
+  };
+  pendingRepositoryMkdirTaskId: string | null;
+  pendingRepositoryMkdirParentUrl: string | null;
+  repositoryMkdirError: string | null;
   repositoryCheckoutForm: {
     url: string;
     localPath: string;
@@ -1634,6 +1669,13 @@ const initialWorkspaceState: WorkspaceStoreState = {
   },
   pendingRepositoryCopyTaskId: null,
   repositoryCopyError: null,
+  repositoryMkdirForm: {
+    targetUrl: "",
+    message: "",
+  },
+  pendingRepositoryMkdirTaskId: null,
+  pendingRepositoryMkdirParentUrl: null,
+  repositoryMkdirError: null,
   repositoryCheckoutForm: {
     url: "",
     localPath: "",
@@ -1782,6 +1824,10 @@ function createWorkspaceStore() {
         },
         pendingRepositoryCopyTaskId: null,
         repositoryCopyError: null,
+        repositoryMkdirForm: emptyRepositoryMkdirForm(),
+        pendingRepositoryMkdirTaskId: null,
+        pendingRepositoryMkdirParentUrl: null,
+        repositoryMkdirError: null,
         repositoryCheckoutForm: {
           ...emptyRepositoryCheckoutForm(),
           url: recent.workspace?.repository_url ?? "",
@@ -1908,6 +1954,10 @@ function createWorkspaceStore() {
         },
         pendingRepositoryCopyTaskId: null,
         repositoryCopyError: null,
+        repositoryMkdirForm: emptyRepositoryMkdirForm(),
+        pendingRepositoryMkdirTaskId: null,
+        pendingRepositoryMkdirParentUrl: null,
+        repositoryMkdirError: null,
         repositoryCheckoutForm: {
           ...emptyRepositoryCheckoutForm(),
           url: current.repository_url,
@@ -2808,6 +2858,71 @@ function createWorkspaceStore() {
       ...state,
       pendingRepositoryCopyTaskId: null,
       repositoryCopyError: message ?? "创建分支或标签失败",
+    }));
+  }
+
+  function setRepositoryMkdirForm(
+    field: keyof WorkspaceStoreState["repositoryMkdirForm"],
+    value: string,
+  ) {
+    update((state) => ({
+      ...state,
+      repositoryMkdirForm: {
+        ...state.repositoryMkdirForm,
+        [field]: value,
+      },
+      repositoryMkdirError: null,
+    }));
+  }
+
+  function prepareRepositoryMkdir(parentUrl?: string | null) {
+    update((state) => {
+      const parent = (
+        parentUrl ||
+        state.repositoryCurrentUrl ||
+        state.repositoryList?.url ||
+        state.repositoryUrlInput
+      ).replace(/\/+$/, "");
+      return {
+        ...state,
+        repositoryMkdirForm: {
+          ...state.repositoryMkdirForm,
+          targetUrl: parent ? `${parent}/new-folder` : "",
+        },
+        repositoryMkdirError: null,
+      };
+    });
+  }
+
+  function markRepositoryMkdirTask(taskId: string | null, parentUrl?: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryMkdirTaskId: taskId,
+      pendingRepositoryMkdirParentUrl: taskId ? parentUrl?.trim() || null : null,
+      repositoryMkdirError: null,
+    }));
+  }
+
+  function completeRepositoryMkdirTask() {
+    update((state) => ({
+      ...state,
+      pendingRepositoryMkdirTaskId: null,
+      pendingRepositoryMkdirParentUrl: null,
+      repositoryMkdirForm: {
+        ...state.repositoryMkdirForm,
+        targetUrl: "",
+        message: "",
+      },
+      repositoryMkdirError: null,
+    }));
+  }
+
+  function failRepositoryMkdirTask(message: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryMkdirTaskId: null,
+      pendingRepositoryMkdirParentUrl: null,
+      repositoryMkdirError: message ?? "创建仓库目录失败",
     }));
   }
 
@@ -4552,6 +4667,11 @@ function createWorkspaceStore() {
     markRepositoryCopyTask,
     completeRepositoryCopyTask,
     failRepositoryCopyTask,
+    setRepositoryMkdirForm,
+    prepareRepositoryMkdir,
+    markRepositoryMkdirTask,
+    completeRepositoryMkdirTask,
+    failRepositoryMkdirTask,
     setRepositoryCheckoutForm,
     prepareRepositoryCheckout,
     chooseRepositoryCheckoutParent,
@@ -4918,6 +5038,13 @@ function emptyRepositoryCopyForm() {
     sourceUrl: "",
     targetUrl: "",
     revision: "",
+    message: "",
+  };
+}
+
+function emptyRepositoryMkdirForm() {
+  return {
+    targetUrl: "",
     message: "",
   };
 }

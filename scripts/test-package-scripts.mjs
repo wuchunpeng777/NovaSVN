@@ -579,6 +579,23 @@ if (
 }
 
 if (
+  !mainWorkspace.includes('aria-label="创建仓库目录"') ||
+  !mainWorkspace.includes("准备创建目录") ||
+  !appSvelte.includes("pendingRepositoryMkdirTaskId") ||
+  !appSvelte.includes("createRepositoryMkdir") ||
+  !appSvelte.includes("确定创建仓库目录吗") ||
+  !appStore.includes("function markRepositoryMkdirTask(") ||
+  !frontendApi.includes('callBackend<Task>("create_repository_mkdir_task"') ||
+  !tauriLib.includes("create_repository_mkdir_task,") ||
+  !taskRs.includes("TaskPayload::RepositoryMkdir") ||
+  !taskRs.includes("fn run_repository_mkdir_task(") ||
+  !taskRs.includes('.arg("mkdir")')
+) {
+  console.error("Repository 创建目录必须要求提交信息与确认，执行真实 svn mkdir，并按 pending 刷新父目录");
+  failed = true;
+}
+
+if (
   !mainWorkspace.includes('aria-label="仓库 Checkout"') ||
   !mainWorkspace.includes("准备 Checkout") ||
   !mainWorkspace.includes("选择父目录") ||

@@ -206,6 +206,13 @@ pub struct CreateRepositoryCopyTaskRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct CreateRepositoryMkdirTaskRequest {
+    pub url: String,
+    pub message: String,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateBranchCheckoutTaskRequest {
     pub branch_url: String,
     pub local_path: String,
@@ -365,6 +372,7 @@ enum TaskPayload {
     RepositoryList(RepositoryListTaskPayload),
     RepositoryFile(RepositoryFileTaskPayload),
     RepositoryCopy(RepositoryCopyTaskPayload),
+    RepositoryMkdir(RepositoryMkdirTaskPayload),
     BranchCheckout(BranchCheckoutTaskPayload),
     RepositoryCheckout(RepositoryCheckoutTaskPayload),
     RepositoryExport(RepositoryExportTaskPayload),
@@ -474,6 +482,13 @@ struct RepositoryCopyTaskPayload {
     source_url: String,
     target_url: String,
     revision: Option<String>,
+    message: String,
+    svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct RepositoryMkdirTaskPayload {
+    url: String,
     message: String,
     svn_executable: String,
 }
@@ -1202,6 +1217,46 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_repository_mkdir_task(
+        &self,
+        request: CreateRepositoryMkdirTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let url = normalize_repository_url(&request.url)?;
+        let message = request.message.trim().to_string();
+        if message.is_empty() {
+            return Err(NovaError::command(
+                "REPOSITORY_MKDIR_MESSAGE_REQUIRED",
+                "请输入创建仓库目录的提交信息",
+                None,
+                true,
+            ));
+        }
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!("创建仓库目录 {}", compact_repository_url(&url)),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "创建仓库目录任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::RepositoryMkdir(RepositoryMkdirTaskPayload {
+                url,
+                message,
+                svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn create_branch_checkout_task(
         &self,
         request: CreateBranchCheckoutTaskRequest,
@@ -1708,6 +1763,9 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             }
             TaskPayload::RepositoryCopy(payload) => {
                 run_repository_copy_task(&state, &task_id, payload)
+            }
+            TaskPayload::RepositoryMkdir(payload) => {
+                run_repository_mkdir_task(&state, &task_id, payload)
             }
             TaskPayload::BranchCheckout(payload) => {
                 run_branch_checkout_task(&state, &task_id, payload)
@@ -3202,6 +3260,62 @@ fn run_repository_copy_task(
                 task_id,
                 TaskStatus::Failed,
                 &format!("{title}失败"),
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn run_repository_mkdir_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: RepositoryMkdirTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "创建仓库目录开始执行",
+        None,
+    );
+    append_task_log(state, task_id, &format!("执行 svn mkdir：{}", payload.url));
+
+    let target = repository_url_with_peg_revision(&payload.url, None);
+    let output = Command::new(&payload.svn_executable)
+        .arg("mkdir")
+        .arg("-m")
+        .arg(&payload.message)
+        .arg("--")
+        .arg(target)
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                "创建仓库目录成功",
+                None,
+            );
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "创建仓库目录失败",
                 Some(command_error_detail(&payload.svn_executable, &output)),
             );
         }
@@ -6812,6 +6926,52 @@ mod tests {
         assert!(normalize_checkout_path("~/NovaSVN/feature").is_ok());
         assert!(normalize_checkout_path("relative\\feature").is_err());
         assert!(normalize_checkout_path("C:\\wc\nfeature").is_err());
+    }
+
+    #[test]
+    fn creates_repository_directory_with_commit_message() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("repository-mkdir-integration");
+        let repository = root.join("repository");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        let queue = TaskQueue::new();
+        let task = queue
+            .create_repository_mkdir_task(CreateRepositoryMkdirTaskRequest {
+                url: format!("{repository_url}/新目录"),
+                message: "创建新目录".to_string(),
+                svn_executable: None,
+            })
+            .expect("create repository mkdir task");
+        let task = wait_for_test_task(&queue, &task.task_id);
+
+        assert!(
+            matches!(task.status, TaskStatus::Success),
+            "创建仓库目录失败：{:?}",
+            task.error
+        );
+        let info = Command::new("svn")
+            .arg("info")
+            .arg(format!("{repository_url}/新目录"))
+            .output()
+            .expect("repository directory info runs");
+        assert!(info.status.success());
+
+        let missing_message = queue
+            .create_repository_mkdir_task(CreateRepositoryMkdirTaskRequest {
+                url: format!("{repository_url}/missing-message"),
+                message: "  ".to_string(),
+                svn_executable: None,
+            })
+            .expect_err("仓库目录必须提供提交信息");
+        assert!(matches!(
+            missing_message,
+            NovaError::Command { ref code, .. } if code == "REPOSITORY_MKDIR_MESSAGE_REQUIRED"
+        ));
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

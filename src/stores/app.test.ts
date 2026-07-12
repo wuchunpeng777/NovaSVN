@@ -9,6 +9,7 @@ vi.mock("../lib/api", () => ({
   createRepositoryExportTask: vi.fn(),
   createRepositoryFileTask: vi.fn(),
   createRepositoryListTask: vi.fn(),
+  createRepositoryMkdirTask: vi.fn(),
   createRevertRevisionTask: vi.fn(),
   createRevisionDiffTask: vi.fn(),
   createSvnBatchOperationTask: vi.fn(),
@@ -45,6 +46,7 @@ import {
   createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
+  createRepositoryMkdirTask,
   createRevertRevisionTask,
   createRevisionDiffTask,
   createSvnBatchOperationTask,
@@ -103,6 +105,7 @@ const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask)
 const createRepositoryExportTaskMock = vi.mocked(createRepositoryExportTask);
 const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
+const createRepositoryMkdirTaskMock = vi.mocked(createRepositoryMkdirTask);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
 const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
@@ -136,6 +139,7 @@ beforeEach(() => {
   createRepositoryExportTaskMock.mockReset();
   createRepositoryFileTaskMock.mockReset();
   createRepositoryListTaskMock.mockReset();
+  createRepositoryMkdirTaskMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
   createRevisionDiffTaskMock.mockReset();
   createSvnBatchOperationTaskMock.mockReset();
@@ -958,6 +962,58 @@ describe("taskStore repository list tasks", () => {
     });
     workspaceStore.setRepositoryRevisionInput("");
     expect(get(workspaceStore).repositoryRevisionInput).toBe("");
+  });
+
+  it("prepares repository mkdir form and tracks its refresh parent", async () => {
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk",
+      revision: "12",
+      entries: [],
+    });
+    workspaceStore.prepareRepositoryMkdir();
+    workspaceStore.setRepositoryMkdirForm("message", "创建 assets");
+    expect(get(workspaceStore).repositoryMkdirForm).toEqual({
+      targetUrl: "https://example.com/svn/trunk/new-folder",
+      message: "创建 assets",
+    });
+
+    createRepositoryMkdirTaskMock.mockResolvedValue(makeTask({ task_id: "repository-mkdir" }));
+    const task = await taskStore.createRepositoryMkdir({
+      url: "https://example.com/svn/trunk/assets",
+      message: "创建 assets",
+      svnExecutable: "svn",
+    });
+    expect(task?.task_id).toBe("repository-mkdir");
+    expect(createRepositoryMkdirTaskMock).toHaveBeenCalledWith({
+      url: "https://example.com/svn/trunk/assets",
+      message: "创建 assets",
+      svn_executable: "svn",
+    });
+
+    workspaceStore.markRepositoryMkdirTask(
+      "repository-mkdir",
+      "https://example.com/svn/trunk",
+    );
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryMkdirTaskId: "repository-mkdir",
+      pendingRepositoryMkdirParentUrl: "https://example.com/svn/trunk",
+      repositoryMkdirError: null,
+    });
+    workspaceStore.completeRepositoryMkdirTask();
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryMkdirTaskId: null,
+      pendingRepositoryMkdirParentUrl: null,
+      repositoryMkdirForm: { targetUrl: "", message: "" },
+      repositoryMkdirError: null,
+    });
+
+    workspaceStore.markRepositoryMkdirTask("repository-mkdir-failed", "https://example.com/svn");
+    workspaceStore.failRepositoryMkdirTask("目录已存在");
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryMkdirTaskId: null,
+      pendingRepositoryMkdirParentUrl: null,
+      repositoryMkdirError: "目录已存在",
+    });
   });
 
   it("prepares repository checkout form and tracks pending local path", async () => {

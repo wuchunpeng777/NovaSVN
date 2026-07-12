@@ -132,6 +132,15 @@
   };
   export let repositoryCopyError: string | null = null;
   export let repositoryCopyRunning = false;
+  export let repositoryMkdirForm: {
+    targetUrl: string;
+    message: string;
+  } = {
+    targetUrl: "",
+    message: "",
+  };
+  export let repositoryMkdirError: string | null = null;
+  export let repositoryMkdirRunning = false;
   export let repositoryCheckoutForm: {
     url: string;
     localPath: string;
@@ -363,6 +372,12 @@
     targetBaseUrl?: string | null,
   ) => void = () => {};
   export let onCreateRepositoryCopy: () => void = () => {};
+  export let onRepositoryMkdirFormInput: (
+    field: keyof typeof repositoryMkdirForm,
+    value: string,
+  ) => void = () => {};
+  export let onPrepareRepositoryMkdir: (parentUrl?: string | null) => void = () => {};
+  export let onCreateRepositoryMkdir: () => void = () => {};
   export let onRepositoryCheckoutFormInput: (
     field: keyof typeof repositoryCheckoutForm,
     value: string,
@@ -2446,6 +2461,13 @@
             </button>
             <button
               type="button"
+              on:click={() => onPrepareRepositoryMkdir()}
+              disabled={!repositoryCurrentUrl && !repositoryUrlInput && !repositoryList}
+            >
+              准备创建目录
+            </button>
+            <button
+              type="button"
               on:click={() => onPrepareRepositoryCheckout()}
               disabled={!repositoryCurrentUrl && !repositoryUrlInput && !repositoryList}
             >
@@ -2838,6 +2860,54 @@
                 </button>
               {/each}
             </section>
+          </div>
+        </details>
+
+        <details class="advanced-section" open={Boolean(repositoryMkdirForm.targetUrl)}>
+          <summary>创建仓库目录</summary>
+          <div class="copy-form" aria-label="创建仓库目录">
+            <button
+              type="button"
+              on:click={() =>
+                onPrepareRepositoryMkdir(
+                  repositoryCurrentUrl || repositoryList?.url || repositoryUrlInput,
+                )}
+            >
+              使用当前 URL
+            </button>
+            <input
+              type="url"
+              value={repositoryMkdirForm.targetUrl}
+              placeholder="新目录 URL"
+              aria-label="新仓库目录 URL"
+              on:input={(event) =>
+                onRepositoryMkdirFormInput(
+                  "targetUrl",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            <textarea
+              rows="3"
+              value={repositoryMkdirForm.message}
+              placeholder="提交信息"
+              aria-label="创建仓库目录提交信息"
+              on:input={(event) =>
+                onRepositoryMkdirFormInput(
+                  "message",
+                  (event.currentTarget as HTMLTextAreaElement).value,
+                )}
+            ></textarea>
+            {#if repositoryMkdirError}
+              <p class="inline-error">{repositoryMkdirError}</p>
+            {/if}
+            <button
+              type="button"
+              class="primary"
+              on:click={onCreateRepositoryMkdir}
+              disabled={repositoryMkdirRunning}
+            >
+              {repositoryMkdirRunning ? "创建中" : "创建目录"}
+            </button>
           </div>
         </details>
 

@@ -587,6 +587,14 @@
     return `${root.replace(/\/+$/, "")}/${normalizedPath}`;
   }
 
+  function parentRepositoryUrl(url: string) {
+    const normalized = url.trim().replace(/\/+$/, "");
+    const separatorIndex = normalized.lastIndexOf("/");
+    return separatorIndex > normalized.indexOf("://") + 2
+      ? normalized.slice(0, separatorIndex)
+      : normalized;
+  }
+
   async function createRepositoryCopy() {
     const form = $workspaceStore.repositoryCopyForm;
     if (!form.sourceUrl.trim() || !form.targetUrl.trim()) {
@@ -616,6 +624,43 @@
     }
 
     workspaceStore.markRepositoryCopyTask(task.task_id);
+  }
+
+  async function createRepositoryMkdir() {
+    const form = $workspaceStore.repositoryMkdirForm;
+    const targetUrl = form.targetUrl.trim();
+    const message = form.message.trim();
+    if (!targetUrl) {
+      workspaceStore.failRepositoryMkdirTask("请输入新目录 URL");
+      return;
+    }
+    if (!message) {
+      workspaceStore.failRepositoryMkdirTask("请输入创建仓库目录的提交信息");
+      return;
+    }
+    if ($workspaceStore.pendingRepositoryMkdirTaskId !== null) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `确定创建仓库目录吗？\n\n目标：${targetUrl}\n提交信息：${message}`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const task = await taskStore.createRepositoryMkdir({
+      url: targetUrl,
+      message,
+      svnExecutable: currentSvnExecutable(),
+    });
+    if (!task) {
+      workspaceStore.failRepositoryMkdirTask(
+        $taskStore.error?.message ?? "创建仓库目录任务创建失败",
+      );
+      return;
+    }
+
+    workspaceStore.markRepositoryMkdirTask(task.task_id, parentRepositoryUrl(targetUrl));
   }
 
   async function createRepositoryCheckout() {
@@ -1380,6 +1425,22 @@
   );
 
   $: consumePendingTask(
+    $workspaceStore.pendingRepositoryMkdirTaskId,
+    $taskStore.snapshot,
+    (task) => {
+      if (task.status !== "success") {
+        workspaceStore.failRepositoryMkdirTask(task.error ?? "创建仓库目录失败");
+        return;
+      }
+      const parentUrl = get(workspaceStore).pendingRepositoryMkdirParentUrl;
+      workspaceStore.completeRepositoryMkdirTask();
+      if (parentUrl) {
+        void loadRepositoryUrl(parentUrl);
+      }
+    },
+  );
+
+  $: consumePendingTask(
     $workspaceStore.pendingRepositoryCheckoutTaskId,
     $taskStore.snapshot,
     (task) => {
@@ -1667,6 +1728,9 @@
   repositoryCopyForm={$workspaceStore.repositoryCopyForm}
   repositoryCopyError={$workspaceStore.repositoryCopyError}
   repositoryCopyRunning={$workspaceStore.pendingRepositoryCopyTaskId !== null}
+  repositoryMkdirForm={$workspaceStore.repositoryMkdirForm}
+  repositoryMkdirError={$workspaceStore.repositoryMkdirError}
+  repositoryMkdirRunning={$workspaceStore.pendingRepositoryMkdirTaskId !== null}
   repositoryCheckoutForm={$workspaceStore.repositoryCheckoutForm}
   repositoryCheckoutError={$workspaceStore.repositoryCheckoutError}
   repositoryCheckoutRunning={$workspaceStore.pendingRepositoryCheckoutTaskId !== null}
@@ -1827,6 +1891,9 @@
   onRepositoryCopyFormInput={workspaceStore.setRepositoryCopyForm}
   onPrepareRepositoryCopyTarget={workspaceStore.prepareRepositoryCopyTarget}
   onCreateRepositoryCopy={createRepositoryCopy}
+  onRepositoryMkdirFormInput={workspaceStore.setRepositoryMkdirForm}
+  onPrepareRepositoryMkdir={workspaceStore.prepareRepositoryMkdir}
+  onCreateRepositoryMkdir={createRepositoryMkdir}
   onRepositoryCheckoutFormInput={workspaceStore.setRepositoryCheckoutForm}
   onPrepareRepositoryCheckout={workspaceStore.prepareRepositoryCheckout}
   onChooseRepositoryCheckoutParent={workspaceStore.chooseRepositoryCheckoutParent}

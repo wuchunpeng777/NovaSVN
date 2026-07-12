@@ -214,6 +214,12 @@ export interface CreateRepositoryCopyTaskRequest {
   svn_executable?: string;
 }
 
+export interface CreateRepositoryMkdirTaskRequest {
+  url: string;
+  message: string;
+  svn_executable?: string;
+}
+
 export interface CreateBranchCheckoutTaskRequest {
   branch_url: string;
   local_path: string;

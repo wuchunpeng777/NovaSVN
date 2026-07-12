@@ -18,6 +18,8 @@ vi.mock("./lib/api", async (importOriginal) => {
     createRepositoryCheckoutTask: vi.fn(),
     createRepositoryExportTask: vi.fn(),
     createRepositoryFileTask: vi.fn(),
+    createRepositoryListTask: vi.fn(),
+    createRepositoryMkdirTask: vi.fn(),
     createRevertRevisionTask: vi.fn(),
     createSvnBatchOperationTask: vi.fn(),
     createSvnOperationTask: vi.fn(),
@@ -42,6 +44,8 @@ import {
   createRepositoryCheckoutTask,
   createRepositoryExportTask,
   createRepositoryFileTask,
+  createRepositoryListTask,
+  createRepositoryMkdirTask,
   createRevertRevisionTask,
   createSvnOperationTask,
   createSvnBatchOperationTask,
@@ -74,6 +78,8 @@ const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
 const createRepositoryExportTaskMock = vi.mocked(createRepositoryExportTask);
 const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
+const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
+const createRepositoryMkdirTaskMock = vi.mocked(createRepositoryMkdirTask);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
 const ignoreWorkspacePathMock = vi.mocked(ignoreWorkspacePath);
@@ -95,6 +101,8 @@ beforeEach(async () => {
   createRepositoryCheckoutTaskMock.mockReset();
   createRepositoryExportTaskMock.mockReset();
   createRepositoryFileTaskMock.mockReset();
+  createRepositoryListTaskMock.mockReset();
+  createRepositoryMkdirTaskMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
   createSvnBatchOperationTaskMock.mockReset();
   ignoreWorkspacePathMock.mockReset();
@@ -658,6 +666,69 @@ describe("App SVN operation completion", () => {
       expect(openWorkspaceMock).not.toHaveBeenCalled();
       expect(get(workspaceStore).pendingRepositoryExportTaskId).toBeNull();
       expect(get(workspaceStore).repositoryExportError).toBeNull();
+    });
+  });
+
+  it("创建仓库目录要求确认并在成功后刷新原父目录", async () => {
+    setCurrentView("repository");
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk",
+      revision: "10",
+      entries: [],
+    });
+    workspaceStore.setRepositoryMkdirForm(
+      "targetUrl",
+      "https://example.com/svn/trunk/assets",
+    );
+    workspaceStore.setRepositoryMkdirForm("message", "创建 assets");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const pendingTask = makeTask({ task_id: "repository-mkdir", status: "pending" });
+    createRepositoryMkdirTaskMock.mockResolvedValue(pendingTask);
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-mkdir", status: "pending" }),
+      ]),
+    );
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "创建目录" }));
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenCalledWith(
+        expect.stringContaining("https://example.com/svn/trunk/assets"),
+      );
+      expect(createRepositoryMkdirTaskMock).toHaveBeenCalledWith({
+        url: "https://example.com/svn/trunk/assets",
+        message: "创建 assets",
+        svn_executable: undefined,
+      });
+      expect(get(workspaceStore).pendingRepositoryMkdirTaskId).toBe("repository-mkdir");
+      expect(get(workspaceStore).pendingRepositoryMkdirParentUrl).toBe(
+        "https://example.com/svn/trunk",
+      );
+    });
+
+    createRepositoryListTaskMock.mockResolvedValue(
+      makeTask({ task_id: "repository-refresh", status: "pending" }),
+    );
+    getTaskMock.mockResolvedValue(
+      makeTask({ task_id: "repository-mkdir", status: "success" }),
+    );
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-mkdir", status: "success" }),
+      ]),
+    );
+    await taskStore.refresh();
+
+    await waitFor(() => {
+      expect(createRepositoryListTaskMock).toHaveBeenCalledWith({
+        url: "https://example.com/svn/trunk",
+        revision: "10",
+        svn_executable: undefined,
+      });
+      expect(get(workspaceStore).pendingRepositoryMkdirTaskId).toBeNull();
+      expect(get(workspaceStore).repositoryMkdirError).toBeNull();
     });
   });
 

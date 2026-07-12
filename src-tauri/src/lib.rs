@@ -30,10 +30,10 @@ use task::{
     CreateMergeTaskRequest, CreateMockTaskRequest, CreatePartialCommitTaskRequest,
     CreateRepositoryCheckoutTaskRequest, CreateRepositoryCopyTaskRequest,
     CreateRepositoryExportTaskRequest, CreateRepositoryFileTaskRequest,
-    CreateRepositoryListTaskRequest, CreateRevertRevisionTaskRequest,
-    CreateRevisionDiffTaskRequest, CreateShadowWorkspaceTaskRequest,
-    CreateSvnBatchOperationTaskRequest, CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest,
-    Task, TaskQueue, TaskSnapshot,
+    CreateRepositoryListTaskRequest, CreateRepositoryMkdirTaskRequest,
+    CreateRevertRevisionTaskRequest, CreateRevisionDiffTaskRequest,
+    CreateShadowWorkspaceTaskRequest, CreateSvnBatchOperationTaskRequest,
+    CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest, Task, TaskQueue, TaskSnapshot,
 };
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use tauri::{Emitter, Manager};
@@ -579,6 +579,17 @@ fn create_repository_copy_task(
 }
 
 #[tauri::command]
+fn create_repository_mkdir_task(
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateRepositoryMkdirTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_repository_mkdir_task command received");
+    Ok(CommandResponse::success(
+        queue.create_repository_mkdir_task(request)?,
+    ))
+}
+
+#[tauri::command]
 fn create_branch_checkout_task(
     queue: tauri::State<'_, TaskQueue>,
     request: CreateBranchCheckoutTaskRequest,
@@ -930,6 +941,7 @@ pub fn run() {
             create_repository_list_task,
             create_repository_file_task,
             create_repository_copy_task,
+            create_repository_mkdir_task,
             create_branch_checkout_task,
             create_repository_checkout_task,
             create_repository_export_task,
