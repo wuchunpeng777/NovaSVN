@@ -13,6 +13,7 @@ import {
   createPartialCommitTask,
   createRepositoryCheckoutTask,
   createRepositoryCopyTask,
+  createRepositoryDeleteTask,
   createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
@@ -532,6 +533,32 @@ function createTaskStore() {
     }
   }
 
+  async function createRepositoryDelete(request: {
+    url: string;
+    message: string;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createRepositoryDeleteTask({
+        url: request.url,
+        message: request.message,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function createBranchCheckout(request: {
     branchUrl: string;
     localPath: string;
@@ -902,6 +929,7 @@ function createTaskStore() {
     createRepositoryMkdir,
     createRepositoryImport,
     createRepositoryMove,
+    createRepositoryDelete,
     createBranchCheckout,
     createRepositoryCheckout,
     createRepositoryExport,
@@ -1593,6 +1621,13 @@ export interface WorkspaceStoreState {
     message: string;
   };
   repositoryRenameError: string | null;
+  repositoryDeleteForm: {
+    url: string;
+    message: string;
+  };
+  pendingRepositoryDeleteTaskId: string | null;
+  pendingRepositoryDeleteParentUrl: string | null;
+  repositoryDeleteError: string | null;
   repositoryCheckoutForm: {
     url: string;
     localPath: string;
@@ -1790,6 +1825,13 @@ const initialWorkspaceState: WorkspaceStoreState = {
     message: "",
   },
   repositoryRenameError: null,
+  repositoryDeleteForm: {
+    url: "",
+    message: "",
+  },
+  pendingRepositoryDeleteTaskId: null,
+  pendingRepositoryDeleteParentUrl: null,
+  repositoryDeleteError: null,
   repositoryCheckoutForm: {
     url: "",
     localPath: "",
@@ -1955,6 +1997,10 @@ function createWorkspaceStore() {
         repositoryMoveError: null,
         repositoryRenameForm: emptyRepositoryRenameForm(),
         repositoryRenameError: null,
+        repositoryDeleteForm: emptyRepositoryDeleteForm(),
+        pendingRepositoryDeleteTaskId: null,
+        pendingRepositoryDeleteParentUrl: null,
+        repositoryDeleteError: null,
         repositoryCheckoutForm: {
           ...emptyRepositoryCheckoutForm(),
           url: recent.workspace?.repository_url ?? "",
@@ -2098,6 +2144,10 @@ function createWorkspaceStore() {
         repositoryMoveError: null,
         repositoryRenameForm: emptyRepositoryRenameForm(),
         repositoryRenameError: null,
+        repositoryDeleteForm: emptyRepositoryDeleteForm(),
+        pendingRepositoryDeleteTaskId: null,
+        pendingRepositoryDeleteParentUrl: null,
+        repositoryDeleteError: null,
         repositoryCheckoutForm: {
           ...emptyRepositoryCheckoutForm(),
           url: current.repository_url,
@@ -3305,6 +3355,64 @@ function createWorkspaceStore() {
       pendingRepositoryMoveSourceParentUrl: null,
       pendingRepositoryMoveTargetParentUrl: null,
       repositoryRenameError: message ?? "Repository Rename 失败",
+    }));
+  }
+
+  function setRepositoryDeleteForm(
+    field: keyof WorkspaceStoreState["repositoryDeleteForm"],
+    value: string,
+  ) {
+    update((state) => ({
+      ...state,
+      repositoryDeleteForm: {
+        ...state.repositoryDeleteForm,
+        [field]: value,
+      },
+      repositoryDeleteError: null,
+    }));
+  }
+
+  function prepareRepositoryDelete(url?: string | null) {
+    update((state) => ({
+      ...state,
+      repositoryDeleteForm: {
+        ...state.repositoryDeleteForm,
+        url: (
+          url ||
+          state.repositoryCurrentUrl ||
+          state.repositoryList?.url ||
+          state.repositoryUrlInput
+        ).replace(/\/+$/, ""),
+      },
+      repositoryDeleteError: null,
+    }));
+  }
+
+  function markRepositoryDeleteTask(taskId: string | null, parentUrl?: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryDeleteTaskId: taskId,
+      pendingRepositoryDeleteParentUrl: taskId ? parentUrl?.trim() || null : null,
+      repositoryDeleteError: null,
+    }));
+  }
+
+  function completeRepositoryDeleteTask() {
+    update((state) => ({
+      ...state,
+      pendingRepositoryDeleteTaskId: null,
+      pendingRepositoryDeleteParentUrl: null,
+      repositoryDeleteForm: emptyRepositoryDeleteForm(),
+      repositoryDeleteError: null,
+    }));
+  }
+
+  function failRepositoryDeleteTask(message: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryDeleteTaskId: null,
+      pendingRepositoryDeleteParentUrl: null,
+      repositoryDeleteError: message ?? "Repository Delete 失败",
     }));
   }
 
@@ -5068,6 +5176,11 @@ function createWorkspaceStore() {
     completeRepositoryMoveTask,
     failRepositoryMoveTask,
     failRepositoryRenameTask,
+    setRepositoryDeleteForm,
+    prepareRepositoryDelete,
+    markRepositoryDeleteTask,
+    completeRepositoryDeleteTask,
+    failRepositoryDeleteTask,
     setRepositoryCheckoutForm,
     prepareRepositoryCheckout,
     chooseRepositoryCheckoutParent,
@@ -5465,6 +5578,13 @@ function emptyRepositoryRenameForm() {
   return {
     sourceUrl: "",
     targetUrl: "",
+    message: "",
+  };
+}
+
+function emptyRepositoryDeleteForm() {
+  return {
+    url: "",
     message: "",
   };
 }

@@ -803,6 +803,42 @@
     );
   }
 
+  async function createRepositoryDelete() {
+    const form = $workspaceStore.repositoryDeleteForm;
+    const url = form.url.trim();
+    const message = form.message.trim();
+    if (!url) {
+      workspaceStore.failRepositoryDeleteTask("请输入要删除的仓库 URL");
+      return;
+    }
+    if (!message) {
+      workspaceStore.failRepositoryDeleteTask("请输入 Repository Delete 的提交信息");
+      return;
+    }
+    if ($workspaceStore.pendingRepositoryDeleteTaskId !== null) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `确定永久删除仓库条目吗？\n\n目标：${url}\n提交信息：${message}\n\n该操作会直接提交到远端仓库。`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const task = await taskStore.createRepositoryDelete({
+      url,
+      message,
+      svnExecutable: currentSvnExecutable(),
+    });
+    if (!task) {
+      workspaceStore.failRepositoryDeleteTask(
+        $taskStore.error?.message ?? "Repository Delete 任务创建失败",
+      );
+      return;
+    }
+    workspaceStore.markRepositoryDeleteTask(task.task_id, parentRepositoryUrl(url));
+  }
+
   async function createRepositoryCheckout() {
     const form = $workspaceStore.repositoryCheckoutForm;
     if (!form.url.trim()) {
@@ -1622,6 +1658,22 @@
   );
 
   $: consumePendingTask(
+    $workspaceStore.pendingRepositoryDeleteTaskId,
+    $taskStore.snapshot,
+    (task) => {
+      if (task.status !== "success") {
+        workspaceStore.failRepositoryDeleteTask(task.error ?? "Repository Delete 失败");
+        return;
+      }
+      const parentUrl = get(workspaceStore).pendingRepositoryDeleteParentUrl;
+      workspaceStore.completeRepositoryDeleteTask();
+      if (parentUrl) {
+        refreshRepositoryAfterWrite(parentUrl);
+      }
+    },
+  );
+
+  $: consumePendingTask(
     $workspaceStore.pendingRepositoryCheckoutTaskId,
     $taskStore.snapshot,
     (task) => {
@@ -1924,6 +1976,9 @@
     $workspaceStore.pendingRepositoryMoveTaskId !== null &&
     $workspaceStore.pendingRepositoryMoveKind === "rename"
   }
+  repositoryDeleteForm={$workspaceStore.repositoryDeleteForm}
+  repositoryDeleteError={$workspaceStore.repositoryDeleteError}
+  repositoryDeleteRunning={$workspaceStore.pendingRepositoryDeleteTaskId !== null}
   repositoryCheckoutForm={$workspaceStore.repositoryCheckoutForm}
   repositoryCheckoutError={$workspaceStore.repositoryCheckoutError}
   repositoryCheckoutRunning={$workspaceStore.pendingRepositoryCheckoutTaskId !== null}
@@ -2097,6 +2152,9 @@
   onRepositoryRenameFormInput={workspaceStore.setRepositoryRenameForm}
   onPrepareRepositoryRename={workspaceStore.prepareRepositoryRename}
   onCreateRepositoryRename={createRepositoryRename}
+  onRepositoryDeleteFormInput={workspaceStore.setRepositoryDeleteForm}
+  onPrepareRepositoryDelete={workspaceStore.prepareRepositoryDelete}
+  onCreateRepositoryDelete={createRepositoryDelete}
   onRepositoryCheckoutFormInput={workspaceStore.setRepositoryCheckoutForm}
   onPrepareRepositoryCheckout={workspaceStore.prepareRepositoryCheckout}
   onChooseRepositoryCheckoutParent={workspaceStore.chooseRepositoryCheckoutParent}

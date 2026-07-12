@@ -231,6 +231,13 @@ pub struct CreateRepositoryMoveTaskRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct CreateRepositoryDeleteTaskRequest {
+    pub url: String,
+    pub message: String,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RepositoryMoveKind {
     Move,
@@ -400,6 +407,7 @@ enum TaskPayload {
     RepositoryMkdir(RepositoryMkdirTaskPayload),
     RepositoryImport(RepositoryImportTaskPayload),
     RepositoryMove(RepositoryMoveTaskPayload),
+    RepositoryDelete(RepositoryDeleteTaskPayload),
     BranchCheckout(BranchCheckoutTaskPayload),
     RepositoryCheckout(RepositoryCheckoutTaskPayload),
     RepositoryExport(RepositoryExportTaskPayload),
@@ -533,6 +541,13 @@ struct RepositoryMoveTaskPayload {
     kind: RepositoryMoveKind,
     source_url: String,
     target_url: String,
+    message: String,
+    svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct RepositoryDeleteTaskPayload {
+    url: String,
     message: String,
     svn_executable: String,
 }
@@ -1415,6 +1430,46 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_repository_delete_task(
+        &self,
+        request: CreateRepositoryDeleteTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let url = normalize_repository_url(&request.url)?;
+        let message = request.message.trim().to_string();
+        if message.is_empty() {
+            return Err(NovaError::command(
+                "REPOSITORY_DELETE_MESSAGE_REQUIRED",
+                "请输入 Repository Delete 的提交信息",
+                None,
+                true,
+            ));
+        }
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!("删除仓库条目 {}", compact_repository_url(&url)),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "Repository Delete 任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::RepositoryDelete(RepositoryDeleteTaskPayload {
+                url,
+                message,
+                svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn create_branch_checkout_task(
         &self,
         request: CreateBranchCheckoutTaskRequest,
@@ -1930,6 +1985,9 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             }
             TaskPayload::RepositoryMove(payload) => {
                 run_repository_move_task(&state, &task_id, payload)
+            }
+            TaskPayload::RepositoryDelete(payload) => {
+                run_repository_delete_task(&state, &task_id, payload)
             }
             TaskPayload::BranchCheckout(payload) => {
                 run_branch_checkout_task(&state, &task_id, payload)
@@ -3627,6 +3685,62 @@ fn run_repository_move_task(
                 task_id,
                 TaskStatus::Failed,
                 &format!("{operation} 失败"),
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn run_repository_delete_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: RepositoryDeleteTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "Repository Delete 开始执行",
+        None,
+    );
+    append_task_log(state, task_id, &format!("执行 svn delete：{}", payload.url));
+
+    let target = repository_url_with_peg_revision(&payload.url, None);
+    let output = Command::new(&payload.svn_executable)
+        .arg("delete")
+        .arg("-m")
+        .arg(&payload.message)
+        .arg("--")
+        .arg(target)
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                "Repository Delete 成功",
+                None,
+            );
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "Repository Delete 失败",
                 Some(command_error_detail(&payload.svn_executable, &output)),
             );
         }
@@ -7559,6 +7673,58 @@ mod tests {
             .expect("read renamed repository entry");
         assert!(renamed_content.status.success());
         assert_eq!(renamed_content.stdout, b"move content");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn deletes_repository_entry_with_commit_message() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("repository-entry-delete-integration");
+        let repository = root.join("repository");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("mkdir")
+                .arg(format!("{repository_url}/obsolete"))
+                .args(["-m", "create obsolete"]),
+        );
+
+        let queue = TaskQueue::new();
+        let task = queue
+            .create_repository_delete_task(CreateRepositoryDeleteTaskRequest {
+                url: format!("{repository_url}/obsolete"),
+                message: "删除废弃目录".to_string(),
+                svn_executable: None,
+            })
+            .expect("create repository delete task");
+        let task = wait_for_test_task(&queue, &task.task_id);
+        assert!(
+            matches!(task.status, TaskStatus::Success),
+            "删除仓库条目失败：{:?}",
+            task.error
+        );
+
+        let info = Command::new("svn")
+            .arg("info")
+            .arg(format!("{repository_url}/obsolete"))
+            .output()
+            .expect("deleted repository entry info runs");
+        assert!(!info.status.success());
+        let missing_message = queue
+            .create_repository_delete_task(CreateRepositoryDeleteTaskRequest {
+                url: format!("{repository_url}/another"),
+                message: " ".to_string(),
+                svn_executable: None,
+            })
+            .expect_err("delete message is required");
+        assert!(matches!(
+            missing_message,
+            NovaError::Command { ref code, .. } if code == "REPOSITORY_DELETE_MESSAGE_REQUIRED"
+        ));
         fs::remove_dir_all(root).ok();
     }
 

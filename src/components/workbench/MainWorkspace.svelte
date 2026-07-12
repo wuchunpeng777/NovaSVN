@@ -174,6 +174,15 @@
   };
   export let repositoryRenameError: string | null = null;
   export let repositoryRenameRunning = false;
+  export let repositoryDeleteForm: {
+    url: string;
+    message: string;
+  } = {
+    url: "",
+    message: "",
+  };
+  export let repositoryDeleteError: string | null = null;
+  export let repositoryDeleteRunning = false;
   export let repositoryCheckoutForm: {
     url: string;
     localPath: string;
@@ -430,6 +439,12 @@
   ) => void = () => {};
   export let onPrepareRepositoryRename: (sourceUrl?: string | null) => void = () => {};
   export let onCreateRepositoryRename: () => void = () => {};
+  export let onRepositoryDeleteFormInput: (
+    field: keyof typeof repositoryDeleteForm,
+    value: string,
+  ) => void = () => {};
+  export let onPrepareRepositoryDelete: (url?: string | null) => void = () => {};
+  export let onCreateRepositoryDelete: () => void = () => {};
   export let onRepositoryCheckoutFormInput: (
     field: keyof typeof repositoryCheckoutForm,
     value: string,
@@ -2541,6 +2556,13 @@
             </button>
             <button
               type="button"
+              on:click={() => onPrepareRepositoryDelete()}
+              disabled={!repositoryCurrentUrl && !repositoryUrlInput && !repositoryList}
+            >
+              准备 Delete
+            </button>
+            <button
+              type="button"
               on:click={() => onPrepareRepositoryCheckout()}
               disabled={!repositoryCurrentUrl && !repositoryUrlInput && !repositoryList}
             >
@@ -3165,6 +3187,54 @@
               disabled={repositoryRenameRunning}
             >
               {repositoryRenameRunning ? "Rename 中" : "Rename"}
+            </button>
+          </div>
+        </details>
+
+        <details class="advanced-section" open={Boolean(repositoryDeleteForm.url)}>
+          <summary>Delete 仓库条目</summary>
+          <div class="copy-form" aria-label="Repository Delete">
+            <button
+              type="button"
+              on:click={() =>
+                onPrepareRepositoryDelete(
+                  repositoryCurrentUrl || repositoryList?.url || repositoryUrlInput,
+                )}
+            >
+              使用当前 URL
+            </button>
+            <input
+              type="url"
+              value={repositoryDeleteForm.url}
+              placeholder="要删除的仓库 URL"
+              aria-label="Repository Delete 目标 URL"
+              on:input={(event) =>
+                onRepositoryDeleteFormInput(
+                  "url",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            <textarea
+              rows="3"
+              value={repositoryDeleteForm.message}
+              placeholder="提交信息"
+              aria-label="Repository Delete 提交信息"
+              on:input={(event) =>
+                onRepositoryDeleteFormInput(
+                  "message",
+                  (event.currentTarget as HTMLTextAreaElement).value,
+                )}
+            ></textarea>
+            {#if repositoryDeleteError}
+              <p class="inline-error">{repositoryDeleteError}</p>
+            {/if}
+            <button
+              type="button"
+              class="danger"
+              on:click={onCreateRepositoryDelete}
+              disabled={repositoryDeleteRunning}
+            >
+              {repositoryDeleteRunning ? "Delete 中" : "Delete"}
             </button>
           </div>
         </details>

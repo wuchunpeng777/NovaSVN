@@ -8,6 +8,7 @@ vi.mock("../lib/api", () => ({
   createMergeTask: vi.fn(),
   createRepositoryCheckoutTask: vi.fn(),
   createRepositoryCopyTask: vi.fn(),
+  createRepositoryDeleteTask: vi.fn(),
   createRepositoryExportTask: vi.fn(),
   createRepositoryFileTask: vi.fn(),
   createRepositoryListTask: vi.fn(),
@@ -49,6 +50,7 @@ import {
   createMergeTask,
   createRepositoryCheckoutTask,
   createRepositoryCopyTask,
+  createRepositoryDeleteTask,
   createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
@@ -112,6 +114,7 @@ const createApplyPatchTaskMock = vi.mocked(createApplyPatchTask);
 const createMergeTaskMock = vi.mocked(createMergeTask);
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
 const createRepositoryCopyTaskMock = vi.mocked(createRepositoryCopyTask);
+const createRepositoryDeleteTaskMock = vi.mocked(createRepositoryDeleteTask);
 const createRepositoryExportTaskMock = vi.mocked(createRepositoryExportTask);
 const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
@@ -150,6 +153,7 @@ beforeEach(() => {
   createMergeTaskMock.mockReset();
   createRepositoryCheckoutTaskMock.mockReset();
   createRepositoryCopyTaskMock.mockReset();
+  createRepositoryDeleteTaskMock.mockReset();
   createRepositoryExportTaskMock.mockReset();
   createRepositoryFileTaskMock.mockReset();
   createRepositoryListTaskMock.mockReset();
@@ -1124,6 +1128,49 @@ describe("taskStore repository list tasks", () => {
       pendingRepositoryMoveKind: null,
       repositoryRenameForm: { sourceUrl: "", targetUrl: "", message: "" },
       repositoryRenameError: null,
+    });
+  });
+
+  it("prepares repository delete and tracks its parent", async () => {
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk/obsolete",
+      revision: "12",
+      entries: [],
+    });
+    workspaceStore.prepareRepositoryDelete();
+    workspaceStore.setRepositoryDeleteForm("message", "删除 obsolete");
+    expect(get(workspaceStore).repositoryDeleteForm).toEqual({
+      url: "https://example.com/svn/trunk/obsolete",
+      message: "删除 obsolete",
+    });
+
+    createRepositoryDeleteTaskMock.mockResolvedValue(makeTask({ task_id: "repository-delete" }));
+    const task = await taskStore.createRepositoryDelete({
+      url: "https://example.com/svn/trunk/obsolete",
+      message: "删除 obsolete",
+      svnExecutable: "svn",
+    });
+    expect(task?.task_id).toBe("repository-delete");
+    expect(createRepositoryDeleteTaskMock).toHaveBeenCalledWith({
+      url: "https://example.com/svn/trunk/obsolete",
+      message: "删除 obsolete",
+      svn_executable: "svn",
+    });
+
+    workspaceStore.markRepositoryDeleteTask(
+      "repository-delete",
+      "https://example.com/svn/trunk",
+    );
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryDeleteTaskId: "repository-delete",
+      pendingRepositoryDeleteParentUrl: "https://example.com/svn/trunk",
+    });
+    workspaceStore.completeRepositoryDeleteTask();
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryDeleteTaskId: null,
+      pendingRepositoryDeleteParentUrl: null,
+      repositoryDeleteForm: { url: "", message: "" },
+      repositoryDeleteError: null,
     });
   });
 

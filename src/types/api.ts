@@ -237,6 +237,12 @@ export interface CreateRepositoryMoveTaskRequest {
 
 export type RepositoryMoveKind = "move" | "rename";
 
+export interface CreateRepositoryDeleteTaskRequest {
+  url: string;
+  message: string;
+  svn_executable?: string;
+}
+
 export interface CreateBranchCheckoutTaskRequest {
   branch_url: string;
   local_path: string;

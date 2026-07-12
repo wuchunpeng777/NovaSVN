@@ -12,6 +12,7 @@ import type {
   CreatePartialCommitTaskRequest,
   CreateRepositoryCheckoutTaskRequest,
   CreateRepositoryCopyTaskRequest,
+  CreateRepositoryDeleteTaskRequest,
   CreateRepositoryExportTaskRequest,
   CreateRepositoryFileTaskRequest,
   CreateRepositoryListTaskRequest,
@@ -212,6 +213,12 @@ export function createRepositoryMoveTask(
   request: CreateRepositoryMoveTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_repository_move_task", { request });
+}
+
+export function createRepositoryDeleteTask(
+  request: CreateRepositoryDeleteTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_repository_delete_task", { request });
 }
 
 export function createBranchCheckoutTask(

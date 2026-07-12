@@ -659,6 +659,22 @@ if (
 }
 
 if (
+  !mainWorkspace.includes('aria-label="Repository Delete"') ||
+  !mainWorkspace.includes("准备 Delete") ||
+  !appSvelte.includes("pendingRepositoryDeleteTaskId") ||
+  !appSvelte.includes("确定永久删除仓库条目吗") ||
+  !appStore.includes("function markRepositoryDeleteTask(") ||
+  !frontendApi.includes('callBackend<Task>("create_repository_delete_task"') ||
+  !tauriLib.includes("create_repository_delete_task,") ||
+  !taskRs.includes("TaskPayload::RepositoryDelete") ||
+  !taskRs.includes("fn run_repository_delete_task(") ||
+  !taskRs.includes('.arg("delete")')
+) {
+  console.error("Repository Delete 必须要求提交信息与破坏性确认，执行真实 svn delete，并刷新目标父目录");
+  failed = true;
+}
+
+if (
   !mainWorkspace.includes('aria-label="仓库 Checkout"') ||
   !mainWorkspace.includes("准备 Checkout") ||
   !mainWorkspace.includes("选择父目录") ||

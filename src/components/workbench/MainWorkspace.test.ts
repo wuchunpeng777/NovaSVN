@@ -582,6 +582,9 @@ describe("MainWorkspace", () => {
     const onPrepareRepositoryRename = vi.fn();
     const onCreateRepositoryRename = vi.fn();
     const onRepositoryRenameFormInput = vi.fn();
+    const onPrepareRepositoryDelete = vi.fn();
+    const onCreateRepositoryDelete = vi.fn();
+    const onRepositoryDeleteFormInput = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.repository,
@@ -644,6 +647,10 @@ describe("MainWorkspace", () => {
           targetUrl: "https://example.com/svn/trunk/assets-renamed",
           message: "重命名 assets",
         },
+        repositoryDeleteForm: {
+          url: "https://example.com/svn/trunk/obsolete",
+          message: "删除 obsolete",
+        },
         onRepositoryRevisionInput,
         onLoadRepositoryUrl,
         onOpenRepositoryFile,
@@ -678,6 +685,9 @@ describe("MainWorkspace", () => {
         onPrepareRepositoryRename,
         onCreateRepositoryRename,
         onRepositoryRenameFormInput,
+        onPrepareRepositoryDelete,
+        onCreateRepositoryDelete,
+        onRepositoryDeleteFormInput,
       },
     });
 
@@ -690,6 +700,7 @@ describe("MainWorkspace", () => {
     expect(screen.getByRole("button", { name: "准备 Import" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "准备 Move" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "准备 Rename" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "准备 Delete" })).toBeInTheDocument();
     expect(screen.getByLabelText("仓库 Checkout")).toBeInTheDocument();
     expect(screen.getByLabelText("仓库 Export")).toBeInTheDocument();
     expect(screen.getByLabelText("创建仓库目录")).toBeInTheDocument();
@@ -721,6 +732,9 @@ describe("MainWorkspace", () => {
     expect(screen.getByLabelText("Repository Rename 目标 URL")).toHaveValue(
       "https://example.com/svn/trunk/assets-renamed",
     );
+    expect(screen.getByLabelText("Repository Delete 目标 URL")).toHaveValue(
+      "https://example.com/svn/trunk/obsolete",
+    );
     expect(screen.getByLabelText("Checkout 仓库 URL")).toHaveValue(
       "https://example.com/svn/trunk",
     );
@@ -748,6 +762,8 @@ describe("MainWorkspace", () => {
     expect(onPrepareRepositoryMove).toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "准备 Rename" }));
     expect(onPrepareRepositoryRename).toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "准备 Delete" }));
+    expect(onPrepareRepositoryDelete).toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
     expect(onCreateRepositoryCheckout).toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "Export" }));
@@ -771,6 +787,8 @@ describe("MainWorkspace", () => {
     expect(onCreateRepositoryMove).toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "Rename" }));
     expect(onCreateRepositoryRename).toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(onCreateRepositoryDelete).toHaveBeenCalled();
 
     const repositoryTable = screen.getByLabelText("仓库目录");
     expect(within(repositoryTable).getByText("Last Revision")).toBeInTheDocument();
