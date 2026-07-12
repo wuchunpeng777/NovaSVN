@@ -9,7 +9,7 @@ use std::{
 
 use quick_xml::{
     encoding::Decoder,
-    escape::unescape,
+    escape::{resolve_xml_entity, unescape},
     events::{attributes::Attribute, Event},
     Reader as XmlReader,
 };
@@ -1446,7 +1446,7 @@ fn parse_versioned_workspace_paths_reader_with_limit<R: BufRead>(
     max_paths: usize,
 ) -> Result<VersionedWorkspaceIndex, NovaError> {
     let mut reader = XmlReader::from_reader(reader);
-    reader.config_mut().trim_text(true);
+    reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut current_entry: Option<StreamingInfoEntry> = None;
     let mut reading_field: Option<StreamingInfoTextField> = None;
@@ -1559,37 +1559,32 @@ fn parse_versioned_workspace_paths_reader_with_limit<R: BufRead>(
                         "svn info 元数据转义字符解析失败：{error}"
                     ))
                 })?;
-                if let Some(entry) = current_entry.as_mut() {
-                    let (target, max_bytes, code, message) = match reading_field {
-                        Some(StreamingInfoTextField::WcRoot) => (
-                            &mut entry.wc_root,
-                            MAX_SVN_INFO_PATH_BYTES,
-                            "SVN_FILE_TREE_INFO_PATH_TOO_LONG",
-                            "SVN 文件树信息包含过长根路径",
-                        ),
-                        Some(StreamingInfoTextField::Author) => (
-                            &mut entry.author,
-                            MAX_SVN_INFO_METADATA_BYTES,
-                            "SVN_FILE_TREE_INFO_METADATA_TOO_LONG",
-                            "SVN 文件树信息包含过长作者字段",
-                        ),
-                        Some(StreamingInfoTextField::Date) => (
-                            &mut entry.date,
-                            MAX_SVN_INFO_METADATA_BYTES,
-                            "SVN_FILE_TREE_INFO_METADATA_TOO_LONG",
-                            "SVN 文件树信息包含过长日期字段",
-                        ),
-                        None => continue,
-                    };
-                    target.push_str(&decoded);
-                    if target.len() > max_bytes {
-                        return Err(NovaError::command(
-                            code,
-                            message,
-                            Some(format!("单个字段超过 {max_bytes} 字节")),
-                            true,
-                        ));
-                    }
+                if let (Some(entry), Some(field)) = (current_entry.as_mut(), reading_field) {
+                    append_streaming_info_text(entry, field, &decoded)?;
+                }
+            }
+            Event::GeneralRef(reference) if reading_field.is_some() => {
+                let decoded = reference.decode().map_err(|error| {
+                    svn_file_tree_info_xml_error(format!("svn info 元数据实体解码失败：{error}"))
+                })?;
+                let resolved = if let Some(character) =
+                    reference.resolve_char_ref().map_err(|error| {
+                        svn_file_tree_info_xml_error(format!(
+                            "svn info 元数据字符引用解析失败：{error}"
+                        ))
+                    })? {
+                    character.to_string()
+                } else {
+                    resolve_xml_entity(&decoded)
+                        .ok_or_else(|| {
+                            svn_file_tree_info_xml_error(format!(
+                                "svn info 元数据包含未知实体：&{decoded};"
+                            ))
+                        })?
+                        .to_string()
+                };
+                if let (Some(entry), Some(field)) = (current_entry.as_mut(), reading_field) {
+                    append_streaming_info_text(entry, field, &resolved)?;
                 }
             }
             Event::End(end)
@@ -1627,6 +1622,43 @@ fn parse_versioned_workspace_paths_reader_with_limit<R: BufRead>(
         insert_streaming_info_path(entry, &reported_root, canonical_root, &mut paths)?;
     }
     Ok(paths)
+}
+
+fn append_streaming_info_text(
+    entry: &mut StreamingInfoEntry,
+    field: StreamingInfoTextField,
+    value: &str,
+) -> Result<(), NovaError> {
+    let (target, max_bytes, code, message) = match field {
+        StreamingInfoTextField::WcRoot => (
+            &mut entry.wc_root,
+            MAX_SVN_INFO_PATH_BYTES,
+            "SVN_FILE_TREE_INFO_PATH_TOO_LONG",
+            "SVN 文件树信息包含过长根路径",
+        ),
+        StreamingInfoTextField::Author => (
+            &mut entry.author,
+            MAX_SVN_INFO_METADATA_BYTES,
+            "SVN_FILE_TREE_INFO_METADATA_TOO_LONG",
+            "SVN 文件树信息包含过长作者字段",
+        ),
+        StreamingInfoTextField::Date => (
+            &mut entry.date,
+            MAX_SVN_INFO_METADATA_BYTES,
+            "SVN_FILE_TREE_INFO_METADATA_TOO_LONG",
+            "SVN 文件树信息包含过长日期字段",
+        ),
+    };
+    target.push_str(value);
+    if target.len() > max_bytes {
+        return Err(NovaError::command(
+            code,
+            message,
+            Some(format!("单个字段超过 {max_bytes} 字节")),
+            true,
+        ));
+    }
+    Ok(())
 }
 
 fn process_streaming_info_entry(
@@ -3802,7 +3834,7 @@ line two</property>
   <entry path="."><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
   <entry path="tracked.txt" revision="42">
     <wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info>
-    <commit revision="40"><author>alice &amp; bob</author><date>2026-07-11T01:02:03Z</date></commit>
+    <commit revision="40"><author>alice &amp; bob &#x26; carol</author><date>2026-07-11T01:02:03Z</date></commit>
   </entry>
   <entry path="escaped&amp;name.txt"><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
   <entry path="src\windows.txt"><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
@@ -3824,7 +3856,10 @@ line two</property>
         let metadata = paths.resolve("tracked.txt", None);
         assert_eq!(metadata.base_revision.as_deref(), Some("42"));
         assert_eq!(metadata.last_revision.as_deref(), Some("40"));
-        assert_eq!(metadata.last_changed_author.as_deref(), Some("alice & bob"));
+        assert_eq!(
+            metadata.last_changed_author.as_deref(),
+            Some("alice & bob & carol")
+        );
         assert_eq!(
             metadata.last_changed_date.as_deref(),
             Some("2026-07-11T01:02:03Z")
