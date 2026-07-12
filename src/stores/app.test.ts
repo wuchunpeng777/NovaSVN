@@ -7,6 +7,7 @@ vi.mock("../lib/api", () => ({
   createApplyPatchTask: vi.fn(),
   createMergeTask: vi.fn(),
   createRepositoryCheckoutTask: vi.fn(),
+  createRepositoryCopyTask: vi.fn(),
   createRepositoryExportTask: vi.fn(),
   createRepositoryFileTask: vi.fn(),
   createRepositoryListTask: vi.fn(),
@@ -46,6 +47,7 @@ import {
   createApplyPatchTask,
   createMergeTask,
   createRepositoryCheckoutTask,
+  createRepositoryCopyTask,
   createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
@@ -107,6 +109,7 @@ const chooseImportSourceMock = vi.mocked(chooseImportSource);
 const createApplyPatchTaskMock = vi.mocked(createApplyPatchTask);
 const createMergeTaskMock = vi.mocked(createMergeTask);
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
+const createRepositoryCopyTaskMock = vi.mocked(createRepositoryCopyTask);
 const createRepositoryExportTaskMock = vi.mocked(createRepositoryExportTask);
 const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
@@ -143,6 +146,7 @@ beforeEach(() => {
   createApplyPatchTaskMock.mockReset();
   createMergeTaskMock.mockReset();
   createRepositoryCheckoutTaskMock.mockReset();
+  createRepositoryCopyTaskMock.mockReset();
   createRepositoryExportTaskMock.mockReset();
   createRepositoryFileTaskMock.mockReset();
   createRepositoryListTaskMock.mockReset();
@@ -970,6 +974,57 @@ describe("taskStore repository list tasks", () => {
     });
     workspaceStore.setRepositoryRevisionInput("");
     expect(get(workspaceStore).repositoryRevisionInput).toBe("");
+  });
+
+  it("prepares generic repository copy and tracks target parent", async () => {
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk/assets",
+      revision: "12",
+      entries: [],
+    });
+    workspaceStore.prepareRepositoryCopyTarget("entry");
+    workspaceStore.setRepositoryCopyForm("message", "复制 assets");
+    expect(get(workspaceStore).repositoryCopyForm).toEqual({
+      kind: "entry",
+      sourceUrl: "https://example.com/svn/trunk/assets",
+      targetUrl: "https://example.com/svn/trunk/assets-copy",
+      revision: "12",
+      message: "复制 assets",
+    });
+
+    createRepositoryCopyTaskMock.mockResolvedValue(makeTask({ task_id: "repository-copy" }));
+    const task = await taskStore.createRepositoryCopy({
+      kind: "entry",
+      sourceUrl: "https://example.com/svn/trunk/assets",
+      targetUrl: "https://example.com/svn/trunk/assets-copy",
+      revision: "12",
+      message: "复制 assets",
+      svnExecutable: "svn",
+    });
+    expect(task?.task_id).toBe("repository-copy");
+    expect(createRepositoryCopyTaskMock).toHaveBeenCalledWith({
+      kind: "entry",
+      source_url: "https://example.com/svn/trunk/assets",
+      target_url: "https://example.com/svn/trunk/assets-copy",
+      revision: "12",
+      message: "复制 assets",
+      svn_executable: "svn",
+    });
+
+    workspaceStore.markRepositoryCopyTask(
+      "repository-copy",
+      "https://example.com/svn/trunk",
+    );
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryCopyTaskId: "repository-copy",
+      pendingRepositoryCopyParentUrl: "https://example.com/svn/trunk",
+    });
+    workspaceStore.completeRepositoryCopyTask();
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryCopyTaskId: null,
+      pendingRepositoryCopyParentUrl: null,
+      repositoryCopyError: null,
+    });
   });
 
   it("prepares repository mkdir form and tracks its refresh parent", async () => {

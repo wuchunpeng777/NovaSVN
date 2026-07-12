@@ -1527,6 +1527,7 @@ export interface WorkspaceStoreState {
     message: string;
   };
   pendingRepositoryCopyTaskId: string | null;
+  pendingRepositoryCopyParentUrl: string | null;
   repositoryCopyError: string | null;
   repositoryMkdirForm: {
     targetUrl: string;
@@ -1707,6 +1708,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
     message: "",
   },
   pendingRepositoryCopyTaskId: null,
+  pendingRepositoryCopyParentUrl: null,
   repositoryCopyError: null,
   repositoryMkdirForm: {
     targetUrl: "",
@@ -1870,6 +1872,7 @@ function createWorkspaceStore() {
           revision: recent.workspace?.revision ?? "",
         },
         pendingRepositoryCopyTaskId: null,
+        pendingRepositoryCopyParentUrl: null,
         repositoryCopyError: null,
         repositoryMkdirForm: emptyRepositoryMkdirForm(),
         pendingRepositoryMkdirTaskId: null,
@@ -2004,6 +2007,7 @@ function createWorkspaceStore() {
           revision: current.revision,
         },
         pendingRepositoryCopyTaskId: null,
+        pendingRepositoryCopyParentUrl: null,
         repositoryCopyError: null,
         repositoryMkdirForm: emptyRepositoryMkdirForm(),
         pendingRepositoryMkdirTaskId: null,
@@ -2857,7 +2861,12 @@ function createWorkspaceStore() {
       ...state,
       repositoryCopyForm: {
         ...state.repositoryCopyForm,
-        [field]: field === "kind" && value === "tag" ? "tag" : value,
+        [field]:
+          field === "kind"
+            ? value === "tag" || value === "entry"
+              ? value
+              : "branch"
+            : value,
       },
       repositoryCopyError: null,
     }));
@@ -2865,21 +2874,35 @@ function createWorkspaceStore() {
 
   function prepareRepositoryCopyTarget(kind: RepositoryCopyKind, targetBaseUrl?: string | null) {
     update((state) => {
+      const currentRepositoryUrl =
+        state.repositoryCurrentUrl || state.repositoryList?.url || state.repositoryUrlInput;
+      const sourceUrl =
+        kind === "entry"
+          ? currentRepositoryUrl || state.current?.repository_url || state.repositoryCopyForm.sourceUrl
+          : state.repositoryCopyForm.sourceUrl ||
+            state.current?.repository_url ||
+            currentRepositoryUrl;
       const baseUrl =
         targetBaseUrl ||
         (kind === "branch"
           ? state.repositoryLayoutResults.branches?.url
-          : state.repositoryLayoutResults.tags?.url) ||
+          : kind === "tag"
+            ? state.repositoryLayoutResults.tags?.url
+            : sourceUrl) ||
         state.repositoryUrlInput;
-      const suffix = kind === "branch" ? "new-branch" : "new-tag";
+      const suffix = kind === "branch" ? "new-branch" : kind === "tag" ? "new-tag" : "copy";
 
       return {
         ...state,
         repositoryCopyForm: {
           ...state.repositoryCopyForm,
           kind,
-          sourceUrl: state.repositoryCopyForm.sourceUrl || state.current?.repository_url || "",
-          targetUrl: baseUrl ? `${baseUrl.replace(/\/+$/, "")}/${suffix}` : "",
+          sourceUrl,
+          targetUrl: baseUrl
+            ? kind === "entry"
+              ? `${baseUrl.replace(/\/+$/, "")}-${suffix}`
+              : `${baseUrl.replace(/\/+$/, "")}/${suffix}`
+            : "",
           revision: state.repositoryCopyForm.revision || state.current?.revision || "",
         },
         repositoryCopyError: null,
@@ -2887,10 +2910,11 @@ function createWorkspaceStore() {
     });
   }
 
-  function markRepositoryCopyTask(taskId: string | null) {
+  function markRepositoryCopyTask(taskId: string | null, parentUrl?: string | null) {
     update((state) => ({
       ...state,
       pendingRepositoryCopyTaskId: taskId,
+      pendingRepositoryCopyParentUrl: taskId ? parentUrl?.trim() || null : null,
       repositoryCopyError: null,
     }));
   }
@@ -2899,6 +2923,7 @@ function createWorkspaceStore() {
     update((state) => ({
       ...state,
       pendingRepositoryCopyTaskId: null,
+      pendingRepositoryCopyParentUrl: null,
       repositoryCopyForm: {
         ...state.repositoryCopyForm,
         targetUrl: "",
@@ -2912,6 +2937,7 @@ function createWorkspaceStore() {
     update((state) => ({
       ...state,
       pendingRepositoryCopyTaskId: null,
+      pendingRepositoryCopyParentUrl: null,
       repositoryCopyError: message ?? "创建分支或标签失败",
     }));
   }

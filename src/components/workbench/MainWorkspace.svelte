@@ -3134,7 +3134,7 @@
         </details>
 
         <details class="advanced-section">
-          <summary>创建分支或标签</summary>
+          <summary>Copy 仓库条目、分支或标签</summary>
           <div class="copy-form">
             <div class="segmented-control">
               <button
@@ -3151,6 +3151,13 @@
               >
                 Tag
               </button>
+              <button
+                type="button"
+                class:active={repositoryCopyForm.kind === "entry"}
+                on:click={() => onRepositoryCopyFormInput("kind", "entry")}
+              >
+                Entry
+              </button>
             </div>
             <button
               type="button"
@@ -3165,10 +3172,17 @@
             >
               填充标签目标
             </button>
+            <button
+              type="button"
+              on:click={() => onPrepareRepositoryCopyTarget("entry", repositoryCurrentUrl)}
+            >
+              复制当前条目
+            </button>
             <input
               type="url"
               value={repositoryCopyForm.sourceUrl}
               placeholder="源 URL"
+              aria-label="Repository Copy 源 URL"
               on:input={(event) =>
                 onRepositoryCopyFormInput(
                   "sourceUrl",
@@ -3179,6 +3193,7 @@
               type="url"
               value={repositoryCopyForm.targetUrl}
               placeholder="目标 URL"
+              aria-label="Repository Copy 目标 URL"
               on:input={(event) =>
                 onRepositoryCopyFormInput(
                   "targetUrl",
@@ -3189,6 +3204,7 @@
               type="text"
               value={repositoryCopyForm.revision}
               placeholder="Revision，留空为 HEAD"
+              aria-label="Repository Copy Revision"
               on:input={(event) =>
                 onRepositoryCopyFormInput(
                   "revision",
@@ -3199,6 +3215,7 @@
               rows="3"
               value={repositoryCopyForm.message}
               placeholder="提交信息"
+              aria-label="Repository Copy 提交信息"
               on:input={(event) =>
                 onRepositoryCopyFormInput(
                   "message",

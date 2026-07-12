@@ -603,7 +603,18 @@
     }
 
     if (!form.message.trim()) {
-      workspaceStore.failRepositoryCopyTask("请输入创建分支或标签的提交信息");
+      workspaceStore.failRepositoryCopyTask("请输入 Repository Copy 的提交信息");
+      return;
+    }
+    if ($workspaceStore.pendingRepositoryCopyTaskId !== null) {
+      return;
+    }
+    const operation =
+      form.kind === "branch" ? "创建分支" : form.kind === "tag" ? "创建标签" : "复制仓库条目";
+    const confirmed = window.confirm(
+      `确定${operation}吗？\n\n源：${form.sourceUrl}\n目标：${form.targetUrl}\n提交信息：${form.message.trim()}`,
+    );
+    if (!confirmed) {
       return;
     }
 
@@ -618,12 +629,12 @@
 
     if (!task) {
       workspaceStore.failRepositoryCopyTask(
-        $taskStore.error?.message ?? "创建分支或标签任务创建失败",
+        $taskStore.error?.message ?? "Repository Copy 任务创建失败",
       );
       return;
     }
 
-    workspaceStore.markRepositoryCopyTask(task.task_id);
+    workspaceStore.markRepositoryCopyTask(task.task_id, parentRepositoryUrl(form.targetUrl));
   }
 
   async function createRepositoryMkdir() {
@@ -1455,9 +1466,13 @@
     $taskStore.snapshot,
     (task) => {
       if (task.status === "success") {
+        const parentUrl = get(workspaceStore).pendingRepositoryCopyParentUrl;
         workspaceStore.completeRepositoryCopyTask();
+        if (parentUrl) {
+          void loadRepositoryUrl(parentUrl);
+        }
       } else {
-        workspaceStore.failRepositoryCopyTask(task.error ?? "创建分支或标签失败");
+        workspaceStore.failRepositoryCopyTask(task.error ?? "Repository Copy 失败");
       }
     },
   );

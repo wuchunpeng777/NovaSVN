@@ -193,6 +193,7 @@ pub struct CreateRepositoryFileTaskRequest {
 pub enum RepositoryCopyKind {
     Branch,
     Tag,
+    Entry,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1181,7 +1182,7 @@ impl TaskQueue {
             return Err(NovaError::command(
                 "REPOSITORY_COPY_TARGET_SAME_AS_SOURCE",
                 "目标 URL 不能和源 URL 相同",
-                Some("创建分支或标签需要选择不同的目标 URL。".to_string()),
+                Some("Repository Copy 需要选择不同的目标 URL。".to_string()),
                 true,
             ));
         }
@@ -1190,7 +1191,7 @@ impl TaskQueue {
         if message.is_empty() {
             return Err(NovaError::command(
                 "REPOSITORY_COPY_MESSAGE_REQUIRED",
-                "请输入创建分支或标签的提交信息",
+                "请输入 Repository Copy 的提交信息",
                 None,
                 true,
             ));
@@ -1199,7 +1200,7 @@ impl TaskQueue {
         let revision = normalize_optional_revision_value(
             request.revision.as_deref(),
             "REPOSITORY_COPY_REVISION_INVALID",
-            "创建分支或标签的 revision 无效",
+            "Repository Copy 的 revision 无效",
         )?;
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
@@ -1207,13 +1208,14 @@ impl TaskQueue {
         let title = match request.kind {
             RepositoryCopyKind::Branch => "创建分支",
             RepositoryCopyKind::Tag => "创建标签",
+            RepositoryCopyKind::Entry => "复制仓库条目",
         };
         let task = Task {
             task_id: task_id.clone(),
             title: format!("{title} {}", compact_repository_url(&target_url)),
             status: TaskStatus::Pending,
             logs: vec![TaskLog {
-                message: "创建分支/标签任务已加入队列".to_string(),
+                message: "Repository Copy 任务已加入队列".to_string(),
                 created_at: now,
             }],
             error: None,
@@ -3281,6 +3283,7 @@ fn run_repository_copy_task(
     let title = match payload.kind {
         RepositoryCopyKind::Branch => "创建分支",
         RepositoryCopyKind::Tag => "创建标签",
+        RepositoryCopyKind::Entry => "复制仓库条目",
     };
     update_task(
         state,
@@ -3298,16 +3301,19 @@ fn run_repository_copy_task(
         ),
     );
 
+    let source = repository_url_with_peg_revision(&payload.source_url, payload.revision.as_deref());
+    let target = repository_url_with_peg_revision(&payload.target_url, None);
     let mut command = Command::new(&payload.svn_executable);
     command.arg("copy");
     if let Some(revision) = payload.revision.as_deref() {
         command.arg("-r").arg(revision);
     }
     command
-        .arg(&payload.source_url)
-        .arg(&payload.target_url)
         .arg("-m")
-        .arg(&payload.message);
+        .arg(&payload.message)
+        .arg("--")
+        .arg(source)
+        .arg(target);
 
     match command.output() {
         Ok(output) if output.status.success() => {
@@ -7217,6 +7223,61 @@ mod tests {
             missing,
             NovaError::Command { ref code, .. } if code == "REPOSITORY_IMPORT_SOURCE_MISSING"
         ));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn copies_repository_entry_from_historical_revision() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("repository-entry-copy-integration");
+        let repository = root.join("repository");
+        let source = root.join("source");
+        fs::create_dir_all(&source).expect("create copy source");
+        fs::write(source.join("note.txt"), "historical content").expect("write copy source");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&source)
+                .arg(format!("{repository_url}/source"))
+                .args(["-m", "create source"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("delete")
+                .arg(format!("{repository_url}/source"))
+                .args(["-m", "delete source"]),
+        );
+
+        let queue = TaskQueue::new();
+        let task = queue
+            .create_repository_copy_task(CreateRepositoryCopyTaskRequest {
+                kind: RepositoryCopyKind::Entry,
+                source_url: format!("{repository_url}/source"),
+                target_url: format!("{repository_url}/restored"),
+                revision: Some("1".to_string()),
+                message: "恢复历史目录".to_string(),
+                svn_executable: None,
+            })
+            .expect("create repository entry copy task");
+        let task = wait_for_test_task(&queue, &task.task_id);
+        assert!(
+            matches!(task.status, TaskStatus::Success),
+            "复制历史仓库条目失败：{:?}",
+            task.error
+        );
+
+        let content = Command::new("svn")
+            .arg("cat")
+            .arg(format!("{repository_url}/restored/note.txt"))
+            .output()
+            .expect("read copied repository entry");
+        assert!(content.status.success());
+        assert_eq!(content.stdout, b"historical content");
         fs::remove_dir_all(root).ok();
     }
 

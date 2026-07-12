@@ -16,6 +16,7 @@ vi.mock("./lib/api", async (importOriginal) => {
   return {
     ...actual,
     createRepositoryCheckoutTask: vi.fn(),
+    createRepositoryCopyTask: vi.fn(),
     createRepositoryExportTask: vi.fn(),
     createRepositoryFileTask: vi.fn(),
     createRepositoryListTask: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock("./lib/api", async (importOriginal) => {
 import { get } from "svelte/store";
 import {
   createRepositoryCheckoutTask,
+  createRepositoryCopyTask,
   createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
@@ -78,6 +80,7 @@ import App from "./App.svelte";
 
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
+const createRepositoryCopyTaskMock = vi.mocked(createRepositoryCopyTask);
 const createRepositoryExportTaskMock = vi.mocked(createRepositoryExportTask);
 const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
@@ -102,6 +105,7 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 beforeEach(async () => {
   createSvnOperationTaskMock.mockReset();
   createRepositoryCheckoutTaskMock.mockReset();
+  createRepositoryCopyTaskMock.mockReset();
   createRepositoryExportTaskMock.mockReset();
   createRepositoryFileTaskMock.mockReset();
   createRepositoryListTaskMock.mockReset();
@@ -796,6 +800,76 @@ describe("App SVN operation completion", () => {
       });
       expect(get(workspaceStore).pendingRepositoryImportTaskId).toBeNull();
       expect(get(workspaceStore).repositoryImportError).toBeNull();
+    });
+  });
+
+  it("Repository 通用 Copy 要求确认并在成功后刷新目标父目录", async () => {
+    setCurrentView("repository");
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk/assets",
+      revision: "10",
+      entries: [],
+    });
+    workspaceStore.setRepositoryCopyForm("kind", "entry");
+    workspaceStore.setRepositoryCopyForm(
+      "sourceUrl",
+      "https://example.com/svn/trunk/assets",
+    );
+    workspaceStore.setRepositoryCopyForm(
+      "targetUrl",
+      "https://example.com/svn/trunk/assets-copy",
+    );
+    workspaceStore.setRepositoryCopyForm("revision", "10");
+    workspaceStore.setRepositoryCopyForm("message", "复制 assets");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const pendingTask = makeTask({ task_id: "repository-copy", status: "pending" });
+    createRepositoryCopyTaskMock.mockResolvedValue(pendingTask);
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-copy", status: "pending" }),
+      ]),
+    );
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("复制仓库条目"));
+      expect(createRepositoryCopyTaskMock).toHaveBeenCalledWith({
+        kind: "entry",
+        source_url: "https://example.com/svn/trunk/assets",
+        target_url: "https://example.com/svn/trunk/assets-copy",
+        revision: "10",
+        message: "复制 assets",
+        svn_executable: undefined,
+      });
+      expect(get(workspaceStore).pendingRepositoryCopyTaskId).toBe("repository-copy");
+      expect(get(workspaceStore).pendingRepositoryCopyParentUrl).toBe(
+        "https://example.com/svn/trunk",
+      );
+    });
+
+    createRepositoryListTaskMock.mockResolvedValue(
+      makeTask({ task_id: "repository-refresh", status: "pending" }),
+    );
+    getTaskMock.mockResolvedValue(
+      makeTask({ task_id: "repository-copy", status: "success" }),
+    );
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-copy", status: "success" }),
+      ]),
+    );
+    await taskStore.refresh();
+
+    await waitFor(() => {
+      expect(createRepositoryListTaskMock).toHaveBeenCalledWith({
+        url: "https://example.com/svn/trunk",
+        revision: "10",
+        svn_executable: undefined,
+      });
+      expect(get(workspaceStore).pendingRepositoryCopyTaskId).toBeNull();
+      expect(get(workspaceStore).repositoryCopyError).toBeNull();
     });
   });
 

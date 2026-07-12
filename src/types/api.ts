@@ -203,7 +203,7 @@ export interface CreateRepositoryFileTaskRequest {
   svn_executable?: string;
 }
 
-export type RepositoryCopyKind = "branch" | "tag";
+export type RepositoryCopyKind = "branch" | "tag" | "entry";
 
 export interface CreateRepositoryCopyTaskRequest {
   kind: RepositoryCopyKind;

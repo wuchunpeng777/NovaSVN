@@ -573,6 +573,9 @@ describe("MainWorkspace", () => {
     const onChooseRepositoryImportSource = vi.fn();
     const onCreateRepositoryImport = vi.fn();
     const onRepositoryImportFormInput = vi.fn();
+    const onPrepareRepositoryCopyTarget = vi.fn();
+    const onCreateRepositoryCopy = vi.fn();
+    const onRepositoryCopyFormInput = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.repository,
@@ -618,6 +621,13 @@ describe("MainWorkspace", () => {
           targetUrl: "https://example.com/svn/trunk/assets",
           message: "导入 assets",
         },
+        repositoryCopyForm: {
+          kind: "entry",
+          sourceUrl: "https://example.com/svn/trunk/assets",
+          targetUrl: "https://example.com/svn/trunk/assets-copy",
+          revision: "10",
+          message: "复制 assets",
+        },
         onRepositoryRevisionInput,
         onLoadRepositoryUrl,
         onOpenRepositoryFile,
@@ -643,6 +653,9 @@ describe("MainWorkspace", () => {
         onChooseRepositoryImportSource,
         onCreateRepositoryImport,
         onRepositoryImportFormInput,
+        onPrepareRepositoryCopyTarget,
+        onCreateRepositoryCopy,
+        onRepositoryCopyFormInput,
       },
     });
 
@@ -666,6 +679,12 @@ describe("MainWorkspace", () => {
       "https://example.com/svn/trunk/assets",
     );
     expect(screen.getByLabelText("Repository Import 提交信息")).toHaveValue("导入 assets");
+    expect(screen.getByLabelText("Repository Copy 源 URL")).toHaveValue(
+      "https://example.com/svn/trunk/assets",
+    );
+    expect(screen.getByLabelText("Repository Copy 目标 URL")).toHaveValue(
+      "https://example.com/svn/trunk/assets-copy",
+    );
     expect(screen.getByLabelText("Checkout 仓库 URL")).toHaveValue(
       "https://example.com/svn/trunk",
     );
@@ -701,6 +720,13 @@ describe("MainWorkspace", () => {
     expect(onChooseRepositoryImportSource).toHaveBeenCalledWith(true);
     await fireEvent.click(screen.getByRole("button", { name: "Import" }));
     expect(onCreateRepositoryImport).toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "复制当前条目" }));
+    expect(onPrepareRepositoryCopyTarget).toHaveBeenCalledWith(
+      "entry",
+      "https://example.com/svn/trunk",
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    expect(onCreateRepositoryCopy).toHaveBeenCalled();
 
     const repositoryTable = screen.getByLabelText("仓库目录");
     expect(within(repositoryTable).getByText("Last Revision")).toBeInTheDocument();

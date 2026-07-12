@@ -616,6 +616,20 @@ if (
 }
 
 if (
+  !mainWorkspace.includes("复制当前条目") ||
+  !mainWorkspace.includes('aria-label="Repository Copy 源 URL"') ||
+  !appSvelte.includes("pendingRepositoryCopyParentUrl") ||
+  !appSvelte.includes("确定${operation}吗") ||
+  !appStore.includes('kind === "entry"') ||
+  !taskRs.includes("RepositoryCopyKind::Entry") ||
+  !taskRs.includes("repository_url_with_peg_revision(&payload.source_url") ||
+  !taskRs.includes("repository_url_with_peg_revision(&payload.target_url, None)")
+) {
+  console.error("Repository 通用 Copy 必须支持普通条目、历史 Revision、执行确认和成功后刷新目标父目录");
+  failed = true;
+}
+
+if (
   !mainWorkspace.includes('aria-label="仓库 Checkout"') ||
   !mainWorkspace.includes("准备 Checkout") ||
   !mainWorkspace.includes("选择父目录") ||
