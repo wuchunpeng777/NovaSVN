@@ -66,6 +66,10 @@ const e2eSmokeSpec = fs.readFileSync(
   path.join(root, "tests", "e2e", "workbench-smoke.spec.ts"),
   "utf8",
 );
+const e2eOperationsSpec = fs.readFileSync(
+  path.join(root, "tests", "e2e", "workbench-operations.spec.ts"),
+  "utf8",
+);
 const appSvelte = fs.readFileSync(path.join(root, "src", "App.svelte"), "utf8");
 const appCss = fs.readFileSync(path.join(root, "src", "styles", "app.css"), "utf8");
 const frontendApi = fs.readFileSync(path.join(root, "src", "lib", "api.ts"), "utf8");
@@ -856,6 +860,22 @@ for (const effect of prohibitedUiEffects) {
 for (const assertion of e2eSmokeAssertions) {
   if (!e2eSmokeSpec.includes(assertion)) {
     console.error(`E2E 冒烟测试缺少关键断言：${assertion}`);
+    failed = true;
+  }
+}
+
+for (const operation of [
+  "create_svn_operation_task",
+  "create_commit_task",
+  "create_merge_task",
+  "create_apply_patch_task",
+  'kind: "add_file"',
+  'kind: "delete_path"',
+  'kind: "revert_file"',
+  'kind: "update_path"',
+]) {
+  if (!e2eOperationsSpec.includes(operation)) {
+    console.error(`主工作台 E2E 缺少操作覆盖：${operation}`);
     failed = true;
   }
 }
