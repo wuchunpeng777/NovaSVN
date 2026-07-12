@@ -823,6 +823,11 @@ if (packageJson.scripts?.["test:e2e"] !== "playwright test") {
   failed = true;
 }
 
+if (packageJson.scripts?.["test:e2e:install"] !== "playwright install chromium") {
+  console.error("test:e2e:install 必须安装 Playwright Chromium");
+  failed = true;
+}
+
 const printOnlyGuardIndex = syncVersionScript.indexOf("if (shouldPrint && !requestedVersion)");
 const packageWriteIndex = syncVersionScript.indexOf("writeJson(packagePath, packageJson)");
 if (printOnlyGuardIndex < 0 || packageWriteIndex < 0 || printOnlyGuardIndex > packageWriteIndex) {

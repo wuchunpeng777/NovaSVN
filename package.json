@@ -12,6 +12,7 @@
     "test:svn:partial": "powershell -ExecutionPolicy Bypass -File scripts/test-svn-partial-commit.ps1",
     "test:scripts": "node scripts/test-package-scripts.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
     "benchmark:svn": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/benchmark-svn-workspace.ps1",
     "benchmark:svn:reset": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/benchmark-svn-workspace.ps1 -Reset",
     "tauri": "tauri",

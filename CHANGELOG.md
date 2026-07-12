@@ -62,6 +62,7 @@
 - 增加 Rust 自动化测试、SVN 流程测试、部分提交流程测试、性能基准脚本、Windows NSIS 安装包配置、macOS DMG 安装包配置和版本同步脚本。
 - MainWorkspace 组件测试覆盖提交目标、常用文件行操作，以及切换任务或工作副本后不恢复旧提交目标。
 - 主工作台 Playwright 端到端测试覆盖打开工作副本、Add、Delete、Commit、Revert、Update、Merge 和 Patch 的完整前端任务流。
+- Playwright smoke 已同步当前工作台无障碍名称，并提供 `npm run test:e2e:install` 安装 Chromium。
 - 性能基准记录状态扫描、diff、虚拟列表准备和提交目标准备耗时。
 
 ### 修复
