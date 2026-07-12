@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { get } from "svelte/store";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
   import {
     callBackend,
@@ -47,6 +48,8 @@
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
   let unlistenAppMenu: UnlistenFn | null = null;
+  let unlistenDragDrop: UnlistenFn | null = null;
+  let repositoryImportDropActive = false;
   let activeWorkspacePath: string | null = null;
   let appMenuState: AppMenuState;
   let queuedAppMenuState: AppMenuState | null = null;
@@ -1899,6 +1902,29 @@
       }).then((unlisten) => {
         unlistenAppMenu = unlisten;
       });
+      void getCurrentWindow()
+        .onDragDropEvent((event) => {
+          if ($currentView !== "repository") {
+            repositoryImportDropActive = false;
+            return;
+          }
+          if (event.payload.type === "enter" || event.payload.type === "over") {
+            repositoryImportDropActive = true;
+            return;
+          }
+          repositoryImportDropActive = false;
+          if (event.payload.type !== "drop") {
+            return;
+          }
+          if (event.payload.paths.length !== 1) {
+            workspaceStore.failRepositoryImportTask("每次只能拖入一个文件或目录");
+            return;
+          }
+          workspaceStore.prepareRepositoryImportFromDrop(event.payload.paths[0]);
+        })
+        .then((unlisten) => {
+          unlistenDragDrop = unlisten;
+        });
       taskStore.startPolling();
       void svnStore.detectWithInputFallback();
       void workspaceStore.loadRecent().then(() => handleStartupIntent());
@@ -1913,6 +1939,7 @@
   onDestroy(() => {
     window.removeEventListener("contextmenu", preventNativeContextMenu);
     unlistenAppMenu?.();
+    unlistenDragDrop?.();
     taskStore.stopPolling();
   });
 </script>
@@ -1967,6 +1994,7 @@
   repositoryImportForm={$workspaceStore.repositoryImportForm}
   repositoryImportError={$workspaceStore.repositoryImportError}
   repositoryImportRunning={$workspaceStore.pendingRepositoryImportTaskId !== null}
+  repositoryImportDropActive={repositoryImportDropActive}
   repositoryMoveForm={$workspaceStore.repositoryMoveForm}
   repositoryMoveError={$workspaceStore.repositoryMoveError}
   repositoryMoveRunning={$workspaceStore.pendingRepositoryMoveTaskId !== null}

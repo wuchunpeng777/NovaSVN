@@ -1273,6 +1273,13 @@ describe("taskStore repository list tasks", () => {
       repositoryImportForm: { sourcePath: "", targetUrl: "", message: "" },
       repositoryImportError: null,
     });
+
+    workspaceStore.prepareRepositoryImportFromDrop("C:\\drop\\报告.txt");
+    expect(get(workspaceStore).repositoryImportForm).toEqual({
+      sourcePath: "C:\\drop\\报告.txt",
+      targetUrl: "https://example.com/svn/trunk/%E6%8A%A5%E5%91%8A.txt",
+      message: "",
+    });
   });
 
   it("prepares repository checkout form and tracks pending local path", async () => {

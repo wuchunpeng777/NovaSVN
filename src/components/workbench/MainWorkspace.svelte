@@ -152,6 +152,7 @@
   };
   export let repositoryImportError: string | null = null;
   export let repositoryImportRunning = false;
+  export let repositoryImportDropActive = false;
   export let repositoryMoveForm: {
     sourceUrl: string;
     targetUrl: string;
@@ -2641,7 +2642,12 @@
           </nav>
         {/if}
 
-        <section class="repository-table" aria-label="仓库目录">
+        <section
+          class="repository-table"
+          class:repository-drop-active={repositoryImportDropActive}
+          aria-label="仓库目录"
+          aria-dropeffect="copy"
+        >
           <div class="table-head">
             <span>名称</span>
             <span>类型</span>

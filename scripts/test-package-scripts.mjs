@@ -616,6 +616,17 @@ if (
 }
 
 if (
+  !appSvelte.includes(".onDragDropEvent((event) =>") ||
+  !appSvelte.includes('event.payload.type !== "drop"') ||
+  !appSvelte.includes("event.payload.paths.length !== 1") ||
+  !appStore.includes("function prepareRepositoryImportFromDrop(") ||
+  !mainWorkspace.includes("class:repository-drop-active={repositoryImportDropActive}")
+) {
+  console.error("Repository 拖入 Import 必须监听原生拖放、限制单路径、预填目标并显示放置状态");
+  failed = true;
+}
+
+if (
   !mainWorkspace.includes("复制当前条目") ||
   !mainWorkspace.includes('aria-label="Repository Copy 源 URL"') ||
   !appSvelte.includes("pendingRepositoryCopyParentUrl") ||

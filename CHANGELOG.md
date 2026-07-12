@@ -45,6 +45,7 @@
 - Repository 可将当前 URL 按指定 Revision Export 到本地空目录，导出结果不含 `.svn`，成功后在文件管理器中显示。
 - Repository 可在当前仓库目录下创建远端目录，执行前确认目标与提交信息，成功后刷新父目录。
 - Repository 可选择本地文件或目录 Import 到目标 URL，执行前复检源路径并确认提交信息，成功后刷新父目录。
+- Repository 支持直接拖入一个本地文件或目录，按当前仓库目录和源名称预填 Import 目标，并显示可放置状态。
 - Repository 可将普通文件或目录按指定历史 Revision Copy 到新 URL，执行前确认并在成功后刷新目标父目录。
 - Repository 可将远端文件或目录 Move 到新 URL，要求提交信息和确认，并在成功后刷新受影响的父目录。
 - Repository 可在同一远端目录内 Rename 文件或目录，跨目录目标会被拒绝，并使用独立表单和任务状态。

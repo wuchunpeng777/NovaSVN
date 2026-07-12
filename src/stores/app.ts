@@ -3197,6 +3197,30 @@ function createWorkspaceStore() {
     });
   }
 
+  function prepareRepositoryImportFromDrop(sourcePath: string) {
+    const selected = sourcePath.trim();
+    if (!selected) {
+      return;
+    }
+    update((state) => {
+      const parent = (
+        state.repositoryCurrentUrl ||
+        state.repositoryList?.url ||
+        state.repositoryUrlInput
+      ).replace(/\/+$/, "");
+      const name = selected.split(/[\\/]/).filter(Boolean).at(-1) || "imported-item";
+      return {
+        ...state,
+        repositoryImportForm: {
+          ...state.repositoryImportForm,
+          sourcePath: selected,
+          targetUrl: parent ? `${parent}/${encodeURIComponent(name)}` : "",
+        },
+        repositoryImportError: null,
+      };
+    });
+  }
+
   function markRepositoryImportTask(taskId: string | null, parentUrl?: string | null) {
     update((state) => ({
       ...state,
@@ -5165,6 +5189,7 @@ function createWorkspaceStore() {
     setRepositoryImportForm,
     prepareRepositoryImport,
     chooseRepositoryImportSource,
+    prepareRepositoryImportFromDrop,
     markRepositoryImportTask,
     completeRepositoryImportTask,
     failRepositoryImportTask,

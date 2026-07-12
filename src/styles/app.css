@@ -1553,6 +1553,11 @@ textarea {
   background: #ffffff;
 }
 
+.repository-table.repository-drop-active {
+  outline: 2px solid #1684d6;
+  outline-offset: -2px;
+}
+
 .table-head,
 .repository-row {
   grid-template-columns: minmax(150px, 1fr) 90px 100px 120px 140px 100px;

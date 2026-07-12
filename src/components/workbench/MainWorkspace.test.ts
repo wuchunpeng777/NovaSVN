@@ -791,6 +791,9 @@ describe("MainWorkspace", () => {
     expect(onCreateRepositoryDelete).toHaveBeenCalled();
 
     const repositoryTable = screen.getByLabelText("仓库目录");
+    await rerender({ repositoryImportDropActive: true });
+    expect(repositoryTable).toHaveClass("repository-drop-active");
+    expect(repositoryTable).toHaveAttribute("aria-dropeffect", "copy");
     expect(within(repositoryTable).getByText("Last Revision")).toBeInTheDocument();
     const directoryRow = within(repositoryTable).getByText("src", { exact: true }).closest("button")!;
     const directoryMetadata = directoryRow.querySelectorAll("span");
