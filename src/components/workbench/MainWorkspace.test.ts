@@ -15,6 +15,7 @@ import { workbenchViews } from "../../lib/workbench";
 import type { AppSettingsState } from "../../types/app";
 import type {
   ChangedFile,
+  Task,
   WorkingCopyStatus,
   WorkspaceFileTree,
   WorkspaceSummary,
@@ -1135,6 +1136,65 @@ describe("MainWorkspace", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does not retain commit target visuals across task or workspace switches", async () => {
+    const originalFile = makeFile("src/main.ts", "modified", "main-digest");
+    const nextFile = makeFile("src/next.ts", "modified", "next-digest");
+    const originalTask = makeComponentTask("task-a");
+    const nextTask = makeComponentTask("task-b");
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([originalFile]),
+        workspaceFileTree: {
+          working_copy_root: "C:/repo/wc",
+          total_files: 1,
+          returned_files: 1,
+          truncated: false,
+          nodes: [makeScopedNode(originalFile.path, "modified", "local")],
+        },
+        commitFiles: [{ path: originalFile.path, status: originalFile.status }],
+        selectedTask: originalTask,
+      },
+    });
+
+    expect(screen.getByRole("button", { name: "取消 Commit src/main.ts" })).toHaveClass(
+      "active",
+    );
+
+    await rerender({
+      commitFiles: [],
+      selectedTask: nextTask,
+    });
+    expect(screen.getByRole("button", { name: "Commit src/main.ts" })).not.toHaveClass("active");
+    await fireEvent.click(screen.getByRole("tab", { name: "Commit" }));
+    expect(screen.getByText("本次将提交 0 个文件")).toBeInTheDocument();
+
+    await rerender({
+      workspace: {
+        ...makeWorkspace(),
+        local_path: "C:/repo/next",
+        working_copy_root: "C:/repo/next",
+      },
+      workingCopyStatus: {
+        ...makeStatus([nextFile]),
+        working_copy_root: "C:/repo/next",
+      },
+      workspaceFileTree: {
+        working_copy_root: "C:/repo/next",
+        total_files: 1,
+        returned_files: 1,
+        truncated: false,
+        nodes: [makeScopedNode(nextFile.path, "modified", "local")],
+      },
+      selectedTask: originalTask,
+      commitFiles: [],
+    });
+    expect(screen.queryByText("main.ts", { exact: true })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Commit src/next.ts" })).not.toHaveClass("active");
+    expect(screen.getByText("本次将提交 0 个文件")).toBeInTheDocument();
+  });
+
   it("separates local, remote, and combined working-copy changes", async () => {
     const local = makeFile("local.txt", "modified", "local-digest");
     const remote = {
@@ -1875,6 +1935,19 @@ function makeWorkspace(): WorkspaceSummary {
     repository_url: "https://example.com/svn/trunk",
     repository_root: "https://example.com/svn",
     revision: "12",
+  };
+}
+
+function makeComponentTask(taskId: string): Task {
+  return {
+    task_id: taskId,
+    title: taskId,
+    status: "success",
+    logs: [],
+    error: null,
+    result: null,
+    created_at: 1,
+    updated_at: 1,
   };
 }
 
