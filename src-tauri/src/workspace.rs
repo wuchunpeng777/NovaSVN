@@ -784,71 +784,6 @@ pub fn ignore_workspace_path(
     let file_path = normalize_relative_file_path(&request.file_path)?;
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
     let target = root.join(&file_path);
-    let status_output = Command::new(&executable)
-        .args(["status", "--xml", "--no-ignore"])
-        .arg(&target)
-        .current_dir(&root)
-        .output()
-        .map_err(|error| {
-            NovaError::command(
-                "SVN_IGNORE_STATUS_FAILED",
-                "无法确认 Ignore 目标状态",
-                Some(format!(
-                    "执行 `{executable} status --xml --no-ignore` 失败：{error}"
-                )),
-                true,
-            )
-        })?;
-    if !status_output.status.success() {
-        return Err(NovaError::command(
-            "SVN_IGNORE_STATUS_FAILED",
-            "Ignore 目标状态读取失败",
-            Some(command_error_detail(
-                &executable,
-                "status --xml --no-ignore",
-                &status_output,
-            )),
-            true,
-        ));
-    }
-    let status_xml = String::from_utf8_lossy(&status_output.stdout);
-    let document = Document::parse(&status_xml).map_err(|error| {
-        NovaError::command(
-            "SVN_IGNORE_STATUS_INVALID",
-            "Ignore 目标状态无法解析",
-            Some(format!("svn status --xml 返回了无法解析的 XML：{error}")),
-            true,
-        )
-    })?;
-    let item = document
-        .descendants()
-        .find(|node| node.has_tag_name("wc-status"))
-        .and_then(|node| node.attribute("item"))
-        .ok_or_else(|| {
-            NovaError::command(
-                "SVN_IGNORE_TARGET_NOT_UNVERSIONED",
-                "Ignore 目标不是未版本控制路径",
-                Some(format!("路径：{file_path}")),
-                true,
-            )
-        })?;
-    if item == "ignored" {
-        return Err(NovaError::command(
-            "SVN_IGNORE_ALREADY_IGNORED",
-            "目标已经被 Ignore",
-            Some(format!("路径：{file_path}")),
-            true,
-        ));
-    }
-    if item != "unversioned" {
-        return Err(NovaError::command(
-            "SVN_IGNORE_TARGET_NOT_UNVERSIONED",
-            "只能 Ignore 未版本控制路径",
-            Some(format!("路径：{file_path}；当前状态：{item}")),
-            true,
-        ));
-    }
-
     let (parent_path, pattern) = file_path
         .rsplit_once('/')
         .map(|(parent, name)| (Some(parent.to_string()), name.to_string()))
@@ -923,6 +858,71 @@ pub fn ignore_workspace_path(
             true,
         ));
     }
+    let status_output = Command::new(&executable)
+        .args(["status", "--xml", "--no-ignore"])
+        .arg(&target)
+        .current_dir(&root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_IGNORE_STATUS_FAILED",
+                "无法确认 Ignore 目标状态",
+                Some(format!(
+                    "执行 `{executable} status --xml --no-ignore` 失败：{error}"
+                )),
+                true,
+            )
+        })?;
+    if !status_output.status.success() {
+        return Err(NovaError::command(
+            "SVN_IGNORE_STATUS_FAILED",
+            "Ignore 目标状态读取失败",
+            Some(command_error_detail(
+                &executable,
+                "status --xml --no-ignore",
+                &status_output,
+            )),
+            true,
+        ));
+    }
+    let status_xml = String::from_utf8_lossy(&status_output.stdout);
+    let document = Document::parse(&status_xml).map_err(|error| {
+        NovaError::command(
+            "SVN_IGNORE_STATUS_INVALID",
+            "Ignore 目标状态无法解析",
+            Some(format!("svn status --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+    let item = document
+        .descendants()
+        .find(|node| node.has_tag_name("wc-status"))
+        .and_then(|node| node.attribute("item"))
+        .ok_or_else(|| {
+            NovaError::command(
+                "SVN_IGNORE_TARGET_NOT_UNVERSIONED",
+                "Ignore 目标不是未版本控制路径",
+                Some(format!("路径：{file_path}")),
+                true,
+            )
+        })?;
+    if item == "ignored" {
+        return Err(NovaError::command(
+            "SVN_IGNORE_ALREADY_IGNORED",
+            "目标已经被 Ignore",
+            Some(format!("路径：{file_path}")),
+            true,
+        ));
+    }
+    if item != "unversioned" {
+        return Err(NovaError::command(
+            "SVN_IGNORE_TARGET_NOT_UNVERSIONED",
+            "只能 Ignore 未版本控制路径",
+            Some(format!("路径：{file_path}；当前状态：{item}")),
+            true,
+        ));
+    }
+
     let properties = get_svn_properties(GetSvnPropertiesRequest {
         working_copy_root: request.working_copy_root.clone(),
         file_path: parent_path.clone(),
