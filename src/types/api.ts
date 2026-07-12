@@ -227,6 +227,13 @@ export interface CreateRepositoryImportTaskRequest {
   svn_executable?: string;
 }
 
+export interface CreateRepositoryMoveTaskRequest {
+  source_url: string;
+  target_url: string;
+  message: string;
+  svn_executable?: string;
+}
+
 export interface CreateBranchCheckoutTaskRequest {
   branch_url: string;
   local_path: string;

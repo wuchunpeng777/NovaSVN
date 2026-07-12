@@ -152,6 +152,17 @@
   };
   export let repositoryImportError: string | null = null;
   export let repositoryImportRunning = false;
+  export let repositoryMoveForm: {
+    sourceUrl: string;
+    targetUrl: string;
+    message: string;
+  } = {
+    sourceUrl: "",
+    targetUrl: "",
+    message: "",
+  };
+  export let repositoryMoveError: string | null = null;
+  export let repositoryMoveRunning = false;
   export let repositoryCheckoutForm: {
     url: string;
     localPath: string;
@@ -396,6 +407,12 @@
   export let onPrepareRepositoryImport: (parentUrl?: string | null) => void = () => {};
   export let onChooseRepositoryImportSource: (directory: boolean) => void = () => {};
   export let onCreateRepositoryImport: () => void = () => {};
+  export let onRepositoryMoveFormInput: (
+    field: keyof typeof repositoryMoveForm,
+    value: string,
+  ) => void = () => {};
+  export let onPrepareRepositoryMove: (sourceUrl?: string | null) => void = () => {};
+  export let onCreateRepositoryMove: () => void = () => {};
   export let onRepositoryCheckoutFormInput: (
     field: keyof typeof repositoryCheckoutForm,
     value: string,
@@ -2493,6 +2510,13 @@
             </button>
             <button
               type="button"
+              on:click={() => onPrepareRepositoryMove()}
+              disabled={!repositoryCurrentUrl && !repositoryUrlInput && !repositoryList}
+            >
+              准备 Move
+            </button>
+            <button
+              type="button"
               on:click={() => onPrepareRepositoryCheckout()}
               disabled={!repositoryCurrentUrl && !repositoryUrlInput && !repositoryList}
             >
@@ -2999,6 +3023,65 @@
               disabled={repositoryImportRunning}
             >
               {repositoryImportRunning ? "Import 中" : "Import"}
+            </button>
+          </div>
+        </details>
+
+        <details class="advanced-section" open={Boolean(repositoryMoveForm.sourceUrl)}>
+          <summary>Move 仓库条目</summary>
+          <div class="copy-form" aria-label="Repository Move">
+            <button
+              type="button"
+              on:click={() =>
+                onPrepareRepositoryMove(
+                  repositoryCurrentUrl || repositoryList?.url || repositoryUrlInput,
+                )}
+            >
+              使用当前 URL
+            </button>
+            <input
+              type="url"
+              value={repositoryMoveForm.sourceUrl}
+              placeholder="源 URL"
+              aria-label="Repository Move 源 URL"
+              on:input={(event) =>
+                onRepositoryMoveFormInput(
+                  "sourceUrl",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            <input
+              type="url"
+              value={repositoryMoveForm.targetUrl}
+              placeholder="目标 URL"
+              aria-label="Repository Move 目标 URL"
+              on:input={(event) =>
+                onRepositoryMoveFormInput(
+                  "targetUrl",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            <textarea
+              rows="3"
+              value={repositoryMoveForm.message}
+              placeholder="提交信息"
+              aria-label="Repository Move 提交信息"
+              on:input={(event) =>
+                onRepositoryMoveFormInput(
+                  "message",
+                  (event.currentTarget as HTMLTextAreaElement).value,
+                )}
+            ></textarea>
+            {#if repositoryMoveError}
+              <p class="inline-error">{repositoryMoveError}</p>
+            {/if}
+            <button
+              type="button"
+              class="primary"
+              on:click={onCreateRepositoryMove}
+              disabled={repositoryMoveRunning}
+            >
+              {repositoryMoveRunning ? "Move 中" : "Move"}
             </button>
           </div>
         </details>

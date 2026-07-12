@@ -630,6 +630,22 @@ if (
 }
 
 if (
+  !mainWorkspace.includes('aria-label="Repository Move"') ||
+  !mainWorkspace.includes("准备 Move") ||
+  !appSvelte.includes("pendingRepositoryMoveSourceParentUrl") ||
+  !appSvelte.includes("确定移动仓库条目吗") ||
+  !appStore.includes("function markRepositoryMoveTask(") ||
+  !frontendApi.includes('callBackend<Task>("create_repository_move_task"') ||
+  !tauriLib.includes("create_repository_move_task,") ||
+  !taskRs.includes("TaskPayload::RepositoryMove") ||
+  !taskRs.includes("fn run_repository_move_task(") ||
+  !taskRs.includes('.arg("move")')
+) {
+  console.error("Repository Move 必须要求提交信息与确认，执行真实 svn move，并刷新受影响的父目录");
+  failed = true;
+}
+
+if (
   !mainWorkspace.includes('aria-label="仓库 Checkout"') ||
   !mainWorkspace.includes("准备 Checkout") ||
   !mainWorkspace.includes("选择父目录") ||

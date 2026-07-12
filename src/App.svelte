@@ -717,6 +717,48 @@
     workspaceStore.markRepositoryImportTask(task.task_id, parentRepositoryUrl(targetUrl));
   }
 
+  async function createRepositoryMove() {
+    const form = $workspaceStore.repositoryMoveForm;
+    const sourceUrl = form.sourceUrl.trim();
+    const targetUrl = form.targetUrl.trim();
+    const message = form.message.trim();
+    if (!sourceUrl || !targetUrl) {
+      workspaceStore.failRepositoryMoveTask("请输入 Move 源 URL 和目标 URL");
+      return;
+    }
+    if (!message) {
+      workspaceStore.failRepositoryMoveTask("请输入 Repository Move 的提交信息");
+      return;
+    }
+    if ($workspaceStore.pendingRepositoryMoveTaskId !== null) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `确定移动仓库条目吗？\n\n源：${sourceUrl}\n目标：${targetUrl}\n提交信息：${message}`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const task = await taskStore.createRepositoryMove({
+      sourceUrl,
+      targetUrl,
+      message,
+      svnExecutable: currentSvnExecutable(),
+    });
+    if (!task) {
+      workspaceStore.failRepositoryMoveTask(
+        $taskStore.error?.message ?? "Repository Move 任务创建失败",
+      );
+      return;
+    }
+    workspaceStore.markRepositoryMoveTask(
+      task.task_id,
+      parentRepositoryUrl(sourceUrl),
+      parentRepositoryUrl(targetUrl),
+    );
+  }
+
   async function createRepositoryCheckout() {
     const form = $workspaceStore.repositoryCheckoutForm;
     if (!form.url.trim()) {
@@ -1515,6 +1557,27 @@
   );
 
   $: consumePendingTask(
+    $workspaceStore.pendingRepositoryMoveTaskId,
+    $taskStore.snapshot,
+    (task) => {
+      if (task.status !== "success") {
+        workspaceStore.failRepositoryMoveTask(task.error ?? "Repository Move 失败");
+        return;
+      }
+      const state = get(workspaceStore);
+      const sourceParentUrl = state.pendingRepositoryMoveSourceParentUrl;
+      const targetParentUrl = state.pendingRepositoryMoveTargetParentUrl;
+      const refreshUrl = isSameRepositoryUrl(state.repositoryCurrentUrl, sourceParentUrl)
+        ? sourceParentUrl
+        : targetParentUrl || sourceParentUrl;
+      workspaceStore.completeRepositoryMoveTask();
+      if (refreshUrl) {
+        refreshRepositoryAfterWrite(refreshUrl);
+      }
+    },
+  );
+
+  $: consumePendingTask(
     $workspaceStore.pendingRepositoryCheckoutTaskId,
     $taskStore.snapshot,
     (task) => {
@@ -1808,6 +1871,9 @@
   repositoryImportForm={$workspaceStore.repositoryImportForm}
   repositoryImportError={$workspaceStore.repositoryImportError}
   repositoryImportRunning={$workspaceStore.pendingRepositoryImportTaskId !== null}
+  repositoryMoveForm={$workspaceStore.repositoryMoveForm}
+  repositoryMoveError={$workspaceStore.repositoryMoveError}
+  repositoryMoveRunning={$workspaceStore.pendingRepositoryMoveTaskId !== null}
   repositoryCheckoutForm={$workspaceStore.repositoryCheckoutForm}
   repositoryCheckoutError={$workspaceStore.repositoryCheckoutError}
   repositoryCheckoutRunning={$workspaceStore.pendingRepositoryCheckoutTaskId !== null}
@@ -1975,6 +2041,9 @@
   onPrepareRepositoryImport={workspaceStore.prepareRepositoryImport}
   onChooseRepositoryImportSource={workspaceStore.chooseRepositoryImportSource}
   onCreateRepositoryImport={createRepositoryImport}
+  onRepositoryMoveFormInput={workspaceStore.setRepositoryMoveForm}
+  onPrepareRepositoryMove={workspaceStore.prepareRepositoryMove}
+  onCreateRepositoryMove={createRepositoryMove}
   onRepositoryCheckoutFormInput={workspaceStore.setRepositoryCheckoutForm}
   onPrepareRepositoryCheckout={workspaceStore.prepareRepositoryCheckout}
   onChooseRepositoryCheckoutParent={workspaceStore.chooseRepositoryCheckoutParent}

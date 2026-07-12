@@ -17,6 +17,7 @@ import type {
   CreateRepositoryListTaskRequest,
   CreateRepositoryImportTaskRequest,
   CreateRepositoryMkdirTaskRequest,
+  CreateRepositoryMoveTaskRequest,
   CreateRevertRevisionTaskRequest,
   CreateRevisionDiffTaskRequest,
   CreateShadowWorkspaceTaskRequest,
@@ -205,6 +206,12 @@ export function createRepositoryImportTask(
   request: CreateRepositoryImportTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_repository_import_task", { request });
+}
+
+export function createRepositoryMoveTask(
+  request: CreateRepositoryMoveTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_repository_move_task", { request });
 }
 
 export function createBranchCheckoutTask(

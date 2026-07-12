@@ -13,6 +13,7 @@ vi.mock("../lib/api", () => ({
   createRepositoryListTask: vi.fn(),
   createRepositoryImportTask: vi.fn(),
   createRepositoryMkdirTask: vi.fn(),
+  createRepositoryMoveTask: vi.fn(),
   createRevertRevisionTask: vi.fn(),
   createRevisionDiffTask: vi.fn(),
   createSvnBatchOperationTask: vi.fn(),
@@ -53,6 +54,7 @@ import {
   createRepositoryListTask,
   createRepositoryImportTask,
   createRepositoryMkdirTask,
+  createRepositoryMoveTask,
   createRevertRevisionTask,
   createRevisionDiffTask,
   createSvnBatchOperationTask,
@@ -115,6 +117,7 @@ const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
 const createRepositoryImportTaskMock = vi.mocked(createRepositoryImportTask);
 const createRepositoryMkdirTaskMock = vi.mocked(createRepositoryMkdirTask);
+const createRepositoryMoveTaskMock = vi.mocked(createRepositoryMoveTask);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
 const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
@@ -152,6 +155,7 @@ beforeEach(() => {
   createRepositoryListTaskMock.mockReset();
   createRepositoryImportTaskMock.mockReset();
   createRepositoryMkdirTaskMock.mockReset();
+  createRepositoryMoveTaskMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
   createRevisionDiffTaskMock.mockReset();
   createSvnBatchOperationTaskMock.mockReset();
@@ -1024,6 +1028,54 @@ describe("taskStore repository list tasks", () => {
       pendingRepositoryCopyTaskId: null,
       pendingRepositoryCopyParentUrl: null,
       repositoryCopyError: null,
+    });
+  });
+
+  it("prepares repository move and tracks both affected parents", async () => {
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk/assets",
+      revision: "12",
+      entries: [],
+    });
+    workspaceStore.prepareRepositoryMove();
+    workspaceStore.setRepositoryMoveForm("message", "移动 assets");
+    expect(get(workspaceStore).repositoryMoveForm).toEqual({
+      sourceUrl: "https://example.com/svn/trunk/assets",
+      targetUrl: "https://example.com/svn/trunk/assets-moved",
+      message: "移动 assets",
+    });
+
+    createRepositoryMoveTaskMock.mockResolvedValue(makeTask({ task_id: "repository-move" }));
+    const task = await taskStore.createRepositoryMove({
+      sourceUrl: "https://example.com/svn/trunk/assets",
+      targetUrl: "https://example.com/svn/archive/assets",
+      message: "移动 assets",
+      svnExecutable: "svn",
+    });
+    expect(task?.task_id).toBe("repository-move");
+    expect(createRepositoryMoveTaskMock).toHaveBeenCalledWith({
+      source_url: "https://example.com/svn/trunk/assets",
+      target_url: "https://example.com/svn/archive/assets",
+      message: "移动 assets",
+      svn_executable: "svn",
+    });
+
+    workspaceStore.markRepositoryMoveTask(
+      "repository-move",
+      "https://example.com/svn/trunk",
+      "https://example.com/svn/archive",
+    );
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryMoveTaskId: "repository-move",
+      pendingRepositoryMoveSourceParentUrl: "https://example.com/svn/trunk",
+      pendingRepositoryMoveTargetParentUrl: "https://example.com/svn/archive",
+    });
+    workspaceStore.completeRepositoryMoveTask();
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryMoveTaskId: null,
+      pendingRepositoryMoveSourceParentUrl: null,
+      pendingRepositoryMoveTargetParentUrl: null,
+      repositoryMoveForm: { sourceUrl: "", targetUrl: "", message: "" },
     });
   });
 

@@ -222,6 +222,14 @@ pub struct CreateRepositoryImportTaskRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct CreateRepositoryMoveTaskRequest {
+    pub source_url: String,
+    pub target_url: String,
+    pub message: String,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateBranchCheckoutTaskRequest {
     pub branch_url: String,
     pub local_path: String,
@@ -383,6 +391,7 @@ enum TaskPayload {
     RepositoryCopy(RepositoryCopyTaskPayload),
     RepositoryMkdir(RepositoryMkdirTaskPayload),
     RepositoryImport(RepositoryImportTaskPayload),
+    RepositoryMove(RepositoryMoveTaskPayload),
     BranchCheckout(BranchCheckoutTaskPayload),
     RepositoryCheckout(RepositoryCheckoutTaskPayload),
     RepositoryExport(RepositoryExportTaskPayload),
@@ -506,6 +515,14 @@ struct RepositoryMkdirTaskPayload {
 #[derive(Debug, Clone)]
 struct RepositoryImportTaskPayload {
     source_path: String,
+    target_url: String,
+    message: String,
+    svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct RepositoryMoveTaskPayload {
+    source_url: String,
     target_url: String,
     message: String,
     svn_executable: String,
@@ -1323,6 +1340,56 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_repository_move_task(
+        &self,
+        request: CreateRepositoryMoveTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let source_url = normalize_repository_url(&request.source_url)?;
+        let target_url = normalize_repository_url(&request.target_url)?;
+        if source_url == target_url {
+            return Err(NovaError::command(
+                "REPOSITORY_MOVE_TARGET_SAME_AS_SOURCE",
+                "Move 目标 URL 不能和源 URL 相同",
+                None,
+                true,
+            ));
+        }
+        let message = request.message.trim().to_string();
+        if message.is_empty() {
+            return Err(NovaError::command(
+                "REPOSITORY_MOVE_MESSAGE_REQUIRED",
+                "请输入 Repository Move 的提交信息",
+                None,
+                true,
+            ));
+        }
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!("移动仓库条目 {}", compact_repository_url(&source_url)),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "Repository Move 任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::RepositoryMove(RepositoryMoveTaskPayload {
+                source_url,
+                target_url,
+                message,
+                svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn create_branch_checkout_task(
         &self,
         request: CreateBranchCheckoutTaskRequest,
@@ -1835,6 +1902,9 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             }
             TaskPayload::RepositoryImport(payload) => {
                 run_repository_import_task(&state, &task_id, payload)
+            }
+            TaskPayload::RepositoryMove(payload) => {
+                run_repository_move_task(&state, &task_id, payload)
             }
             TaskPayload::BranchCheckout(payload) => {
                 run_branch_checkout_task(&state, &task_id, payload)
@@ -3463,6 +3533,71 @@ fn run_repository_import_task(
                 task_id,
                 TaskStatus::Failed,
                 "Repository Import 失败",
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn run_repository_move_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: RepositoryMoveTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "Repository Move 开始执行",
+        None,
+    );
+    append_task_log(
+        state,
+        task_id,
+        &format!(
+            "执行 svn move：{} -> {}",
+            payload.source_url, payload.target_url
+        ),
+    );
+
+    let source = repository_url_with_peg_revision(&payload.source_url, None);
+    let target = repository_url_with_peg_revision(&payload.target_url, None);
+    let output = Command::new(&payload.svn_executable)
+        .arg("move")
+        .arg("-m")
+        .arg(&payload.message)
+        .arg("--")
+        .arg(source)
+        .arg(target)
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                "Repository Move 成功",
+                None,
+            );
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "Repository Move 失败",
                 Some(command_error_detail(&payload.svn_executable, &output)),
             );
         }
@@ -7278,6 +7413,79 @@ mod tests {
             .expect("read copied repository entry");
         assert!(content.status.success());
         assert_eq!(content.stdout, b"historical content");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn moves_repository_entry_to_new_url() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("repository-entry-move-integration");
+        let repository = root.join("repository");
+        let source = root.join("source");
+        fs::create_dir_all(&source).expect("create move source");
+        fs::write(source.join("note.txt"), "move content").expect("write move source");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&source)
+                .arg(format!("{repository_url}/source"))
+                .args(["-m", "create source"]),
+        );
+
+        let queue = TaskQueue::new();
+        let task = queue
+            .create_repository_move_task(CreateRepositoryMoveTaskRequest {
+                source_url: format!("{repository_url}/source"),
+                target_url: format!("{repository_url}/archive/moved"),
+                message: "移动仓库目录".to_string(),
+                svn_executable: None,
+            })
+            .expect("create repository move task");
+        let task = wait_for_test_task(&queue, &task.task_id);
+        assert!(
+            matches!(task.status, TaskStatus::Failed),
+            "目标父目录不存在时 Move 应失败"
+        );
+
+        run_test_command(
+            Command::new("svn")
+                .arg("mkdir")
+                .arg(format!("{repository_url}/archive"))
+                .args(["-m", "create archive"]),
+        );
+        let task = queue
+            .create_repository_move_task(CreateRepositoryMoveTaskRequest {
+                source_url: format!("{repository_url}/source"),
+                target_url: format!("{repository_url}/archive/moved"),
+                message: "移动仓库目录".to_string(),
+                svn_executable: None,
+            })
+            .expect("create repository move task with parent");
+        let task = wait_for_test_task(&queue, &task.task_id);
+        assert!(
+            matches!(task.status, TaskStatus::Success),
+            "移动仓库条目失败：{:?}",
+            task.error
+        );
+
+        let old_info = Command::new("svn")
+            .arg("info")
+            .arg(format!("{repository_url}/source"))
+            .output()
+            .expect("old repository entry info runs");
+        assert!(!old_info.status.success());
+        let content = Command::new("svn")
+            .arg("cat")
+            .arg(format!("{repository_url}/archive/moved/note.txt"))
+            .output()
+            .expect("read moved repository entry");
+        assert!(content.status.success());
+        assert_eq!(content.stdout, b"move content");
         fs::remove_dir_all(root).ok();
     }
 
