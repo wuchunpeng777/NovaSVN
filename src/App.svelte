@@ -1113,6 +1113,10 @@
       workspaceStore.failMergeTask("Merge 源 URL 不能和当前工作副本 URL 相同");
       return;
     }
+    if (form.recordOnly && form.ignoreAncestry) {
+      workspaceStore.failMergeTask("Record only 不能与 Ignore ancestry 同时使用");
+      return;
+    }
 
     const task = await taskStore.createMerge({
       workingCopyRoot: $workspaceStore.current.working_copy_root,
@@ -1120,6 +1124,9 @@
       startRevision: form.startRevision,
       endRevision: form.endRevision,
       dryRun: form.dryRun,
+      recordOnly: form.recordOnly,
+      ignoreAncestry: form.ignoreAncestry,
+      force: form.force,
       svnExecutable: currentSvnExecutable(),
     });
 

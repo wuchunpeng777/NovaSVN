@@ -1775,6 +1775,61 @@ describe("MainWorkspace", () => {
     expect(within(dialog).getByText("预检发现问题")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "应用 Patch" })).toBeDisabled();
   });
+
+  it("forwards merge tracking options and previews structured results", async () => {
+    const onMergeFormInput = vi.fn();
+    const onRunMerge = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.branches,
+        workspace: makeWorkspace(),
+        mergeForm: {
+          sourceUrl: "https://example.com/svn/branches/feature",
+          startRevision: "10",
+          endRevision: "12",
+          dryRun: true,
+          recordOnly: false,
+          ignoreAncestry: false,
+          force: false,
+        },
+        mergeResult: {
+          dry_run: true,
+          source_url: "https://example.com/svn/branches/feature",
+          revision_range: "10:12",
+          record_only: true,
+          ignore_ancestry: false,
+          force: true,
+          output_text: "U    src/main.ts",
+          file_count: 1,
+          line_count: 1,
+          added: 0,
+          deleted: 0,
+          updated: 1,
+          conflicted: 0,
+        },
+        onMergeFormInput,
+        onRunMerge,
+      },
+    });
+
+    await fireEvent.click(screen.getByLabelText("Record only"));
+    await fireEvent.click(screen.getByLabelText("Ignore ancestry"));
+    await fireEvent.click(screen.getByLabelText("Force"));
+    expect(onMergeFormInput).toHaveBeenNthCalledWith(1, "recordOnly", true);
+    expect(onMergeFormInput).toHaveBeenNthCalledWith(2, "ignoreAncestry", true);
+    expect(onMergeFormInput).toHaveBeenNthCalledWith(3, "force", true);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Dry-run" }));
+    expect(onRunMerge).toHaveBeenCalledOnce();
+    expect(screen.getByText("Dry-run 预览")).toBeInTheDocument();
+    expect(screen.getByText("r10:12")).toBeInTheDocument();
+    expect(screen.getByText("Record only", { selector: ".merge-result-meta span" }))
+      .toBeInTheDocument();
+    const summary = screen.getByLabelText("Merge 结果统计");
+    expect(summary.children[0]).toHaveTextContent("1条目");
+    expect(summary.children[1]).toHaveTextContent("1更新");
+    expect(screen.getByText("U src/main.ts")).toBeInTheDocument();
+  });
 });
 
 function makeWorkspace(): WorkspaceSummary {

@@ -744,6 +744,9 @@ function createTaskStore() {
     startRevision?: string | null;
     endRevision?: string | null;
     dryRun: boolean;
+    recordOnly: boolean;
+    ignoreAncestry: boolean;
+    force: boolean;
     svnExecutable?: string | null;
   }) {
     update((state) => ({ ...state, loading: true, error: null }));
@@ -755,6 +758,9 @@ function createTaskStore() {
         start_revision: request.startRevision || undefined,
         end_revision: request.endRevision || undefined,
         dry_run: request.dryRun,
+        record_only: request.recordOnly,
+        ignore_ancestry: request.ignoreAncestry,
+        force: request.force,
         svn_executable: request.svnExecutable || undefined,
       });
       selectedTaskId = task.task_id;
@@ -1721,6 +1727,9 @@ export interface WorkspaceStoreState {
     startRevision: string;
     endRevision: string;
     dryRun: boolean;
+    recordOnly: boolean;
+    ignoreAncestry: boolean;
+    force: boolean;
   };
   pendingMergeTaskId: string | null;
   mergeError: string | null;
@@ -1925,6 +1934,9 @@ const initialWorkspaceState: WorkspaceStoreState = {
     startRevision: "",
     endRevision: "",
     dryRun: true,
+    recordOnly: false,
+    ignoreAncestry: false,
+    force: false,
   },
   pendingMergeTaskId: null,
   mergeError: null,
@@ -5031,11 +5043,17 @@ function createWorkspaceStore() {
   }
 
   function setMergeForm(field: keyof WorkspaceStoreState["mergeForm"], value: string | boolean) {
+    const booleanFields: Array<keyof WorkspaceStoreState["mergeForm"]> = [
+      "dryRun",
+      "recordOnly",
+      "ignoreAncestry",
+      "force",
+    ];
     update((state) => ({
       ...state,
       mergeForm: {
         ...state.mergeForm,
-        [field]: field === "dryRun" ? Boolean(value) : String(value),
+        [field]: booleanFields.includes(field) ? Boolean(value) : String(value),
       },
       mergeError: null,
     }));

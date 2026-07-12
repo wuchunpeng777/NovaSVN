@@ -259,6 +259,9 @@
     startRevision: "",
     endRevision: "",
     dryRun: true,
+    recordOnly: false,
+    ignoreAncestry: false,
+    force: false,
   };
   export let mergeRunning = false;
   export let mergeError: string | null = null;
@@ -3615,6 +3618,43 @@
               />
               <span>先 Dry-run</span>
             </label>
+            <div class="merge-options" aria-label="Merge tracking 参数">
+              <label class="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={mergeForm.recordOnly}
+                  disabled={mergeForm.ignoreAncestry}
+                  on:change={(event) =>
+                    onMergeFormInput(
+                      "recordOnly",
+                      (event.currentTarget as HTMLInputElement).checked,
+                    )}
+                />
+                <span>Record only</span>
+              </label>
+              <label class="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={mergeForm.ignoreAncestry}
+                  disabled={mergeForm.recordOnly}
+                  on:change={(event) =>
+                    onMergeFormInput(
+                      "ignoreAncestry",
+                      (event.currentTarget as HTMLInputElement).checked,
+                    )}
+                />
+                <span>Ignore ancestry</span>
+              </label>
+              <label class="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={mergeForm.force}
+                  on:change={(event) =>
+                    onMergeFormInput("force", (event.currentTarget as HTMLInputElement).checked)}
+                />
+                <span>Force</span>
+              </label>
+            </div>
             {#if branchPool.entries.length > 0}
               <div class="quick-picks">
                 {#each branchPool.entries as entry (entry.id)}
@@ -3636,7 +3676,23 @@
               {mergeRunning ? "执行中" : mergeForm.dryRun ? "Dry-run" : "Merge"}
             </button>
             {#if mergeResult}
-              <pre>{mergeResult.output_text || "svn merge 没有输出。"}</pre>
+              <div class="merge-result-meta">
+                <span>{mergeResult.dry_run ? "Dry-run 预览" : "Merge 结果"}</span>
+                <span>{mergeResult.revision_range === "默认"
+                    ? "默认范围"
+                    : `r${mergeResult.revision_range}`}</span>
+                {#if mergeResult.record_only}<span>Record only</span>{/if}
+                {#if mergeResult.ignore_ancestry}<span>Ignore ancestry</span>{/if}
+                {#if mergeResult.force}<span>Force</span>{/if}
+              </div>
+              <div class="merge-result-summary" aria-label="Merge 结果统计">
+                <span><strong>{mergeResult.file_count}</strong>条目</span>
+                <span><strong>{mergeResult.updated}</strong>更新</span>
+                <span><strong>{mergeResult.added}</strong>新增</span>
+                <span><strong>{mergeResult.deleted}</strong>删除</span>
+                <span><strong>{mergeResult.conflicted}</strong>冲突</span>
+              </div>
+              <pre class="merge-output">{mergeResult.output_text || "svn merge 没有输出。"}</pre>
             {/if}
           </article>
 

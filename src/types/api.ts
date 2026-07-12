@@ -277,6 +277,9 @@ export interface CreateMergeTaskRequest {
   start_revision?: string;
   end_revision?: string;
   dry_run: boolean;
+  record_only: boolean;
+  ignore_ancestry: boolean;
+  force: boolean;
   svn_executable?: string;
 }
 
@@ -389,9 +392,16 @@ export interface MergeResult {
   dry_run: boolean;
   source_url: string;
   revision_range: string;
+  record_only: boolean;
+  ignore_ancestry: boolean;
+  force: boolean;
   output_text: string;
   file_count: number;
   line_count: number;
+  added: number;
+  deleted: number;
+  updated: number;
+  conflicted: number;
 }
 
 export interface ApplyPatchResult {

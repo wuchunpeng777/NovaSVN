@@ -503,6 +503,20 @@ if (
 }
 
 if (
+  !taskRs.includes('command.arg("--record-only")') ||
+  !taskRs.includes('command.arg("--ignore-ancestry")') ||
+  !taskRs.includes('command.arg("--force")') ||
+  !taskRs.includes("validate_merge_tracking_options") ||
+  !mainWorkspace.includes('aria-label="Merge tracking 参数"') ||
+  !mainWorkspace.includes('aria-label="Merge 结果统计"') ||
+  !appSvelte.includes("recordOnly: form.recordOnly") ||
+  !appStore.includes("record_only: request.recordOnly")
+) {
+  console.error("Merge 必须支持 revision 预览与常用 merge tracking 参数");
+  failed = true;
+}
+
+if (
   !taskRs.includes("APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES") ||
   !taskRs.includes("APPLY_PATCH_TASK_LOG_MAX_BYTES") ||
   !taskRs.includes("APPLY_PATCH_TASK_LOG_MAX_LINES") ||

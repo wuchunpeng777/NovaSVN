@@ -19,6 +19,7 @@ vi.mock("./lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/api")>();
   return {
     ...actual,
+    createMergeTask: vi.fn(),
     createRepositoryCheckoutTask: vi.fn(),
     createRepositoryCopyTask: vi.fn(),
     createRepositoryDeleteTask: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock("./lib/api", async (importOriginal) => {
 import { get } from "svelte/store";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import {
+  createMergeTask,
   createRepositoryCheckoutTask,
   createRepositoryCopyTask,
   createRepositoryDeleteTask,
@@ -90,6 +92,7 @@ import type {
 import App from "./App.svelte";
 
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
+const createMergeTaskMock = vi.mocked(createMergeTask);
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
 const createRepositoryCopyTaskMock = vi.mocked(createRepositoryCopyTask);
 const createRepositoryDeleteTaskMock = vi.mocked(createRepositoryDeleteTask);
@@ -118,6 +121,7 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 const startDragMock = vi.mocked(startDrag);
 
 beforeEach(async () => {
+  createMergeTaskMock.mockReset();
   createSvnOperationTaskMock.mockReset();
   createRepositoryCheckoutTaskMock.mockReset();
   createRepositoryCopyTaskMock.mockReset();
@@ -150,6 +154,13 @@ beforeEach(async () => {
   listTasksMock.mockResolvedValue(makeTaskSnapshot([]));
   await taskStore.refresh();
   workspaceStore.markSvnOperationTask(null, null, null);
+  workspaceStore.setMergeForm("sourceUrl", "");
+  workspaceStore.setMergeForm("startRevision", "");
+  workspaceStore.setMergeForm("endRevision", "");
+  workspaceStore.setMergeForm("dryRun", true);
+  workspaceStore.setMergeForm("recordOnly", false);
+  workspaceStore.setMergeForm("ignoreAncestry", false);
+  workspaceStore.setMergeForm("force", false);
   setCurrentView("changes");
 
   openWorkspaceMock.mockResolvedValue(makeWorkspace());
@@ -163,6 +174,34 @@ afterEach(() => {
 });
 
 describe("App SVN operation completion", () => {
+  it("创建带 revision 范围和 tracking 参数的 Merge 任务", async () => {
+    createMergeTaskMock.mockResolvedValue(makeTask({ task_id: "merge-create" }));
+    workspaceStore.setMergeForm("sourceUrl", "https://example.com/svn/branches/feature");
+    workspaceStore.setMergeForm("startRevision", "10");
+    workspaceStore.setMergeForm("endRevision", "12");
+    workspaceStore.setMergeForm("dryRun", false);
+    workspaceStore.setMergeForm("recordOnly", true);
+    workspaceStore.setMergeForm("force", true);
+    setCurrentView("branches");
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+
+    await waitFor(() => expect(createMergeTaskMock).toHaveBeenCalledOnce());
+    expect(createMergeTaskMock).toHaveBeenCalledWith({
+      working_copy_root: "C:/repo/wc",
+      source_url: "https://example.com/svn/branches/feature",
+      start_revision: "10",
+      end_revision: "12",
+      dry_run: false,
+      record_only: true,
+      ignore_ancestry: false,
+      force: true,
+      svn_executable: undefined,
+    });
+    expect(get(workspaceStore).pendingMergeTaskId).toBe("merge-create");
+  });
+
   it("连续点击更新只创建并绑定一个任务", async () => {
     const creation = deferred<Task>();
     const createdTask = makeTask({ task_id: "svn-update", status: "pending" });

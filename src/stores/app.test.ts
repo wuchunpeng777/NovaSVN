@@ -1687,6 +1687,9 @@ describe("taskStore merge tasks", () => {
       startRevision: "10",
       endRevision: "12",
       dryRun: true,
+      recordOnly: true,
+      ignoreAncestry: false,
+      force: true,
       svnExecutable: "C:/svn/svn.exe",
     });
 
@@ -1697,6 +1700,9 @@ describe("taskStore merge tasks", () => {
       start_revision: "10",
       end_revision: "12",
       dry_run: true,
+      record_only: true,
+      ignore_ancestry: false,
+      force: true,
       svn_executable: "C:/svn/svn.exe",
     });
   });

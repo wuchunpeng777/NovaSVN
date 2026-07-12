@@ -322,6 +322,9 @@ pub struct CreateMergeTaskRequest {
     pub start_revision: Option<String>,
     pub end_revision: Option<String>,
     pub dry_run: bool,
+    pub record_only: bool,
+    pub ignore_ancestry: bool,
+    pub force: bool,
     pub svn_executable: Option<String>,
 }
 
@@ -396,9 +399,16 @@ pub struct MergeResult {
     pub dry_run: bool,
     pub source_url: String,
     pub revision_range: String,
+    pub record_only: bool,
+    pub ignore_ancestry: bool,
+    pub force: bool,
     pub output_text: String,
     pub file_count: usize,
     pub line_count: usize,
+    pub added: usize,
+    pub deleted: usize,
+    pub updated: usize,
+    pub conflicted: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -635,6 +645,9 @@ struct MergeTaskPayload {
     start_revision: Option<String>,
     end_revision: Option<String>,
     dry_run: bool,
+    record_only: bool,
+    ignore_ancestry: bool,
+    force: bool,
     svn_executable: String,
 }
 
@@ -1798,6 +1811,7 @@ impl TaskQueue {
         let source_url = normalize_repository_url(&request.source_url)?;
         let (start_revision, end_revision) =
             normalize_merge_revision_range(request.start_revision, request.end_revision)?;
+        validate_merge_tracking_options(request.record_only, request.ignore_ancestry)?;
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         if !request.dry_run
             && merge_workspace_has_local_changes(&svn_executable, &working_copy_root)?
@@ -1833,6 +1847,9 @@ impl TaskQueue {
                 start_revision,
                 end_revision,
                 dry_run: request.dry_run,
+                record_only: request.record_only,
+                ignore_ancestry: request.ignore_ancestry,
+                force: request.force,
                 svn_executable,
             }),
         };
@@ -4267,13 +4284,33 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
     if payload.dry_run {
         command.arg("--dry-run");
     }
+    if payload.record_only {
+        command.arg("--record-only");
+    }
+    if payload.ignore_ancestry {
+        command.arg("--ignore-ancestry");
+    }
+    if payload.force {
+        command.arg("--force");
+    }
     command.arg(&payload.source_url).current_dir(&root);
     append_task_log(
         state,
         task_id,
         &format!(
-            "执行 svn merge{}：{}",
+            "执行 svn merge{}{}{}{}：{}",
             if payload.dry_run { " --dry-run" } else { "" },
+            if payload.record_only {
+                " --record-only"
+            } else {
+                ""
+            },
+            if payload.ignore_ancestry {
+                " --ignore-ancestry"
+            } else {
+                ""
+            },
+            if payload.force { " --force" } else { "" },
             payload.source_url
         ),
     );
@@ -4282,6 +4319,7 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             let output_text = merge_output_text(&output);
+            let summary = summarize_merge_output(&output_text);
             let result = MergeResult {
                 dry_run: payload.dry_run,
                 source_url: payload.source_url.clone(),
@@ -4289,8 +4327,15 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
                     &payload.start_revision,
                     &payload.end_revision,
                 ),
-                file_count: count_merge_output_files(&output_text),
+                record_only: payload.record_only,
+                ignore_ancestry: payload.ignore_ancestry,
+                force: payload.force,
+                file_count: summary.file_count,
                 line_count: output_text.lines().count(),
+                added: summary.added,
+                deleted: summary.deleted,
+                updated: summary.updated,
+                conflicted: summary.conflicted,
                 output_text,
             };
             set_task_result(
@@ -7076,6 +7121,25 @@ fn merge_revision_label(start_revision: &Option<String>, end_revision: &Option<S
     merge_revision_arg(start_revision, end_revision).unwrap_or_else(|| "默认".to_string())
 }
 
+fn validate_merge_tracking_options(
+    record_only: bool,
+    ignore_ancestry: bool,
+) -> Result<(), NovaError> {
+    if record_only && ignore_ancestry {
+        return Err(NovaError::command(
+            "MERGE_TRACKING_OPTIONS_CONFLICT",
+            "Record only 不能与 Ignore ancestry 同时使用",
+            Some(
+                "--record-only 只记录 mergeinfo，而 --ignore-ancestry 会禁用 merge tracking。"
+                    .to_string(),
+            ),
+            true,
+        ));
+    }
+
+    Ok(())
+}
+
 fn merge_output_text(output: &std::process::Output) -> String {
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -7087,17 +7151,42 @@ fn merge_output_text(output: &std::process::Output) -> String {
     }
 }
 
-fn count_merge_output_files(output: &str) -> usize {
-    output
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim_start();
-            matches!(
-                trimmed.chars().next(),
-                Some('A' | 'D' | 'U' | 'C' | 'G' | 'M' | 'R' | 'E')
-            ) && trimmed.chars().nth(1).is_some_and(char::is_whitespace)
-        })
-        .count()
+#[derive(Debug, Default, PartialEq, Eq)]
+struct MergeOutputSummary {
+    file_count: usize,
+    added: usize,
+    deleted: usize,
+    updated: usize,
+    conflicted: usize,
+}
+
+fn summarize_merge_output(output: &str) -> MergeOutputSummary {
+    let mut summary = MergeOutputSummary::default();
+
+    for line in output.lines() {
+        let status_columns: Vec<char> = line.chars().take(4).collect();
+        if status_columns.len() < 2
+            || !status_columns
+                .iter()
+                .any(|status| matches!(status, 'A' | 'D' | 'U' | 'C' | 'G' | 'M' | 'R' | 'E'))
+            || !status_columns.iter().any(|status| status.is_whitespace())
+        {
+            continue;
+        }
+
+        summary.file_count += 1;
+        if status_columns.contains(&'C') {
+            summary.conflicted += 1;
+        } else if status_columns.first() == Some(&'A') {
+            summary.added += 1;
+        } else if status_columns.first() == Some(&'D') {
+            summary.deleted += 1;
+        } else {
+            summary.updated += 1;
+        }
+    }
+
+    summary
 }
 
 struct ApplyPatchSnapshotFile {
@@ -10569,9 +10658,31 @@ mod tests {
 
     #[test]
     fn counts_merge_output_file_lines() {
-        let output = "U    src/a.txt\nA    src/b.txt\n--- Merging r1 through r2 into '.':\n";
+        let output = "U    src/a.txt\nA    src/b.txt\nD    src/old.txt\n C   src/conflict.txt\n U   .\n--- Merging r1 through r2 into '.':\n";
 
-        assert_eq!(count_merge_output_files(output), 2);
+        assert_eq!(
+            summarize_merge_output(output),
+            MergeOutputSummary {
+                file_count: 5,
+                added: 1,
+                deleted: 1,
+                updated: 2,
+                conflicted: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_conflicting_merge_tracking_options() {
+        let error = validate_merge_tracking_options(true, true)
+            .expect_err("record-only and ignore-ancestry must conflict");
+
+        assert!(matches!(
+            error,
+            NovaError::Command { ref code, .. } if code == "MERGE_TRACKING_OPTIONS_CONFLICT"
+        ));
+        assert!(validate_merge_tracking_options(true, false).is_ok());
+        assert!(validate_merge_tracking_options(false, true).is_ok());
     }
 
     #[test]
@@ -10590,6 +10701,9 @@ mod tests {
                 start_revision: Some("10".to_string()),
                 end_revision: Some("12".to_string()),
                 dry_run: false,
+                record_only: false,
+                ignore_ancestry: false,
+                force: false,
                 svn_executable: Some(svn.display().to_string()),
             })
             .expect_err("non dry-run merge must be blocked for dirty workspace");
@@ -10619,13 +10733,190 @@ mod tests {
                 start_revision: Some("10".to_string()),
                 end_revision: Some("12".to_string()),
                 dry_run: true,
+                record_only: true,
+                ignore_ancestry: false,
+                force: true,
                 svn_executable: Some(svn.display().to_string()),
             })
             .expect("dry-run merge should not require a clean workspace");
 
-        assert!(matches!(task.payload, TaskPayload::Merge(payload) if payload.dry_run));
+        assert!(matches!(
+            task.payload,
+            TaskPayload::Merge(payload)
+                if payload.dry_run && payload.record_only && payload.force
+        ));
 
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn merges_revision_range_and_records_mergeinfo_in_real_repository() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("merge-integration");
+        let repository = root.join("repository");
+        let trunk = root.join("trunk");
+        let branch = root.join("branch");
+        let record_only_target = root.join("record-only-target");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        let trunk_url = format!("{repository_url}/trunk");
+        let branch_url = format!("{repository_url}/branches/feature");
+        run_test_command(
+            Command::new("svn")
+                .arg("mkdir")
+                .arg(&trunk_url)
+                .arg(format!("{repository_url}/branches"))
+                .args(["-m", "create layout"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&trunk_url)
+                .arg(&trunk),
+        );
+
+        let trunk_file = trunk.join("tracked.txt");
+        fs::write(&trunk_file, "trunk\n").expect("write trunk file");
+        run_test_command(Command::new("svn").arg("add").arg(&trunk_file));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&trunk)
+                .args(["-m", "add trunk file"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("copy")
+                .arg(&trunk_url)
+                .arg(&branch_url)
+                .args(["-m", "create feature branch"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&branch_url)
+                .arg(&branch),
+        );
+        fs::write(branch.join("tracked.txt"), "feature\n").expect("write branch file");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&branch)
+                .args(["-m", "update feature"]),
+        );
+        run_test_command(Command::new("svn").arg("update").arg(&trunk));
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&trunk_url)
+                .arg(&record_only_target),
+        );
+
+        let queue = TaskQueue::new();
+        let dry_run = queue
+            .create_merge_task(CreateMergeTaskRequest {
+                working_copy_root: trunk.display().to_string(),
+                source_url: branch_url.clone(),
+                start_revision: Some("3".to_string()),
+                end_revision: Some("4".to_string()),
+                dry_run: true,
+                record_only: false,
+                ignore_ancestry: false,
+                force: false,
+                svn_executable: None,
+            })
+            .expect("create merge dry-run task");
+        let dry_run = wait_for_test_task(&queue, &dry_run.task_id);
+        assert!(
+            matches!(dry_run.status, TaskStatus::Success),
+            "Merge dry-run 失败：{:?}",
+            dry_run.error
+        );
+        let dry_run_result = dry_run
+            .result
+            .and_then(|result| result.merge_result)
+            .expect("merge dry-run result");
+        assert!(dry_run_result.dry_run);
+        assert_eq!(dry_run_result.revision_range, "3:4");
+        assert!(dry_run_result.updated >= 1);
+        assert_eq!(fs::read_to_string(&trunk_file).unwrap(), "trunk\n");
+        let clean_status = run_test_command(Command::new("svn").arg("status").arg(&trunk));
+        assert!(clean_status.stdout.is_empty());
+
+        let merge = queue
+            .create_merge_task(CreateMergeTaskRequest {
+                working_copy_root: trunk.display().to_string(),
+                source_url: branch_url.clone(),
+                start_revision: Some("3".to_string()),
+                end_revision: Some("4".to_string()),
+                dry_run: false,
+                record_only: false,
+                ignore_ancestry: false,
+                force: true,
+                svn_executable: None,
+            })
+            .expect("create merge task");
+        let merge = wait_for_test_task(&queue, &merge.task_id);
+        assert!(
+            matches!(merge.status, TaskStatus::Success),
+            "Merge 失败：{:?}",
+            merge.error
+        );
+        let merge_result = merge
+            .result
+            .and_then(|result| result.merge_result)
+            .expect("merge result");
+        assert!(merge_result.force);
+        assert_eq!(fs::read_to_string(&trunk_file).unwrap(), "feature\n");
+        let mergeinfo = run_test_command(
+            Command::new("svn")
+                .arg("propget")
+                .arg("svn:mergeinfo")
+                .arg(&trunk),
+        );
+        assert!(String::from_utf8_lossy(&mergeinfo.stdout).contains("/branches/feature:4"));
+
+        let record_queue = TaskQueue::new();
+        let record_only = record_queue
+            .create_merge_task(CreateMergeTaskRequest {
+                working_copy_root: record_only_target.display().to_string(),
+                source_url: branch_url,
+                start_revision: Some("3".to_string()),
+                end_revision: Some("4".to_string()),
+                dry_run: false,
+                record_only: true,
+                ignore_ancestry: false,
+                force: false,
+                svn_executable: None,
+            })
+            .expect("create record-only merge task");
+        let record_only = wait_for_test_task(&record_queue, &record_only.task_id);
+        assert!(
+            matches!(record_only.status, TaskStatus::Success),
+            "Record-only Merge 失败：{:?}",
+            record_only.error
+        );
+        let record_only_result = record_only
+            .result
+            .and_then(|result| result.merge_result)
+            .expect("record-only merge result");
+        assert!(record_only_result.record_only);
+        assert_eq!(
+            fs::read_to_string(record_only_target.join("tracked.txt")).unwrap(),
+            "trunk\n"
+        );
+        let record_mergeinfo = run_test_command(
+            Command::new("svn")
+                .arg("propget")
+                .arg("svn:mergeinfo")
+                .arg(&record_only_target),
+        );
+        assert!(String::from_utf8_lossy(&record_mergeinfo.stdout).contains("/branches/feature:4"));
+
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]
