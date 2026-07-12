@@ -2378,6 +2378,20 @@ function createWorkspaceStore() {
     }));
   }
 
+  function focusConflictResolution() {
+    focusConflictFilter();
+    const state = get({ subscribe });
+    const conflict = state.status?.files.find(
+      (file) => file.status === "conflicted" || file.conflict_kind !== null,
+    );
+    if (!conflict) {
+      return null;
+    }
+
+    selectPathOnly(conflict.path);
+    return conflict.path;
+  }
+
   function setGroupMode(value: WorkspaceGroupMode) {
     update((state) => ({
       ...state,
@@ -5183,6 +5197,7 @@ function createWorkspaceStore() {
     toggleGeneratedOnly,
     toggleStatusFilter,
     focusConflictFilter,
+    focusConflictResolution,
     setGroupMode,
     clearFilters,
     selectFile,

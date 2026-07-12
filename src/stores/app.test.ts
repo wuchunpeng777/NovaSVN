@@ -539,6 +539,42 @@ describe("workspaceStore safety warnings", () => {
     expect(get(workspaceStore).status).toBe(conflictedStatus);
   });
 
+  it("focuses the first merge conflict and prepares the Resolve workflow", async () => {
+    const workspace = makeWorkspace();
+    const status = makeStatus([
+      makeFile({
+        path: "src/modified.ts",
+        status: "modified",
+        content_digest: "modified-digest",
+      }),
+      makeFile({
+        path: "src/conflict.ts",
+        status: "conflicted",
+        abnormal: true,
+        conflict_kind: "text",
+        content_digest: "conflict-digest",
+      }),
+    ]);
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(status);
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    workspaceStore.setSearchText("modified");
+    workspaceStore.toggleAbnormalOnly();
+
+    const conflictPath = workspaceStore.focusConflictResolution();
+
+    expect(conflictPath).toBe("src/conflict.ts");
+    expect(get(workspaceStore)).toMatchObject({
+      selectedFilePath: "src/conflict.ts",
+      searchText: "",
+      abnormalOnly: false,
+      statusFilters: ["conflicted"],
+      groupMode: "status",
+    });
+  });
+
   it("drops confirmed warnings when selected commit content changes", async () => {
     const workspace = makeWorkspace();
     const firstStatus = makeStatus([

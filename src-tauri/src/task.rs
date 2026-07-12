@@ -4276,6 +4276,42 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
     );
 
     let root = PathBuf::from(&payload.working_copy_root);
+    match merge_workspace_has_local_changes(&payload.svn_executable, &root) {
+        Ok(true) if !payload.dry_run => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "Merge 执行前检查未通过",
+                Some(
+                    "当前工作副本在任务等待期间出现了本地改动；请提交或清理后重新执行 Merge。"
+                        .to_string(),
+                ),
+            );
+            return;
+        }
+        Ok(true) => {
+            append_task_log(
+                state,
+                task_id,
+                "执行前复检发现本地改动；dry-run 将继续生成预览",
+            );
+        }
+        Ok(false) => {
+            append_task_log(state, task_id, "执行前工作副本状态复检通过");
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "Merge 执行前检查失败",
+                Some(nova_error_text(&error)),
+            );
+            return;
+        }
+    }
+
     let mut command = Command::new(&payload.svn_executable);
     command.arg("merge");
     if let Some(range) = merge_revision_arg(&payload.start_revision, &payload.end_revision) {
@@ -10745,6 +10781,58 @@ mod tests {
             TaskPayload::Merge(payload)
                 if payload.dry_run && payload.record_only && payload.force
         ));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn rechecks_workspace_status_immediately_before_merge_execution() {
+        let dir = test_temp_dir("merge-execution-guard");
+        let svn = write_svn_status_stub(
+            &dir,
+            r#"<status><target path="wc"><entry path="queued-change.txt"><wc-status item="modified" /></entry></target></status>"#,
+        );
+        let payload = MergeTaskPayload {
+            working_copy_root: dir.display().to_string(),
+            source_url: "https://example.com/svn/branches/feature".to_string(),
+            start_revision: Some("10".to_string()),
+            end_revision: Some("12".to_string()),
+            dry_run: false,
+            record_only: false,
+            ignore_ancestry: false,
+            force: false,
+            svn_executable: svn.display().to_string(),
+        };
+        let state = repository_file_test_state("merge-execution-guard");
+
+        run_merge_task(&state, "merge-execution-guard", payload.clone());
+
+        let task = state.lock().unwrap().tasks[0].clone();
+        assert!(matches!(task.status, TaskStatus::Failed));
+        assert!(task
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("任务等待期间出现了本地改动")));
+        assert!(!task
+            .logs
+            .iter()
+            .any(|log| log.message.starts_with("执行 svn merge")));
+
+        let dry_run_state = repository_file_test_state("merge-dry-run-execution-guard");
+        run_merge_task(
+            &dry_run_state,
+            "merge-dry-run-execution-guard",
+            MergeTaskPayload {
+                dry_run: true,
+                ..payload
+            },
+        );
+        let dry_run_task = dry_run_state.lock().unwrap().tasks[0].clone();
+        assert!(matches!(dry_run_task.status, TaskStatus::Success));
+        assert!(dry_run_task
+            .logs
+            .iter()
+            .any(|log| log.message.contains("dry-run 将继续生成预览")));
 
         fs::remove_dir_all(dir).ok();
     }

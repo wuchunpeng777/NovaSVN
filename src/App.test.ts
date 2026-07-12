@@ -80,7 +80,7 @@ import {
   openWorkspace,
   scanWorkspaceStatus,
 } from "./lib/api";
-import { setCurrentView, taskStore, workspaceStore } from "./stores/app";
+import { currentView, setCurrentView, taskStore, workspaceStore } from "./stores/app";
 import type {
   Task,
   TaskSnapshot,
@@ -154,6 +154,7 @@ beforeEach(async () => {
   listTasksMock.mockResolvedValue(makeTaskSnapshot([]));
   await taskStore.refresh();
   workspaceStore.markSvnOperationTask(null, null, null);
+  workspaceStore.markMergeTask(null);
   workspaceStore.setMergeForm("sourceUrl", "");
   workspaceStore.setMergeForm("startRevision", "");
   workspaceStore.setMergeForm("endRevision", "");
@@ -1381,6 +1382,78 @@ describe("App SVN operation completion", () => {
       expect(get(workspaceStore).pendingMergeTaskId).toBeNull();
     });
     expect(get(workspaceStore).mergeError).toBe("用户取消 Merge");
+  });
+
+  it("Merge 完成后选中首个冲突并进入 Resolve 操作", async () => {
+    const pendingSummary = makeTaskSummary({
+      task_id: "merge-conflict",
+      status: "success",
+    });
+    const completedTask = makeTask({
+      task_id: "merge-conflict",
+      status: "success",
+      result: {
+        repository_list: null,
+        repository_file: null,
+        repository_export: null,
+        revision_diff: null,
+        merge_result: {
+          dry_run: false,
+          source_url: "https://example.com/svn/branches/feature",
+          revision_range: "10:12",
+          record_only: false,
+          ignore_ancestry: false,
+          force: false,
+          output_text: "C    src/conflict.ts",
+          file_count: 1,
+          line_count: 1,
+          added: 0,
+          deleted: 0,
+          updated: 0,
+          conflicted: 1,
+        },
+        apply_patch_result: null,
+      },
+    });
+    const conflictedStatus = makeStatus();
+    conflictedStatus.total = 1;
+    conflictedStatus.returned = 1;
+    conflictedStatus.local_changes = 1;
+    conflictedStatus.conflicted = 1;
+    conflictedStatus.files = [
+      {
+        path: "src/conflict.ts",
+        status: "conflicted",
+        revision: "12",
+        property_status: null,
+        property_changed: false,
+        remote_status: null,
+        remote_property_status: null,
+        change_scope: "local",
+        abnormal: true,
+        lock_state: "none",
+        lock_owner: null,
+        lock_comment: null,
+        conflict_kind: "text",
+        file_size: 10,
+        content_digest: "merge-conflict-digest",
+      },
+    ];
+    listTasksMock.mockResolvedValue(makeTaskSnapshot([pendingSummary]));
+    getTaskMock.mockResolvedValue(completedTask);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(conflictedStatus);
+    await taskStore.refresh();
+    setCurrentView("branches");
+    render(App);
+
+    workspaceStore.markMergeTask("merge-conflict");
+
+    await waitFor(() => {
+      expect(get(currentView)).toBe("changes");
+      expect(get(workspaceStore).selectedFilePath).toBe("src/conflict.ts");
+      expect(get(workspaceStore).statusFilters).toEqual(["conflicted"]);
+    });
+    expect(screen.getByRole("button", { name: "使用工作副本" })).toBeInTheDocument();
   });
 
   it("确认源和目标后创建工作副本 Move 任务", async () => {

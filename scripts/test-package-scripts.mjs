@@ -517,6 +517,17 @@ if (
 }
 
 if (
+  !taskRs.includes("执行前工作副本状态复检通过") ||
+  !taskRs.includes("merge_workspace_has_local_changes(&payload.svn_executable, &root)") ||
+  !appSvelte.includes("workspaceStore.focusConflictResolution()") ||
+  !appStore.includes("function focusConflictResolution()") ||
+  !mainWorkspace.includes("inspectorSelectionSignature")
+) {
+  console.error("Merge 必须在执行前复检工作副本，并把冲突带入 Resolve 工作流");
+  failed = true;
+}
+
+if (
   !taskRs.includes("APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES") ||
   !taskRs.includes("APPLY_PATCH_TASK_LOG_MAX_BYTES") ||
   !taskRs.includes("APPLY_PATCH_TASK_LOG_MAX_LINES") ||

@@ -1872,7 +1872,7 @@
         void refreshStatusAndSyncBranchPool(workingCopyRoot).then((status) => {
           if ((status?.conflicted ?? 0) > 0) {
             setCurrentView("changes");
-            workspaceStore.focusConflictFilter();
+            workspaceStore.focusConflictResolution();
           }
         });
       }

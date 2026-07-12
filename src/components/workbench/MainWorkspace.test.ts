@@ -1830,6 +1830,42 @@ describe("MainWorkspace", () => {
     expect(summary.children[1]).toHaveTextContent("1更新");
     expect(screen.getByText("U src/main.ts")).toBeInTheDocument();
   });
+
+  it("opens Resolve actions when a selected path becomes conflicted", async () => {
+    const modified = makeFile("src/main.ts", "modified", "before-merge");
+    const conflicted: ChangedFile = {
+      ...modified,
+      status: "conflicted",
+      abnormal: true,
+      conflict_kind: "text",
+      content_digest: "after-merge-conflict",
+    };
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([modified]),
+        workspaceFileTree: makeFileTree(),
+        selectedFilePath: modified.path,
+        selectedFile: modified,
+      },
+    });
+    await fireEvent.click(screen.getByRole("tab", { name: "Diff" }));
+    expect(screen.getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true");
+
+    await rerender({
+      workingCopyStatus: makeStatus([conflicted]),
+      selectedFile: conflicted,
+    });
+
+    expect(screen.getByRole("tab", { name: "Information" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "使用工作副本" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mine Full" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Theirs Full" })).toBeInTheDocument();
+  });
 });
 
 function makeWorkspace(): WorkspaceSummary {

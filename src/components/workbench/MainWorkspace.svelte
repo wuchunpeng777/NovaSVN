@@ -617,6 +617,7 @@
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
   let resolvedTheme: "light" | "dark" = "light";
+  let inspectorSelectionSignature = "";
 
   $: if (appSettings.diffMode) {
     diffInline = appSettings.diffMode === "inline";
@@ -631,6 +632,20 @@
         ? "dark"
         : "light"
       : appSettings.themeMode;
+  $: {
+    const selected = selectedFilePath
+      ? selectedFile ?? workingCopyStatus?.files.find((file) => file.path === selectedFilePath)
+      : null;
+    const selectionSignature = `${selectedFilePath ?? ""}:${selected?.status ?? ""}:${selected?.conflict_kind ?? ""}`;
+    if (
+      selectionSignature !== inspectorSelectionSignature &&
+      selected &&
+      (selected.status === "conflicted" || selected.conflict_kind)
+    ) {
+      activeInspectorTab = "information";
+    }
+    inspectorSelectionSignature = selectionSignature;
+  }
 
   function labelStatus(status: string) {
     return statusLabels[status] ?? status;
@@ -719,7 +734,7 @@
   }
 
   function changedFileForPath(path: string) {
-    return files.find((file) => file.path === path) ?? null;
+    return (files ?? []).find((file) => file.path === path) ?? null;
   }
 
   function treeNodeForPath(path: string | null): WorkspaceFileNode | null {
