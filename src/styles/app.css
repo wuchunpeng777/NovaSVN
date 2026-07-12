@@ -2026,7 +2026,7 @@ textarea {
 
 .patch-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   border-top: 1px solid #d8dde3;
   border-bottom: 1px solid #d8dde3;
 }
@@ -2047,6 +2047,12 @@ textarea {
 .patch-summary strong {
   color: #26323d;
   font-size: 16px;
+}
+
+.patch-output-limit {
+  margin: 0;
+  color: #8a5a12;
+  font-size: 12px;
 }
 
 .patch-output {
@@ -2530,7 +2536,8 @@ textarea {
   background: #3f351b;
 }
 
-.versions-workbench[data-theme="dark"] .patch-dialog-status.patch-warning {
+.versions-workbench[data-theme="dark"] .patch-dialog-status.patch-warning,
+.versions-workbench[data-theme="dark"] .patch-output-limit {
   color: #ffbb7d;
 }
 

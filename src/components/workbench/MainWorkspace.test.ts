@@ -1715,7 +1715,10 @@ describe("MainWorkspace", () => {
           patch_file_path: "C:/patches/change.patch",
           patch_digest: "a".repeat(64),
           output_text: "U         C:/repo/wc/src/main.ts",
+          output_truncated: true,
+          max_output_bytes: 256 * 1024,
           applied: 1,
+          offset_hunks: 1,
           rejected: 0,
           skipped: 0,
           conflicted: 0,
@@ -1731,7 +1734,12 @@ describe("MainWorkspace", () => {
     expect(dialog.querySelector(".patch-output")).toHaveTextContent(
       "U C:/repo/wc/src/main.ts",
     );
-    expect(within(dialog).getByText("1").closest("span")).toHaveTextContent("1应用");
+    const patchSummary = within(dialog).getByLabelText("Patch 结果统计");
+    expect(patchSummary.children[0]).toHaveTextContent("1应用");
+    expect(patchSummary.children[1]).toHaveTextContent("1偏移");
+    expect(within(dialog).getByRole("status")).toHaveTextContent(
+      "输出预览已截断（上限 256 KiB）",
+    );
 
     await fireEvent.click(within(dialog).getByRole("button", { name: "应用 Patch" }));
     expect(onRunApplyPatch).toHaveBeenCalledWith(false);
@@ -1752,7 +1760,10 @@ describe("MainWorkspace", () => {
           patch_file_path: "C:/patches/change.patch",
           patch_digest: "b".repeat(64),
           output_text: "Skipped missing target: '../outside.txt'",
+          output_truncated: false,
+          max_output_bytes: 256 * 1024,
           applied: 0,
+          offset_hunks: 0,
           rejected: 0,
           skipped: 1,
           conflicted: 0,

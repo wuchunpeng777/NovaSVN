@@ -399,7 +399,10 @@ export interface ApplyPatchResult {
   patch_file_path: string;
   patch_digest: string;
   output_text: string;
+  output_truncated: boolean;
+  max_output_bytes: number;
   applied: number;
+  offset_hunks: number;
   rejected: number;
   skipped: number;
   conflicted: number;

@@ -503,6 +503,21 @@ if (
 }
 
 if (
+  !taskRs.includes("APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES") ||
+  !taskRs.includes("APPLY_PATCH_TASK_LOG_MAX_BYTES") ||
+  !taskRs.includes("APPLY_PATCH_TASK_LOG_MAX_LINES") ||
+  !taskRs.includes("append_apply_patch_command_output(state, task_id, &preflight_output)") ||
+  !taskRs.includes("fn bounded_apply_patch_output(") ||
+  !taskRs.includes("offset_hunks") ||
+  !taskRs.includes('root.join("offset.patch")') ||
+  !mainWorkspace.includes("applyPatchResult.output_truncated") ||
+  !mainWorkspace.includes("applyPatchResult.offset_hunks")
+) {
+  console.error("Apply Patch 必须覆盖偏移应用，并限制任务日志和 IPC 输出预览");
+  failed = true;
+}
+
+if (
   !mainWorkspace.includes('aria-label="仓库 Revision"') ||
   !mainWorkspace.includes('class="repository-revision-status"') ||
   !appSvelte.includes("revision: $workspaceStore.repositoryRevisionInput") ||

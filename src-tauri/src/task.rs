@@ -28,6 +28,9 @@ use crate::{
 
 const REVISION_DIFF_PREVIEW_MAX_BYTES: usize = 2 * 1024 * 1024;
 const APPLY_PATCH_MAX_BYTES: u64 = 32 * 1024 * 1024;
+const APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES: usize = 256 * 1024;
+const APPLY_PATCH_TASK_LOG_MAX_BYTES: usize = 64 * 1024;
+const APPLY_PATCH_TASK_LOG_MAX_LINES: usize = 500;
 const MAX_BATCH_OPERATION_PATHS: usize = 500;
 const MAX_BATCH_OPERATION_PATH_BYTES: usize = 24 * 1024;
 static APPLY_PATCH_SNAPSHOT_NONCE: AtomicU64 = AtomicU64::new(1);
@@ -404,7 +407,10 @@ pub struct ApplyPatchResult {
     pub patch_file_path: String,
     pub patch_digest: String,
     pub output_text: String,
+    pub output_truncated: bool,
+    pub max_output_bytes: usize,
     pub applied: usize,
+    pub offset_hunks: usize,
     pub rejected: usize,
     pub skipped: usize,
     pub conflicted: usize,
@@ -4421,7 +4427,7 @@ fn run_apply_patch_task(
                 return;
             }
         };
-        append_command_output(state, task_id, &preflight_output);
+        append_apply_patch_command_output(state, task_id, &preflight_output);
         let preflight_text = apply_patch_output_from_command(&preflight_output);
         let preflight_stats = parse_apply_patch_stats(&preflight_text);
         if !preflight_output.status.success() || !preflight_stats.allows_apply() {
@@ -4469,7 +4475,7 @@ fn run_apply_patch_task(
     .output()
     {
         Ok(output) => {
-            append_command_output(state, task_id, &output);
+            append_apply_patch_command_output(state, task_id, &output);
             let output_text = apply_patch_output_from_command(&output);
             let stats = parse_apply_patch_stats(&output_text);
             set_apply_patch_result(
@@ -4535,6 +4541,7 @@ fn set_apply_patch_result(
     output_text: String,
     stats: &ApplyPatchStats,
 ) {
+    let (output_text, output_truncated) = bounded_apply_patch_output(output_text);
     set_task_result(
         state,
         task_id,
@@ -4549,7 +4556,10 @@ fn set_apply_patch_result(
                 patch_file_path: payload.patch_file_path.clone(),
                 patch_digest: payload.patch_digest.clone(),
                 output_text,
+                output_truncated,
+                max_output_bytes: APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES,
                 applied: stats.applied,
+                offset_hunks: stats.offset_hunks,
                 rejected: stats.rejected,
                 skipped: stats.skipped,
                 conflicted: stats.conflicted,
@@ -4944,6 +4954,64 @@ fn append_command_output(
     append_stream_lines(state, task_id, &String::from_utf8_lossy(&output.stderr));
 }
 
+fn append_apply_patch_command_output(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    output: &std::process::Output,
+) {
+    let (lines, truncated) = apply_patch_log_preview(&output.stdout, &output.stderr);
+    for line in lines {
+        append_task_log(state, task_id, &line);
+    }
+    if truncated {
+        append_task_log(
+            state,
+            task_id,
+            &format!(
+                "Patch 命令输出日志已截断（最多 {} 字节、{} 行）",
+                APPLY_PATCH_TASK_LOG_MAX_BYTES, APPLY_PATCH_TASK_LOG_MAX_LINES
+            ),
+        );
+    }
+}
+
+fn apply_patch_log_preview(stdout: &[u8], stderr: &[u8]) -> (Vec<String>, bool) {
+    let mut lines = Vec::new();
+    let mut bytes = 0usize;
+    let mut truncated = false;
+    let streams = [
+        String::from_utf8_lossy(stdout),
+        String::from_utf8_lossy(stderr),
+    ];
+
+    'streams: for stream in streams {
+        for line in stream
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
+            if lines.len() >= APPLY_PATCH_TASK_LOG_MAX_LINES
+                || bytes >= APPLY_PATCH_TASK_LOG_MAX_BYTES
+            {
+                truncated = true;
+                break 'streams;
+            }
+            let remaining = APPLY_PATCH_TASK_LOG_MAX_BYTES - bytes;
+            let preview = truncate_utf8(line, remaining);
+            if preview.len() < line.len() {
+                truncated = true;
+            }
+            bytes += preview.len();
+            lines.push(preview);
+            if truncated {
+                break 'streams;
+            }
+        }
+    }
+
+    (lines, truncated)
+}
+
 fn append_stream_lines(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, text: &str) {
     for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
         append_task_log(state, task_id, line);
@@ -5006,7 +5074,26 @@ fn format_repository_write_error_detail(detail: &str) -> String {
 }
 
 fn apply_patch_command_error_detail(executable: &str, output: &std::process::Output) -> String {
-    command_output_error_detail(executable, "patch", output)
+    bounded_text_preview(
+        command_output_error_detail(executable, "patch", output),
+        APPLY_PATCH_TASK_LOG_MAX_BYTES,
+        "Patch 错误输出已截断",
+    )
+}
+
+fn bounded_text_preview(value: String, max_bytes: usize, marker: &str) -> String {
+    if value.len() <= max_bytes {
+        return value;
+    }
+
+    let omitted = value.len() - max_bytes;
+    let suffix = format!("\n...[{marker}，省略至少 {omitted} 字节]");
+    let content_limit = max_bytes.saturating_sub(suffix.len());
+    let mut boundary = content_limit.min(value.len());
+    while boundary > 0 && !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    format!("{}{}", &value[..boundary], suffix)
 }
 
 fn command_output_error_detail(
@@ -7168,9 +7255,20 @@ fn apply_patch_output_from_command(output: &std::process::Output) -> String {
     )
 }
 
+fn bounded_apply_patch_output(output_text: String) -> (String, bool) {
+    let truncated = output_text.len() > APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES;
+    let preview = bounded_text_preview(
+        output_text,
+        APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES,
+        "Patch 输出预览已截断",
+    );
+    (preview, truncated)
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ApplyPatchStats {
     applied: usize,
+    offset_hunks: usize,
     rejected: usize,
     skipped: usize,
     conflicted: usize,
@@ -7205,6 +7303,9 @@ fn parse_apply_patch_stats(output: &str) -> ApplyPatchStats {
         let lowercase = trimmed.to_ascii_lowercase();
         if lowercase.contains("rejected hunk") {
             stats.rejected += 1;
+        }
+        if lowercase.contains("hunk") && lowercase.contains("offset") {
+            stats.offset_hunks += 1;
         }
         if lowercase.starts_with("skipped ") && !lowercase.starts_with("skipped paths:") {
             stats.skipped += 1;
@@ -9805,19 +9906,38 @@ mod tests {
 
     #[test]
     fn parses_apply_patch_output_statistics() {
-        let output = "UU        /tmp/wc/applied.txt\n U        /tmp/wc/applied.txt\nC         /tmp/wc/conflict.txt\nCC        /tmp/wc/conflict.txt\n>         rejected hunk @@ -1,1 +1,1 @@\nSkipped missing target: '/tmp/wc/missing.txt'\nSummary of conflicts:\n  Text conflicts: 1\n  Skipped paths: 1\n";
+        let output = "UU        /tmp/wc/applied.txt\n U        /tmp/wc/applied.txt\n>         applied hunk @@ -1,1 +1,1 @@ with offset 2\nC         /tmp/wc/conflict.txt\nCC        /tmp/wc/conflict.txt\n>         rejected hunk @@ -1,1 +1,1 @@\nSkipped missing target: '/tmp/wc/missing.txt'\nSummary of conflicts:\n  Text conflicts: 1\n  Skipped paths: 1\n";
 
         let stats = parse_apply_patch_stats(output);
         assert_eq!(
             stats,
             ApplyPatchStats {
                 applied: 1,
+                offset_hunks: 1,
                 rejected: 1,
                 skipped: 1,
                 conflicted: 1,
             }
         );
         assert!(!stats.allows_apply());
+    }
+
+    #[test]
+    fn bounds_apply_patch_ipc_preview_and_task_log_lines() {
+        let large_output = "应用行-中文\n".repeat(APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES / 4);
+        let (preview, truncated) = bounded_apply_patch_output(large_output);
+        assert!(truncated);
+        assert!(preview.len() <= APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES);
+        assert!(preview.contains("Patch 输出预览已截断"));
+        assert!(preview.is_char_boundary(preview.len()));
+
+        let many_lines = (0..(APPLY_PATCH_TASK_LOG_MAX_LINES + 50))
+            .map(|index| format!("U file-{index}.txt\n"))
+            .collect::<String>();
+        let (lines, log_truncated) = apply_patch_log_preview(many_lines.as_bytes(), b"");
+        assert!(log_truncated);
+        assert_eq!(lines.len(), APPLY_PATCH_TASK_LOG_MAX_LINES);
+        assert!(lines.iter().map(String::len).sum::<usize>() <= APPLY_PATCH_TASK_LOG_MAX_BYTES);
     }
 
     #[test]
@@ -9832,6 +9952,11 @@ mod tests {
         let working_copy = root.join("working-copy");
         fs::create_dir_all(&import_source).expect("create import source");
         fs::write(import_source.join("中文.txt"), "before\n").expect("write initial file");
+        fs::write(
+            import_source.join("offset.txt"),
+            "prefix\nbefore\ncontext\n",
+        )
+        .expect("write offset file");
         run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
         let repository_url = format!("file://{}", repository.display());
         run_test_command(
@@ -9981,6 +10106,55 @@ mod tests {
         assert_eq!(apply_result.rejected, 0);
         assert_eq!(apply_result.skipped, 0);
         assert_eq!(apply_result.conflicted, 0);
+
+        let offset_patch_file = root.join("offset.patch");
+        fs::write(
+            &offset_patch_file,
+            "Index: offset.txt\n===================================================================\n--- offset.txt\t(revision 1)\n+++ offset.txt\t(working copy)\n@@ -1,2 +1,2 @@\n-before\n+after-offset\n context\n",
+        )
+        .expect("write offset patch");
+        let offset_dry_run = queue
+            .create_apply_patch_task(CreateApplyPatchTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                patch_file_path: offset_patch_file.display().to_string(),
+                dry_run: true,
+                expected_patch_digest: None,
+                svn_executable: None,
+            })
+            .expect("create offset dry-run task");
+        let offset_dry_run = wait_for_test_task(&queue, &offset_dry_run.task_id);
+        assert!(matches!(offset_dry_run.status, TaskStatus::Success));
+        let offset_dry_run_result = offset_dry_run
+            .result
+            .and_then(|result| result.apply_patch_result)
+            .expect("offset dry-run result exists");
+        assert_eq!(offset_dry_run_result.applied, 1);
+        assert!(offset_dry_run_result.offset_hunks > 0);
+
+        let offset_apply = queue
+            .create_apply_patch_task(CreateApplyPatchTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                patch_file_path: offset_patch_file.display().to_string(),
+                dry_run: false,
+                expected_patch_digest: Some(offset_dry_run_result.patch_digest),
+                svn_executable: None,
+            })
+            .expect("create offset apply task");
+        let offset_apply = wait_for_test_task(&queue, &offset_apply.task_id);
+        assert!(
+            matches!(offset_apply.status, TaskStatus::Success),
+            "偏移 Patch 应用失败：{:?}",
+            offset_apply.error
+        );
+        let offset_apply_result = offset_apply
+            .result
+            .and_then(|result| result.apply_patch_result)
+            .expect("offset apply result exists");
+        assert!(offset_apply_result.offset_hunks > 0);
+        assert_eq!(
+            fs::read_to_string(working_copy.join("offset.txt")).unwrap(),
+            "prefix\nafter-offset\ncontext\n"
+        );
 
         fs::remove_dir_all(root).ok();
     }

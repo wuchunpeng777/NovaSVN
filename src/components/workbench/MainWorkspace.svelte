@@ -4885,10 +4885,16 @@
         {#if applyPatchResult}
           <div class="patch-summary" aria-label="Patch 结果统计">
             <span><strong>{applyPatchResult.applied}</strong>应用</span>
+            <span><strong>{applyPatchResult.offset_hunks}</strong>偏移</span>
             <span><strong>{applyPatchResult.rejected}</strong>拒绝</span>
             <span><strong>{applyPatchResult.skipped}</strong>跳过</span>
             <span><strong>{applyPatchResult.conflicted}</strong>冲突</span>
           </div>
+          {#if applyPatchResult.output_truncated}
+            <p class="patch-output-limit" role="status">
+              输出预览已截断（上限 {Math.round(applyPatchResult.max_output_bytes / 1024)} KiB）
+            </p>
+          {/if}
           <pre class="patch-output">{applyPatchResult.output_text || "SVN 未返回输出"}</pre>
         {/if}
 
