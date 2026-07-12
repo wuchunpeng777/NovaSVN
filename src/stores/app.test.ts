@@ -1054,6 +1054,7 @@ describe("taskStore repository list tasks", () => {
     });
     expect(task?.task_id).toBe("repository-move");
     expect(createRepositoryMoveTaskMock).toHaveBeenCalledWith({
+      kind: undefined,
       source_url: "https://example.com/svn/trunk/assets",
       target_url: "https://example.com/svn/archive/assets",
       message: "移动 assets",
@@ -1076,6 +1077,53 @@ describe("taskStore repository list tasks", () => {
       pendingRepositoryMoveSourceParentUrl: null,
       pendingRepositoryMoveTargetParentUrl: null,
       repositoryMoveForm: { sourceUrl: "", targetUrl: "", message: "" },
+    });
+  });
+
+  it("prepares repository rename in the same parent and clears its own state", async () => {
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk/assets",
+      revision: "12",
+      entries: [],
+    });
+    workspaceStore.prepareRepositoryRename();
+    workspaceStore.setRepositoryRenameForm("message", "重命名 assets");
+    expect(get(workspaceStore).repositoryRenameForm).toEqual({
+      sourceUrl: "https://example.com/svn/trunk/assets",
+      targetUrl: "https://example.com/svn/trunk/assets-renamed",
+      message: "重命名 assets",
+    });
+
+    createRepositoryMoveTaskMock.mockResolvedValue(makeTask({ task_id: "repository-rename" }));
+    const task = await taskStore.createRepositoryMove({
+      kind: "rename",
+      sourceUrl: "https://example.com/svn/trunk/assets",
+      targetUrl: "https://example.com/svn/trunk/assets-renamed",
+      message: "重命名 assets",
+      svnExecutable: "svn",
+    });
+    expect(task?.task_id).toBe("repository-rename");
+    expect(createRepositoryMoveTaskMock).toHaveBeenCalledWith({
+      kind: "rename",
+      source_url: "https://example.com/svn/trunk/assets",
+      target_url: "https://example.com/svn/trunk/assets-renamed",
+      message: "重命名 assets",
+      svn_executable: "svn",
+    });
+
+    workspaceStore.markRepositoryMoveTask(
+      "repository-rename",
+      "https://example.com/svn/trunk",
+      "https://example.com/svn/trunk",
+      "rename",
+    );
+    expect(get(workspaceStore).pendingRepositoryMoveKind).toBe("rename");
+    workspaceStore.completeRepositoryMoveTask();
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryMoveTaskId: null,
+      pendingRepositoryMoveKind: null,
+      repositoryRenameForm: { sourceUrl: "", targetUrl: "", message: "" },
+      repositoryRenameError: null,
     });
   });
 

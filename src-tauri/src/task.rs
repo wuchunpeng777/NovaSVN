@@ -223,10 +223,18 @@ pub struct CreateRepositoryImportTaskRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateRepositoryMoveTaskRequest {
+    pub kind: Option<RepositoryMoveKind>,
     pub source_url: String,
     pub target_url: String,
     pub message: String,
     pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepositoryMoveKind {
+    Move,
+    Rename,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -522,6 +530,7 @@ struct RepositoryImportTaskPayload {
 
 #[derive(Debug, Clone)]
 struct RepositoryMoveTaskPayload {
+    kind: RepositoryMoveKind,
     source_url: String,
     target_url: String,
     message: String,
@@ -1344,12 +1353,23 @@ impl TaskQueue {
         &self,
         request: CreateRepositoryMoveTaskRequest,
     ) -> Result<Task, NovaError> {
+        let kind = request.kind.unwrap_or(RepositoryMoveKind::Move);
         let source_url = normalize_repository_url(&request.source_url)?;
         let target_url = normalize_repository_url(&request.target_url)?;
         if source_url == target_url {
             return Err(NovaError::command(
                 "REPOSITORY_MOVE_TARGET_SAME_AS_SOURCE",
                 "Move 目标 URL 不能和源 URL 相同",
+                None,
+                true,
+            ));
+        }
+        if matches!(kind, RepositoryMoveKind::Rename)
+            && repository_url_parent(&source_url) != repository_url_parent(&target_url)
+        {
+            return Err(NovaError::command(
+                "REPOSITORY_RENAME_PARENT_MISMATCH",
+                "Rename 目标必须和源条目位于同一仓库目录",
                 None,
                 true,
             ));
@@ -1366,9 +1386,13 @@ impl TaskQueue {
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
+        let operation = match kind {
+            RepositoryMoveKind::Move => "移动仓库条目",
+            RepositoryMoveKind::Rename => "重命名仓库条目",
+        };
         let task = Task {
             task_id: task_id.clone(),
-            title: format!("移动仓库条目 {}", compact_repository_url(&source_url)),
+            title: format!("{operation} {}", compact_repository_url(&source_url)),
             status: TaskStatus::Pending,
             logs: vec![TaskLog {
                 message: "Repository Move 任务已加入队列".to_string(),
@@ -1379,6 +1403,7 @@ impl TaskQueue {
             created_at: now,
             updated_at: now,
             payload: TaskPayload::RepositoryMove(RepositoryMoveTaskPayload {
+                kind,
                 source_url,
                 target_url,
                 message,
@@ -3553,11 +3578,15 @@ fn run_repository_move_task(
     task_id: &str,
     payload: RepositoryMoveTaskPayload,
 ) {
+    let operation = match payload.kind {
+        RepositoryMoveKind::Move => "Repository Move",
+        RepositoryMoveKind::Rename => "Repository Rename",
+    };
     update_task(
         state,
         task_id,
         TaskStatus::Running,
-        "Repository Move 开始执行",
+        &format!("{operation} 开始执行"),
         None,
     );
     append_task_log(
@@ -3587,7 +3616,7 @@ fn run_repository_move_task(
                 state,
                 task_id,
                 TaskStatus::Success,
-                "Repository Move 成功",
+                &format!("{operation} 成功"),
                 None,
             );
         }
@@ -3597,7 +3626,7 @@ fn run_repository_move_task(
                 state,
                 task_id,
                 TaskStatus::Failed,
-                "Repository Move 失败",
+                &format!("{operation} 失败"),
                 Some(command_error_detail(&payload.svn_executable, &output)),
             );
         }
@@ -6162,6 +6191,11 @@ pub(crate) fn normalize_repository_url(url: &str) -> Result<String, NovaError> {
     Ok(trimmed.trim_end_matches('/').to_string())
 }
 
+fn repository_url_parent(url: &str) -> Option<&str> {
+    url.rsplit_once('/')
+        .and_then(|(parent, _)| (!parent.is_empty() && !parent.ends_with(':')).then_some(parent))
+}
+
 fn normalize_checkout_path(path: &str) -> Result<String, NovaError> {
     normalize_repository_local_path(path, "CHECKOUT_PATH", "本地工作副本路径")
 }
@@ -7440,6 +7474,7 @@ mod tests {
         let queue = TaskQueue::new();
         let task = queue
             .create_repository_move_task(CreateRepositoryMoveTaskRequest {
+                kind: None,
                 source_url: format!("{repository_url}/source"),
                 target_url: format!("{repository_url}/archive/moved"),
                 message: "移动仓库目录".to_string(),
@@ -7460,6 +7495,7 @@ mod tests {
         );
         let task = queue
             .create_repository_move_task(CreateRepositoryMoveTaskRequest {
+                kind: None,
                 source_url: format!("{repository_url}/source"),
                 target_url: format!("{repository_url}/archive/moved"),
                 message: "移动仓库目录".to_string(),
@@ -7486,6 +7522,43 @@ mod tests {
             .expect("read moved repository entry");
         assert!(content.status.success());
         assert_eq!(content.stdout, b"move content");
+
+        let invalid_rename = queue
+            .create_repository_move_task(CreateRepositoryMoveTaskRequest {
+                kind: Some(RepositoryMoveKind::Rename),
+                source_url: format!("{repository_url}/archive/moved"),
+                target_url: format!("{repository_url}/other/renamed"),
+                message: "无效重命名".to_string(),
+                svn_executable: None,
+            })
+            .expect_err("Rename must stay in the same parent");
+        assert!(matches!(
+            invalid_rename,
+            NovaError::Command { ref code, .. } if code == "REPOSITORY_RENAME_PARENT_MISMATCH"
+        ));
+
+        let rename = queue
+            .create_repository_move_task(CreateRepositoryMoveTaskRequest {
+                kind: Some(RepositoryMoveKind::Rename),
+                source_url: format!("{repository_url}/archive/moved"),
+                target_url: format!("{repository_url}/archive/renamed"),
+                message: "重命名仓库目录".to_string(),
+                svn_executable: None,
+            })
+            .expect("create repository rename task");
+        let rename = wait_for_test_task(&queue, &rename.task_id);
+        assert!(
+            matches!(rename.status, TaskStatus::Success),
+            "重命名仓库条目失败：{:?}",
+            rename.error
+        );
+        let renamed_content = Command::new("svn")
+            .arg("cat")
+            .arg(format!("{repository_url}/archive/renamed/note.txt"))
+            .output()
+            .expect("read renamed repository entry");
+        assert!(renamed_content.status.success());
+        assert_eq!(renamed_content.stdout, b"move content");
         fs::remove_dir_all(root).ok();
     }
 

@@ -163,6 +163,17 @@
   };
   export let repositoryMoveError: string | null = null;
   export let repositoryMoveRunning = false;
+  export let repositoryRenameForm: {
+    sourceUrl: string;
+    targetUrl: string;
+    message: string;
+  } = {
+    sourceUrl: "",
+    targetUrl: "",
+    message: "",
+  };
+  export let repositoryRenameError: string | null = null;
+  export let repositoryRenameRunning = false;
   export let repositoryCheckoutForm: {
     url: string;
     localPath: string;
@@ -413,6 +424,12 @@
   ) => void = () => {};
   export let onPrepareRepositoryMove: (sourceUrl?: string | null) => void = () => {};
   export let onCreateRepositoryMove: () => void = () => {};
+  export let onRepositoryRenameFormInput: (
+    field: keyof typeof repositoryRenameForm,
+    value: string,
+  ) => void = () => {};
+  export let onPrepareRepositoryRename: (sourceUrl?: string | null) => void = () => {};
+  export let onCreateRepositoryRename: () => void = () => {};
   export let onRepositoryCheckoutFormInput: (
     field: keyof typeof repositoryCheckoutForm,
     value: string,
@@ -2517,6 +2534,13 @@
             </button>
             <button
               type="button"
+              on:click={() => onPrepareRepositoryRename()}
+              disabled={!repositoryCurrentUrl && !repositoryUrlInput && !repositoryList}
+            >
+              准备 Rename
+            </button>
+            <button
+              type="button"
               on:click={() => onPrepareRepositoryCheckout()}
               disabled={!repositoryCurrentUrl && !repositoryUrlInput && !repositoryList}
             >
@@ -3082,6 +3106,65 @@
               disabled={repositoryMoveRunning}
             >
               {repositoryMoveRunning ? "Move 中" : "Move"}
+            </button>
+          </div>
+        </details>
+
+        <details class="advanced-section" open={Boolean(repositoryRenameForm.sourceUrl)}>
+          <summary>Rename 仓库条目</summary>
+          <div class="copy-form" aria-label="Repository Rename">
+            <button
+              type="button"
+              on:click={() =>
+                onPrepareRepositoryRename(
+                  repositoryCurrentUrl || repositoryList?.url || repositoryUrlInput,
+                )}
+            >
+              使用当前 URL
+            </button>
+            <input
+              type="url"
+              value={repositoryRenameForm.sourceUrl}
+              placeholder="源 URL"
+              aria-label="Repository Rename 源 URL"
+              on:input={(event) =>
+                onRepositoryRenameFormInput(
+                  "sourceUrl",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            <input
+              type="url"
+              value={repositoryRenameForm.targetUrl}
+              placeholder="同目录目标 URL"
+              aria-label="Repository Rename 目标 URL"
+              on:input={(event) =>
+                onRepositoryRenameFormInput(
+                  "targetUrl",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            <textarea
+              rows="3"
+              value={repositoryRenameForm.message}
+              placeholder="提交信息"
+              aria-label="Repository Rename 提交信息"
+              on:input={(event) =>
+                onRepositoryRenameFormInput(
+                  "message",
+                  (event.currentTarget as HTMLTextAreaElement).value,
+                )}
+            ></textarea>
+            {#if repositoryRenameError}
+              <p class="inline-error">{repositoryRenameError}</p>
+            {/if}
+            <button
+              type="button"
+              class="primary"
+              on:click={onCreateRepositoryRename}
+              disabled={repositoryRenameRunning}
+            >
+              {repositoryRenameRunning ? "Rename 中" : "Rename"}
             </button>
           </div>
         </details>

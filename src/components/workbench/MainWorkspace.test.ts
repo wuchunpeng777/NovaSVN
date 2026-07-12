@@ -579,6 +579,9 @@ describe("MainWorkspace", () => {
     const onPrepareRepositoryMove = vi.fn();
     const onCreateRepositoryMove = vi.fn();
     const onRepositoryMoveFormInput = vi.fn();
+    const onPrepareRepositoryRename = vi.fn();
+    const onCreateRepositoryRename = vi.fn();
+    const onRepositoryRenameFormInput = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.repository,
@@ -636,6 +639,11 @@ describe("MainWorkspace", () => {
           targetUrl: "https://example.com/svn/archive/assets",
           message: "移动 assets",
         },
+        repositoryRenameForm: {
+          sourceUrl: "https://example.com/svn/trunk/assets",
+          targetUrl: "https://example.com/svn/trunk/assets-renamed",
+          message: "重命名 assets",
+        },
         onRepositoryRevisionInput,
         onLoadRepositoryUrl,
         onOpenRepositoryFile,
@@ -667,6 +675,9 @@ describe("MainWorkspace", () => {
         onPrepareRepositoryMove,
         onCreateRepositoryMove,
         onRepositoryMoveFormInput,
+        onPrepareRepositoryRename,
+        onCreateRepositoryRename,
+        onRepositoryRenameFormInput,
       },
     });
 
@@ -678,6 +689,7 @@ describe("MainWorkspace", () => {
     expect(screen.getByRole("button", { name: "准备创建目录" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "准备 Import" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "准备 Move" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "准备 Rename" })).toBeInTheDocument();
     expect(screen.getByLabelText("仓库 Checkout")).toBeInTheDocument();
     expect(screen.getByLabelText("仓库 Export")).toBeInTheDocument();
     expect(screen.getByLabelText("创建仓库目录")).toBeInTheDocument();
@@ -702,6 +714,12 @@ describe("MainWorkspace", () => {
     );
     expect(screen.getByLabelText("Repository Move 目标 URL")).toHaveValue(
       "https://example.com/svn/archive/assets",
+    );
+    expect(screen.getByLabelText("Repository Rename 源 URL")).toHaveValue(
+      "https://example.com/svn/trunk/assets",
+    );
+    expect(screen.getByLabelText("Repository Rename 目标 URL")).toHaveValue(
+      "https://example.com/svn/trunk/assets-renamed",
     );
     expect(screen.getByLabelText("Checkout 仓库 URL")).toHaveValue(
       "https://example.com/svn/trunk",
@@ -728,6 +746,8 @@ describe("MainWorkspace", () => {
     expect(onPrepareRepositoryImport).toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "准备 Move" }));
     expect(onPrepareRepositoryMove).toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "准备 Rename" }));
+    expect(onPrepareRepositoryRename).toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
     expect(onCreateRepositoryCheckout).toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "Export" }));
@@ -749,6 +769,8 @@ describe("MainWorkspace", () => {
     expect(onCreateRepositoryCopy).toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "Move" }));
     expect(onCreateRepositoryMove).toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    expect(onCreateRepositoryRename).toHaveBeenCalled();
 
     const repositoryTable = screen.getByLabelText("仓库目录");
     expect(within(repositoryTable).getByText("Last Revision")).toBeInTheDocument();

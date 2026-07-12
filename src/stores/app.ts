@@ -76,6 +76,7 @@ import type {
   RepositoryListResult,
   RepositoryFileResult,
   RepositoryCopyKind,
+  RepositoryMoveKind,
   RevisionDiffMode,
   RevisionDiffResult,
   SelectedPatch,
@@ -502,6 +503,7 @@ function createTaskStore() {
   }
 
   async function createRepositoryMove(request: {
+    kind?: RepositoryMoveKind;
     sourceUrl: string;
     targetUrl: string;
     message: string;
@@ -511,6 +513,7 @@ function createTaskStore() {
 
     try {
       const task = await createRepositoryMoveTask({
+        kind: request.kind,
         source_url: request.sourceUrl,
         target_url: request.targetUrl,
         message: request.message,
@@ -1580,9 +1583,16 @@ export interface WorkspaceStoreState {
     message: string;
   };
   pendingRepositoryMoveTaskId: string | null;
+  pendingRepositoryMoveKind: RepositoryMoveKind | null;
   pendingRepositoryMoveSourceParentUrl: string | null;
   pendingRepositoryMoveTargetParentUrl: string | null;
   repositoryMoveError: string | null;
+  repositoryRenameForm: {
+    sourceUrl: string;
+    targetUrl: string;
+    message: string;
+  };
+  repositoryRenameError: string | null;
   repositoryCheckoutForm: {
     url: string;
     localPath: string;
@@ -1770,9 +1780,16 @@ const initialWorkspaceState: WorkspaceStoreState = {
     message: "",
   },
   pendingRepositoryMoveTaskId: null,
+  pendingRepositoryMoveKind: null,
   pendingRepositoryMoveSourceParentUrl: null,
   pendingRepositoryMoveTargetParentUrl: null,
   repositoryMoveError: null,
+  repositoryRenameForm: {
+    sourceUrl: "",
+    targetUrl: "",
+    message: "",
+  },
+  repositoryRenameError: null,
   repositoryCheckoutForm: {
     url: "",
     localPath: "",
@@ -1932,9 +1949,12 @@ function createWorkspaceStore() {
         repositoryImportError: null,
         repositoryMoveForm: emptyRepositoryMoveForm(),
         pendingRepositoryMoveTaskId: null,
+        pendingRepositoryMoveKind: null,
         pendingRepositoryMoveSourceParentUrl: null,
         pendingRepositoryMoveTargetParentUrl: null,
         repositoryMoveError: null,
+        repositoryRenameForm: emptyRepositoryRenameForm(),
+        repositoryRenameError: null,
         repositoryCheckoutForm: {
           ...emptyRepositoryCheckoutForm(),
           url: recent.workspace?.repository_url ?? "",
@@ -2072,9 +2092,12 @@ function createWorkspaceStore() {
         repositoryImportError: null,
         repositoryMoveForm: emptyRepositoryMoveForm(),
         pendingRepositoryMoveTaskId: null,
+        pendingRepositoryMoveKind: null,
         pendingRepositoryMoveSourceParentUrl: null,
         pendingRepositoryMoveTargetParentUrl: null,
         repositoryMoveError: null,
+        repositoryRenameForm: emptyRepositoryRenameForm(),
+        repositoryRenameError: null,
         repositoryCheckoutForm: {
           ...emptyRepositoryCheckoutForm(),
           url: current.repository_url,
@@ -3186,38 +3209,102 @@ function createWorkspaceStore() {
     });
   }
 
+  function setRepositoryRenameForm(
+    field: keyof WorkspaceStoreState["repositoryRenameForm"],
+    value: string,
+  ) {
+    update((state) => ({
+      ...state,
+      repositoryRenameForm: {
+        ...state.repositoryRenameForm,
+        [field]: value,
+      },
+      repositoryRenameError: null,
+    }));
+  }
+
+  function prepareRepositoryRename(sourceUrl?: string | null) {
+    update((state) => {
+      const source = (
+        sourceUrl ||
+        state.repositoryCurrentUrl ||
+        state.repositoryList?.url ||
+        state.repositoryUrlInput
+      ).replace(/\/+$/, "");
+      const separatorIndex = source.lastIndexOf("/");
+      const parent = separatorIndex >= 0 ? source.slice(0, separatorIndex) : "";
+      const name = separatorIndex >= 0 ? source.slice(separatorIndex + 1) : source;
+      return {
+        ...state,
+        repositoryRenameForm: {
+          ...state.repositoryRenameForm,
+          sourceUrl: source,
+          targetUrl: parent && name ? `${parent}/${name}-renamed` : "",
+        },
+        repositoryRenameError: null,
+      };
+    });
+  }
+
   function markRepositoryMoveTask(
     taskId: string | null,
     sourceParentUrl?: string | null,
     targetParentUrl?: string | null,
+    kind: RepositoryMoveKind = "move",
   ) {
     update((state) => ({
       ...state,
       pendingRepositoryMoveTaskId: taskId,
+      pendingRepositoryMoveKind: taskId ? kind : null,
       pendingRepositoryMoveSourceParentUrl: taskId ? sourceParentUrl?.trim() || null : null,
       pendingRepositoryMoveTargetParentUrl: taskId ? targetParentUrl?.trim() || null : null,
-      repositoryMoveError: null,
+      repositoryMoveError: kind === "move" ? null : state.repositoryMoveError,
+      repositoryRenameError: kind === "rename" ? null : state.repositoryRenameError,
     }));
   }
 
   function completeRepositoryMoveTask() {
-    update((state) => ({
-      ...state,
-      pendingRepositoryMoveTaskId: null,
-      pendingRepositoryMoveSourceParentUrl: null,
-      pendingRepositoryMoveTargetParentUrl: null,
-      repositoryMoveForm: emptyRepositoryMoveForm(),
-      repositoryMoveError: null,
-    }));
+    update((state) => {
+      const rename = state.pendingRepositoryMoveKind === "rename";
+      return {
+        ...state,
+        pendingRepositoryMoveTaskId: null,
+        pendingRepositoryMoveKind: null,
+        pendingRepositoryMoveSourceParentUrl: null,
+        pendingRepositoryMoveTargetParentUrl: null,
+        repositoryMoveForm: rename ? state.repositoryMoveForm : emptyRepositoryMoveForm(),
+        repositoryMoveError: rename ? state.repositoryMoveError : null,
+        repositoryRenameForm: rename ? emptyRepositoryRenameForm() : state.repositoryRenameForm,
+        repositoryRenameError: rename ? null : state.repositoryRenameError,
+      };
+    });
   }
 
   function failRepositoryMoveTask(message: string | null) {
+    update((state) => {
+      const rename = state.pendingRepositoryMoveKind === "rename";
+      return {
+        ...state,
+        pendingRepositoryMoveTaskId: null,
+        pendingRepositoryMoveKind: null,
+        pendingRepositoryMoveSourceParentUrl: null,
+        pendingRepositoryMoveTargetParentUrl: null,
+        repositoryMoveError: rename ? state.repositoryMoveError : message ?? "Repository Move 失败",
+        repositoryRenameError: rename
+          ? message ?? "Repository Rename 失败"
+          : state.repositoryRenameError,
+      };
+    });
+  }
+
+  function failRepositoryRenameTask(message: string | null) {
     update((state) => ({
       ...state,
       pendingRepositoryMoveTaskId: null,
+      pendingRepositoryMoveKind: null,
       pendingRepositoryMoveSourceParentUrl: null,
       pendingRepositoryMoveTargetParentUrl: null,
-      repositoryMoveError: message ?? "Repository Move 失败",
+      repositoryRenameError: message ?? "Repository Rename 失败",
     }));
   }
 
@@ -4975,9 +5062,12 @@ function createWorkspaceStore() {
     failRepositoryImportTask,
     setRepositoryMoveForm,
     prepareRepositoryMove,
+    setRepositoryRenameForm,
+    prepareRepositoryRename,
     markRepositoryMoveTask,
     completeRepositoryMoveTask,
     failRepositoryMoveTask,
+    failRepositoryRenameTask,
     setRepositoryCheckoutForm,
     prepareRepositoryCheckout,
     chooseRepositoryCheckoutParent,
@@ -5364,6 +5454,14 @@ function emptyRepositoryImportForm() {
 }
 
 function emptyRepositoryMoveForm() {
+  return {
+    sourceUrl: "",
+    targetUrl: "",
+    message: "",
+  };
+}
+
+function emptyRepositoryRenameForm() {
   return {
     sourceUrl: "",
     targetUrl: "",

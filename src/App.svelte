@@ -759,6 +759,50 @@
     );
   }
 
+  async function createRepositoryRename() {
+    const form = $workspaceStore.repositoryRenameForm;
+    const sourceUrl = form.sourceUrl.trim();
+    const targetUrl = form.targetUrl.trim();
+    const message = form.message.trim();
+    if (!sourceUrl || !targetUrl) {
+      workspaceStore.failRepositoryRenameTask("请输入 Rename 源 URL 和目标 URL");
+      return;
+    }
+    if (!message) {
+      workspaceStore.failRepositoryRenameTask("请输入 Repository Rename 的提交信息");
+      return;
+    }
+    if ($workspaceStore.pendingRepositoryMoveTaskId !== null) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `确定重命名仓库条目吗？\n\n源：${sourceUrl}\n目标：${targetUrl}\n提交信息：${message}`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const task = await taskStore.createRepositoryMove({
+      kind: "rename",
+      sourceUrl,
+      targetUrl,
+      message,
+      svnExecutable: currentSvnExecutable(),
+    });
+    if (!task) {
+      workspaceStore.failRepositoryRenameTask(
+        $taskStore.error?.message ?? "Repository Rename 任务创建失败",
+      );
+      return;
+    }
+    workspaceStore.markRepositoryMoveTask(
+      task.task_id,
+      parentRepositoryUrl(sourceUrl),
+      parentRepositoryUrl(targetUrl),
+      "rename",
+    );
+  }
+
   async function createRepositoryCheckout() {
     const form = $workspaceStore.repositoryCheckoutForm;
     if (!form.url.trim()) {
@@ -1874,6 +1918,12 @@
   repositoryMoveForm={$workspaceStore.repositoryMoveForm}
   repositoryMoveError={$workspaceStore.repositoryMoveError}
   repositoryMoveRunning={$workspaceStore.pendingRepositoryMoveTaskId !== null}
+  repositoryRenameForm={$workspaceStore.repositoryRenameForm}
+  repositoryRenameError={$workspaceStore.repositoryRenameError}
+  repositoryRenameRunning={
+    $workspaceStore.pendingRepositoryMoveTaskId !== null &&
+    $workspaceStore.pendingRepositoryMoveKind === "rename"
+  }
   repositoryCheckoutForm={$workspaceStore.repositoryCheckoutForm}
   repositoryCheckoutError={$workspaceStore.repositoryCheckoutError}
   repositoryCheckoutRunning={$workspaceStore.pendingRepositoryCheckoutTaskId !== null}
@@ -2044,6 +2094,9 @@
   onRepositoryMoveFormInput={workspaceStore.setRepositoryMoveForm}
   onPrepareRepositoryMove={workspaceStore.prepareRepositoryMove}
   onCreateRepositoryMove={createRepositoryMove}
+  onRepositoryRenameFormInput={workspaceStore.setRepositoryRenameForm}
+  onPrepareRepositoryRename={workspaceStore.prepareRepositoryRename}
+  onCreateRepositoryRename={createRepositoryRename}
   onRepositoryCheckoutFormInput={workspaceStore.setRepositoryCheckoutForm}
   onPrepareRepositoryCheckout={workspaceStore.prepareRepositoryCheckout}
   onChooseRepositoryCheckoutParent={workspaceStore.chooseRepositoryCheckoutParent}

@@ -646,6 +646,19 @@ if (
 }
 
 if (
+  !mainWorkspace.includes('aria-label="Repository Rename"') ||
+  !mainWorkspace.includes("准备 Rename") ||
+  !appSvelte.includes("pendingRepositoryMoveKind") ||
+  !appSvelte.includes("确定重命名仓库条目吗") ||
+  !appStore.includes("function prepareRepositoryRename(") ||
+  !taskRs.includes("RepositoryMoveKind::Rename") ||
+  !taskRs.includes("REPOSITORY_RENAME_PARENT_MISMATCH")
+) {
+  console.error("Repository Rename 必须限制同一父目录、使用独立表单与错误状态，并执行真实 svn move");
+  failed = true;
+}
+
+if (
   !mainWorkspace.includes('aria-label="仓库 Checkout"') ||
   !mainWorkspace.includes("准备 Checkout") ||
   !mainWorkspace.includes("选择父目录") ||

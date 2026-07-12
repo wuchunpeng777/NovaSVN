@@ -911,6 +911,7 @@ describe("App SVN operation completion", () => {
     await waitFor(() => {
       expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("移动仓库条目"));
       expect(createRepositoryMoveTaskMock).toHaveBeenCalledWith({
+        kind: undefined,
         source_url: "https://example.com/svn/trunk/assets",
         target_url: "https://example.com/svn/archive/assets",
         message: "移动 assets",
@@ -946,6 +947,75 @@ describe("App SVN operation completion", () => {
       });
       expect(get(workspaceStore).pendingRepositoryMoveTaskId).toBeNull();
       expect(get(workspaceStore).repositoryMoveError).toBeNull();
+    });
+  });
+
+  it("Repository Rename 使用同目录目标并清理独立表单", async () => {
+    setCurrentView("repository");
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk",
+      revision: "10",
+      entries: [],
+    });
+    workspaceStore.setRepositoryRenameForm(
+      "sourceUrl",
+      "https://example.com/svn/trunk/assets",
+    );
+    workspaceStore.setRepositoryRenameForm(
+      "targetUrl",
+      "https://example.com/svn/trunk/assets-renamed",
+    );
+    workspaceStore.setRepositoryRenameForm("message", "重命名 assets");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const pendingTask = makeTask({ task_id: "repository-rename", status: "pending" });
+    createRepositoryMoveTaskMock.mockResolvedValue(pendingTask);
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-rename", status: "pending" }),
+      ]),
+    );
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("重命名仓库条目"));
+      expect(createRepositoryMoveTaskMock).toHaveBeenCalledWith({
+        kind: "rename",
+        source_url: "https://example.com/svn/trunk/assets",
+        target_url: "https://example.com/svn/trunk/assets-renamed",
+        message: "重命名 assets",
+        svn_executable: undefined,
+      });
+      expect(get(workspaceStore).pendingRepositoryMoveKind).toBe("rename");
+    });
+
+    createRepositoryListTaskMock.mockResolvedValue(
+      makeTask({ task_id: "repository-refresh", status: "pending" }),
+    );
+    getTaskMock.mockResolvedValue(
+      makeTask({ task_id: "repository-rename", status: "success" }),
+    );
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-rename", status: "success" }),
+      ]),
+    );
+    await taskStore.refresh();
+
+    await waitFor(() => {
+      expect(createRepositoryListTaskMock).toHaveBeenCalledWith({
+        url: "https://example.com/svn/trunk",
+        revision: undefined,
+        svn_executable: undefined,
+      });
+      expect(get(workspaceStore).pendingRepositoryMoveTaskId).toBeNull();
+      expect(get(workspaceStore).repositoryRenameForm).toEqual({
+        sourceUrl: "",
+        targetUrl: "",
+        message: "",
+      });
+      expect(get(workspaceStore).repositoryRenameError).toBeNull();
     });
   });
 

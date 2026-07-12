@@ -47,6 +47,7 @@
 - Repository 可选择本地文件或目录 Import 到目标 URL，执行前复检源路径并确认提交信息，成功后刷新父目录。
 - Repository 可将普通文件或目录按指定历史 Revision Copy 到新 URL，执行前确认并在成功后刷新目标父目录。
 - Repository 可将远端文件或目录 Move 到新 URL，要求提交信息和确认，并在成功后刷新受影响的父目录。
+- Repository 可在同一远端目录内 Rename 文件或目录，跨目录目标会被拒绝，并使用独立表单和任务状态。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。

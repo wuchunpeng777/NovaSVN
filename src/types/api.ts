@@ -228,11 +228,14 @@ export interface CreateRepositoryImportTaskRequest {
 }
 
 export interface CreateRepositoryMoveTaskRequest {
+  kind?: RepositoryMoveKind;
   source_url: string;
   target_url: string;
   message: string;
   svn_executable?: string;
 }
+
+export type RepositoryMoveKind = "move" | "rename";
 
 export interface CreateBranchCheckoutTaskRequest {
   branch_url: string;
