@@ -732,11 +732,12 @@ describe("App SVN operation completion", () => {
     await waitFor(() => {
       expect(createRepositoryListTaskMock).toHaveBeenCalledWith({
         url: "https://example.com/svn/trunk",
-        revision: "10",
+        revision: undefined,
         svn_executable: undefined,
       });
       expect(get(workspaceStore).pendingRepositoryMkdirTaskId).toBeNull();
       expect(get(workspaceStore).repositoryMkdirError).toBeNull();
+      expect(get(workspaceStore).repositoryRevisionInput).toBe("");
     });
   });
 
@@ -795,11 +796,12 @@ describe("App SVN operation completion", () => {
     await waitFor(() => {
       expect(createRepositoryListTaskMock).toHaveBeenCalledWith({
         url: "https://example.com/svn/trunk",
-        revision: "10",
+        revision: undefined,
         svn_executable: undefined,
       });
       expect(get(workspaceStore).pendingRepositoryImportTaskId).toBeNull();
       expect(get(workspaceStore).repositoryImportError).toBeNull();
+      expect(get(workspaceStore).repositoryRevisionInput).toBe("");
     });
   });
 
@@ -865,11 +867,12 @@ describe("App SVN operation completion", () => {
     await waitFor(() => {
       expect(createRepositoryListTaskMock).toHaveBeenCalledWith({
         url: "https://example.com/svn/trunk",
-        revision: "10",
+        revision: undefined,
         svn_executable: undefined,
       });
       expect(get(workspaceStore).pendingRepositoryCopyTaskId).toBeNull();
       expect(get(workspaceStore).repositoryCopyError).toBeNull();
+      expect(get(workspaceStore).repositoryRevisionInput).toBe("");
     });
   });
 

@@ -595,6 +595,11 @@
       : normalized;
   }
 
+  function refreshRepositoryAfterWrite(url: string) {
+    workspaceStore.setRepositoryRevisionInput("");
+    void loadRepositoryUrl(url);
+  }
+
   async function createRepositoryCopy() {
     const form = $workspaceStore.repositoryCopyForm;
     if (!form.sourceUrl.trim() || !form.targetUrl.trim()) {
@@ -1469,7 +1474,7 @@
         const parentUrl = get(workspaceStore).pendingRepositoryCopyParentUrl;
         workspaceStore.completeRepositoryCopyTask();
         if (parentUrl) {
-          void loadRepositoryUrl(parentUrl);
+          refreshRepositoryAfterWrite(parentUrl);
         }
       } else {
         workspaceStore.failRepositoryCopyTask(task.error ?? "Repository Copy 失败");
@@ -1488,7 +1493,7 @@
       const parentUrl = get(workspaceStore).pendingRepositoryMkdirParentUrl;
       workspaceStore.completeRepositoryMkdirTask();
       if (parentUrl) {
-        void loadRepositoryUrl(parentUrl);
+        refreshRepositoryAfterWrite(parentUrl);
       }
     },
   );
@@ -1504,7 +1509,7 @@
       const parentUrl = get(workspaceStore).pendingRepositoryImportParentUrl;
       workspaceStore.completeRepositoryImportTask();
       if (parentUrl) {
-        void loadRepositoryUrl(parentUrl);
+        refreshRepositoryAfterWrite(parentUrl);
       }
     },
   );
