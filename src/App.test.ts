@@ -19,6 +19,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     createRepositoryExportTask: vi.fn(),
     createRepositoryFileTask: vi.fn(),
     createRepositoryListTask: vi.fn(),
+    createRepositoryImportTask: vi.fn(),
     createRepositoryMkdirTask: vi.fn(),
     createRevertRevisionTask: vi.fn(),
     createSvnBatchOperationTask: vi.fn(),
@@ -45,6 +46,7 @@ import {
   createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
+  createRepositoryImportTask,
   createRepositoryMkdirTask,
   createRevertRevisionTask,
   createSvnOperationTask,
@@ -79,6 +81,7 @@ const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask)
 const createRepositoryExportTaskMock = vi.mocked(createRepositoryExportTask);
 const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
+const createRepositoryImportTaskMock = vi.mocked(createRepositoryImportTask);
 const createRepositoryMkdirTaskMock = vi.mocked(createRepositoryMkdirTask);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
@@ -102,6 +105,7 @@ beforeEach(async () => {
   createRepositoryExportTaskMock.mockReset();
   createRepositoryFileTaskMock.mockReset();
   createRepositoryListTaskMock.mockReset();
+  createRepositoryImportTaskMock.mockReset();
   createRepositoryMkdirTaskMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
   createSvnBatchOperationTaskMock.mockReset();
@@ -729,6 +733,69 @@ describe("App SVN operation completion", () => {
       });
       expect(get(workspaceStore).pendingRepositoryMkdirTaskId).toBeNull();
       expect(get(workspaceStore).repositoryMkdirError).toBeNull();
+    });
+  });
+
+  it("Repository Import 要求确认并在成功后刷新目标父目录", async () => {
+    setCurrentView("repository");
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk",
+      revision: "10",
+      entries: [],
+    });
+    workspaceStore.setRepositoryImportForm("sourcePath", "/Users/me/assets");
+    workspaceStore.setRepositoryImportForm(
+      "targetUrl",
+      "https://example.com/svn/trunk/assets",
+    );
+    workspaceStore.setRepositoryImportForm("message", "导入 assets");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const pendingTask = makeTask({ task_id: "repository-import", status: "pending" });
+    createRepositoryImportTaskMock.mockResolvedValue(pendingTask);
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-import", status: "pending" }),
+      ]),
+    );
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("/Users/me/assets"));
+      expect(createRepositoryImportTaskMock).toHaveBeenCalledWith({
+        source_path: "/Users/me/assets",
+        target_url: "https://example.com/svn/trunk/assets",
+        message: "导入 assets",
+        svn_executable: undefined,
+      });
+      expect(get(workspaceStore).pendingRepositoryImportTaskId).toBe("repository-import");
+      expect(get(workspaceStore).pendingRepositoryImportParentUrl).toBe(
+        "https://example.com/svn/trunk",
+      );
+    });
+
+    createRepositoryListTaskMock.mockResolvedValue(
+      makeTask({ task_id: "repository-refresh", status: "pending" }),
+    );
+    getTaskMock.mockResolvedValue(
+      makeTask({ task_id: "repository-import", status: "success" }),
+    );
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-import", status: "success" }),
+      ]),
+    );
+    await taskStore.refresh();
+
+    await waitFor(() => {
+      expect(createRepositoryListTaskMock).toHaveBeenCalledWith({
+        url: "https://example.com/svn/trunk",
+        revision: "10",
+        svn_executable: undefined,
+      });
+      expect(get(workspaceStore).pendingRepositoryImportTaskId).toBeNull();
+      expect(get(workspaceStore).repositoryImportError).toBeNull();
     });
   });
 

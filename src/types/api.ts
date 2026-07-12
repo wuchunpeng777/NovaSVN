@@ -220,6 +220,13 @@ export interface CreateRepositoryMkdirTaskRequest {
   svn_executable?: string;
 }
 
+export interface CreateRepositoryImportTaskRequest {
+  source_path: string;
+  target_url: string;
+  message: string;
+  svn_executable?: string;
+}
+
 export interface CreateBranchCheckoutTaskRequest {
   branch_url: string;
   local_path: string;

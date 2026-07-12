@@ -15,6 +15,7 @@ import type {
   CreateRepositoryExportTaskRequest,
   CreateRepositoryFileTaskRequest,
   CreateRepositoryListTaskRequest,
+  CreateRepositoryImportTaskRequest,
   CreateRepositoryMkdirTaskRequest,
   CreateRevertRevisionTaskRequest,
   CreateRevisionDiffTaskRequest,
@@ -198,6 +199,12 @@ export function createRepositoryMkdirTask(
   request: CreateRepositoryMkdirTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_repository_mkdir_task", { request });
+}
+
+export function createRepositoryImportTask(
+  request: CreateRepositoryImportTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_repository_import_task", { request });
 }
 
 export function createBranchCheckoutTask(
@@ -415,6 +422,16 @@ export async function chooseExportDirectory(): Promise<string | null> {
     directory: true,
     multiple: false,
     title: "选择 Export 父目录",
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function chooseImportSource(directory: boolean): Promise<string | null> {
+  const selected = await open({
+    directory,
+    multiple: false,
+    title: directory ? "选择要 Import 的目录" : "选择要 Import 的文件",
   });
 
   return typeof selected === "string" ? selected : null;

@@ -596,6 +596,26 @@ if (
 }
 
 if (
+  !mainWorkspace.includes('aria-label="Repository Import"') ||
+  !mainWorkspace.includes("准备 Import") ||
+  !mainWorkspace.includes("选择 Import 文件") ||
+  !mainWorkspace.includes("选择 Import 目录") ||
+  !appSvelte.includes("pendingRepositoryImportTaskId") ||
+  !appSvelte.includes("确定 Import 到仓库吗") ||
+  !appStore.includes("function markRepositoryImportTask(") ||
+  !frontendApi.includes('callBackend<Task>("create_repository_import_task"') ||
+  !frontendApi.includes("chooseImportSource") ||
+  !tauriLib.includes("create_repository_import_task,") ||
+  !taskRs.includes("TaskPayload::RepositoryImport") ||
+  !taskRs.includes("fn run_repository_import_task(") ||
+  !taskRs.includes('.arg("import")') ||
+  !taskRs.includes("validate_repository_import_source(Path::new(&payload.source_path))")
+) {
+  console.error("Repository Import 必须选择文件或目录、要求提交信息与确认、复检本地源并执行真实 svn import");
+  failed = true;
+}
+
+if (
   !mainWorkspace.includes('aria-label="仓库 Checkout"') ||
   !mainWorkspace.includes("准备 Checkout") ||
   !mainWorkspace.includes("选择父目录") ||

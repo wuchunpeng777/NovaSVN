@@ -663,6 +663,44 @@
     workspaceStore.markRepositoryMkdirTask(task.task_id, parentRepositoryUrl(targetUrl));
   }
 
+  async function createRepositoryImport() {
+    const form = $workspaceStore.repositoryImportForm;
+    const sourcePath = form.sourcePath.trim();
+    const targetUrl = form.targetUrl.trim();
+    const message = form.message.trim();
+    if (!sourcePath || !targetUrl) {
+      workspaceStore.failRepositoryImportTask("请选择本地源并输入目标 URL");
+      return;
+    }
+    if (!message) {
+      workspaceStore.failRepositoryImportTask("请输入 Repository Import 的提交信息");
+      return;
+    }
+    if ($workspaceStore.pendingRepositoryImportTaskId !== null) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `确定 Import 到仓库吗？\n\n本地源：${sourcePath}\n目标：${targetUrl}\n提交信息：${message}`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const task = await taskStore.createRepositoryImport({
+      sourcePath,
+      targetUrl,
+      message,
+      svnExecutable: currentSvnExecutable(),
+    });
+    if (!task) {
+      workspaceStore.failRepositoryImportTask(
+        $taskStore.error?.message ?? "Repository Import 任务创建失败",
+      );
+      return;
+    }
+    workspaceStore.markRepositoryImportTask(task.task_id, parentRepositoryUrl(targetUrl));
+  }
+
   async function createRepositoryCheckout() {
     const form = $workspaceStore.repositoryCheckoutForm;
     if (!form.url.trim()) {
@@ -1441,6 +1479,22 @@
   );
 
   $: consumePendingTask(
+    $workspaceStore.pendingRepositoryImportTaskId,
+    $taskStore.snapshot,
+    (task) => {
+      if (task.status !== "success") {
+        workspaceStore.failRepositoryImportTask(task.error ?? "Repository Import 失败");
+        return;
+      }
+      const parentUrl = get(workspaceStore).pendingRepositoryImportParentUrl;
+      workspaceStore.completeRepositoryImportTask();
+      if (parentUrl) {
+        void loadRepositoryUrl(parentUrl);
+      }
+    },
+  );
+
+  $: consumePendingTask(
     $workspaceStore.pendingRepositoryCheckoutTaskId,
     $taskStore.snapshot,
     (task) => {
@@ -1731,6 +1785,9 @@
   repositoryMkdirForm={$workspaceStore.repositoryMkdirForm}
   repositoryMkdirError={$workspaceStore.repositoryMkdirError}
   repositoryMkdirRunning={$workspaceStore.pendingRepositoryMkdirTaskId !== null}
+  repositoryImportForm={$workspaceStore.repositoryImportForm}
+  repositoryImportError={$workspaceStore.repositoryImportError}
+  repositoryImportRunning={$workspaceStore.pendingRepositoryImportTaskId !== null}
   repositoryCheckoutForm={$workspaceStore.repositoryCheckoutForm}
   repositoryCheckoutError={$workspaceStore.repositoryCheckoutError}
   repositoryCheckoutRunning={$workspaceStore.pendingRepositoryCheckoutTaskId !== null}
@@ -1894,6 +1951,10 @@
   onRepositoryMkdirFormInput={workspaceStore.setRepositoryMkdirForm}
   onPrepareRepositoryMkdir={workspaceStore.prepareRepositoryMkdir}
   onCreateRepositoryMkdir={createRepositoryMkdir}
+  onRepositoryImportFormInput={workspaceStore.setRepositoryImportForm}
+  onPrepareRepositoryImport={workspaceStore.prepareRepositoryImport}
+  onChooseRepositoryImportSource={workspaceStore.chooseRepositoryImportSource}
+  onCreateRepositoryImport={createRepositoryImport}
   onRepositoryCheckoutFormInput={workspaceStore.setRepositoryCheckoutForm}
   onPrepareRepositoryCheckout={workspaceStore.prepareRepositoryCheckout}
   onChooseRepositoryCheckoutParent={workspaceStore.chooseRepositoryCheckoutParent}

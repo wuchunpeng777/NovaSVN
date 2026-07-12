@@ -3,6 +3,7 @@ import {
   cancelTask,
   chooseCheckoutDirectory,
   chooseExportDirectory,
+  chooseImportSource,
   chooseWorkspaceDirectory,
   createApplyPatchTask,
   createBranchCheckoutTask,
@@ -15,6 +16,7 @@ import {
   createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
+  createRepositoryImportTask,
   createRepositoryMkdirTask,
   createRevertRevisionTask,
   createRevisionDiffTask,
@@ -470,6 +472,34 @@ function createTaskStore() {
     }
   }
 
+  async function createRepositoryImport(request: {
+    sourcePath: string;
+    targetUrl: string;
+    message: string;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createRepositoryImportTask({
+        source_path: request.sourcePath,
+        target_url: request.targetUrl,
+        message: request.message,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function createBranchCheckout(request: {
     branchUrl: string;
     localPath: string;
@@ -838,6 +868,7 @@ function createTaskStore() {
     createRepositoryFile,
     createRepositoryCopy,
     createRepositoryMkdir,
+    createRepositoryImport,
     createBranchCheckout,
     createRepositoryCheckout,
     createRepositoryExport,
@@ -1504,6 +1535,14 @@ export interface WorkspaceStoreState {
   pendingRepositoryMkdirTaskId: string | null;
   pendingRepositoryMkdirParentUrl: string | null;
   repositoryMkdirError: string | null;
+  repositoryImportForm: {
+    sourcePath: string;
+    targetUrl: string;
+    message: string;
+  };
+  pendingRepositoryImportTaskId: string | null;
+  pendingRepositoryImportParentUrl: string | null;
+  repositoryImportError: string | null;
   repositoryCheckoutForm: {
     url: string;
     localPath: string;
@@ -1676,6 +1715,14 @@ const initialWorkspaceState: WorkspaceStoreState = {
   pendingRepositoryMkdirTaskId: null,
   pendingRepositoryMkdirParentUrl: null,
   repositoryMkdirError: null,
+  repositoryImportForm: {
+    sourcePath: "",
+    targetUrl: "",
+    message: "",
+  },
+  pendingRepositoryImportTaskId: null,
+  pendingRepositoryImportParentUrl: null,
+  repositoryImportError: null,
   repositoryCheckoutForm: {
     url: "",
     localPath: "",
@@ -1828,6 +1875,10 @@ function createWorkspaceStore() {
         pendingRepositoryMkdirTaskId: null,
         pendingRepositoryMkdirParentUrl: null,
         repositoryMkdirError: null,
+        repositoryImportForm: emptyRepositoryImportForm(),
+        pendingRepositoryImportTaskId: null,
+        pendingRepositoryImportParentUrl: null,
+        repositoryImportError: null,
         repositoryCheckoutForm: {
           ...emptyRepositoryCheckoutForm(),
           url: recent.workspace?.repository_url ?? "",
@@ -1958,6 +2009,10 @@ function createWorkspaceStore() {
         pendingRepositoryMkdirTaskId: null,
         pendingRepositoryMkdirParentUrl: null,
         repositoryMkdirError: null,
+        repositoryImportForm: emptyRepositoryImportForm(),
+        pendingRepositoryImportTaskId: null,
+        pendingRepositoryImportParentUrl: null,
+        repositoryImportError: null,
         repositoryCheckoutForm: {
           ...emptyRepositoryCheckoutForm(),
           url: current.repository_url,
@@ -2923,6 +2978,93 @@ function createWorkspaceStore() {
       pendingRepositoryMkdirTaskId: null,
       pendingRepositoryMkdirParentUrl: null,
       repositoryMkdirError: message ?? "创建仓库目录失败",
+    }));
+  }
+
+  function setRepositoryImportForm(
+    field: keyof WorkspaceStoreState["repositoryImportForm"],
+    value: string,
+  ) {
+    update((state) => ({
+      ...state,
+      repositoryImportForm: {
+        ...state.repositoryImportForm,
+        [field]: value,
+      },
+      repositoryImportError: null,
+    }));
+  }
+
+  function prepareRepositoryImport(parentUrl?: string | null) {
+    update((state) => {
+      const parent = (
+        parentUrl ||
+        state.repositoryCurrentUrl ||
+        state.repositoryList?.url ||
+        state.repositoryUrlInput
+      ).replace(/\/+$/, "");
+      return {
+        ...state,
+        repositoryImportForm: {
+          ...state.repositoryImportForm,
+          targetUrl: state.repositoryImportForm.targetUrl ||
+            (parent ? `${parent}/imported-item` : ""),
+        },
+        repositoryImportError: null,
+      };
+    });
+  }
+
+  async function chooseRepositoryImportSource(directory: boolean) {
+    const selected = await chooseImportSource(directory);
+    if (!selected) {
+      return;
+    }
+    update((state) => {
+      const parent = (
+        state.repositoryCurrentUrl ||
+        state.repositoryList?.url ||
+        state.repositoryUrlInput
+      ).replace(/\/+$/, "");
+      const name = selected.split(/[\\/]/).filter(Boolean).at(-1) || "imported-item";
+      return {
+        ...state,
+        repositoryImportForm: {
+          ...state.repositoryImportForm,
+          sourcePath: selected,
+          targetUrl: state.repositoryImportForm.targetUrl ||
+            (parent ? `${parent}/${encodeURIComponent(name)}` : ""),
+        },
+        repositoryImportError: null,
+      };
+    });
+  }
+
+  function markRepositoryImportTask(taskId: string | null, parentUrl?: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryImportTaskId: taskId,
+      pendingRepositoryImportParentUrl: taskId ? parentUrl?.trim() || null : null,
+      repositoryImportError: null,
+    }));
+  }
+
+  function completeRepositoryImportTask() {
+    update((state) => ({
+      ...state,
+      pendingRepositoryImportTaskId: null,
+      pendingRepositoryImportParentUrl: null,
+      repositoryImportForm: emptyRepositoryImportForm(),
+      repositoryImportError: null,
+    }));
+  }
+
+  function failRepositoryImportTask(message: string | null) {
+    update((state) => ({
+      ...state,
+      pendingRepositoryImportTaskId: null,
+      pendingRepositoryImportParentUrl: null,
+      repositoryImportError: message ?? "Repository Import 失败",
     }));
   }
 
@@ -4672,6 +4814,12 @@ function createWorkspaceStore() {
     markRepositoryMkdirTask,
     completeRepositoryMkdirTask,
     failRepositoryMkdirTask,
+    setRepositoryImportForm,
+    prepareRepositoryImport,
+    chooseRepositoryImportSource,
+    markRepositoryImportTask,
+    completeRepositoryImportTask,
+    failRepositoryImportTask,
     setRepositoryCheckoutForm,
     prepareRepositoryCheckout,
     chooseRepositoryCheckoutParent,
@@ -5044,6 +5192,14 @@ function emptyRepositoryCopyForm() {
 
 function emptyRepositoryMkdirForm() {
   return {
+    targetUrl: "",
+    message: "",
+  };
+}
+
+function emptyRepositoryImportForm() {
+  return {
+    sourcePath: "",
     targetUrl: "",
     message: "",
   };

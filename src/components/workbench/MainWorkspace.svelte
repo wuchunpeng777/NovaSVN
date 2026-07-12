@@ -141,6 +141,17 @@
   };
   export let repositoryMkdirError: string | null = null;
   export let repositoryMkdirRunning = false;
+  export let repositoryImportForm: {
+    sourcePath: string;
+    targetUrl: string;
+    message: string;
+  } = {
+    sourcePath: "",
+    targetUrl: "",
+    message: "",
+  };
+  export let repositoryImportError: string | null = null;
+  export let repositoryImportRunning = false;
   export let repositoryCheckoutForm: {
     url: string;
     localPath: string;
@@ -378,6 +389,13 @@
   ) => void = () => {};
   export let onPrepareRepositoryMkdir: (parentUrl?: string | null) => void = () => {};
   export let onCreateRepositoryMkdir: () => void = () => {};
+  export let onRepositoryImportFormInput: (
+    field: keyof typeof repositoryImportForm,
+    value: string,
+  ) => void = () => {};
+  export let onPrepareRepositoryImport: (parentUrl?: string | null) => void = () => {};
+  export let onChooseRepositoryImportSource: (directory: boolean) => void = () => {};
+  export let onCreateRepositoryImport: () => void = () => {};
   export let onRepositoryCheckoutFormInput: (
     field: keyof typeof repositoryCheckoutForm,
     value: string,
@@ -2468,6 +2486,13 @@
             </button>
             <button
               type="button"
+              on:click={() => onPrepareRepositoryImport()}
+              disabled={!repositoryCurrentUrl && !repositoryUrlInput && !repositoryList}
+            >
+              准备 Import
+            </button>
+            <button
+              type="button"
               on:click={() => onPrepareRepositoryCheckout()}
               disabled={!repositoryCurrentUrl && !repositoryUrlInput && !repositoryList}
             >
@@ -2907,6 +2932,73 @@
               disabled={repositoryMkdirRunning}
             >
               {repositoryMkdirRunning ? "创建中" : "创建目录"}
+            </button>
+          </div>
+        </details>
+
+        <details class="advanced-section" open={Boolean(repositoryImportForm.targetUrl)}>
+          <summary>Import 到仓库</summary>
+          <div class="copy-form" aria-label="Repository Import">
+            <button
+              type="button"
+              on:click={() =>
+                onPrepareRepositoryImport(
+                  repositoryCurrentUrl || repositoryList?.url || repositoryUrlInput,
+                )}
+            >
+              使用当前 URL
+            </button>
+            <div class="button-row">
+              <input
+                type="text"
+                value={repositoryImportForm.sourcePath}
+                placeholder="本地文件或目录"
+                aria-label="Import 本地源路径"
+                on:input={(event) =>
+                  onRepositoryImportFormInput(
+                    "sourcePath",
+                    (event.currentTarget as HTMLInputElement).value,
+                  )}
+              />
+              <button type="button" on:click={() => onChooseRepositoryImportSource(false)}>
+                选择 Import 文件
+              </button>
+              <button type="button" on:click={() => onChooseRepositoryImportSource(true)}>
+                选择 Import 目录
+              </button>
+            </div>
+            <input
+              type="url"
+              value={repositoryImportForm.targetUrl}
+              placeholder="目标 URL"
+              aria-label="Import 目标 URL"
+              on:input={(event) =>
+                onRepositoryImportFormInput(
+                  "targetUrl",
+                  (event.currentTarget as HTMLInputElement).value,
+                )}
+            />
+            <textarea
+              rows="3"
+              value={repositoryImportForm.message}
+              placeholder="提交信息"
+              aria-label="Repository Import 提交信息"
+              on:input={(event) =>
+                onRepositoryImportFormInput(
+                  "message",
+                  (event.currentTarget as HTMLTextAreaElement).value,
+                )}
+            ></textarea>
+            {#if repositoryImportError}
+              <p class="inline-error">{repositoryImportError}</p>
+            {/if}
+            <button
+              type="button"
+              class="primary"
+              on:click={onCreateRepositoryImport}
+              disabled={repositoryImportRunning}
+            >
+              {repositoryImportRunning ? "Import 中" : "Import"}
             </button>
           </div>
         </details>

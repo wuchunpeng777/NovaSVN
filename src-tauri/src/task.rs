@@ -213,6 +213,14 @@ pub struct CreateRepositoryMkdirTaskRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct CreateRepositoryImportTaskRequest {
+    pub source_path: String,
+    pub target_url: String,
+    pub message: String,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateBranchCheckoutTaskRequest {
     pub branch_url: String,
     pub local_path: String,
@@ -373,6 +381,7 @@ enum TaskPayload {
     RepositoryFile(RepositoryFileTaskPayload),
     RepositoryCopy(RepositoryCopyTaskPayload),
     RepositoryMkdir(RepositoryMkdirTaskPayload),
+    RepositoryImport(RepositoryImportTaskPayload),
     BranchCheckout(BranchCheckoutTaskPayload),
     RepositoryCheckout(RepositoryCheckoutTaskPayload),
     RepositoryExport(RepositoryExportTaskPayload),
@@ -489,6 +498,14 @@ struct RepositoryCopyTaskPayload {
 #[derive(Debug, Clone)]
 struct RepositoryMkdirTaskPayload {
     url: String,
+    message: String,
+    svn_executable: String,
+}
+
+#[derive(Debug, Clone)]
+struct RepositoryImportTaskPayload {
+    source_path: String,
+    target_url: String,
     message: String,
     svn_executable: String,
 }
@@ -1257,6 +1274,53 @@ impl TaskQueue {
         Ok(task)
     }
 
+    pub fn create_repository_import_task(
+        &self,
+        request: CreateRepositoryImportTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let source_path = normalize_repository_local_path(
+            &request.source_path,
+            "REPOSITORY_IMPORT_SOURCE",
+            "Import 本地源路径",
+        )?;
+        validate_repository_import_source(Path::new(&source_path))?;
+        let target_url = normalize_repository_url(&request.target_url)?;
+        let message = request.message.trim().to_string();
+        if message.is_empty() {
+            return Err(NovaError::command(
+                "REPOSITORY_IMPORT_MESSAGE_REQUIRED",
+                "请输入 Repository Import 的提交信息",
+                None,
+                true,
+            ));
+        }
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!("Import 到 {}", compact_repository_url(&target_url)),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "Repository Import 任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::RepositoryImport(RepositoryImportTaskPayload {
+                source_path,
+                target_url,
+                message,
+                svn_executable,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
     pub fn create_branch_checkout_task(
         &self,
         request: CreateBranchCheckoutTaskRequest,
@@ -1766,6 +1830,9 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
             }
             TaskPayload::RepositoryMkdir(payload) => {
                 run_repository_mkdir_task(&state, &task_id, payload)
+            }
+            TaskPayload::RepositoryImport(payload) => {
+                run_repository_import_task(&state, &task_id, payload)
             }
             TaskPayload::BranchCheckout(payload) => {
                 run_branch_checkout_task(&state, &task_id, payload)
@@ -3316,6 +3383,80 @@ fn run_repository_mkdir_task(
                 task_id,
                 TaskStatus::Failed,
                 "创建仓库目录失败",
+                Some(command_error_detail(&payload.svn_executable, &output)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN 命令启动失败",
+                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            );
+        }
+    }
+}
+
+fn run_repository_import_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: RepositoryImportTaskPayload,
+) {
+    update_task(
+        state,
+        task_id,
+        TaskStatus::Running,
+        "Repository Import 开始执行",
+        None,
+    );
+    if let Err(error) = validate_repository_import_source(Path::new(&payload.source_path)) {
+        update_task(
+            state,
+            task_id,
+            TaskStatus::Failed,
+            "Repository Import 本地源不可用",
+            Some(error.to_string()),
+        );
+        return;
+    }
+    append_task_log(
+        state,
+        task_id,
+        &format!(
+            "执行 svn import：{} -> {}",
+            payload.source_path, payload.target_url
+        ),
+    );
+
+    let target = repository_url_with_peg_revision(&payload.target_url, None);
+    let output = Command::new(&payload.svn_executable)
+        .arg("import")
+        .arg("-m")
+        .arg(&payload.message)
+        .arg("--")
+        .arg(&payload.source_path)
+        .arg(target)
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                "Repository Import 成功",
+                None,
+            );
+        }
+        Ok(output) => {
+            append_command_output(state, task_id, &output);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "Repository Import 失败",
                 Some(command_error_detail(&payload.svn_executable, &output)),
             );
         }
@@ -5933,6 +6074,39 @@ fn validate_export_destination(path: &Path) -> Result<(), NovaError> {
     validate_repository_local_destination(path, "REPOSITORY_EXPORT", "Export")
 }
 
+fn validate_repository_import_source(path: &Path) -> Result<(), NovaError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        let code = if error.kind() == std::io::ErrorKind::NotFound {
+            "REPOSITORY_IMPORT_SOURCE_MISSING"
+        } else {
+            "REPOSITORY_IMPORT_SOURCE_UNAVAILABLE"
+        };
+        NovaError::command(
+            code,
+            "Repository Import 本地源不可用",
+            Some(format!("读取路径 `{}` 失败：{error}", path.display())),
+            true,
+        )
+    })?;
+    if metadata.file_type().is_symlink() || metadata_is_reparse_point(&metadata) {
+        return Err(NovaError::command(
+            "REPOSITORY_IMPORT_SOURCE_UNSAFE",
+            "Repository Import 本地源不可用",
+            Some("本地源不能是符号链接或 reparse point。".to_string()),
+            true,
+        ));
+    }
+    if !metadata.is_file() && !metadata.is_dir() {
+        return Err(NovaError::command(
+            "REPOSITORY_IMPORT_SOURCE_UNSUPPORTED",
+            "Repository Import 本地源类型不受支持",
+            Some(format!("路径 `{}` 不是普通文件或目录。", path.display())),
+            true,
+        ));
+    }
+    Ok(())
+}
+
 fn validate_repository_local_destination(
     path: &Path,
     code_prefix: &str,
@@ -6970,6 +7144,78 @@ mod tests {
         assert!(matches!(
             missing_message,
             NovaError::Command { ref code, .. } if code == "REPOSITORY_MKDIR_MESSAGE_REQUIRED"
+        ));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn imports_local_file_and_directory_into_repository() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("repository-import-integration");
+        let repository = root.join("repository");
+        let source_dir = root.join("导入目录");
+        let source_file = root.join("单文件.txt");
+        fs::create_dir_all(source_dir.join("nested")).expect("create import source directory");
+        fs::write(source_dir.join("nested/note.txt"), "directory content")
+            .expect("write directory import source");
+        fs::write(&source_file, "single file content").expect("write file import source");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        let queue = TaskQueue::new();
+
+        let directory_task = queue
+            .create_repository_import_task(CreateRepositoryImportTaskRequest {
+                source_path: source_dir.display().to_string(),
+                target_url: format!("{repository_url}/assets"),
+                message: "导入目录".to_string(),
+                svn_executable: None,
+            })
+            .expect("create directory import task");
+        let directory_task = wait_for_test_task(&queue, &directory_task.task_id);
+        assert!(
+            matches!(directory_task.status, TaskStatus::Success),
+            "导入目录失败：{:?}",
+            directory_task.error
+        );
+
+        let file_task = queue
+            .create_repository_import_task(CreateRepositoryImportTaskRequest {
+                source_path: source_file.display().to_string(),
+                target_url: format!("{repository_url}/单文件.txt"),
+                message: "导入单文件".to_string(),
+                svn_executable: None,
+            })
+            .expect("create file import task");
+        let file_task = wait_for_test_task(&queue, &file_task.task_id);
+        assert!(
+            matches!(file_task.status, TaskStatus::Success),
+            "导入文件失败：{:?}",
+            file_task.error
+        );
+
+        let directory_content = Command::new("svn")
+            .arg("cat")
+            .arg(format!("{repository_url}/assets/nested/note.txt"))
+            .output()
+            .expect("read imported directory file");
+        assert!(directory_content.status.success());
+        assert_eq!(directory_content.stdout, b"directory content");
+        let file_content = Command::new("svn")
+            .arg("cat")
+            .arg(format!("{repository_url}/单文件.txt"))
+            .output()
+            .expect("read imported single file");
+        assert!(file_content.status.success());
+        assert_eq!(file_content.stdout, b"single file content");
+
+        let missing = validate_repository_import_source(&root.join("missing"))
+            .expect_err("missing import source must fail");
+        assert!(matches!(
+            missing,
+            NovaError::Command { ref code, .. } if code == "REPOSITORY_IMPORT_SOURCE_MISSING"
         ));
         fs::remove_dir_all(root).ok();
     }

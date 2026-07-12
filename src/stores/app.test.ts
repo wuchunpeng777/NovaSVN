@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../lib/api", () => ({
   chooseCheckoutDirectory: vi.fn(),
   chooseExportDirectory: vi.fn(),
+  chooseImportSource: vi.fn(),
   createApplyPatchTask: vi.fn(),
   createMergeTask: vi.fn(),
   createRepositoryCheckoutTask: vi.fn(),
   createRepositoryExportTask: vi.fn(),
   createRepositoryFileTask: vi.fn(),
   createRepositoryListTask: vi.fn(),
+  createRepositoryImportTask: vi.fn(),
   createRepositoryMkdirTask: vi.fn(),
   createRevertRevisionTask: vi.fn(),
   createRevisionDiffTask: vi.fn(),
@@ -40,12 +42,14 @@ import { get } from "svelte/store";
 import {
   chooseCheckoutDirectory,
   chooseExportDirectory,
+  chooseImportSource,
   createApplyPatchTask,
   createMergeTask,
   createRepositoryCheckoutTask,
   createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
+  createRepositoryImportTask,
   createRepositoryMkdirTask,
   createRevertRevisionTask,
   createRevisionDiffTask,
@@ -99,12 +103,14 @@ import {
 
 const chooseCheckoutDirectoryMock = vi.mocked(chooseCheckoutDirectory);
 const chooseExportDirectoryMock = vi.mocked(chooseExportDirectory);
+const chooseImportSourceMock = vi.mocked(chooseImportSource);
 const createApplyPatchTaskMock = vi.mocked(createApplyPatchTask);
 const createMergeTaskMock = vi.mocked(createMergeTask);
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
 const createRepositoryExportTaskMock = vi.mocked(createRepositoryExportTask);
 const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
+const createRepositoryImportTaskMock = vi.mocked(createRepositoryImportTask);
 const createRepositoryMkdirTaskMock = vi.mocked(createRepositoryMkdirTask);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
@@ -133,12 +139,14 @@ const setSvnPropertyMock = vi.mocked(setSvnProperty);
 beforeEach(() => {
   chooseCheckoutDirectoryMock.mockReset();
   chooseExportDirectoryMock.mockReset();
+  chooseImportSourceMock.mockReset();
   createApplyPatchTaskMock.mockReset();
   createMergeTaskMock.mockReset();
   createRepositoryCheckoutTaskMock.mockReset();
   createRepositoryExportTaskMock.mockReset();
   createRepositoryFileTaskMock.mockReset();
   createRepositoryListTaskMock.mockReset();
+  createRepositoryImportTaskMock.mockReset();
   createRepositoryMkdirTaskMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
   createRevisionDiffTaskMock.mockReset();
@@ -1013,6 +1021,55 @@ describe("taskStore repository list tasks", () => {
       pendingRepositoryMkdirTaskId: null,
       pendingRepositoryMkdirParentUrl: null,
       repositoryMkdirError: "目录已存在",
+    });
+  });
+
+  it("chooses repository import source and tracks its refresh parent", async () => {
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk",
+      revision: "12",
+      entries: [],
+    });
+    chooseImportSourceMock.mockResolvedValue("/Users/me/资料 目录");
+    await workspaceStore.chooseRepositoryImportSource(true);
+    workspaceStore.setRepositoryImportForm("message", "导入资料");
+    expect(chooseImportSourceMock).toHaveBeenCalledWith(true);
+    expect(get(workspaceStore).repositoryImportForm).toEqual({
+      sourcePath: "/Users/me/资料 目录",
+      targetUrl: "https://example.com/svn/trunk/%E8%B5%84%E6%96%99%20%E7%9B%AE%E5%BD%95",
+      message: "导入资料",
+    });
+
+    createRepositoryImportTaskMock.mockResolvedValue(makeTask({ task_id: "repository-import" }));
+    const task = await taskStore.createRepositoryImport({
+      sourcePath: "/Users/me/资料 目录",
+      targetUrl: "https://example.com/svn/trunk/assets",
+      message: "导入资料",
+      svnExecutable: "svn",
+    });
+    expect(task?.task_id).toBe("repository-import");
+    expect(createRepositoryImportTaskMock).toHaveBeenCalledWith({
+      source_path: "/Users/me/资料 目录",
+      target_url: "https://example.com/svn/trunk/assets",
+      message: "导入资料",
+      svn_executable: "svn",
+    });
+
+    workspaceStore.markRepositoryImportTask(
+      "repository-import",
+      "https://example.com/svn/trunk",
+    );
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryImportTaskId: "repository-import",
+      pendingRepositoryImportParentUrl: "https://example.com/svn/trunk",
+      repositoryImportError: null,
+    });
+    workspaceStore.completeRepositoryImportTask();
+    expect(get(workspaceStore)).toMatchObject({
+      pendingRepositoryImportTaskId: null,
+      pendingRepositoryImportParentUrl: null,
+      repositoryImportForm: { sourcePath: "", targetUrl: "", message: "" },
+      repositoryImportError: null,
     });
   });
 

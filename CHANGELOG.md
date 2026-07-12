@@ -44,6 +44,7 @@
 - Repository 可将当前 URL 按指定 Revision Checkout 到本地空目录，成功后自动打开工作副本。
 - Repository 可将当前 URL 按指定 Revision Export 到本地空目录，导出结果不含 `.svn`，成功后在文件管理器中显示。
 - Repository 可在当前仓库目录下创建远端目录，执行前确认目标与提交信息，成功后刷新父目录。
+- Repository 可选择本地文件或目录 Import 到目标 URL，执行前复检源路径并确认提交信息，成功后刷新父目录。
 - 支持 update、revert、cleanup、Repository Browser、分支/标签识别、分支/标签创建、分支工作副本池、任务工作区和 svn switch。
 - 支持 Log、Revision Diff、分支比较、Lock/Unlock、冲突处理、Merge、SVN Properties 和 Externals。
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。
