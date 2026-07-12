@@ -7,6 +7,7 @@
     FolderOpen,
     GitCompareArrows,
     GitCommitHorizontal,
+    GripVertical,
     History,
     ListChecks,
     LoaderCircle,
@@ -153,6 +154,9 @@
   export let repositoryImportError: string | null = null;
   export let repositoryImportRunning = false;
   export let repositoryImportDropActive = false;
+  export let repositoryDragExportRunning = false;
+  export let repositoryDragExportRunningName: string | null = null;
+  export let repositoryDragExportError: string | null = null;
   export let repositoryMoveForm: {
     sourceUrl: string;
     targetUrl: string;
@@ -466,6 +470,7 @@
   ) => void = () => {};
   export let onChooseRepositoryExportParent: () => void = () => {};
   export let onCreateRepositoryExport: () => void = () => {};
+  export let onDragRepositoryEntry: (name: string) => void = () => {};
 
   export let onRefreshSvnLog: () => void = () => {};
   export let onSvnLogFilterInput: (
@@ -2699,8 +2704,30 @@
                   <span title={entry.date || undefined}>{formatDate(entry.date)}</span>
                   <span></span>
                 </button>
-                {#if entry.kind === "file"}
-                  <div class="repository-row-actions">
+                <div class="repository-row-actions">
+                  <button
+                    type="button"
+                    class="repository-row-action repository-drag-export-handle"
+                    aria-label={`拖出仓库条目 ${entry.name} 执行 Export`}
+                    title={repositoryDragExportRunningName === entry.name
+                      ? `正在准备 ${entry.name}`
+                      : `按住并拖出 ${entry.name} 到文件管理器`}
+                    disabled={repositoryDragExportRunning}
+                    on:pointerdown={(event) => {
+                      if (event.button !== 0) {
+                        return;
+                      }
+                      event.preventDefault();
+                      onDragRepositoryEntry(entry.name);
+                    }}
+                  >
+                    {#if repositoryDragExportRunningName === entry.name}
+                      <LoaderCircle class="spin" size={15} strokeWidth={2} aria-hidden="true" />
+                    {:else}
+                      <GripVertical size={15} strokeWidth={2} aria-hidden="true" />
+                    {/if}
+                  </button>
+                  {#if entry.kind === "file"}
                     <button
                       type="button"
                       class="repository-row-action"
@@ -2731,8 +2758,8 @@
                     >
                       <ListChecks size={15} strokeWidth={2} aria-hidden="true" />
                     </button>
-                  </div>
-                {/if}
+                  {/if}
+                </div>
               </div>
             {/each}
             {#if repositoryEntries.length === 0}
@@ -2742,6 +2769,10 @@
             <article class="empty-state">输入仓库 URL 后开始浏览</article>
           {/if}
         </section>
+
+        {#if repositoryDragExportError}
+          <p class="inline-error">{repositoryDragExportError}</p>
+        {/if}
 
         {#if repositoryFileLog || repositoryFileLogLoading || repositoryFileLogError}
           <section class="repository-file-log-panel" aria-label="仓库文件日志">

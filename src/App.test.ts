@@ -11,6 +11,10 @@ vi.mock("./components/workbench/MonacoDiffViewer.svelte", () => ({
   })),
 }));
 
+vi.mock("@crabnebula/tauri-plugin-drag", () => ({
+  startDrag: vi.fn(),
+}));
+
 vi.mock("./lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/api")>();
   return {
@@ -18,6 +22,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     createRepositoryCheckoutTask: vi.fn(),
     createRepositoryCopyTask: vi.fn(),
     createRepositoryDeleteTask: vi.fn(),
+    createRepositoryDragExportTask: vi.fn(),
     createRepositoryExportTask: vi.fn(),
     createRepositoryFileTask: vi.fn(),
     createRepositoryListTask: vi.fn(),
@@ -44,10 +49,12 @@ vi.mock("./lib/api", async (importOriginal) => {
 });
 
 import { get } from "svelte/store";
+import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import {
   createRepositoryCheckoutTask,
   createRepositoryCopyTask,
   createRepositoryDeleteTask,
+  createRepositoryDragExportTask,
   createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
@@ -86,6 +93,7 @@ const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
 const createRepositoryCopyTaskMock = vi.mocked(createRepositoryCopyTask);
 const createRepositoryDeleteTaskMock = vi.mocked(createRepositoryDeleteTask);
+const createRepositoryDragExportTaskMock = vi.mocked(createRepositoryDragExportTask);
 const createRepositoryExportTaskMock = vi.mocked(createRepositoryExportTask);
 const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
@@ -107,12 +115,14 @@ const openRepositoryTempFileMock = vi.mocked(openRepositoryTempFile);
 const openWorkspaceFileMock = vi.mocked(openWorkspaceFile);
 const openWorkspaceMock = vi.mocked(openWorkspace);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
+const startDragMock = vi.mocked(startDrag);
 
 beforeEach(async () => {
   createSvnOperationTaskMock.mockReset();
   createRepositoryCheckoutTaskMock.mockReset();
   createRepositoryCopyTaskMock.mockReset();
   createRepositoryDeleteTaskMock.mockReset();
+  createRepositoryDragExportTaskMock.mockReset();
   createRepositoryExportTaskMock.mockReset();
   createRepositoryFileTaskMock.mockReset();
   createRepositoryListTaskMock.mockReset();
@@ -134,6 +144,8 @@ beforeEach(async () => {
   openWorkspaceFileMock.mockReset();
   openWorkspaceMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
+  startDragMock.mockReset();
+  startDragMock.mockResolvedValue(undefined);
 
   listTasksMock.mockResolvedValue(makeTaskSnapshot([]));
   await taskStore.refresh();
@@ -427,6 +439,7 @@ describe("App SVN operation completion", () => {
           entries: [],
         },
         repository_file: null,
+        repository_export: null,
         revision_diff: null,
         merge_result: null,
         apply_patch_result: null,
@@ -507,6 +520,7 @@ describe("App SVN operation completion", () => {
           file_name: "README space.md",
           bytes: 12,
         },
+        repository_export: null,
         revision_diff: null,
         merge_result: null,
         apply_patch_result: null,
@@ -542,6 +556,7 @@ describe("App SVN operation completion", () => {
           file_name: "file.txt",
           bytes: 4,
         },
+        repository_export: null,
         revision_diff: null,
         merge_result: null,
         apply_patch_result: null,
@@ -683,6 +698,84 @@ describe("App SVN operation completion", () => {
       expect(get(workspaceStore).pendingRepositoryExportTaskId).toBeNull();
       expect(get(workspaceStore).repositoryExportError).toBeNull();
     });
+  });
+
+  it("拖出仓库条目先执行真实 Export，再通过原生插件复用本地产物", async () => {
+    setCurrentView("repository");
+    workspaceStore.applyRepositoryListResult({
+      url: "https://example.com/svn/trunk",
+      revision: "10",
+      entries: [
+        {
+          name: "assets",
+          kind: "dir",
+          revision: "9",
+          author: "dev",
+          date: "2026-07-11T01:02:03Z",
+        },
+      ],
+    });
+    const pendingTask = makeTask({ task_id: "repository-drag-export", status: "pending" });
+    createRepositoryDragExportTaskMock.mockResolvedValue(pendingTask);
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-drag-export", status: "pending" }),
+      ]),
+    );
+    render(App);
+
+    const dragHandle = screen.getByRole("button", {
+      name: "拖出仓库条目 assets 执行 Export",
+    });
+    await fireEvent.pointerDown(dragHandle, { button: 0 });
+
+    await waitFor(() => {
+      expect(createRepositoryDragExportTaskMock).toHaveBeenCalledWith({
+        url: "https://example.com/svn/trunk/assets",
+        name: "assets",
+        revision: "10",
+        svn_executable: undefined,
+      });
+      expect(dragHandle).toBeDisabled();
+    });
+
+    const completedTask = makeTask({
+      task_id: "repository-drag-export",
+      status: "success",
+      result: {
+        repository_list: null,
+        repository_file: null,
+        repository_export: {
+          url: "https://example.com/svn/trunk/assets",
+          revision: "10",
+          local_path: "C:/data/repository-drag-exports/task-1/assets",
+          file_name: "assets",
+        },
+        revision_diff: null,
+        merge_result: null,
+        apply_patch_result: null,
+      },
+    });
+    listTasksMock.mockResolvedValue(
+      makeTaskSnapshot([
+        makeTaskSummary({ task_id: "repository-drag-export", status: "success" }),
+      ]),
+    );
+    getTaskMock.mockResolvedValue(completedTask);
+    await taskStore.refresh();
+
+    await waitFor(() => {
+      expect(startDragMock).toHaveBeenCalledWith({
+        item: ["C:/data/repository-drag-exports/task-1/assets"],
+        icon: expect.stringContaining("data:image/png;base64,"),
+        mode: "copy",
+      });
+      expect(dragHandle).toBeEnabled();
+    });
+
+    await fireEvent.pointerDown(dragHandle, { button: 0 });
+    await waitFor(() => expect(startDragMock).toHaveBeenCalledTimes(2));
+    expect(createRepositoryDragExportTaskMock).toHaveBeenCalledOnce();
   });
 
   it("创建仓库目录要求确认并在成功后刷新原父目录", async () => {

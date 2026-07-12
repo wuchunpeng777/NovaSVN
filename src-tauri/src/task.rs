@@ -269,6 +269,14 @@ pub struct CreateRepositoryExportTaskRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct CreateRepositoryDragExportTaskRequest {
+    pub url: String,
+    pub name: String,
+    pub revision: Option<String>,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateSvnSwitchTaskRequest {
     pub working_copy_root: String,
     pub target_url: String,
@@ -327,9 +335,18 @@ pub struct CreateApplyPatchTaskRequest {
 pub struct TaskResult {
     pub repository_list: Option<RepositoryListResult>,
     pub repository_file: Option<RepositoryFileResult>,
+    pub repository_export: Option<RepositoryExportResult>,
     pub revision_diff: Option<RevisionDiffResult>,
     pub merge_result: Option<MergeResult>,
     pub apply_patch_result: Option<ApplyPatchResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RepositoryExportResult {
+    pub url: String,
+    pub revision: Option<String>,
+    pub local_path: String,
+    pub file_name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -574,6 +591,7 @@ struct RepositoryExportTaskPayload {
     local_path: String,
     revision: Option<String>,
     svn_executable: String,
+    cleanup_on_failure: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1579,6 +1597,69 @@ impl TaskQueue {
                 local_path,
                 revision,
                 svn_executable,
+                cleanup_on_failure: false,
+            }),
+        };
+
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
+    pub fn create_repository_drag_export_task(
+        &self,
+        app: &AppHandle,
+        request: CreateRepositoryDragExportTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let url = normalize_repository_url(&request.url)?;
+        let revision = normalize_optional_revision_value(
+            request.revision.as_deref(),
+            "REPOSITORY_DRAG_EXPORT_REVISION_INVALID",
+            "仓库拖出 Export Revision 无效",
+        )?;
+        let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        let file_name = normalize_repository_drag_export_name(&request.name)?;
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let output_dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|error| {
+                NovaError::command(
+                    "APP_DATA_DIR_FAILED",
+                    "无法获取应用数据目录",
+                    Some(error.to_string()),
+                    true,
+                )
+            })?
+            .join("repository-drag-exports")
+            .join(format!("{}-{task_id}", timestamp_millis()));
+        fs::create_dir_all(&output_dir).map_err(|error| {
+            NovaError::command(
+                "REPOSITORY_DRAG_EXPORT_DIRECTORY_FAILED",
+                "无法创建仓库拖出临时目录",
+                Some(format!("路径：{}；错误：{error}", output_dir.display())),
+                true,
+            )
+        })?;
+        let local_path = output_dir.join(file_name).display().to_string();
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!("拖出 Export {}", compact_repository_url(&url)),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "仓库拖出 Export 任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::RepositoryExport(RepositoryExportTaskPayload {
+                url,
+                local_path,
+                revision,
+                svn_executable,
+                cleanup_on_failure: true,
             }),
         };
 
@@ -3126,6 +3207,7 @@ fn run_repository_list_task(
                         TaskResult {
                             repository_list: Some(result),
                             repository_file: None,
+                            repository_export: None,
                             revision_diff: None,
                             merge_result: None,
                             apply_patch_result: None,
@@ -3272,6 +3354,7 @@ fn run_repository_file_task(
                         file_name,
                         bytes,
                     }),
+                    repository_export: None,
                     revision_diff: None,
                     merge_result: None,
                     apply_patch_result: None,
@@ -3900,6 +3983,7 @@ fn run_revision_diff_task(
                 TaskResult {
                     repository_list: None,
                     repository_file: None,
+                    repository_export: None,
                     revision_diff: Some(result),
                     merge_result: None,
                     apply_patch_result: None,
@@ -4194,6 +4278,7 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
                 TaskResult {
                     repository_list: None,
                     repository_file: None,
+                    repository_export: None,
                     revision_diff: None,
                     merge_result: Some(result),
                     apply_patch_result: None,
@@ -4441,6 +4526,7 @@ fn set_apply_patch_result(
         TaskResult {
             repository_list: None,
             repository_file: None,
+            repository_export: None,
             revision_diff: None,
             merge_result: None,
             apply_patch_result: Some(ApplyPatchResult {
@@ -4614,6 +4700,7 @@ fn run_repository_export_task(
         None,
     );
     if let Err(error) = validate_export_destination(Path::new(&payload.local_path)) {
+        cleanup_repository_drag_export(&payload);
         update_task(
             state,
             task_id,
@@ -4644,6 +4731,29 @@ fn run_repository_export_task(
     match command.output() {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
+            let local_path = Path::new(&payload.local_path);
+            let file_name = local_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("repository-export")
+                .to_string();
+            set_task_result(
+                state,
+                task_id,
+                TaskResult {
+                    repository_list: None,
+                    repository_file: None,
+                    repository_export: Some(RepositoryExportResult {
+                        url: payload.url.clone(),
+                        revision: payload.revision.clone(),
+                        local_path: payload.local_path.clone(),
+                        file_name,
+                    }),
+                    revision_diff: None,
+                    merge_result: None,
+                    apply_patch_result: None,
+                },
+            );
             update_task(
                 state,
                 task_id,
@@ -4653,6 +4763,7 @@ fn run_repository_export_task(
             );
         }
         Ok(output) => {
+            cleanup_repository_drag_export(&payload);
             append_command_output(state, task_id, &output);
             update_task(
                 state,
@@ -4663,6 +4774,7 @@ fn run_repository_export_task(
             );
         }
         Err(error) => {
+            cleanup_repository_drag_export(&payload);
             update_task(
                 state,
                 task_id,
@@ -4671,6 +4783,15 @@ fn run_repository_export_task(
                 Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
             );
         }
+    }
+}
+
+fn cleanup_repository_drag_export(payload: &RepositoryExportTaskPayload) {
+    if !payload.cleanup_on_failure {
+        return;
+    }
+    if let Some(parent) = Path::new(&payload.local_path).parent() {
+        fs::remove_dir_all(parent).ok();
     }
 }
 
@@ -6318,6 +6439,74 @@ fn normalize_export_path(path: &str) -> Result<String, NovaError> {
     normalize_repository_local_path(path, "EXPORT_PATH", "本地导出路径")
 }
 
+fn normalize_repository_drag_export_name(name: &str) -> Result<String, NovaError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(NovaError::command(
+            "REPOSITORY_DRAG_EXPORT_NAME_REQUIRED",
+            "仓库拖出条目名称不能为空",
+            None,
+            true,
+        ));
+    }
+
+    let mut normalized = trimmed
+        .chars()
+        .take(180)
+        .map(|character| {
+            if character.is_control()
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+            {
+                '_'
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    normalized = normalized.trim_end_matches([' ', '.']).to_string();
+    if normalized.is_empty() || normalized == "." || normalized == ".." {
+        normalized = "repository-export".to_string();
+    }
+
+    let stem = normalized
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    if matches!(
+        stem.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    ) {
+        normalized.insert(0, '_');
+    }
+
+    Ok(normalized)
+}
+
 fn normalize_repository_local_path(
     path: &str,
     code_prefix: &str,
@@ -7898,18 +8087,90 @@ mod tests {
                 local_path: export_target.display().to_string(),
                 revision: Some("1".to_string()),
                 svn_executable: "svn".to_string(),
+                cleanup_on_failure: false,
             },
         );
 
         let task = state.lock().unwrap().tasks[0].clone();
         assert!(matches!(task.status, TaskStatus::Success));
+        let result = task
+            .result
+            .and_then(|result| result.repository_export)
+            .expect("repository export result");
+        assert_eq!(result.local_path, export_target.display().to_string());
+        assert_eq!(result.file_name, "export-target");
         assert!(export_target.join("note.txt").is_file());
         assert!(!export_target.join(".svn").exists());
         assert_eq!(
             fs::read_to_string(export_target.join("note.txt")).expect("read exported note"),
             "revision one"
         );
+
+        let drag_container = root.join("drag-export-file");
+        fs::create_dir_all(&drag_container).expect("create drag export container");
+        let drag_target = drag_container.join("报告.txt");
+        let drag_state = repository_file_test_state("repository-drag-export");
+        run_repository_export_task(
+            &drag_state,
+            "repository-drag-export",
+            RepositoryExportTaskPayload {
+                url: format!("{repository_url}/history/note.txt"),
+                local_path: drag_target.display().to_string(),
+                revision: Some("1".to_string()),
+                svn_executable: "svn".to_string(),
+                cleanup_on_failure: true,
+            },
+        );
+        let drag_task = drag_state.lock().unwrap().tasks[0].clone();
+        assert!(matches!(drag_task.status, TaskStatus::Success));
+        let drag_result = drag_task
+            .result
+            .and_then(|result| result.repository_export)
+            .expect("repository drag export result");
+        assert_eq!(drag_result.local_path, drag_target.display().to_string());
+        assert_eq!(drag_result.file_name, "报告.txt");
+        assert_eq!(
+            fs::read_to_string(&drag_target).expect("read drag exported file"),
+            "revision one"
+        );
+
+        let failed_container = root.join("failed-drag-export");
+        fs::create_dir_all(&failed_container).expect("create failed drag export container");
+        let failed_state = repository_file_test_state("repository-drag-export-failed");
+        run_repository_export_task(
+            &failed_state,
+            "repository-drag-export-failed",
+            RepositoryExportTaskPayload {
+                url: format!("{repository_url}/history"),
+                local_path: failed_container.join("history").display().to_string(),
+                revision: Some("1".to_string()),
+                svn_executable: "missing-svn-executable".to_string(),
+                cleanup_on_failure: true,
+            },
+        );
+        assert!(matches!(
+            failed_state.lock().unwrap().tasks[0].status,
+            TaskStatus::Failed
+        ));
+        assert!(!failed_container.exists());
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn normalizes_repository_drag_export_names_for_all_platforms() {
+        assert_eq!(
+            normalize_repository_drag_export_name("报告 2026.txt").unwrap(),
+            "报告 2026.txt"
+        );
+        assert_eq!(
+            normalize_repository_drag_export_name("../../bad:name?.txt").unwrap(),
+            ".._.._bad_name_.txt"
+        );
+        assert_eq!(
+            normalize_repository_drag_export_name("CON.txt").unwrap(),
+            "_CON.txt"
+        );
+        assert!(normalize_repository_drag_export_name("  ").is_err());
     }
 
     #[test]

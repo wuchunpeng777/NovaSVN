@@ -29,13 +29,13 @@ use task::{
     CreateApplyPatchTaskRequest, CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest,
     CreateMergeTaskRequest, CreateMockTaskRequest, CreatePartialCommitTaskRequest,
     CreateRepositoryCheckoutTaskRequest, CreateRepositoryCopyTaskRequest,
-    CreateRepositoryDeleteTaskRequest, CreateRepositoryExportTaskRequest,
-    CreateRepositoryFileTaskRequest, CreateRepositoryImportTaskRequest,
-    CreateRepositoryListTaskRequest, CreateRepositoryMkdirTaskRequest,
-    CreateRepositoryMoveTaskRequest, CreateRevertRevisionTaskRequest,
-    CreateRevisionDiffTaskRequest, CreateShadowWorkspaceTaskRequest,
-    CreateSvnBatchOperationTaskRequest, CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest,
-    Task, TaskQueue, TaskSnapshot,
+    CreateRepositoryDeleteTaskRequest, CreateRepositoryDragExportTaskRequest,
+    CreateRepositoryExportTaskRequest, CreateRepositoryFileTaskRequest,
+    CreateRepositoryImportTaskRequest, CreateRepositoryListTaskRequest,
+    CreateRepositoryMkdirTaskRequest, CreateRepositoryMoveTaskRequest,
+    CreateRevertRevisionTaskRequest, CreateRevisionDiffTaskRequest,
+    CreateShadowWorkspaceTaskRequest, CreateSvnBatchOperationTaskRequest,
+    CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest, Task, TaskQueue, TaskSnapshot,
 };
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use tauri::{Emitter, Manager};
@@ -658,6 +658,18 @@ fn create_repository_export_task(
 }
 
 #[tauri::command]
+fn create_repository_drag_export_task(
+    app: tauri::AppHandle,
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateRepositoryDragExportTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_repository_drag_export_task command received");
+    Ok(CommandResponse::success(
+        queue.create_repository_drag_export_task(&app, request)?,
+    ))
+}
+
+#[tauri::command]
 fn create_svn_switch_task(
     queue: tauri::State<'_, TaskQueue>,
     request: CreateSvnSwitchTaskRequest,
@@ -956,6 +968,7 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_drag::init())
         .invoke_handler(tauri::generate_handler![
             ping,
             fail_for_preview,
@@ -983,6 +996,7 @@ pub fn run() {
             create_branch_checkout_task,
             create_repository_checkout_task,
             create_repository_export_task,
+            create_repository_drag_export_task,
             create_svn_switch_task,
             create_revision_diff_task,
             create_revert_revision_task,

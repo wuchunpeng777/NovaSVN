@@ -13,6 +13,7 @@ import type {
   CreateRepositoryCheckoutTaskRequest,
   CreateRepositoryCopyTaskRequest,
   CreateRepositoryDeleteTaskRequest,
+  CreateRepositoryDragExportTaskRequest,
   CreateRepositoryExportTaskRequest,
   CreateRepositoryFileTaskRequest,
   CreateRepositoryListTaskRequest,
@@ -247,6 +248,12 @@ export function createRepositoryExportTask(
   request: CreateRepositoryExportTaskRequest,
 ): Promise<Task> {
   return callBackend<Task>("create_repository_export_task", { request });
+}
+
+export function createRepositoryDragExportTask(
+  request: CreateRepositoryDragExportTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_repository_drag_export_task", { request });
 }
 
 export function createRepositoryFileTask(

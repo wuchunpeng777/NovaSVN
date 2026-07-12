@@ -345,9 +345,17 @@ export interface RemoveTaskWorkspaceRequest {
 export interface TaskResult {
   repository_list: RepositoryListResult | null;
   repository_file: RepositoryFileResult | null;
+  repository_export: RepositoryExportResult | null;
   revision_diff: RevisionDiffResult | null;
   merge_result: MergeResult | null;
   apply_patch_result: ApplyPatchResult | null;
+}
+
+export interface RepositoryExportResult {
+  url: string;
+  revision: string | null;
+  local_path: string;
+  file_name: string;
 }
 
 export interface RepositoryListResult {
@@ -532,6 +540,13 @@ export interface CreateRepositoryCheckoutTaskRequest {
 export interface CreateRepositoryExportTaskRequest {
   url: string;
   local_path: string;
+  revision?: string;
+  svn_executable?: string;
+}
+
+export interface CreateRepositoryDragExportTaskRequest {
+  url: string;
+  name: string;
   revision?: string;
   svn_executable?: string;
 }

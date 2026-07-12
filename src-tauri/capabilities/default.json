@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default permissions for NovaSVN desktop window",
   "windows": ["main"],
-  "permissions": ["dialog:default"]
+  "permissions": ["dialog:default", "drag:default"]
 }

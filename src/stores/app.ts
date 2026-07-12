@@ -14,6 +14,7 @@ import {
   createRepositoryCheckoutTask,
   createRepositoryCopyTask,
   createRepositoryDeleteTask,
+  createRepositoryDragExportTask,
   createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
@@ -643,6 +644,34 @@ function createTaskStore() {
     }
   }
 
+  async function createRepositoryDragExport(request: {
+    url: string;
+    name: string;
+    revision?: string | null;
+    svnExecutable?: string | null;
+  }) {
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const task = await createRepositoryDragExportTask({
+        url: request.url,
+        name: request.name,
+        revision: request.revision || undefined,
+        svn_executable: request.svnExecutable || undefined,
+      });
+      selectedTaskId = task.task_id;
+      await refresh();
+      return task;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function createSvnSwitch(request: {
     workingCopyRoot: string;
     targetUrl: string;
@@ -933,6 +962,7 @@ function createTaskStore() {
     createBranchCheckout,
     createRepositoryCheckout,
     createRepositoryExport,
+    createRepositoryDragExport,
     createSvnSwitch,
     createRevisionDiff,
     createRevertRevision,

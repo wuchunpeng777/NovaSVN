@@ -3,6 +3,8 @@
   import { get } from "svelte/store";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { startDrag } from "@crabnebula/tauri-plugin-drag";
+  import dragPreviewIcon from "../src-tauri/icons/icon.png?inline";
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
   import {
     callBackend,
@@ -38,6 +40,7 @@
     CommandError,
     ExternalToolKind,
     HealthPayload,
+    RepositoryExportResult,
     SvnBatchOperationKind,
     SvnOperationKind,
     Task,
@@ -50,6 +53,11 @@
   let unlistenAppMenu: UnlistenFn | null = null;
   let unlistenDragDrop: UnlistenFn | null = null;
   let repositoryImportDropActive = false;
+  let pendingRepositoryDragExportTaskId: string | null = null;
+  let repositoryDragExportPrepared: RepositoryExportResult | null = null;
+  let repositoryDragExportError: string | null = null;
+  let repositoryDragExportStarting = false;
+  let repositoryDragExportRunningName: string | null = null;
   let activeWorkspacePath: string | null = null;
   let appMenuState: AppMenuState;
   let queuedAppMenuState: AppMenuState | null = null;
@@ -904,6 +912,57 @@
     workspaceStore.markRepositoryExportTask(task.task_id, form.localPath);
   }
 
+  async function startRepositoryEntryDrag(result: RepositoryExportResult) {
+    repositoryDragExportError = null;
+    try {
+      await startDrag({
+        item: [result.local_path],
+        icon: dragPreviewIcon,
+        mode: "copy",
+      });
+    } catch (error) {
+      repositoryDragExportPrepared = null;
+      const message =
+        typeof error === "object" && error !== null && "message" in error
+          ? String(error.message)
+          : String(error);
+      repositoryDragExportError = message || "无法启动系统文件拖拽";
+    }
+  }
+
+  async function dragRepositoryEntry(name: string) {
+    const repositoryList = $workspaceStore.repositoryList;
+    if (!repositoryList || repositoryDragExportStarting || pendingRepositoryDragExportTaskId) {
+      return;
+    }
+    const url = joinRepositoryUrl(repositoryList.url, name);
+    const revision = repositoryList.revision;
+    if (
+      repositoryDragExportPrepared?.url === url &&
+      repositoryDragExportPrepared.revision === revision
+    ) {
+      await startRepositoryEntryDrag(repositoryDragExportPrepared);
+      return;
+    }
+
+    repositoryDragExportStarting = true;
+    repositoryDragExportRunningName = name;
+    repositoryDragExportError = null;
+    const task = await taskStore.createRepositoryDragExport({
+      url,
+      name,
+      revision,
+      svnExecutable: currentSvnExecutable(),
+    });
+    repositoryDragExportStarting = false;
+    if (!task) {
+      repositoryDragExportRunningName = null;
+      repositoryDragExportError = $taskStore.error?.message ?? "仓库拖出 Export 任务创建失败";
+      return;
+    }
+    pendingRepositoryDragExportTaskId = task.task_id;
+  }
+
   async function checkoutBranchPoolEntry() {
     const form = $branchPoolStore.form;
     if (!form.branchUrl.trim() || !form.localPath.trim()) {
@@ -1720,6 +1779,29 @@
   );
 
   $: consumePendingTask(
+    pendingRepositoryDragExportTaskId,
+    $taskStore.snapshot,
+    async (task) => {
+      pendingRepositoryDragExportTaskId = null;
+      repositoryDragExportRunningName = null;
+      if (task.status !== "success") {
+        repositoryDragExportError = task.error ?? "仓库拖出 Export 失败";
+        return;
+      }
+      const result = task.result?.repository_export;
+      if (!result) {
+        repositoryDragExportError = "仓库拖出 Export 任务没有返回本地产物";
+        return;
+      }
+      repositoryDragExportPrepared = result;
+      repositoryDragExportError = null;
+      if ($currentView === "repository") {
+        await startRepositoryEntryDrag(result);
+      }
+    },
+  );
+
+  $: consumePendingTask(
     $branchPoolStore.pendingCheckoutTaskId,
     $taskStore.snapshot,
     (task) => {
@@ -1995,6 +2077,11 @@
   repositoryImportError={$workspaceStore.repositoryImportError}
   repositoryImportRunning={$workspaceStore.pendingRepositoryImportTaskId !== null}
   repositoryImportDropActive={repositoryImportDropActive}
+  repositoryDragExportRunning={
+    repositoryDragExportStarting || pendingRepositoryDragExportTaskId !== null
+  }
+  repositoryDragExportError={repositoryDragExportError}
+  repositoryDragExportRunningName={repositoryDragExportRunningName}
   repositoryMoveForm={$workspaceStore.repositoryMoveForm}
   repositoryMoveError={$workspaceStore.repositoryMoveError}
   repositoryMoveRunning={$workspaceStore.pendingRepositoryMoveTaskId !== null}
@@ -2191,6 +2278,7 @@
   onPrepareRepositoryExport={workspaceStore.prepareRepositoryExport}
   onChooseRepositoryExportParent={workspaceStore.chooseRepositoryExportParent}
   onCreateRepositoryExport={createRepositoryExport}
+  onDragRepositoryEntry={dragRepositoryEntry}
   onRefreshSvnLog={() => workspaceStore.refreshSvnLog(currentSvnExecutable())}
   onSvnLogFilterInput={workspaceStore.setSvnLogFilter}
   onSvnLogFileOnlyInput={setSvnLogFileOnlyAndRefresh}

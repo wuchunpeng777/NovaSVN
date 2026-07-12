@@ -56,6 +56,11 @@ const benchmarkScript = fs.readFileSync(
 const benchmarkDoc = fs.readFileSync(path.join(root, "doc", "性能基准.md"), "utf8");
 const syncVersionScript = fs.readFileSync(path.join(root, "scripts", "sync-version.mjs"), "utf8");
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, "src-tauri", "tauri.conf.json"), "utf8"));
+const tauriCargo = fs.readFileSync(path.join(root, "src-tauri", "Cargo.toml"), "utf8");
+const defaultCapability = fs.readFileSync(
+  path.join(root, "src-tauri", "capabilities", "default.json"),
+  "utf8",
+);
 const playwrightConfig = fs.readFileSync(path.join(root, "playwright.config.ts"), "utf8");
 const e2eSmokeSpec = fs.readFileSync(
   path.join(root, "tests", "e2e", "workbench-smoke.spec.ts"),
@@ -623,6 +628,22 @@ if (
   !mainWorkspace.includes("class:repository-drop-active={repositoryImportDropActive}")
 ) {
   console.error("Repository 拖入 Import 必须监听原生拖放、限制单路径、预填目标并显示放置状态");
+  failed = true;
+}
+
+if (
+  packageJson.dependencies?.["@crabnebula/tauri-plugin-drag"] !== "^2.1.0" ||
+  !tauriCargo.includes('tauri-plugin-drag = "2.1.1"') ||
+  !defaultCapability.includes('"drag:default"') ||
+  !tauriLib.includes(".plugin(tauri_plugin_drag::init())") ||
+  !frontendApi.includes('callBackend<Task>("create_repository_drag_export_task"') ||
+  !taskRs.includes("fn normalize_repository_drag_export_name(") ||
+  !taskRs.includes('.join("repository-drag-exports")') ||
+  !mainWorkspace.includes("on:pointerdown={(event) =>") ||
+  !appSvelte.includes("await startDrag({") ||
+  !appSvelte.includes('mode: "copy"')
+) {
+  console.error("Repository 拖出 Export 必须使用受控临时 svn export 和跨平台原生 copy 拖拽");
   failed = true;
 }
 

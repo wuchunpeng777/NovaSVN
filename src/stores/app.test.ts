@@ -9,6 +9,7 @@ vi.mock("../lib/api", () => ({
   createRepositoryCheckoutTask: vi.fn(),
   createRepositoryCopyTask: vi.fn(),
   createRepositoryDeleteTask: vi.fn(),
+  createRepositoryDragExportTask: vi.fn(),
   createRepositoryExportTask: vi.fn(),
   createRepositoryFileTask: vi.fn(),
   createRepositoryListTask: vi.fn(),
@@ -51,6 +52,7 @@ import {
   createRepositoryCheckoutTask,
   createRepositoryCopyTask,
   createRepositoryDeleteTask,
+  createRepositoryDragExportTask,
   createRepositoryExportTask,
   createRepositoryFileTask,
   createRepositoryListTask,
@@ -115,6 +117,7 @@ const createMergeTaskMock = vi.mocked(createMergeTask);
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
 const createRepositoryCopyTaskMock = vi.mocked(createRepositoryCopyTask);
 const createRepositoryDeleteTaskMock = vi.mocked(createRepositoryDeleteTask);
+const createRepositoryDragExportTaskMock = vi.mocked(createRepositoryDragExportTask);
 const createRepositoryExportTaskMock = vi.mocked(createRepositoryExportTask);
 const createRepositoryFileTaskMock = vi.mocked(createRepositoryFileTask);
 const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
@@ -154,6 +157,7 @@ beforeEach(() => {
   createRepositoryCheckoutTaskMock.mockReset();
   createRepositoryCopyTaskMock.mockReset();
   createRepositoryDeleteTaskMock.mockReset();
+  createRepositoryDragExportTaskMock.mockReset();
   createRepositoryExportTaskMock.mockReset();
   createRepositoryFileTaskMock.mockReset();
   createRepositoryListTaskMock.mockReset();
@@ -1385,6 +1389,23 @@ describe("taskStore repository list tasks", () => {
     expect(createRepositoryExportTaskMock).toHaveBeenCalledWith({
       url: "https://example.com/svn/trunk",
       local_path: "/Users/me/out/svn-trunk",
+      revision: "12",
+      svn_executable: "svn",
+    });
+
+    createRepositoryDragExportTaskMock.mockResolvedValue(
+      makeTask({ task_id: "repository-drag-export" }),
+    );
+    const dragTask = await taskStore.createRepositoryDragExport({
+      url: "https://example.com/svn/trunk/报告.txt",
+      name: "报告.txt",
+      revision: "12",
+      svnExecutable: "svn",
+    });
+    expect(dragTask?.task_id).toBe("repository-drag-export");
+    expect(createRepositoryDragExportTaskMock).toHaveBeenCalledWith({
+      url: "https://example.com/svn/trunk/报告.txt",
+      name: "报告.txt",
       revision: "12",
       svn_executable: "svn",
     });

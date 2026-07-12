@@ -585,6 +585,7 @@ describe("MainWorkspace", () => {
     const onPrepareRepositoryDelete = vi.fn();
     const onCreateRepositoryDelete = vi.fn();
     const onRepositoryDeleteFormInput = vi.fn();
+    const onDragRepositoryEntry = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.repository,
@@ -688,6 +689,7 @@ describe("MainWorkspace", () => {
         onPrepareRepositoryDelete,
         onCreateRepositoryDelete,
         onRepositoryDeleteFormInput,
+        onDragRepositoryEntry,
       },
     });
 
@@ -794,6 +796,23 @@ describe("MainWorkspace", () => {
     await rerender({ repositoryImportDropActive: true });
     expect(repositoryTable).toHaveClass("repository-drop-active");
     expect(repositoryTable).toHaveAttribute("aria-dropeffect", "copy");
+    const directoryDragHandle = screen.getByRole("button", {
+      name: "拖出仓库条目 src 执行 Export",
+    });
+    expect(directoryDragHandle).toHaveAttribute("title", "按住并拖出 src 到文件管理器");
+    await fireEvent.pointerDown(directoryDragHandle, { button: 0 });
+    expect(onDragRepositoryEntry).toHaveBeenCalledWith("src");
+    const fileDragHandle = screen.getByRole("button", {
+      name: "拖出仓库条目 README.md 执行 Export",
+    });
+    await fireEvent.pointerDown(fileDragHandle, { button: 0 });
+    expect(onDragRepositoryEntry).toHaveBeenCalledWith("README.md");
+    await rerender({
+      repositoryDragExportRunning: true,
+      repositoryDragExportRunningName: "README.md",
+    });
+    expect(fileDragHandle).toBeDisabled();
+    expect(fileDragHandle).toHaveAttribute("title", "正在准备 README.md");
     expect(within(repositoryTable).getByText("Last Revision")).toBeInTheDocument();
     const directoryRow = within(repositoryTable).getByText("src", { exact: true }).closest("button")!;
     const directoryMetadata = directoryRow.querySelectorAll("span");

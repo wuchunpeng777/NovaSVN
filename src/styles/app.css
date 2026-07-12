@@ -1560,7 +1560,7 @@ textarea {
 
 .table-head,
 .repository-row {
-  grid-template-columns: minmax(150px, 1fr) 90px 100px 120px 140px 100px;
+  grid-template-columns: minmax(150px, 1fr) 90px 100px 120px 140px 140px;
 }
 
 .repository-row-shell {
@@ -1701,6 +1701,14 @@ textarea {
   border-color: #b8c2cc;
   background: #e9eef3;
   color: #245f96;
+}
+
+.repository-drag-export-handle:not(:disabled) {
+  cursor: grab;
+}
+
+.repository-drag-export-handle:not(:disabled):active {
+  cursor: grabbing;
 }
 
 .repository-file-log-panel,
