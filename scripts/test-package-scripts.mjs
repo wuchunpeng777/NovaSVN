@@ -100,6 +100,12 @@ const taskRs = fs.readFileSync(path.join(root, "src-tauri", "src", "task.rs"), "
 const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 
 const releaseScripts = ["release:windows", "release:macos"];
+const requiredCheckSteps = [
+  "npm run test:components",
+  "npm run test:scripts",
+  "npm run build",
+  "npm run test:rust",
+];
 const requiredBundleTargets = ["nsis", "dmg"];
 const benchmarkScripts = ["benchmark:svn", "benchmark:svn:reset"];
 const e2eSmokeAssertions = [
@@ -130,6 +136,30 @@ const startupActionViewChecks = [
   { action: "branch-workspace", view: "branches" },
 ];
 let failed = false;
+
+const checkCommand = packageJson.scripts?.check;
+if (typeof checkCommand !== "string") {
+  console.error("缺少跨平台统一 npm run check 入口");
+  failed = true;
+} else {
+  let previousStepIndex = -1;
+  for (const step of requiredCheckSteps) {
+    const stepIndex = checkCommand.indexOf(step);
+    if (stepIndex < 0) {
+      console.error(`npm run check 缺少质量门禁：${step}`);
+      failed = true;
+    } else if (stepIndex <= previousStepIndex) {
+      console.error(`npm run check 质量门禁顺序错误：${step}`);
+      failed = true;
+    }
+    previousStepIndex = stepIndex;
+  }
+}
+
+if (packageJson.scripts?.["test:rust"] !== "cargo test --manifest-path src-tauri/Cargo.toml") {
+  console.error("test:rust 必须使用项目内 Cargo manifest，保证各平台入口一致");
+  failed = true;
+}
 
 const tauriWindowMinWidth = tauriConfig.app?.windows?.[0]?.minWidth;
 const cssWindowMinWidth = Number(
