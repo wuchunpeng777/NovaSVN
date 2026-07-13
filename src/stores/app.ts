@@ -109,6 +109,9 @@ export function setCurrentView(view: AppView) {
 
 const initialAppSettings: AppSettingsState = {
   svnExecutable: "",
+  svnAuthenticationMode: "system",
+  svnUsername: "",
+  svnRememberPassword: true,
   diffMode: "side_by_side",
   showWhitespace: false,
   themeMode: "system",
@@ -5412,6 +5415,13 @@ function loadAppSettings(): AppSettingsState {
     return {
       ...initialAppSettings,
       svnExecutable: typeof parsed.svnExecutable === "string" ? parsed.svnExecutable : "",
+      svnAuthenticationMode:
+        parsed.svnAuthenticationMode === "password" || parsed.svnAuthenticationMode === "ssh"
+          ? parsed.svnAuthenticationMode
+          : "system",
+      svnUsername: typeof parsed.svnUsername === "string" ? parsed.svnUsername : "",
+      svnRememberPassword:
+        typeof parsed.svnRememberPassword === "boolean" ? parsed.svnRememberPassword : true,
       diffMode:
         parsed.diffMode === "inline" || parsed.diffMode === "side_by_side"
           ? parsed.diffMode
@@ -5442,6 +5452,7 @@ function loadAppSettings(): AppSettingsState {
       diagnosticExportError: null,
       validationErrors: {
         svnExecutable: validateExecutableSetting(parsed.svnExecutable, "SVN 路径"),
+        svnUsername: validateSvnUsername(parsed.svnUsername),
         branchPoolBasePath: validateOptionalAbsoluteOrHomePath(
           parsed.branchPoolBasePath,
           "工作副本池路径",
@@ -5458,6 +5469,7 @@ function loadAppSettings(): AppSettingsState {
 function emptyAppSettingsValidationErrors() {
   return {
     svnExecutable: null,
+    svnUsername: null,
     branchPoolBasePath: null,
     externalDiffTool: null,
     externalMergeTool: null,
@@ -5490,6 +5502,7 @@ function validateAppSettingsField<K extends keyof AppSettingsState>(
 ) {
   if (
     field !== "svnExecutable" &&
+    field !== "svnUsername" &&
     field !== "branchPoolBasePath" &&
     field !== "externalDiffTool" &&
     field !== "externalMergeTool"
@@ -5500,6 +5513,7 @@ function validateAppSettingsField<K extends keyof AppSettingsState>(
   const settingField = field as keyof AppSettingsState["validationErrors"];
   const labels: Record<keyof AppSettingsState["validationErrors"], string> = {
     svnExecutable: "SVN 路径",
+    svnUsername: "SVN 用户名",
     branchPoolBasePath: "工作副本池路径",
     externalDiffTool: "外部 Diff 工具",
     externalMergeTool: "外部 Merge 工具",
@@ -5512,10 +5526,31 @@ function validateAppSettingsField<K extends keyof AppSettingsState>(
     };
   }
 
+  if (field === "svnUsername") {
+    return {
+      ...current,
+      svnUsername: validateSvnUsername(value),
+    };
+  }
+
   return {
     ...current,
     [settingField]: validateExecutableSetting(value, labels[settingField]),
   };
+}
+
+function validateSvnUsername(value: unknown) {
+  if (typeof value !== "string" || value.trim() === "") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (hasControlCharacter(trimmed)) {
+    return "SVN 用户名不能包含控制字符";
+  }
+  if (new TextEncoder().encode(trimmed).length > 256) {
+    return "SVN 用户名不能超过 256 字节";
+  }
+  return null;
 }
 
 function validateOptionalAbsoluteOrHomePath(value: unknown, label: string) {

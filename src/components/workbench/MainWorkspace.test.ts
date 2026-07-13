@@ -311,6 +311,52 @@ describe("MainWorkspace", () => {
     }
   });
 
+  it("configures system, password, and SSH authentication from preferences", async () => {
+    const onAppSettingInput = vi.fn();
+    const onSvnAuthenticationPasswordInput = vi.fn();
+    const onApplySvnAuthentication = vi.fn();
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.settings,
+        appSettings: makeAppSettings({ svnAuthenticationMode: "system" }),
+        onAppSettingInput,
+        onSvnAuthenticationPasswordInput,
+        onApplySvnAuthentication,
+      },
+    });
+
+    const authControl = screen.getByLabelText("SVN 认证方式");
+    expect(within(authControl).getByRole("button", { name: "系统凭据" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await fireEvent.click(within(authControl).getByRole("button", { name: "SSH" }));
+    expect(onAppSettingInput).toHaveBeenLastCalledWith("svnAuthenticationMode", "ssh");
+
+    await rerender({
+      appSettings: makeAppSettings({
+        svnAuthenticationMode: "password",
+        svnUsername: "alice",
+      }),
+      svnAuthenticationPassword: "temporary-secret",
+      svnAuthenticationStatus: {
+        mode: "password",
+        username: "alice",
+        password_configured: true,
+        uses_system_credentials: false,
+        remember_password: false,
+      },
+    });
+    expect(screen.getByLabelText("用户名")).toHaveValue("alice");
+    const password = screen.getByLabelText("密码");
+    expect(password).toHaveValue("temporary-secret");
+    await fireEvent.input(password, { target: { value: "new-secret" } });
+    expect(onSvnAuthenticationPasswordInput).toHaveBeenCalledWith("new-secret");
+    await fireEvent.click(screen.getByRole("button", { name: "应用认证" }));
+    expect(onApplySvnAuthentication).toHaveBeenCalledOnce();
+    expect(screen.getByText("密码仅用于当前会话")).toBeInTheDocument();
+  });
+
   it("groups filtered Timeline revisions by local calendar date", async () => {
     const onPrepareRevisionDiffFromLog = vi.fn(() => true);
     const onRunRevisionDiff = vi.fn();
@@ -1954,6 +2000,9 @@ function makeComponentTask(taskId: string): Task {
 function makeAppSettings(settings: Partial<AppSettingsState> = {}): AppSettingsState {
   return {
     svnExecutable: "",
+    svnAuthenticationMode: "system",
+    svnUsername: "",
+    svnRememberPassword: true,
     diffMode: "side_by_side",
     showWhitespace: false,
     themeMode: "system",
@@ -1968,6 +2017,7 @@ function makeAppSettings(settings: Partial<AppSettingsState> = {}): AppSettingsS
     diagnosticExportError: null,
     validationErrors: {
       svnExecutable: null,
+      svnUsername: null,
       branchPoolBasePath: null,
       externalDiffTool: null,
       externalMergeTool: null,

@@ -9,6 +9,7 @@
   import {
     callBackend,
     choosePatchFile,
+    configureSvnAuthentication,
     getStartupIntent,
     launchExternalTool,
     openFileLocation,
@@ -41,6 +42,7 @@
     ExternalToolKind,
     HealthPayload,
     RepositoryExportResult,
+    SvnAuthenticationStatus,
     SvnBatchOperationKind,
     SvnOperationKind,
     Task,
@@ -64,6 +66,10 @@
   let appMenuStateSignature = "";
   let appMenuSyncRunning = false;
   let repositoryFileCreating = false;
+  let svnAuthenticationPassword = "";
+  let svnAuthenticationStatus: SvnAuthenticationStatus | null = null;
+  let svnAuthenticationError: CommandError | null = null;
+  let svnAuthenticationLoading = false;
   const repositoryLayoutTaskChecks = new Set<string>();
   const applyPatchTaskChecks = new Set<string>();
   const missingSvnOperationTaskChecks = new Set<string>();
@@ -134,6 +140,26 @@
 
   function currentSvnExecutable() {
     return $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable;
+  }
+
+  async function applySvnAuthentication() {
+    svnAuthenticationLoading = true;
+    svnAuthenticationError = null;
+    const mode = $appSettingsStore.svnAuthenticationMode;
+    try {
+      svnAuthenticationStatus = await configureSvnAuthentication({
+        mode,
+        username: $appSettingsStore.svnUsername.trim() || undefined,
+        password: mode === "password" ? svnAuthenticationPassword : undefined,
+        remember_password:
+          mode === "password" && $appSettingsStore.svnRememberPassword,
+      });
+      svnAuthenticationPassword = "";
+    } catch (error) {
+      svnAuthenticationError = error as CommandError;
+    } finally {
+      svnAuthenticationLoading = false;
+    }
   }
 
   function hasTauriRuntime() {
@@ -2024,6 +2050,9 @@
           unlistenDragDrop = unlisten;
         });
       taskStore.startPolling();
+      if ($appSettingsStore.svnAuthenticationMode !== "password") {
+        void applySvnAuthentication();
+      }
       void svnStore.detectWithInputFallback();
       void workspaceStore.loadRecent().then(() => handleStartupIntent());
       void branchPoolStore.load();
@@ -2194,6 +2223,10 @@
   svnError={$svnStore.error}
   svnExecutableInput={$svnStore.executableInput}
   svnLoading={$svnStore.loading}
+  {svnAuthenticationPassword}
+  {svnAuthenticationStatus}
+  {svnAuthenticationError}
+  {svnAuthenticationLoading}
   appSettings={$appSettingsStore}
   svnSwitchTargetUrl={$workspaceStore.svnSwitchTargetUrl}
   svnSwitchError={$workspaceStore.svnSwitchError}
@@ -2330,6 +2363,8 @@
   onDetectSvn={svnStore.detect}
   onDetectSvnWithInput={detectSvnWithInputAndSave}
   onSvnExecutableInput={svnStore.setExecutableInput}
+  onSvnAuthenticationPasswordInput={(value) => (svnAuthenticationPassword = value)}
+  onApplySvnAuthentication={applySvnAuthentication}
   onAppSettingInput={appSettingsStore.setField}
   onExportDiagnosticLog={appSettingsStore.exportDiagnosticLog}
 />

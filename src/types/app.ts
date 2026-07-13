@@ -47,6 +47,9 @@ export interface ReviewedFileState {
 
 export interface AppSettingsState {
   svnExecutable: string;
+  svnAuthenticationMode: "system" | "password" | "ssh";
+  svnUsername: string;
+  svnRememberPassword: boolean;
   diffMode: "side_by_side" | "inline";
   showWhitespace: boolean;
   themeMode: "system" | "light" | "dark";
@@ -61,6 +64,7 @@ export interface AppSettingsState {
   diagnosticExportError: string | null;
   validationErrors: {
     svnExecutable: string | null;
+    svnUsername: string | null;
     branchPoolBasePath: string | null;
     externalDiffTool: string | null;
     externalMergeTool: string | null;

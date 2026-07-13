@@ -380,6 +380,26 @@ describe("appSettingsStore", () => {
       branchPoolBasePath: "工作副本池路径需要是绝对路径或 ~/ 开头路径",
     });
   });
+
+  it("persists SVN authentication preferences and validates usernames", () => {
+    appSettingsStore.setField("svnAuthenticationMode", "ssh");
+    appSettingsStore.setField("svnUsername", "alice");
+    appSettingsStore.setField("svnRememberPassword", false);
+
+    appSettingsStore.load();
+
+    expect(get(appSettingsStore)).toMatchObject({
+      svnAuthenticationMode: "ssh",
+      svnUsername: "alice",
+      svnRememberPassword: false,
+      validationErrors: { svnUsername: null },
+    });
+
+    appSettingsStore.setField("svnUsername", "alice\nadmin");
+    expect(get(appSettingsStore).validationErrors.svnUsername).toBe(
+      "SVN 用户名不能包含控制字符",
+    );
+  });
 });
 
 describe("workspaceStore svn properties", () => {

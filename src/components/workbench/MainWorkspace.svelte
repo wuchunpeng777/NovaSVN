@@ -39,6 +39,7 @@
     RevisionDiffResult,
     SvnBlame,
     SvnDetection,
+    SvnAuthenticationStatus,
     SvnLog,
     SvnProperties,
     PendingSvnOperationKind,
@@ -321,8 +322,15 @@
   export let svnError: CommandError | null = null;
   export let svnExecutableInput = "";
   export let svnLoading = false;
+  export let svnAuthenticationPassword = "";
+  export let svnAuthenticationStatus: SvnAuthenticationStatus | null = null;
+  export let svnAuthenticationError: CommandError | null = null;
+  export let svnAuthenticationLoading = false;
   export let appSettings: AppSettingsState = {
     svnExecutable: "",
+    svnAuthenticationMode: "system",
+    svnUsername: "",
+    svnRememberPassword: true,
     diffMode: "side_by_side",
     showWhitespace: false,
     themeMode: "system",
@@ -337,6 +345,7 @@
     diagnosticExportError: null,
     validationErrors: {
       svnExecutable: null,
+      svnUsername: null,
       branchPoolBasePath: null,
       externalDiffTool: null,
       externalMergeTool: null,
@@ -540,6 +549,8 @@
   export let onDetectSvn: () => void = () => {};
   export let onDetectSvnWithInput: () => void = () => {};
   export let onSvnExecutableInput: (value: string) => void = () => {};
+  export let onSvnAuthenticationPasswordInput: (value: string) => void = () => {};
+  export let onApplySvnAuthentication: () => void = () => {};
   export let onAppSettingInput: <K extends keyof AppSettingsState>(
     field: K,
     value: AppSettingsState[K],
@@ -3844,6 +3855,96 @@
             {#if appSettings.validationErrors.svnExecutable}
               <p class="inline-error">{appSettings.validationErrors.svnExecutable}</p>
             {/if}
+            <div class="segmented-control svn-auth-control" aria-label="SVN 认证方式">
+              <button
+                type="button"
+                class:active={appSettings.svnAuthenticationMode === "system"}
+                aria-pressed={appSettings.svnAuthenticationMode === "system"}
+                on:click={() => onAppSettingInput("svnAuthenticationMode", "system")}
+              >
+                系统凭据
+              </button>
+              <button
+                type="button"
+                class:active={appSettings.svnAuthenticationMode === "password"}
+                aria-pressed={appSettings.svnAuthenticationMode === "password"}
+                on:click={() => onAppSettingInput("svnAuthenticationMode", "password")}
+              >
+                用户名密码
+              </button>
+              <button
+                type="button"
+                class:active={appSettings.svnAuthenticationMode === "ssh"}
+                aria-pressed={appSettings.svnAuthenticationMode === "ssh"}
+                on:click={() => onAppSettingInput("svnAuthenticationMode", "ssh")}
+              >
+                SSH
+              </button>
+            </div>
+            <label>
+              <span>用户名</span>
+              <input
+                type="text"
+                autocomplete="username"
+                value={appSettings.svnUsername}
+                on:input={(event) =>
+                  onAppSettingInput(
+                    "svnUsername",
+                    (event.currentTarget as HTMLInputElement).value,
+                  )}
+              />
+            </label>
+            {#if appSettings.validationErrors.svnUsername}
+              <p class="inline-error">{appSettings.validationErrors.svnUsername}</p>
+            {/if}
+            {#if appSettings.svnAuthenticationMode === "password"}
+              <label>
+                <span>密码</span>
+                <input
+                  type="password"
+                  autocomplete="current-password"
+                  value={svnAuthenticationPassword}
+                  on:input={(event) =>
+                    onSvnAuthenticationPasswordInput(
+                      (event.currentTarget as HTMLInputElement).value,
+                    )}
+                />
+              </label>
+              <label class="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={appSettings.svnRememberPassword}
+                  on:change={(event) =>
+                    onAppSettingInput(
+                      "svnRememberPassword",
+                      (event.currentTarget as HTMLInputElement).checked,
+                    )}
+                />
+                <span>保存到系统凭据存储</span>
+              </label>
+            {/if}
+            <div class="button-row">
+              <button
+                type="button"
+                class="primary"
+                on:click={onApplySvnAuthentication}
+                disabled={svnAuthenticationLoading || !!appSettings.validationErrors.svnUsername}
+              >
+                {svnAuthenticationLoading ? "应用中" : "应用认证"}
+              </button>
+              {#if svnAuthenticationStatus}
+                <span class="settings-status">
+                  {svnAuthenticationStatus.mode === "password"
+                    ? svnAuthenticationStatus.remember_password
+                      ? "密码已交给系统存储"
+                      : "密码仅用于当前会话"
+                    : svnAuthenticationStatus.mode === "ssh"
+                      ? "使用系统 SSH"
+                      : "使用系统凭据"}
+                </span>
+              {/if}
+            </div>
+            <ErrorNotice error={svnAuthenticationError} />
           </article>
 
           <article>

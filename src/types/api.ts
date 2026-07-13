@@ -441,6 +441,23 @@ export interface SvnDetection {
   resolved_path: string | null;
 }
 
+export type SvnAuthenticationMode = "system" | "password" | "ssh";
+
+export interface ConfigureSvnAuthenticationRequest {
+  mode: SvnAuthenticationMode;
+  username?: string;
+  password?: string;
+  remember_password?: boolean;
+}
+
+export interface SvnAuthenticationStatus {
+  mode: SvnAuthenticationMode;
+  username: string | null;
+  password_configured: boolean;
+  uses_system_credentials: boolean;
+  remember_password: boolean;
+}
+
 export interface DetectSvnRequest {
   executable?: string;
 }

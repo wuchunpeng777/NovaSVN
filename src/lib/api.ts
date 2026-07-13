@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type {
   CommandError,
   CommandResponse,
+  ConfigureSvnAuthenticationRequest,
   BranchPool,
   CreateApplyPatchTaskRequest,
   CreateMergeTaskRequest,
@@ -63,6 +64,7 @@ import type {
   SaveTaskWorkspaceRequest,
   SetSvnPropertyRequest,
   SvnDetection,
+  SvnAuthenticationStatus,
   SvnBlame,
   SvnLog,
   SvnProperties,
@@ -324,6 +326,12 @@ export function cancelTask(taskId: string): Promise<Task> {
 
 export function detectSvn(request: DetectSvnRequest = {}): Promise<SvnDetection> {
   return callBackend<SvnDetection>("detect_svn", { request });
+}
+
+export function configureSvnAuthentication(
+  request: ConfigureSvnAuthenticationRequest,
+): Promise<SvnAuthenticationStatus> {
+  return callBackend<SvnAuthenticationStatus>("configure_svn_authentication", { request });
 }
 
 export function openWorkspace(

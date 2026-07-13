@@ -19,6 +19,7 @@ vi.mock("./lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/api")>();
   return {
     ...actual,
+    configureSvnAuthentication: vi.fn(),
     createMergeTask: vi.fn(),
     createRepositoryCheckoutTask: vi.fn(),
     createRepositoryCopyTask: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock("./lib/api", async (importOriginal) => {
 import { get } from "svelte/store";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import {
+  configureSvnAuthentication,
   createMergeTask,
   createRepositoryCheckoutTask,
   createRepositoryCopyTask,
@@ -80,7 +82,13 @@ import {
   openWorkspace,
   scanWorkspaceStatus,
 } from "./lib/api";
-import { currentView, setCurrentView, taskStore, workspaceStore } from "./stores/app";
+import {
+  appSettingsStore,
+  currentView,
+  setCurrentView,
+  taskStore,
+  workspaceStore,
+} from "./stores/app";
 import type {
   Task,
   TaskSnapshot,
@@ -92,6 +100,7 @@ import type {
 import App from "./App.svelte";
 
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
+const configureSvnAuthenticationMock = vi.mocked(configureSvnAuthentication);
 const createMergeTaskMock = vi.mocked(createMergeTask);
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
 const createRepositoryCopyTaskMock = vi.mocked(createRepositoryCopyTask);
@@ -121,6 +130,7 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 const startDragMock = vi.mocked(startDrag);
 
 beforeEach(async () => {
+  configureSvnAuthenticationMock.mockReset();
   createMergeTaskMock.mockReset();
   createSvnOperationTaskMock.mockReset();
   createRepositoryCheckoutTaskMock.mockReset();
@@ -175,6 +185,36 @@ afterEach(() => {
 });
 
 describe("App SVN operation completion", () => {
+  it("applies password authentication and clears the frontend password", async () => {
+    configureSvnAuthenticationMock.mockResolvedValue({
+      mode: "password",
+      username: "alice",
+      password_configured: true,
+      uses_system_credentials: false,
+      remember_password: false,
+    });
+    appSettingsStore.setField("svnAuthenticationMode", "password");
+    appSettingsStore.setField("svnUsername", "alice");
+    appSettingsStore.setField("svnRememberPassword", false);
+    setCurrentView("settings");
+    render(App);
+
+    const passwordInput = screen.getByLabelText("密码");
+    await fireEvent.input(passwordInput, { target: { value: "temporary-secret" } });
+    await fireEvent.click(screen.getByRole("button", { name: "应用认证" }));
+
+    await waitFor(() =>
+      expect(configureSvnAuthenticationMock).toHaveBeenCalledWith({
+        mode: "password",
+        username: "alice",
+        password: "temporary-secret",
+        remember_password: false,
+      }),
+    );
+    await waitFor(() => expect(passwordInput).toHaveValue(""));
+    expect(screen.getByText("密码仅用于当前会话")).toBeInTheDocument();
+  });
+
   it("创建带 revision 范围和 tracking 参数的 Merge 任务", async () => {
     createMergeTaskMock.mockResolvedValue(makeTask({ task_id: "merge-create" }));
     workspaceStore.setMergeForm("sourceUrl", "https://example.com/svn/branches/feature");

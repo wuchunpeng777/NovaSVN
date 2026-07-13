@@ -23,7 +23,10 @@ use external_tool::{
     OpenWorkspaceFile, OpenWorkspaceFileRequest,
 };
 use shadow::{ShadowWorkspaceRequest, ShadowWorkspaceStatus};
-use svn::{DetectSvnRequest, SvnClient, SvnDetection};
+use svn::{
+    ConfigureSvnAuthenticationRequest, DetectSvnRequest, SvnAuthenticationStatus, SvnClient,
+    SvnDetection,
+};
 use system_integration::StartupIntent;
 use task::{
     CreateApplyPatchTaskRequest, CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest,
@@ -799,6 +802,15 @@ fn detect_svn(request: DetectSvnRequest) -> CommandResult<SvnDetection> {
 }
 
 #[tauri::command]
+fn configure_svn_authentication(
+    request: ConfigureSvnAuthenticationRequest,
+) -> CommandResult<SvnAuthenticationStatus> {
+    Ok(CommandResponse::success(svn::configure_authentication(
+        request,
+    )?))
+}
+
+#[tauri::command]
 fn open_workspace(
     app: tauri::AppHandle,
     request: OpenWorkspaceRequest,
@@ -1015,6 +1027,7 @@ pub fn run() {
             get_task,
             cancel_task,
             detect_svn,
+            configure_svn_authentication,
             open_workspace,
             get_recent_workspace,
             scan_workspace_status,
