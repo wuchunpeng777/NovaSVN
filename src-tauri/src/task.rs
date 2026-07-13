@@ -33,6 +33,11 @@ const APPLY_PATCH_TASK_LOG_MAX_BYTES: usize = 64 * 1024;
 const APPLY_PATCH_TASK_LOG_MAX_LINES: usize = 500;
 const MAX_BATCH_OPERATION_PATHS: usize = 500;
 const MAX_BATCH_OPERATION_PATH_BYTES: usize = 24 * 1024;
+const TASK_HISTORY_FILE_VERSION: u32 = 1;
+const MAX_PERSISTED_TASKS: usize = 200;
+const MAX_PERSISTED_TASK_LOGS: usize = 500;
+const MAX_PERSISTED_TASK_LOG_BYTES: usize = 256 * 1024;
+const MAX_PERSISTED_TASK_ERROR_BYTES: usize = 64 * 1024;
 static APPLY_PATCH_SNAPSHOT_NONCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,9 +48,10 @@ pub enum TaskStatus {
     Success,
     Failed,
     Cancelled,
+    Interrupted,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskLog {
     pub message: String,
     pub created_at: u64,
@@ -428,6 +434,7 @@ pub struct ApplyPatchResult {
 
 #[derive(Debug, Clone)]
 enum TaskPayload {
+    Recovered,
     Mock(MockTaskOutcome),
     SvnCommit(CommitTaskPayload),
     SvnOperation(SvnOperationTaskPayload),
@@ -668,18 +675,112 @@ pub struct TaskQueue {
     worker_running: Arc<AtomicBool>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedTaskHistory {
+    version: u32,
+    tasks: Vec<PersistedTask>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedTask {
+    task_id: String,
+    title: String,
+    status: TaskStatus,
+    logs: Vec<TaskLog>,
+    error: Option<String>,
+    created_at: u64,
+    updated_at: u64,
+}
+
+impl From<&Task> for PersistedTask {
+    fn from(task: &Task) -> Self {
+        Self {
+            task_id: task.task_id.clone(),
+            title: task.title.clone(),
+            status: task.status.clone(),
+            logs: persisted_task_logs(&task.logs),
+            error: task
+                .error
+                .as_deref()
+                .map(|error| persisted_task_text(error, MAX_PERSISTED_TASK_ERROR_BYTES)),
+            created_at: task.created_at,
+            updated_at: task.updated_at,
+        }
+    }
+}
+
+impl From<PersistedTask> for Task {
+    fn from(task: PersistedTask) -> Self {
+        Self {
+            task_id: task.task_id,
+            title: task.title,
+            status: task.status,
+            logs: task.logs,
+            error: task.error,
+            result: None,
+            created_at: task.created_at,
+            updated_at: task.updated_at,
+            payload: TaskPayload::Recovered,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct TaskQueueState {
     tasks: Vec<Task>,
     pending: VecDeque<String>,
     running_task_id: Option<String>,
+    persistence_path: Option<PathBuf>,
 }
 
 impl TaskQueue {
+    #[cfg(test)]
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(TaskQueueState::default())),
             next_id: AtomicU64::new(1),
+            worker_running: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn persistent(path: PathBuf) -> Self {
+        let (mut tasks, recovery_changed) = load_task_history(&path);
+        let next_id = next_task_id(&tasks);
+        let now = timestamp_millis();
+        let mut interrupted = false;
+
+        for task in &mut tasks {
+            if matches!(task.status, TaskStatus::Pending | TaskStatus::Running) {
+                task.status = TaskStatus::Interrupted;
+                task.error = Some(
+                    "应用在任务完成前退出，任务已中断且不会自动重试。请检查工作副本状态后重新执行。"
+                        .to_string(),
+                );
+                task.result = None;
+                task.updated_at = now;
+                task.logs.push(TaskLog {
+                    message: "应用重启时检测到未完成任务，已标记为中断".to_string(),
+                    created_at: now,
+                });
+                interrupted = true;
+            }
+        }
+
+        let state = TaskQueueState {
+            tasks,
+            pending: VecDeque::new(),
+            running_task_id: None,
+            persistence_path: Some(path),
+        };
+        if recovery_changed || interrupted {
+            if let Err(error) = persist_task_history(&state) {
+                eprintln!("[NovaSVN] 保存恢复后的任务历史失败：{error}");
+            }
+        }
+
+        Self {
+            state: Arc::new(Mutex::new(state)),
+            next_id: AtomicU64::new(next_id),
             worker_running: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -1957,7 +2058,7 @@ impl TaskQueue {
                 )
             })?;
 
-        match task.status {
+        let result = match task.status {
             TaskStatus::Pending => {
                 task.status = TaskStatus::Cancelled;
                 release_apply_patch_snapshot(&mut task.payload);
@@ -1974,15 +2075,24 @@ impl TaskQueue {
                 Some("本阶段取消功能仅支持尚未开始的任务。".to_string()),
                 true,
             )),
-            TaskStatus::Success | TaskStatus::Failed | TaskStatus::Cancelled => {
-                Err(NovaError::command(
-                    "TASK_ALREADY_FINISHED",
-                    "任务已经结束",
-                    Some(format!("当前状态：{:?}", task.status)),
-                    true,
-                ))
+            TaskStatus::Success
+            | TaskStatus::Failed
+            | TaskStatus::Cancelled
+            | TaskStatus::Interrupted => Err(NovaError::command(
+                "TASK_ALREADY_FINISHED",
+                "任务已经结束",
+                Some(format!("当前状态：{:?}", task.status)),
+                true,
+            )),
+        };
+
+        if result.is_ok() {
+            if let Err(error) = persist_task_history(&state) {
+                eprintln!("[NovaSVN] 保存取消后的任务历史失败：{error}");
             }
         }
+
+        result
     }
 
     fn ensure_worker(&self) {
@@ -2007,10 +2117,161 @@ impl TaskQueue {
             let mut state = self.state.lock().expect("任务队列锁已损坏");
             state.pending.push_back(task_id);
             state.tasks.push(task);
+            if let Err(error) = persist_task_history(&state) {
+                eprintln!("[NovaSVN] 保存新任务历史失败：{error}");
+            }
         }
 
         self.ensure_worker();
     }
+}
+
+fn load_task_history(path: &Path) -> (Vec<Task>, bool) {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return (Vec::new(), false),
+        Err(error) => {
+            return (
+                vec![task_history_recovery_error(format!(
+                    "读取 `{}` 失败：{error}",
+                    path.display()
+                ))],
+                true,
+            );
+        }
+    };
+
+    let history = match serde_json::from_str::<PersistedTaskHistory>(&content) {
+        Ok(history) if history.version == TASK_HISTORY_FILE_VERSION => history,
+        Ok(history) => {
+            return (
+                vec![task_history_recovery_error(format!(
+                    "任务历史版本 {} 不受支持，当前版本为 {}。",
+                    history.version, TASK_HISTORY_FILE_VERSION
+                ))],
+                true,
+            );
+        }
+        Err(error) => {
+            return (
+                vec![task_history_recovery_error(format!(
+                    "解析 `{}` 失败：{error}",
+                    path.display()
+                ))],
+                true,
+            );
+        }
+    };
+
+    let mut tasks = history
+        .tasks
+        .into_iter()
+        .map(Task::from)
+        .collect::<Vec<_>>();
+    if tasks.len() <= MAX_PERSISTED_TASKS {
+        return (tasks, false);
+    }
+
+    let first_task = tasks.len() - MAX_PERSISTED_TASKS;
+    tasks.drain(..first_task);
+    (tasks, true)
+}
+
+fn task_history_recovery_error(detail: String) -> Task {
+    let now = timestamp_millis();
+    Task {
+        task_id: format!("task-recovery-{now}"),
+        title: "任务历史恢复失败".to_string(),
+        status: TaskStatus::Interrupted,
+        logs: vec![TaskLog {
+            message: "应用启动时无法恢复任务历史".to_string(),
+            created_at: now,
+        }],
+        error: Some(detail),
+        result: None,
+        created_at: now,
+        updated_at: now,
+        payload: TaskPayload::Recovered,
+    }
+}
+
+fn next_task_id(tasks: &[Task]) -> u64 {
+    tasks
+        .iter()
+        .filter_map(|task| task.task_id.strip_prefix("task-"))
+        .filter_map(|value| value.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1)
+        .max(1)
+}
+
+fn persisted_task_logs(logs: &[TaskLog]) -> Vec<TaskLog> {
+    let mut persisted = Vec::new();
+    let mut persisted_bytes = 0usize;
+    for log in logs.iter().rev().take(MAX_PERSISTED_TASK_LOGS) {
+        if persisted_bytes >= MAX_PERSISTED_TASK_LOG_BYTES {
+            break;
+        }
+        let remaining = MAX_PERSISTED_TASK_LOG_BYTES - persisted_bytes;
+        let message = persisted_task_text(&log.message, remaining);
+        persisted_bytes += message.len();
+        persisted.push(TaskLog {
+            message,
+            created_at: log.created_at,
+        });
+    }
+    persisted.reverse();
+    persisted
+}
+
+fn persisted_task_text(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    let marker = "\n...[任务历史内容已截断]";
+    if max_bytes <= marker.len() {
+        return truncate_utf8(value, max_bytes);
+    }
+    let content_bytes = max_bytes.saturating_sub(marker.len());
+    format!("{}{}", truncate_utf8(value, content_bytes), marker)
+}
+
+fn persist_task_history(state: &TaskQueueState) -> Result<(), String> {
+    let Some(path) = state.persistence_path.as_deref() else {
+        return Ok(());
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("创建目录 `{}` 失败：{error}", parent.display()))?;
+    }
+
+    let first_task = state.tasks.len().saturating_sub(MAX_PERSISTED_TASKS);
+    let history = PersistedTaskHistory {
+        version: TASK_HISTORY_FILE_VERSION,
+        tasks: state.tasks[first_task..]
+            .iter()
+            .map(PersistedTask::from)
+            .collect(),
+    };
+    let content = serde_json::to_vec_pretty(&history)
+        .map_err(|error| format!("序列化任务历史失败：{error}"))?;
+    let temp_path = path.with_extension("json.tmp");
+    fs::write(&temp_path, content)
+        .map_err(|error| format!("写入 `{}` 失败：{error}", temp_path.display()))?;
+
+    if cfg!(windows) && path.exists() {
+        fs::remove_file(path)
+            .map_err(|error| format!("替换 `{}` 失败：{error}", path.display()))?;
+    }
+    fs::rename(&temp_path, path).map_err(|error| {
+        format!(
+            "将 `{}` 替换为 `{}` 失败：{error}",
+            temp_path.display(),
+            path.display()
+        )
+    })
 }
 
 impl From<&Task> for TaskSummary {
@@ -2060,6 +2321,13 @@ fn run_worker(state: Arc<Mutex<TaskQueueState>>, worker_running: Arc<AtomicBool>
         };
 
         match payload {
+            TaskPayload::Recovered => update_task(
+                &state,
+                &task_id,
+                TaskStatus::Interrupted,
+                "恢复任务不能重新执行",
+                Some("任务执行参数不会持久化，请检查工作副本状态后重新创建任务。".to_string()),
+            ),
             TaskPayload::Mock(outcome) => run_mock_task(&state, &task_id, outcome),
             TaskPayload::SvnCommit(payload) => run_commit_task(&state, &task_id, payload),
             TaskPayload::SvnOperation(payload) => run_svn_operation_task(&state, &task_id, payload),
@@ -5218,7 +5486,7 @@ fn update_task(
     error: Option<String>,
 ) {
     let mut state = state.lock().expect("任务队列锁已损坏");
-    if let Some(task) = state.tasks.iter_mut().find(|task| task.task_id == task_id) {
+    let updated = if let Some(task) = state.tasks.iter_mut().find(|task| task.task_id == task_id) {
         let now = timestamp_millis();
         task.status = status;
         task.error = error;
@@ -5227,6 +5495,14 @@ fn update_task(
             message: message.to_string(),
             created_at: now,
         });
+        true
+    } else {
+        false
+    };
+    if updated {
+        if let Err(error) = persist_task_history(&state) {
+            eprintln!("[NovaSVN] 保存任务状态失败：{error}");
+        }
     }
 }
 
@@ -7714,7 +7990,10 @@ mod tests {
             let task = queue.get_task(task_id).expect("task exists");
             if matches!(
                 task.status,
-                TaskStatus::Success | TaskStatus::Failed | TaskStatus::Cancelled
+                TaskStatus::Success
+                    | TaskStatus::Failed
+                    | TaskStatus::Cancelled
+                    | TaskStatus::Interrupted
             ) {
                 return task;
             }
@@ -7739,7 +8018,131 @@ mod tests {
             }],
             pending: VecDeque::new(),
             running_task_id: Some(task_id.to_string()),
+            persistence_path: None,
         }))
+    }
+
+    fn persisted_test_task(task_id: &str, status: TaskStatus, now: u64) -> Task {
+        Task {
+            task_id: task_id.to_string(),
+            title: format!("测试任务 {task_id}"),
+            status,
+            logs: vec![TaskLog {
+                message: "任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::Recovered,
+        }
+    }
+
+    #[test]
+    fn restores_unfinished_task_history_as_interrupted_once() {
+        let root = test_temp_dir("task-history-restart");
+        let path = root.join("task-history.json");
+        let now = timestamp_millis();
+        let state = TaskQueueState {
+            tasks: vec![
+                persisted_test_task("task-7", TaskStatus::Pending, now),
+                persisted_test_task("task-8", TaskStatus::Running, now),
+                persisted_test_task("task-9", TaskStatus::Success, now),
+            ],
+            pending: VecDeque::new(),
+            running_task_id: Some("task-8".to_string()),
+            persistence_path: Some(path.clone()),
+        };
+        persist_task_history(&state).expect("任务历史应能写入");
+
+        let queue = TaskQueue::persistent(path.clone());
+        let snapshot = queue.list_tasks();
+        assert!(snapshot.running_task_id.is_none());
+        assert!(matches!(snapshot.tasks[0].status, TaskStatus::Interrupted));
+        assert!(matches!(snapshot.tasks[1].status, TaskStatus::Interrupted));
+        assert!(matches!(snapshot.tasks[2].status, TaskStatus::Success));
+        assert_eq!(queue.next_id.load(Ordering::Relaxed), 10);
+
+        let interrupted = queue.get_task("task-7").expect("中断任务应可读取");
+        assert!(interrupted
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("不会自动重试")));
+        assert_eq!(
+            interrupted
+                .logs
+                .iter()
+                .filter(|log| log.message.contains("应用重启时检测到未完成任务"))
+                .count(),
+            1
+        );
+        drop(queue);
+
+        let reopened = TaskQueue::persistent(path.clone());
+        let interrupted = reopened.get_task("task-7").expect("中断任务应继续保留");
+        assert_eq!(
+            interrupted
+                .logs
+                .iter()
+                .filter(|log| log.message.contains("应用重启时检测到未完成任务"))
+                .count(),
+            1
+        );
+
+        let content = fs::read_to_string(path).expect("任务历史应可读取");
+        assert!(content.contains("\"status\": \"interrupted\""));
+        assert!(!content.contains("payload"));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn surfaces_corrupted_task_history_without_blocking_startup() {
+        let root = test_temp_dir("task-history-corrupted");
+        let path = root.join("task-history.json");
+        fs::write(&path, "{invalid json").expect("损坏历史应能写入");
+
+        let queue = TaskQueue::persistent(path);
+        let snapshot = queue.list_tasks();
+        assert_eq!(snapshot.tasks.len(), 1);
+        assert!(matches!(snapshot.tasks[0].status, TaskStatus::Interrupted));
+        assert_eq!(snapshot.tasks[0].title, "任务历史恢复失败");
+        let task = queue
+            .get_task(&snapshot.tasks[0].task_id)
+            .expect("恢复错误任务应可读取");
+        assert!(task
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("解析")));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn persists_completed_task_history_across_queue_recreation() {
+        let root = test_temp_dir("task-history-completed");
+        let path = root.join("task-history.json");
+        let queue = TaskQueue::persistent(path.clone());
+        let task = queue.create_mock_task(CreateMockTaskRequest {
+            title: Some("持久化完成任务".to_string()),
+            outcome: MockTaskOutcome::Success,
+        });
+        let completed = wait_for_test_task(&queue, &task.task_id);
+        assert!(matches!(completed.status, TaskStatus::Success));
+        drop(queue);
+
+        let reopened = TaskQueue::persistent(path);
+        let restored = reopened
+            .get_task(&task.task_id)
+            .expect("完成任务应在队列重建后保留");
+        assert!(matches!(restored.status, TaskStatus::Success));
+        assert!(restored
+            .logs
+            .iter()
+            .any(|log| log.message == "任务执行成功"));
+        assert!(restored.result.is_none());
+
+        fs::remove_dir_all(root).ok();
     }
 
     #[cfg(windows)]

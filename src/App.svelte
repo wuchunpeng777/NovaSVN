@@ -1913,7 +1913,11 @@
         return;
       }
 
-      if (task.status === "failed" || task.status === "cancelled") {
+      if (
+        task.status === "failed" ||
+        task.status === "cancelled" ||
+        task.status === "interrupted"
+      ) {
         const result = task.result?.apply_patch_result;
         if (result) {
           workspaceStore.completeApplyPatchTask(result);
@@ -1939,7 +1943,8 @@
       patchTask &&
       (patchTask.status === "success" ||
         patchTask.status === "failed" ||
-        patchTask.status === "cancelled")
+        patchTask.status === "cancelled" ||
+        patchTask.status === "interrupted")
     ) {
       void checkApplyPatchTask(patchTask.task_id);
     }
@@ -1970,7 +1975,11 @@
       return;
     }
 
-    if (task.status === "failed" || task.status === "cancelled") {
+    if (
+      task.status === "failed" ||
+      task.status === "cancelled" ||
+      task.status === "interrupted"
+    ) {
       workspaceStore.failRepositoryLayoutResult(kind, task.error ?? "仓库布局识别失败");
     }
   }

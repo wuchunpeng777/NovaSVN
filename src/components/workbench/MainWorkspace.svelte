@@ -566,6 +566,7 @@
     success: "完成",
     failed: "失败",
     cancelled: "取消",
+    interrupted: "中断",
   };
 
   type WorkingCopyTreeFilter = "all" | "local" | "remote" | "unversioned";

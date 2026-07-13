@@ -1,6 +1,9 @@
 import type { Task, TaskSnapshot, TaskStatus } from "../types/api";
 
-type TerminalTaskStatus = Extract<TaskStatus, "success" | "failed" | "cancelled">;
+type TerminalTaskStatus = Extract<
+  TaskStatus,
+  "success" | "failed" | "cancelled" | "interrupted"
+>;
 
 export interface PendingTaskCompletionCoordinator {
   consume: (
@@ -42,5 +45,10 @@ export function createPendingTaskCompletionCoordinator(): PendingTaskCompletionC
 }
 
 function isTerminalTaskStatus(status: TaskStatus): status is TerminalTaskStatus {
-  return status === "success" || status === "failed" || status === "cancelled";
+  return (
+    status === "success" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "interrupted"
+  );
 }

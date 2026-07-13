@@ -21,7 +21,7 @@ describe("createPendingTaskCompletionCoordinator", () => {
     expect(handleTask).toHaveBeenCalledWith(pending);
   });
 
-  it.each(["success", "failed", "cancelled"] as const)(
+  it.each(["success", "failed", "cancelled", "interrupted"] as const)(
     "消费 %s 终态",
     async (status) => {
       const coordinator = createPendingTaskCompletionCoordinator();

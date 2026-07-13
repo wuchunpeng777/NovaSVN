@@ -958,9 +958,12 @@ pub fn run() {
 
             let _ = app.emit("novasvn-menu", id.to_string());
         })
-        .manage(TaskQueue::new())
         .setup(|app| {
-            diagnostics::install_panic_hook(app.path().app_data_dir()?);
+            let app_data_dir = app.path().app_data_dir()?;
+            app.manage(TaskQueue::persistent(
+                app_data_dir.join("task-history.json"),
+            ));
+            diagnostics::install_panic_hook(app_data_dir);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();

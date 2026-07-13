@@ -109,6 +109,7 @@ fn build_diagnostics_content(app_version: &str, app_data_dir: &Path, tasks: &[Ta
     append_file_summary(&mut lines, &app_data_dir.join("recent-workspace.json"));
     append_file_summary(&mut lines, &app_data_dir.join("branch-pool.json"));
     append_file_summary(&mut lines, &app_data_dir.join("task-workspaces.json"));
+    append_file_summary(&mut lines, &app_data_dir.join("task-history.json"));
     append_file_summary(&mut lines, &app_data_dir.join("crash.log"));
 
     lines.push(String::new());

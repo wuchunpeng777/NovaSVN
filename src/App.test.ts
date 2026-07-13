@@ -1356,15 +1356,18 @@ describe("App SVN operation completion", () => {
     });
   });
 
-  it("按 pending id 处理取消的 Merge", async () => {
+  it.each([
+    ["cancelled", "用户取消 Merge"],
+    ["interrupted", "应用重启前 Merge 未完成"],
+  ] as const)("按 pending id 处理 %s 的 Merge", async (status, error) => {
     const pendingSummary = makeTaskSummary({
       task_id: "merge-task",
-      status: "cancelled",
+      status,
     });
     const pendingTask = makeTask({
       task_id: "merge-task",
-      status: "cancelled",
-      error: "用户取消 Merge",
+      status,
+      error,
     });
     const selectedTask = makeTask({ task_id: "other-task", status: "running" });
     listTasksMock.mockResolvedValue(
@@ -1381,7 +1384,7 @@ describe("App SVN operation completion", () => {
     await waitFor(() => {
       expect(get(workspaceStore).pendingMergeTaskId).toBeNull();
     });
-    expect(get(workspaceStore).mergeError).toBe("用户取消 Merge");
+    expect(get(workspaceStore).mergeError).toBe(error);
   });
 
   it("Merge 完成后选中首个冲突并进入 Resolve 操作", async () => {

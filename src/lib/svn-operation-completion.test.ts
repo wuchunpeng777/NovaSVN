@@ -123,7 +123,7 @@ describe("consumePendingSvnOperationCompletion", () => {
     expect(handlers.refreshStatus).not.toHaveBeenCalled();
   });
 
-  it.each(["failed", "cancelled"] as const)(
+  it.each(["failed", "cancelled", "interrupted"] as const)(
     "%s 终态只要求清理 pending，不刷新工作副本",
     (status) => {
       const taskState = {

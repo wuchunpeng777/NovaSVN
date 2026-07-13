@@ -4,7 +4,10 @@ import type {
   TaskStatus,
 } from "../types/api";
 
-type TerminalTaskStatus = Extract<TaskStatus, "success" | "failed" | "cancelled">;
+type TerminalTaskStatus = Extract<
+  TaskStatus,
+  "success" | "failed" | "cancelled" | "interrupted"
+>;
 
 export interface TaskSnapshotSource {
   snapshot: TaskSnapshot;
@@ -48,7 +51,8 @@ export function resolvePendingSvnOperationCompletion(
     !task ||
     (task.status !== "success" &&
       task.status !== "failed" &&
-      task.status !== "cancelled")
+      task.status !== "cancelled" &&
+      task.status !== "interrupted")
   ) {
     return null;
   }

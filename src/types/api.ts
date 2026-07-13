@@ -32,7 +32,8 @@ export type TaskStatus =
   | "running"
   | "success"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "interrupted";
 
 export type MockTaskOutcome = "success" | "failed";
 
