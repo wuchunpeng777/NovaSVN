@@ -731,6 +731,7 @@ struct TaskQueueState {
     pending: VecDeque<String>,
     running_task_id: Option<String>,
     running_processes: HashMap<String, Arc<Mutex<Child>>>,
+    cancellation_requested: HashSet<String>,
     persistence_path: Option<PathBuf>,
 }
 
@@ -772,6 +773,7 @@ impl TaskQueue {
             pending: VecDeque::new(),
             running_task_id: None,
             running_processes: HashMap::new(),
+            cancellation_requested: HashSet::new(),
             persistence_path: Some(path),
         };
         if recovery_changed || interrupted {
@@ -2041,60 +2043,108 @@ impl TaskQueue {
     }
 
     pub fn cancel_task(&self, task_id: &str) -> Result<Task, NovaError> {
-        let mut state = self.state.lock().expect("任务队列锁已损坏");
-        let pending_index = state.pending.iter().position(|id| id == task_id);
-        if let Some(index) = pending_index {
-            state.pending.remove(index);
-        }
+        let running_process = {
+            let mut state = self.state.lock().expect("任务队列锁已损坏");
+            let task_index = state
+                .tasks
+                .iter()
+                .position(|task| task.task_id == task_id)
+                .ok_or_else(|| {
+                    NovaError::command(
+                        "TASK_NOT_FOUND",
+                        "未找到指定任务",
+                        Some(format!("task_id: {task_id}")),
+                        true,
+                    )
+                })?;
 
-        let task = state
-            .tasks
-            .iter_mut()
-            .find(|task| task.task_id == task_id)
-            .ok_or_else(|| {
-                NovaError::command(
-                    "TASK_NOT_FOUND",
-                    "未找到指定任务",
-                    Some(format!("task_id: {task_id}")),
-                    true,
-                )
-            })?;
-
-        let result = match task.status {
-            TaskStatus::Pending => {
-                task.status = TaskStatus::Cancelled;
-                release_apply_patch_snapshot(&mut task.payload);
-                task.updated_at = timestamp_millis();
-                task.logs.push(TaskLog {
-                    message: "任务已取消".to_string(),
-                    created_at: task.updated_at,
-                });
-                Ok(task.clone())
+            match state.tasks[task_index].status.clone() {
+                TaskStatus::Pending => {
+                    if let Some(index) = state.pending.iter().position(|id| id == task_id) {
+                        state.pending.remove(index);
+                    }
+                    let task = &mut state.tasks[task_index];
+                    task.status = TaskStatus::Cancelled;
+                    release_apply_patch_snapshot(&mut task.payload);
+                    task.updated_at = timestamp_millis();
+                    task.logs.push(TaskLog {
+                        message: "任务已取消".to_string(),
+                        created_at: task.updated_at,
+                    });
+                    if let Err(error) = persist_task_history(&state) {
+                        eprintln!("[NovaSVN] 保存取消后的任务历史失败：{error}");
+                    }
+                    return Ok(state.tasks[task_index].clone());
+                }
+                TaskStatus::Running => {
+                    if !state.cancellation_requested.insert(task_id.to_string()) {
+                        return Ok(state.tasks[task_index].clone());
+                    }
+                    let now = timestamp_millis();
+                    state.tasks[task_index].updated_at = now;
+                    state.tasks[task_index].logs.push(TaskLog {
+                        message: "已请求取消运行中任务，正在终止 SVN 进程树".to_string(),
+                        created_at: now,
+                    });
+                    let process = state.running_processes.get(task_id).cloned();
+                    if let Err(error) = persist_task_history(&state) {
+                        eprintln!("[NovaSVN] 保存取消请求失败：{error}");
+                    }
+                    process
+                }
+                TaskStatus::Success
+                | TaskStatus::Failed
+                | TaskStatus::Cancelled
+                | TaskStatus::Interrupted => {
+                    return Err(NovaError::command(
+                        "TASK_ALREADY_FINISHED",
+                        "任务已经结束",
+                        Some(format!("当前状态：{:?}", state.tasks[task_index].status)),
+                        true,
+                    ));
+                }
             }
-            TaskStatus::Running => Err(NovaError::command(
-                "TASK_CANCEL_UNSUPPORTED",
-                "当前任务正在运行，暂不支持终止进程",
-                Some("本阶段取消功能仅支持尚未开始的任务。".to_string()),
-                true,
-            )),
-            TaskStatus::Success
-            | TaskStatus::Failed
-            | TaskStatus::Cancelled
-            | TaskStatus::Interrupted => Err(NovaError::command(
-                "TASK_ALREADY_FINISHED",
-                "任务已经结束",
-                Some(format!("当前状态：{:?}", task.status)),
-                true,
-            )),
         };
 
-        if result.is_ok() {
-            if let Err(error) = persist_task_history(&state) {
-                eprintln!("[NovaSVN] 保存取消后的任务历史失败：{error}");
+        if let Some(process) = running_process {
+            if let Err(error) = terminate_process_tree(&process) {
+                let mut state = self.state.lock().expect("任务队列锁已损坏");
+                let already_cancelled = state
+                    .tasks
+                    .iter()
+                    .find(|task| task.task_id == task_id)
+                    .is_some_and(|task| matches!(task.status, TaskStatus::Cancelled));
+                if already_cancelled {
+                    return Ok(state
+                        .tasks
+                        .iter()
+                        .find(|task| task.task_id == task_id)
+                        .expect("已取消任务应存在")
+                        .clone());
+                }
+
+                state.cancellation_requested.remove(task_id);
+                if let Some(task) = state.tasks.iter_mut().find(|task| task.task_id == task_id) {
+                    let now = timestamp_millis();
+                    task.updated_at = now;
+                    task.logs.push(TaskLog {
+                        message: format!("终止 SVN 进程树失败：{error}"),
+                        created_at: now,
+                    });
+                }
+                if let Err(persist_error) = persist_task_history(&state) {
+                    eprintln!("[NovaSVN] 保存取消失败状态失败：{persist_error}");
+                }
+                return Err(NovaError::command(
+                    "TASK_CANCEL_FAILED",
+                    "终止运行中任务失败",
+                    Some(error.to_string()),
+                    true,
+                ));
             }
         }
 
-        result
+        self.get_task(task_id)
     }
 
     fn ensure_worker(&self) {
@@ -5327,10 +5377,23 @@ fn run_task_command_inner(
     command: &mut Command,
     capture_stdout: bool,
 ) -> std::io::Result<Output> {
+    if state
+        .lock()
+        .expect("任务队列锁已损坏")
+        .cancellation_requested
+        .contains(task_id)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "任务已请求取消",
+        ));
+    }
+
     if capture_stdout {
         command.stdout(Stdio::piped());
     }
     command.stderr(Stdio::piped());
+    configure_task_process_group(command);
 
     let mut child = command.spawn()?;
     let stdout = child.stdout.take();
@@ -5339,11 +5402,19 @@ fn run_task_command_inner(
     let stderr_reader = thread::spawn(move || read_child_pipe(stderr));
     let child = Arc::new(Mutex::new(child));
 
-    {
+    let cancellation_requested = {
         let mut queue = state.lock().expect("任务队列锁已损坏");
-        queue
-            .running_processes
-            .insert(task_id.to_string(), Arc::clone(&child));
+        if queue.cancellation_requested.contains(task_id) {
+            true
+        } else {
+            queue
+                .running_processes
+                .insert(task_id.to_string(), Arc::clone(&child));
+            false
+        }
+    };
+    if cancellation_requested {
+        terminate_process_tree(&child)?;
     }
 
     let status = loop {
@@ -5395,6 +5466,101 @@ fn join_child_reader(
     reader
         .join()
         .map_err(|_| std::io::Error::other(format!("读取子进程 {stream_name} 的线程异常退出")))?
+}
+
+#[cfg(unix)]
+fn configure_task_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_task_process_group(_command: &mut Command) {}
+
+#[cfg(unix)]
+fn terminate_process_tree(process: &Arc<Mutex<Child>>) -> std::io::Result<()> {
+    let pid = {
+        let mut child = process.lock().expect("SVN 子进程锁已损坏");
+        if child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        i32::try_from(child.id())
+            .map_err(|_| std::io::Error::other("SVN 子进程 ID 超出 Unix pid 范围"))?
+    };
+
+    signal_unix_process_group(pid, libc::SIGTERM)?;
+    let root_exited = wait_for_process_exit(process, Duration::from_millis(500))?;
+    signal_unix_process_group(pid, libc::SIGKILL)?;
+    if root_exited {
+        return Ok(());
+    }
+
+    if wait_for_process_exit(process, Duration::from_secs(1))? {
+        return Ok(());
+    }
+
+    process.lock().expect("SVN 子进程锁已损坏").kill()
+}
+
+#[cfg(unix)]
+fn signal_unix_process_group(pid: i32, signal: i32) -> std::io::Result<()> {
+    // 子进程启动时已成为独立进程组组长，负 pid 只会向该任务的进程组发送信号。
+    let result = unsafe { libc::kill(-pid, signal) };
+    if result == 0 {
+        return Ok(());
+    }
+
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(error)
+    }
+}
+
+#[cfg(windows)]
+fn terminate_process_tree(process: &Arc<Mutex<Child>>) -> std::io::Result<()> {
+    let pid = {
+        let mut child = process.lock().expect("SVN 子进程锁已损坏");
+        if child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        child.id()
+    };
+    let output = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .output();
+    if output.is_ok_and(|output| output.status.success())
+        || wait_for_process_exit(process, Duration::from_secs(1))?
+    {
+        return Ok(());
+    }
+
+    process.lock().expect("SVN 子进程锁已损坏").kill()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn terminate_process_tree(process: &Arc<Mutex<Child>>) -> std::io::Result<()> {
+    process.lock().expect("SVN 子进程锁已损坏").kill()
+}
+
+fn wait_for_process_exit(process: &Arc<Mutex<Child>>, timeout: Duration) -> std::io::Result<bool> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if process
+            .lock()
+            .expect("SVN 子进程锁已损坏")
+            .try_wait()?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(false);
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn append_command_output(
@@ -5589,13 +5755,29 @@ fn update_task(
     error: Option<String>,
 ) {
     let mut state = state.lock().expect("任务队列锁已损坏");
+    let cancelled = state.cancellation_requested.contains(task_id)
+        && !matches!(status, TaskStatus::Pending | TaskStatus::Running);
+    if cancelled {
+        state.cancellation_requested.remove(task_id);
+    }
     let updated = if let Some(task) = state.tasks.iter_mut().find(|task| task.task_id == task_id) {
         let now = timestamp_millis();
-        task.status = status;
-        task.error = error;
+        task.status = if cancelled {
+            TaskStatus::Cancelled
+        } else {
+            status
+        };
+        task.error = if cancelled { None } else { error };
+        if cancelled {
+            task.result = None;
+        }
         task.updated_at = now;
         task.logs.push(TaskLog {
-            message: message.to_string(),
+            message: if cancelled {
+                "任务已取消，SVN 进程树已终止".to_string()
+            } else {
+                message.to_string()
+            },
             created_at: now,
         });
         true
@@ -8122,6 +8304,7 @@ mod tests {
             pending: VecDeque::new(),
             running_task_id: Some(task_id.to_string()),
             running_processes: HashMap::new(),
+            cancellation_requested: HashSet::new(),
             persistence_path: None,
         }))
     }
@@ -8160,6 +8343,58 @@ mod tests {
         let mut command = Command::new("cmd");
         command.args(["/C", "ping -n 2 127.0.0.1 >NUL && <NUL set /P =tracked"]);
         command
+    }
+
+    #[cfg(unix)]
+    fn process_tree_test_command(root: &Path, marker: &Path) -> Command {
+        let path = root.join("process-tree-task.sh");
+        fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\n(sleep 1; printf child > '{}') &\nsleep 5\n",
+                marker.display()
+            ),
+        )
+        .expect("进程树测试脚本应能写入");
+        let mut permissions = fs::metadata(&path)
+            .expect("进程树测试脚本元数据应可读取")
+            .permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).expect("进程树测试脚本应可执行");
+        Command::new(path)
+    }
+
+    fn running_process_test_queue(task_id: &str) -> (TaskQueue, Arc<Mutex<TaskQueueState>>) {
+        let state = Arc::new(Mutex::new(TaskQueueState {
+            tasks: vec![persisted_test_task(
+                task_id,
+                TaskStatus::Running,
+                timestamp_millis(),
+            )],
+            running_task_id: Some(task_id.to_string()),
+            ..TaskQueueState::default()
+        }));
+        let queue = TaskQueue {
+            state: Arc::clone(&state),
+            next_id: AtomicU64::new(2),
+            worker_running: Arc::new(AtomicBool::new(true)),
+        };
+        (queue, state)
+    }
+
+    fn wait_for_registered_process(state: &Arc<Mutex<TaskQueueState>>, task_id: &str) {
+        for _ in 0..100 {
+            if state
+                .lock()
+                .expect("任务队列锁应可用")
+                .running_processes
+                .contains_key(task_id)
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("任务运行期间应保存子进程句柄");
     }
 
     #[test]
@@ -8202,6 +8437,82 @@ mod tests {
     }
 
     #[test]
+    fn cancels_running_task_process_and_keeps_cancelled_status() {
+        let root = test_temp_dir("cancel-running-task");
+        let (queue, state) = running_process_test_queue("task-cancel");
+        let worker_state = Arc::clone(&state);
+        let mut command = slow_test_command(&root);
+        let worker = thread::spawn(move || {
+            let result = run_task_command(&worker_state, "task-cancel", &mut command);
+            update_task(
+                &worker_state,
+                "task-cancel",
+                TaskStatus::Failed,
+                "测试子进程已结束",
+                result.as_ref().err().map(ToString::to_string),
+            );
+        });
+
+        wait_for_registered_process(&state, "task-cancel");
+        queue
+            .cancel_task("task-cancel")
+            .expect("运行中任务应接受取消请求");
+        worker.join().expect("取消测试线程应正常结束");
+
+        let task = queue.get_task("task-cancel").expect("取消后的任务应可读取");
+        assert!(matches!(task.status, TaskStatus::Cancelled));
+        assert!(task.error.is_none());
+        assert!(task
+            .logs
+            .iter()
+            .any(|log| log.message.contains("正在终止 SVN 进程树")));
+        assert!(task
+            .logs
+            .iter()
+            .any(|log| log.message == "任务已取消，SVN 进程树已终止"));
+        assert!(state
+            .lock()
+            .expect("任务队列锁应可用")
+            .cancellation_requested
+            .is_empty());
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancels_entire_unix_process_group() {
+        let root = test_temp_dir("cancel-process-tree");
+        let marker = root.join("child-finished.txt");
+        let (queue, state) = running_process_test_queue("task-tree");
+        let worker_state = Arc::clone(&state);
+        let mut command = process_tree_test_command(&root, &marker);
+        let worker = thread::spawn(move || {
+            let result = run_task_command(&worker_state, "task-tree", &mut command);
+            update_task(
+                &worker_state,
+                "task-tree",
+                TaskStatus::Failed,
+                "进程树测试已结束",
+                result.as_ref().err().map(ToString::to_string),
+            );
+        });
+
+        wait_for_registered_process(&state, "task-tree");
+        queue.cancel_task("task-tree").expect("Unix 进程树应可终止");
+        worker.join().expect("进程树测试线程应正常结束");
+        thread::sleep(Duration::from_millis(1_200));
+
+        assert!(!marker.exists(), "取消后孙进程不应继续写入标记文件");
+        assert!(matches!(
+            queue.get_task("task-tree").expect("任务应存在").status,
+            TaskStatus::Cancelled
+        ));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn restores_unfinished_task_history_as_interrupted_once() {
         let root = test_temp_dir("task-history-restart");
         let path = root.join("task-history.json");
@@ -8215,6 +8526,7 @@ mod tests {
             pending: VecDeque::new(),
             running_task_id: Some("task-8".to_string()),
             running_processes: HashMap::new(),
+            cancellation_requested: HashSet::new(),
             persistence_path: Some(path.clone()),
         };
         persist_task_history(&state).expect("任务历史应能写入");

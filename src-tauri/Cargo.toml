@@ -23,3 +23,6 @@ tauri-plugin-drag = "2.1.1"
 roxmltree = "0.21.1"
 quick-xml = "0.39.4"
 sha2 = "0.10.9"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
