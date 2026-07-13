@@ -5,7 +5,7 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
+    process::{Child, Command, ExitStatus, Output, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
@@ -38,6 +38,7 @@ const MAX_PERSISTED_TASKS: usize = 200;
 const MAX_PERSISTED_TASK_LOGS: usize = 500;
 const MAX_PERSISTED_TASK_LOG_BYTES: usize = 256 * 1024;
 const MAX_PERSISTED_TASK_ERROR_BYTES: usize = 64 * 1024;
+const MAX_TASK_COMMAND_LOG_BYTES: usize = 16 * 1024;
 const TASK_COMMAND_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const TASK_COMMAND_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 static APPLY_PATCH_SNAPSHOT_NONCE: AtomicU64 = AtomicU64::new(1);
@@ -2070,7 +2071,7 @@ impl TaskQueue {
                     release_apply_patch_snapshot(&mut task.payload);
                     task.updated_at = timestamp_millis();
                     task.logs.push(TaskLog {
-                        message: "任务已取消".to_string(),
+                        message: "取消原因：用户在任务开始前取消".to_string(),
                         created_at: task.updated_at,
                     });
                     if let Err(error) = persist_task_history(&state) {
@@ -2085,7 +2086,8 @@ impl TaskQueue {
                     let now = timestamp_millis();
                     state.tasks[task_index].updated_at = now;
                     state.tasks[task_index].logs.push(TaskLog {
-                        message: "已请求取消运行中任务，正在终止 SVN 进程树".to_string(),
+                        message: "取消原因：用户请求取消运行中任务；正在终止 SVN 进程树"
+                            .to_string(),
                         created_at: now,
                     });
                     let process = state.running_processes.get(task_id).cloned();
@@ -5431,6 +5433,11 @@ fn run_task_command_inner(
     }
     command.stderr(Stdio::piped());
     configure_task_process_group(command);
+    append_task_log(
+        state,
+        task_id,
+        &format!("启动命令：{}", format_task_command(command)),
+    );
 
     let mut child = command.spawn()?;
     let stdout = child.stdout.take();
@@ -5496,6 +5503,12 @@ fn run_task_command_inner(
             if let Err(error) = terminate_process_tree(&child) {
                 message.push_str(&format!("；终止时发生错误：{error}"));
             }
+            status = child
+                .lock()
+                .expect("SVN 子进程锁已损坏")
+                .try_wait()
+                .ok()
+                .flatten();
             execution_error = Some(std::io::Error::new(std::io::ErrorKind::TimedOut, message));
             break;
         }
@@ -5514,16 +5527,101 @@ fn run_task_command_inner(
         }
     }
 
-    let stdout = join_child_reader(stdout_reader, "stdout")?;
-    let stderr = join_child_reader(stderr_reader, "stderr")?;
+    let stdout = join_child_reader(stdout_reader, "stdout");
+    let stderr = join_child_reader(stderr_reader, "stderr");
+    if let Some(status) = status.as_ref() {
+        append_task_log(state, task_id, &format_task_exit_status(status));
+    }
     if let Some(error) = execution_error {
+        append_task_log(state, task_id, &format!("命令执行异常：{error}"));
         return Err(error);
     }
     Ok(Output {
         status: status.ok_or_else(|| std::io::Error::other("SVN 子进程未返回退出状态"))?,
-        stdout,
-        stderr,
+        stdout: stdout?,
+        stderr: stderr?,
     })
+}
+
+fn format_task_command(command: &Command) -> String {
+    const SENSITIVE_VALUE_FLAGS: [&str; 5] = [
+        "-m",
+        "--message",
+        "--username",
+        "--password",
+        "--config-option",
+    ];
+
+    let mut parts = vec![format!(
+        "{:?}",
+        command.get_program().to_string_lossy().as_ref()
+    )];
+    let mut redact_next = false;
+    for argument in command.get_args() {
+        let argument = argument.to_string_lossy();
+        if redact_next {
+            parts.push(format!("{:?}", "<已隐藏>"));
+            redact_next = false;
+            continue;
+        }
+
+        if SENSITIVE_VALUE_FLAGS.contains(&argument.as_ref()) {
+            parts.push(format!("{:?}", argument.as_ref()));
+            redact_next = true;
+            continue;
+        }
+        if let Some((flag, _)) = argument.split_once('=') {
+            if SENSITIVE_VALUE_FLAGS.contains(&flag) {
+                parts.push(format!("{:?}", format!("{flag}=<已隐藏>")));
+                continue;
+            }
+        }
+
+        parts.push(format!("{:?}", redact_task_command_url(&argument)));
+    }
+
+    bounded_text_preview(
+        parts.join(" "),
+        MAX_TASK_COMMAND_LOG_BYTES,
+        "命令日志已截断",
+    )
+}
+
+fn redact_task_command_url(value: &str) -> String {
+    let Some(scheme_end) = value.find("://") else {
+        return value.to_string();
+    };
+    let authority_start = scheme_end + 3;
+    let authority_end = value[authority_start..]
+        .find(['/', '?', '#'])
+        .map(|index| authority_start + index)
+        .unwrap_or(value.len());
+    let authority = &value[authority_start..authority_end];
+    let Some(userinfo_end) = authority.rfind('@') else {
+        return value.to_string();
+    };
+    format!(
+        "{}<凭据>@{}",
+        &value[..authority_start],
+        &value[authority_start + userinfo_end + 1..]
+    )
+}
+
+fn format_task_exit_status(status: &ExitStatus) -> String {
+    if let Some(code) = status.code() {
+        return format!("命令退出：退出码 {code}");
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+
+        if let Some(signal) = status.signal() {
+            return format!("命令退出：Unix 信号 {signal}");
+        }
+    }
+
+    "命令退出：系统未提供退出码".to_string()
 }
 
 fn read_child_pipe(
@@ -8525,7 +8623,7 @@ mod tests {
     #[test]
     fn tracks_task_process_handle_lifecycle() {
         let root = test_temp_dir("task-process-handle");
-        let state = Arc::new(Mutex::new(TaskQueueState::default()));
+        let (_queue, state) = running_process_test_queue("task-process");
         let worker_state = Arc::clone(&state);
         let mut command = slow_test_command(&root);
         let worker = thread::spawn(move || {
@@ -8557,8 +8655,74 @@ mod tests {
             .expect("任务队列锁应可用")
             .running_processes
             .contains_key("task-process"));
+        let task = state.lock().expect("任务队列锁应可用").tasks[0].clone();
+        assert!(task
+            .logs
+            .iter()
+            .any(|log| log.message.starts_with("启动命令：")));
+        assert!(task
+            .logs
+            .iter()
+            .any(|log| log.message == "命令退出：退出码 0"));
 
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn redacts_sensitive_task_command_arguments() {
+        let mut command = Command::new("svn");
+        command.args([
+            "commit",
+            "--username",
+            "private-user",
+            "--password=private-password",
+            "-m",
+            "private-log-message",
+            "--config-option",
+            "servers:global:http-auth-types=private-config",
+            "https://url-user:url-password@example.com/repository",
+        ]);
+
+        let formatted = format_task_command(&command);
+        assert!(formatted.contains("<已隐藏>"));
+        assert!(formatted.contains("https://<凭据>@example.com/repository"));
+        for secret in [
+            "private-user",
+            "private-password",
+            "private-log-message",
+            "private-config",
+            "url-user",
+            "url-password",
+        ] {
+            assert!(!formatted.contains(secret));
+        }
+    }
+
+    #[test]
+    fn records_pending_task_cancellation_reason() {
+        let state = Arc::new(Mutex::new(TaskQueueState {
+            tasks: vec![persisted_test_task(
+                "task-pending-cancel",
+                TaskStatus::Pending,
+                timestamp_millis(),
+            )],
+            pending: VecDeque::from(["task-pending-cancel".to_string()]),
+            ..TaskQueueState::default()
+        }));
+        let queue = TaskQueue {
+            state,
+            next_id: AtomicU64::new(2),
+            worker_running: Arc::new(AtomicBool::new(false)),
+        };
+
+        let task = queue
+            .cancel_task("task-pending-cancel")
+            .expect("排队任务应可取消");
+        assert!(matches!(task.status, TaskStatus::Cancelled));
+        assert!(task
+            .logs
+            .iter()
+            .any(|log| log.message == "取消原因：用户在任务开始前取消"));
     }
 
     #[test]
@@ -8590,7 +8754,7 @@ mod tests {
         assert!(task
             .logs
             .iter()
-            .any(|log| log.message.contains("正在终止 SVN 进程树")));
+            .any(|log| log.message.contains("取消原因：用户请求取消运行中任务")));
         assert!(task
             .logs
             .iter()
@@ -8607,7 +8771,7 @@ mod tests {
     #[test]
     fn terminates_task_command_after_idle_timeout() {
         let root = test_temp_dir("task-idle-timeout");
-        let state = Arc::new(Mutex::new(TaskQueueState::default()));
+        let (_queue, state) = running_process_test_queue("task-idle-timeout");
         let mut command = slow_test_command(&root);
         let error = run_task_command_with_limits(
             &state,
@@ -8627,6 +8791,10 @@ mod tests {
             .expect("任务队列锁应可用")
             .running_processes
             .is_empty());
+        assert!(state.lock().expect("任务队列锁应可用").tasks[0]
+            .logs
+            .iter()
+            .any(|log| log.message.contains("命令执行异常") && log.message.contains("无输出")));
         fs::remove_dir_all(root).ok();
     }
 
