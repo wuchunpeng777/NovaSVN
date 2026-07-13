@@ -70,6 +70,10 @@ const e2eOperationsSpec = fs.readFileSync(
   path.join(root, "tests", "e2e", "workbench-operations.spec.ts"),
   "utf8",
 );
+const ciWorkflow = fs.readFileSync(
+  path.join(root, ".github", "workflows", "ci.yml"),
+  "utf8",
+);
 const appSvelte = fs.readFileSync(path.join(root, "src", "App.svelte"), "utf8");
 const appCss = fs.readFileSync(path.join(root, "src", "styles", "app.css"), "utf8");
 const frontendApi = fs.readFileSync(path.join(root, "src", "lib", "api.ts"), "utf8");
@@ -137,6 +141,20 @@ const startupActionViewChecks = [
   { action: "branch-workspace", view: "branches" },
 ];
 let failed = false;
+
+for (const ciQualityGate of [
+  "components: clippy",
+  "subversion",
+  "run: npm ci",
+  "run: npm run check",
+  "run: npx playwright install --with-deps chromium",
+  "run: npm run test:e2e",
+]) {
+  if (!ciWorkflow.includes(ciQualityGate)) {
+    console.error(`CI 缺少质量门禁：${ciQualityGate}`);
+    failed = true;
+  }
+}
 
 const checkCommand = packageJson.scripts?.check;
 if (typeof checkCommand !== "string") {
