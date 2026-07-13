@@ -1,11 +1,11 @@
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Child, Command, Output, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
@@ -730,6 +730,7 @@ struct TaskQueueState {
     tasks: Vec<Task>,
     pending: VecDeque<String>,
     running_task_id: Option<String>,
+    running_processes: HashMap<String, Arc<Mutex<Child>>>,
     persistence_path: Option<PathBuf>,
 }
 
@@ -770,6 +771,7 @@ impl TaskQueue {
             tasks,
             pending: VecDeque::new(),
             running_task_id: None,
+            running_processes: HashMap::new(),
             persistence_path: Some(path),
         };
         if recovery_changed || interrupted {
@@ -2438,7 +2440,7 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
         &format!("执行 svn commit：{}", payload.files.join(", ")),
     );
 
-    match command.output() {
+    match run_task_command(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             update_task(state, task_id, TaskStatus::Success, "提交执行成功", None);
@@ -2821,7 +2823,7 @@ fn run_svn_operation_task(
     }
     command.current_dir(&root);
 
-    match command.output() {
+    match run_task_command(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             update_task(
@@ -3115,7 +3117,7 @@ fn run_svn_batch_operation_task(
     }
     command.current_dir(&root);
 
-    match command.output() {
+    match run_task_command(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             update_task(
@@ -3244,7 +3246,7 @@ fn run_shadow_workspace_task(
         append_task_log(state, task_id, "执行 svn checkout 创建影子工作副本");
     }
 
-    match command.output() {
+    match run_task_command(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             update_task(
@@ -3342,12 +3344,13 @@ fn run_partial_commit_task(
     }
 
     append_task_log(state, task_id, "清理影子工作副本本地改动");
-    let revert_output = Command::new(&executable)
+    let mut revert_command = Command::new(&executable);
+    revert_command
         .arg("revert")
         .arg("-R")
         .arg(&shadow_path)
-        .current_dir(&shadow_path)
-        .output();
+        .current_dir(&shadow_path);
+    let revert_output = run_task_command(state, task_id, &mut revert_command);
     match revert_output {
         Ok(output) if output.status.success() => append_command_output(state, task_id, &output),
         Ok(output) => {
@@ -3386,7 +3389,8 @@ fn run_partial_commit_task(
     }
 
     append_task_log(state, task_id, "应用 selected patch 到影子工作副本");
-    let patch_output = svn_patch_command(&executable, false, &patch_path, &shadow_path).output();
+    let mut patch_command = svn_patch_command(&executable, false, &patch_path, &shadow_path);
+    let patch_output = run_task_command(state, task_id, &mut patch_command);
     let _ = std::fs::remove_file(&patch_path);
     match patch_output {
         Ok(output) if output.status.success() => append_command_output(state, task_id, &output),
@@ -3424,7 +3428,7 @@ fn run_partial_commit_task(
         .arg(&payload.message)
         .current_dir(&shadow_path);
 
-    match commit.output() {
+    match run_task_command(state, task_id, &mut commit) {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             update_task(
@@ -3483,7 +3487,8 @@ fn run_repository_list_task(
     }
     let command_target =
         repository_url_with_peg_revision(&payload.url, payload.revision.as_deref());
-    let output = command.arg(command_target).output();
+    command.arg(command_target);
+    let output = run_task_command(state, task_id, &mut command);
 
     match output {
         Ok(output) if output.status.success() => {
@@ -3612,10 +3617,10 @@ fn run_repository_file_task(
     }
     let command_target =
         repository_url_with_peg_revision(&payload.url, payload.revision.as_deref());
-    let output = command
+    command
         .arg(command_target)
-        .stdout(std::process::Stdio::from(file))
-        .output();
+        .stdout(std::process::Stdio::from(file));
+    let output = run_task_command_with_configured_stdout(state, task_id, &mut command);
     match output {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
@@ -3842,7 +3847,7 @@ fn run_repository_copy_task(
         .arg(source)
         .arg(target);
 
-    match command.output() {
+    match run_task_command(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             update_task(
@@ -3893,13 +3898,14 @@ fn run_repository_mkdir_task(
     append_task_log(state, task_id, &format!("执行 svn mkdir：{}", payload.url));
 
     let target = repository_url_with_peg_revision(&payload.url, None);
-    let output = Command::new(&payload.svn_executable)
+    let mut command = Command::new(&payload.svn_executable);
+    command
         .arg("mkdir")
         .arg("-m")
         .arg(&payload.message)
         .arg("--")
-        .arg(target)
-        .output();
+        .arg(target);
+    let output = run_task_command(state, task_id, &mut command);
 
     match output {
         Ok(output) if output.status.success() => {
@@ -3969,14 +3975,15 @@ fn run_repository_import_task(
     );
 
     let target = repository_url_with_peg_revision(&payload.target_url, None);
-    let output = Command::new(&payload.svn_executable)
+    let mut command = Command::new(&payload.svn_executable);
+    command
         .arg("import")
         .arg("-m")
         .arg(&payload.message)
         .arg("--")
         .arg(&payload.source_path)
-        .arg(target)
-        .output();
+        .arg(target);
+    let output = run_task_command(state, task_id, &mut command);
 
     match output {
         Ok(output) if output.status.success() => {
@@ -4041,14 +4048,15 @@ fn run_repository_move_task(
 
     let source = repository_url_with_peg_revision(&payload.source_url, None);
     let target = repository_url_with_peg_revision(&payload.target_url, None);
-    let output = Command::new(&payload.svn_executable)
+    let mut command = Command::new(&payload.svn_executable);
+    command
         .arg("move")
         .arg("-m")
         .arg(&payload.message)
         .arg("--")
         .arg(source)
-        .arg(target)
-        .output();
+        .arg(target);
+    let output = run_task_command(state, task_id, &mut command);
 
     match output {
         Ok(output) if output.status.success() => {
@@ -4101,13 +4109,14 @@ fn run_repository_delete_task(
     append_task_log(state, task_id, &format!("执行 svn delete：{}", payload.url));
 
     let target = repository_url_with_peg_revision(&payload.url, None);
-    let output = Command::new(&payload.svn_executable)
+    let mut command = Command::new(&payload.svn_executable);
+    command
         .arg("delete")
         .arg("-m")
         .arg(&payload.message)
         .arg("--")
-        .arg(target)
-        .output();
+        .arg(target);
+    let output = run_task_command(state, task_id, &mut command);
 
     match output {
         Ok(output) if output.status.success() => {
@@ -4220,7 +4229,7 @@ fn run_revision_diff_task(
     };
     append_task_log(state, task_id, &format!("执行 svn diff：{target}"));
 
-    match command.output() {
+    match run_task_command(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_stream_lines(state, task_id, &String::from_utf8_lossy(&output.stderr));
             let diff_text = String::from_utf8_lossy(&output.stdout).to_string();
@@ -4345,7 +4354,7 @@ fn run_revert_revision_task(
         None,
     );
 
-    match execute_revert_revision(&payload) {
+    match execute_revert_revision(state, task_id, &payload) {
         Ok((output, base_revision, source_url)) => {
             append_task_log(
                 state,
@@ -4389,6 +4398,8 @@ fn nova_error_message(error: &NovaError) -> String {
 }
 
 fn execute_revert_revision(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
     payload: &RevertRevisionTaskPayload,
 ) -> Result<(std::process::Output, String, String), NovaError> {
     let root = PathBuf::from(&payload.working_copy_root);
@@ -4458,21 +4469,21 @@ fn execute_revert_revision(
 
     let source_url = read_revert_revision_info_item(&payload.svn_executable, &root, "url", false)?;
     let source_url = normalize_repository_url(&source_url)?;
-    let output = Command::new(&payload.svn_executable)
+    let mut command = Command::new(&payload.svn_executable);
+    command
         .args(["merge", "--ignore-ancestry", "-r"])
         .arg(format!("{base_number}:{target_number}"))
         .arg(&source_url)
         .arg(&root)
-        .current_dir(&root)
-        .output()
-        .map_err(|error| {
-            NovaError::command(
-                "REVERT_REVISION_COMMAND_FAILED",
-                "无法启动 Revert Revision 命令",
-                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
-                true,
-            )
-        })?;
+        .current_dir(&root);
+    let output = run_task_command(state, task_id, &mut command).map_err(|error| {
+        NovaError::command(
+            "REVERT_REVISION_COMMAND_FAILED",
+            "无法启动 Revert Revision 命令",
+            Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+            true,
+        )
+    })?;
     if !output.status.success() {
         return Err(NovaError::command(
             "REVERT_REVISION_FAILED",
@@ -4619,7 +4630,7 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
         ),
     );
 
-    match command.output() {
+    match run_task_command(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             let output_text = merge_output_text(&output);
@@ -4756,13 +4767,13 @@ fn run_apply_patch_task(
 
     if !payload.dry_run {
         append_task_log(state, task_id, "使用不可变 Patch 快照执行应用前 dry-run");
-        let preflight_output = svn_patch_command(
+        let mut preflight_command = svn_patch_command(
             &payload.svn_executable,
             true,
             snapshot_file.path(),
             &working_copy_root,
-        )
-        .output();
+        );
+        let preflight_output = run_task_command(state, task_id, &mut preflight_command);
         let preflight_output = match preflight_output {
             Ok(output) => output,
             Err(error) => {
@@ -4815,14 +4826,13 @@ fn run_apply_patch_task(
         ),
     );
 
-    match svn_patch_command(
+    let mut patch_command = svn_patch_command(
         &payload.svn_executable,
         payload.dry_run,
         snapshot_file.path(),
         &working_copy_root,
-    )
-    .output()
-    {
+    );
+    match run_task_command(state, task_id, &mut patch_command) {
         Ok(output) => {
             append_apply_patch_command_output(state, task_id, &output);
             let output_text = apply_patch_output_from_command(&output);
@@ -4952,7 +4962,7 @@ fn run_branch_checkout_task(
     }
     command.arg(&payload.branch_url).arg(&payload.local_path);
 
-    match command.output() {
+    match run_task_command(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             update_task(
@@ -5028,7 +5038,7 @@ fn run_repository_checkout_task(
         .arg(command_target)
         .arg(&payload.local_path);
 
-    match command.output() {
+    match run_task_command(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             update_task(
@@ -5102,7 +5112,7 @@ fn run_repository_export_task(
         .arg(command_target)
         .arg(&payload.local_path);
 
-    match command.output() {
+    match run_task_command(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             let local_path = Path::new(&payload.local_path);
@@ -5188,12 +5198,13 @@ fn run_svn_switch_task(
     );
 
     let root = PathBuf::from(&payload.working_copy_root);
-    let output = Command::new(&payload.svn_executable)
+    let mut command = Command::new(&payload.svn_executable);
+    command
         .arg("switch")
         .arg(&payload.target_url)
         .arg(&root)
-        .current_dir(&root)
-        .output();
+        .current_dir(&root);
+    let output = run_task_command(state, task_id, &mut command);
 
     match output {
         Ok(output) if output.status.success() => {
@@ -5265,7 +5276,7 @@ fn run_shadow_checkout_or_update(
         command.arg(&request.repository_url).arg(shadow_path);
     }
 
-    match command.output() {
+    match run_task_command(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             true
@@ -5292,6 +5303,98 @@ fn run_shadow_checkout_or_update(
             false
         }
     }
+}
+
+fn run_task_command(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    command: &mut Command,
+) -> std::io::Result<Output> {
+    run_task_command_inner(state, task_id, command, true)
+}
+
+fn run_task_command_with_configured_stdout(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    command: &mut Command,
+) -> std::io::Result<Output> {
+    run_task_command_inner(state, task_id, command, false)
+}
+
+fn run_task_command_inner(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    command: &mut Command,
+    capture_stdout: bool,
+) -> std::io::Result<Output> {
+    if capture_stdout {
+        command.stdout(Stdio::piped());
+    }
+    command.stderr(Stdio::piped());
+
+    let mut child = command.spawn()?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let stdout_reader = thread::spawn(move || read_child_pipe(stdout));
+    let stderr_reader = thread::spawn(move || read_child_pipe(stderr));
+    let child = Arc::new(Mutex::new(child));
+
+    {
+        let mut queue = state.lock().expect("任务队列锁已损坏");
+        queue
+            .running_processes
+            .insert(task_id.to_string(), Arc::clone(&child));
+    }
+
+    let status = loop {
+        let result = child.lock().expect("SVN 子进程锁已损坏").try_wait();
+        match result {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => thread::sleep(Duration::from_millis(25)),
+            Err(error) => {
+                let mut child = child.lock().expect("SVN 子进程锁已损坏");
+                child.kill().ok();
+                child.wait().ok();
+                break Err(error);
+            }
+        }
+    };
+
+    {
+        let mut queue = state.lock().expect("任务队列锁已损坏");
+        let registered = queue
+            .running_processes
+            .get(task_id)
+            .is_some_and(|registered| Arc::ptr_eq(registered, &child));
+        if registered {
+            queue.running_processes.remove(task_id);
+        }
+    }
+
+    let stdout = join_child_reader(stdout_reader, "stdout")?;
+    let stderr = join_child_reader(stderr_reader, "stderr")?;
+    Ok(Output {
+        status: status?,
+        stdout,
+        stderr,
+    })
+}
+
+fn read_child_pipe(mut pipe: Option<impl Read>) -> std::io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    if let Some(pipe) = pipe.as_mut() {
+        pipe.read_to_end(&mut output)?;
+    }
+    Ok(output)
+}
+
+fn join_child_reader(
+    reader: thread::JoinHandle<std::io::Result<Vec<u8>>>,
+    stream_name: &str,
+) -> std::io::Result<Vec<u8>> {
+    reader
+        .join()
+        .map_err(|_| std::io::Error::other(format!("读取子进程 {stream_name} 的线程异常退出")))?
 }
 
 fn append_command_output(
@@ -8018,6 +8121,7 @@ mod tests {
             }],
             pending: VecDeque::new(),
             running_task_id: Some(task_id.to_string()),
+            running_processes: HashMap::new(),
             persistence_path: None,
         }))
     }
@@ -8039,6 +8143,64 @@ mod tests {
         }
     }
 
+    #[cfg(not(windows))]
+    fn slow_test_command(root: &Path) -> Command {
+        let path = root.join("slow-task-command.sh");
+        fs::write(&path, "#!/bin/sh\nsleep 0.3\nprintf tracked\n").expect("慢速测试脚本应能写入");
+        let mut permissions = fs::metadata(&path)
+            .expect("慢速测试脚本元数据应可读取")
+            .permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).expect("慢速测试脚本应可执行");
+        Command::new(path)
+    }
+
+    #[cfg(windows)]
+    fn slow_test_command(_root: &Path) -> Command {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "ping -n 2 127.0.0.1 >NUL && <NUL set /P =tracked"]);
+        command
+    }
+
+    #[test]
+    fn tracks_task_process_handle_lifecycle() {
+        let root = test_temp_dir("task-process-handle");
+        let state = Arc::new(Mutex::new(TaskQueueState::default()));
+        let worker_state = Arc::clone(&state);
+        let mut command = slow_test_command(&root);
+        let worker = thread::spawn(move || {
+            run_task_command(&worker_state, "task-process", &mut command)
+                .expect("慢速测试命令应成功")
+        });
+
+        let mut registered_child = None;
+        for _ in 0..100 {
+            registered_child = state
+                .lock()
+                .expect("任务队列锁应可用")
+                .running_processes
+                .get("task-process")
+                .cloned();
+            if registered_child.is_some() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let registered_child = registered_child.expect("任务运行期间应保存子进程句柄");
+        assert!(registered_child.lock().expect("子进程锁应可用").id() > 0);
+        let output = worker.join().expect("命令线程应正常结束");
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "tracked");
+        assert!(!state
+            .lock()
+            .expect("任务队列锁应可用")
+            .running_processes
+            .contains_key("task-process"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
     #[test]
     fn restores_unfinished_task_history_as_interrupted_once() {
         let root = test_temp_dir("task-history-restart");
@@ -8052,6 +8214,7 @@ mod tests {
             ],
             pending: VecDeque::new(),
             running_task_id: Some("task-8".to_string()),
+            running_processes: HashMap::new(),
             persistence_path: Some(path.clone()),
         };
         persist_task_history(&state).expect("任务历史应能写入");
@@ -11013,8 +11176,10 @@ mod tests {
             target_revision: "1".to_string(),
             svn_executable: "svn".to_string(),
         };
+        let state = Arc::new(Mutex::new(TaskQueueState::default()));
         let (output, base_revision, source_url) =
-            execute_revert_revision(&payload).expect("reverse merge should succeed");
+            execute_revert_revision(&state, "revert-revision-test", &payload)
+                .expect("reverse merge should succeed");
 
         assert!(output.status.success());
         assert_eq!(base_revision, "2");
