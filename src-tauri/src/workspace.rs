@@ -1088,18 +1088,18 @@ pub fn list_workspace_files(
         .collect::<HashMap<_, _>>();
     let versioned_paths = read_versioned_workspace_paths(&executable, &path)?;
     let max_files = request.max_files.unwrap_or(5000).clamp(1, 20000);
-    let mut returned_files = 0;
-    let mut total_files = 0;
-    let mut truncated = false;
+    let mut read_state = WorkspaceFileTreeReadState {
+        max_files,
+        returned_files: 0,
+        total_files: 0,
+        truncated: false,
+    };
     let mut nodes = read_workspace_children(
         &path,
         &path,
         &status_by_path,
         &versioned_paths,
-        max_files,
-        &mut returned_files,
-        &mut total_files,
-        &mut truncated,
+        &mut read_state,
     )?;
 
     add_missing_status_nodes(&mut nodes, &status_by_path, &versioned_paths);
@@ -1107,9 +1107,9 @@ pub fn list_workspace_files(
 
     Ok(WorkspaceFileTree {
         working_copy_root: path.display().to_string(),
-        total_files,
-        returned_files,
-        truncated,
+        total_files: read_state.total_files,
+        returned_files: read_state.returned_files,
+        truncated: read_state.truncated,
         nodes,
     })
 }
@@ -1970,7 +1970,7 @@ fn read_svn_base_text(
 }
 
 fn bytes_to_limited_text(bytes: Vec<u8>, too_large: bool) -> Result<LimitedText, NovaError> {
-    if bytes.iter().any(|byte| *byte == 0) {
+    if bytes.contains(&0) {
         return Ok(LimitedText {
             text: String::new(),
             binary: true,
@@ -2300,15 +2300,19 @@ fn count_status(files: &[ChangedFile], status: &str) -> usize {
     files.iter().filter(|file| file.status == status).count()
 }
 
+struct WorkspaceFileTreeReadState {
+    max_files: usize,
+    returned_files: usize,
+    total_files: usize,
+    truncated: bool,
+}
+
 fn read_workspace_children(
     root: &Path,
     directory: &Path,
     status_by_path: &HashMap<String, &ChangedFile>,
     versioned_paths: &VersionedWorkspaceIndex,
-    max_files: usize,
-    returned_files: &mut usize,
-    total_files: &mut usize,
-    truncated: &mut bool,
+    read_state: &mut WorkspaceFileTreeReadState,
 ) -> Result<Vec<WorkspaceFileNode>, NovaError> {
     let entries = fs::read_dir(directory).map_err(|error| {
         NovaError::command(
@@ -2349,16 +2353,8 @@ fn read_workspace_children(
         if metadata.is_dir() && !reparse_point {
             let normalized_path = normalize_tree_path(&relative_path);
             let versioned = versioned_paths.contains(&normalized_path);
-            let children = read_workspace_children(
-                root,
-                &path,
-                status_by_path,
-                versioned_paths,
-                max_files,
-                returned_files,
-                total_files,
-                truncated,
-            )?;
+            let children =
+                read_workspace_children(root, &path, status_by_path, versioned_paths, read_state)?;
             if children.is_empty() && !versioned {
                 continue;
             }
@@ -2396,13 +2392,13 @@ fn read_workspace_children(
                 children,
             });
         } else if metadata.is_file() || metadata.file_type().is_symlink() || reparse_point {
-            *total_files += 1;
-            if *returned_files >= max_files {
-                *truncated = true;
+            read_state.total_files += 1;
+            if read_state.returned_files >= read_state.max_files {
+                read_state.truncated = true;
                 continue;
             }
 
-            *returned_files += 1;
+            read_state.returned_files += 1;
             nodes.push(workspace_file_node(
                 relative_path,
                 name,
@@ -2722,9 +2718,7 @@ fn parse_svnversion_output(output: &str) -> RevisionSummary {
         return RevisionSummary::default();
     }
 
-    let range = trimmed
-        .trim_end_matches(|value| matches!(value, 'M' | 'S' | 'P' | 'U'))
-        .to_string();
+    let range = trimmed.trim_end_matches(['M', 'S', 'P', 'U']).to_string();
 
     let mixed = range.contains(':');
 
@@ -4195,25 +4189,25 @@ line two</property>
             .into_iter()
             .map(ToString::to_string),
         );
-        let mut returned_files = 0;
-        let mut total_files = 0;
-        let mut truncated = false;
+        let mut read_state = WorkspaceFileTreeReadState {
+            max_files: 100,
+            returned_files: 0,
+            total_files: 0,
+            truncated: false,
+        };
         let mut nodes = read_workspace_children(
             &root,
             &root,
             &status_by_path,
             &versioned_paths,
-            100,
-            &mut returned_files,
-            &mut total_files,
-            &mut truncated,
+            &mut read_state,
         )
         .expect("tree reads");
         add_missing_status_nodes(&mut nodes, &status_by_path, &versioned_paths);
         sort_workspace_nodes(&mut nodes);
 
-        assert_eq!(total_files, 3);
-        assert!(!truncated);
+        assert_eq!(read_state.total_files, 3);
+        assert!(!read_state.truncated);
         assert!(nodes.iter().all(|node| node.name != ".svn"));
         let src = nodes.iter().find(|node| node.name == "src").unwrap();
         assert!(src.changed);
@@ -4363,24 +4357,24 @@ line two</property>
 
         let status_by_path: HashMap<String, &ChangedFile> = HashMap::new();
         let versioned_paths = VersionedWorkspaceIndex::from_paths(["linked".to_string()]);
-        let mut returned_files = 0;
-        let mut total_files = 0;
-        let mut truncated = false;
+        let mut read_state = WorkspaceFileTreeReadState {
+            max_files: 100,
+            returned_files: 0,
+            total_files: 0,
+            truncated: false,
+        };
         let nodes = read_workspace_children(
             &root,
             &root,
             &status_by_path,
             &versioned_paths,
-            100,
-            &mut returned_files,
-            &mut total_files,
-            &mut truncated,
+            &mut read_state,
         )
         .expect("symlink tree reads");
 
-        assert_eq!(total_files, 1);
-        assert_eq!(returned_files, 1);
-        assert!(!truncated);
+        assert_eq!(read_state.total_files, 1);
+        assert_eq!(read_state.returned_files, 1);
+        assert!(!read_state.truncated);
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].path, "linked");
         assert_eq!(nodes[0].kind, "file");
@@ -4764,7 +4758,7 @@ line two</property>
         let root = Path::new("/tmp/novasvn-backslash-root");
         assert_eq!(
             status_target_path("\\name.txt", root),
-            root.join("\\name.txt")
+            PathBuf::from("/tmp/novasvn-backslash-root/\\name.txt")
         );
         assert_eq!(
             display_status_path("/tmp/novasvn-backslash-root/\\name.txt", root),

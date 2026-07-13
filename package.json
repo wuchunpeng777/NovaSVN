@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "check": "npm run test:components && npm run test:scripts && npm run build && npm run test:rust",
+    "check": "npm run test:components && npm run test:scripts && npm run build && npm run lint:rust && npm run test:rust",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
@@ -14,6 +14,7 @@
     "test:scripts": "node scripts/test-package-scripts.mjs",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
+    "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "benchmark:svn": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/benchmark-svn-workspace.ps1",
     "benchmark:svn:reset": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/benchmark-svn-workspace.ps1 -Reset",

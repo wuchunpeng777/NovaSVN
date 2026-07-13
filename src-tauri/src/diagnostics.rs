@@ -1,4 +1,8 @@
-use std::{fs, panic, path::PathBuf, process::Command};
+use std::{
+    fs, panic,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
@@ -76,7 +80,7 @@ pub fn export_diagnostics(
 
 fn build_diagnostics(
     app: &AppHandle,
-    app_data_dir: &PathBuf,
+    app_data_dir: &Path,
     tasks: &[Task],
 ) -> Result<String, NovaError> {
     let package = app.package_info();
@@ -87,7 +91,7 @@ fn build_diagnostics(
     ))
 }
 
-fn build_diagnostics_content(app_version: &str, app_data_dir: &PathBuf, tasks: &[Task]) -> String {
+fn build_diagnostics_content(app_version: &str, app_data_dir: &Path, tasks: &[Task]) -> String {
     let mut lines = vec![
         "NovaSVN 诊断日志".to_string(),
         format!("生成时间：{}", timestamp_millis()),
@@ -138,7 +142,7 @@ fn build_diagnostics_content(app_version: &str, app_data_dir: &PathBuf, tasks: &
     lines.join("\n")
 }
 
-fn append_file_summary(lines: &mut Vec<String>, path: &PathBuf) {
+fn append_file_summary(lines: &mut Vec<String>, path: &Path) {
     match fs::metadata(path) {
         Ok(metadata) => lines.push(format!(
             "{}：存在，{} bytes",
@@ -184,7 +188,7 @@ fn append_svn_cli_summary(lines: &mut Vec<String>) {
     }
 }
 
-fn append_optional_file(lines: &mut Vec<String>, path: &PathBuf, max_bytes: usize) {
+fn append_optional_file(lines: &mut Vec<String>, path: &Path, max_bytes: usize) {
     match fs::read_to_string(path) {
         Ok(content) => {
             if content.len() > max_bytes {

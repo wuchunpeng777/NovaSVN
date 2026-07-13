@@ -6507,9 +6507,10 @@ fn validate_delete_target_ancestors(
             }
         };
         let is_symlink = metadata.file_type().is_symlink();
-        if (!is_target && is_symlink)
-            || (metadata_is_reparse_point(&metadata) && !(is_target && is_symlink))
-        {
+        let unsafe_symlink = is_symlink && !is_target;
+        let unsafe_reparse_point =
+            metadata_is_reparse_point(&metadata) && !(is_target && is_symlink);
+        if unsafe_symlink || unsafe_reparse_point {
             return Err(NovaError::command(
                 "DELETE_TARGET_UNSAFE",
                 "删除目标的中间路径包含符号链接或重解析点",
@@ -6735,8 +6736,8 @@ fn normalize_repository_local_path(
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err(NovaError::command(
-            &format!("{code_prefix}_REQUIRED"),
-            &format!("请输入{label}"),
+            format!("{code_prefix}_REQUIRED"),
+            format!("请输入{label}"),
             None,
             true,
         ));
@@ -6744,8 +6745,8 @@ fn normalize_repository_local_path(
 
     if trimmed.chars().any(char::is_control) {
         return Err(NovaError::command(
-            &format!("{code_prefix}_INVALID"),
-            &format!("{label}无效"),
+            format!("{code_prefix}_INVALID"),
+            format!("{label}无效"),
             Some(format!("{label}不能包含控制字符。")),
             true,
         ));
@@ -6754,8 +6755,8 @@ fn normalize_repository_local_path(
     let path = Path::new(trimmed);
     if !path_utils::is_absolute_or_home_path(path, trimmed) {
         return Err(NovaError::command(
-            &format!("{code_prefix}_INVALID"),
-            &format!("{label}无效"),
+            format!("{code_prefix}_INVALID"),
+            format!("{label}无效"),
             Some(format!("{label}必须是绝对路径或 ~/ 开头路径。")),
             true,
         ));
@@ -6814,24 +6815,24 @@ fn validate_repository_local_destination(
         Ok(metadata) => {
             if metadata.file_type().is_symlink() || metadata_is_reparse_point(&metadata) {
                 return Err(NovaError::command(
-                    &format!("{code_prefix}_DESTINATION_UNSAFE"),
-                    &format!("{operation} 本地目标不可用"),
+                    format!("{code_prefix}_DESTINATION_UNSAFE"),
+                    format!("{operation} 本地目标不可用"),
                     Some("目标目录不能是符号链接或 reparse point。".to_string()),
                     true,
                 ));
             }
             if !metadata.is_dir() {
                 return Err(NovaError::command(
-                    &format!("{code_prefix}_DESTINATION_NOT_DIRECTORY"),
-                    &format!("{operation} 本地目标不可用"),
+                    format!("{code_prefix}_DESTINATION_NOT_DIRECTORY"),
+                    format!("{operation} 本地目标不可用"),
                     Some("目标路径已存在且不是目录。".to_string()),
                     true,
                 ));
             }
             let mut entries = fs::read_dir(path).map_err(|error| {
                 NovaError::command(
-                    &format!("{code_prefix}_DESTINATION_UNREADABLE"),
-                    &format!("无法检查 {operation} 本地目标"),
+                    format!("{code_prefix}_DESTINATION_UNREADABLE"),
+                    format!("无法检查 {operation} 本地目标"),
                     Some(format!("读取目录 `{}` 失败：{error}", path.display())),
                     true,
                 )
@@ -6841,8 +6842,8 @@ fn validate_repository_local_destination(
                 .transpose()
                 .map_err(|error| {
                     NovaError::command(
-                        &format!("{code_prefix}_DESTINATION_UNREADABLE"),
-                        &format!("无法检查 {operation} 本地目标"),
+                        format!("{code_prefix}_DESTINATION_UNREADABLE"),
+                        format!("无法检查 {operation} 本地目标"),
                         Some(format!("读取目录 `{}` 失败：{error}", path.display())),
                         true,
                     )
@@ -6850,8 +6851,8 @@ fn validate_repository_local_destination(
                 .is_some()
             {
                 return Err(NovaError::command(
-                    &format!("{code_prefix}_DESTINATION_NOT_EMPTY"),
-                    &format!("{operation} 本地目标必须为空"),
+                    format!("{code_prefix}_DESTINATION_NOT_EMPTY"),
+                    format!("{operation} 本地目标必须为空"),
                     Some(format!("目录 `{}` 已包含文件。", path.display())),
                     true,
                 ));
@@ -6864,24 +6865,24 @@ fn validate_repository_local_destination(
                 .filter(|parent| !parent.as_os_str().is_empty())
                 .ok_or_else(|| {
                     NovaError::command(
-                        &format!("{code_prefix}_PARENT_REQUIRED"),
-                        &format!("{operation} 本地目标不可用"),
+                        format!("{code_prefix}_PARENT_REQUIRED"),
+                        format!("{operation} 本地目标不可用"),
                         Some("目标路径必须包含已存在的父目录。".to_string()),
                         true,
                     )
                 })?;
             let parent_metadata = fs::metadata(parent).map_err(|error| {
                 NovaError::command(
-                    &format!("{code_prefix}_PARENT_UNAVAILABLE"),
-                    &format!("{operation} 父目录不可用"),
+                    format!("{code_prefix}_PARENT_UNAVAILABLE"),
+                    format!("{operation} 父目录不可用"),
                     Some(format!("读取父目录 `{}` 失败：{error}", parent.display())),
                     true,
                 )
             })?;
             if !parent_metadata.is_dir() {
                 return Err(NovaError::command(
-                    &format!("{code_prefix}_PARENT_NOT_DIRECTORY"),
-                    &format!("{operation} 父目录不可用"),
+                    format!("{code_prefix}_PARENT_NOT_DIRECTORY"),
+                    format!("{operation} 父目录不可用"),
                     Some(format!("`{}` 不是目录。", parent.display())),
                     true,
                 ));
@@ -6889,8 +6890,8 @@ fn validate_repository_local_destination(
             Ok(())
         }
         Err(error) => Err(NovaError::command(
-            &format!("{code_prefix}_DESTINATION_UNAVAILABLE"),
-            &format!("无法检查 {operation} 本地目标"),
+            format!("{code_prefix}_DESTINATION_UNAVAILABLE"),
+            format!("无法检查 {operation} 本地目标"),
             Some(format!("读取路径 `{}` 失败：{error}", path.display())),
             true,
         )),
@@ -7587,6 +7588,89 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
     }
 
     value[..end].to_string()
+}
+
+fn compact_repository_url(url: &str) -> String {
+    const MAX_CHARS: usize = 48;
+    if url.chars().count() <= MAX_CHARS {
+        return url.to_string();
+    }
+
+    let tail: String = url
+        .chars()
+        .rev()
+        .take(MAX_CHARS - 3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("...{tail}")
+}
+
+fn parse_repository_list_xml(
+    xml: &str,
+    url: &str,
+    revision: Option<&str>,
+) -> Result<RepositoryListResult, NovaError> {
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "SVN_LIST_XML_PARSE_FAILED",
+            "解析仓库目录失败",
+            Some(format!("svn list --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+
+    let mut entries = Vec::new();
+    for entry in document
+        .descendants()
+        .filter(|node| node.has_tag_name("entry"))
+    {
+        let kind = entry.attribute("kind").unwrap_or("file").to_string();
+        let name = text_child(entry, "name").unwrap_or_default();
+        let commit = entry.children().find(|node| node.has_tag_name("commit"));
+        let revision = commit
+            .and_then(|node| node.attribute("revision"))
+            .unwrap_or("")
+            .to_string();
+        let author = commit
+            .and_then(|node| text_child(node, "author"))
+            .unwrap_or_default();
+        let date = commit
+            .and_then(|node| text_child(node, "date"))
+            .unwrap_or_default();
+
+        entries.push(RepositoryListEntry {
+            name,
+            kind,
+            revision,
+            author,
+            date,
+        });
+    }
+
+    entries.sort_by(|left, right| {
+        let left_dir = left.kind == "dir";
+        let right_dir = right.kind == "dir";
+        right_dir
+            .cmp(&left_dir)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+
+    Ok(RepositoryListResult {
+        url: url.to_string(),
+        revision: revision.map(ToString::to_string),
+        entries,
+    })
+}
+
+fn text_child(node: roxmltree::Node<'_, '_>, tag_name: &str) -> Option<String> {
+    node.children()
+        .find(|child| child.has_tag_name(tag_name))
+        .and_then(|child| child.text())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 #[cfg(test)]
@@ -11139,87 +11223,4 @@ mod tests {
         assert_eq!(result.entries[0].author, "dev");
         assert_eq!(result.entries[0].date, "2026-01-01T00:00:00Z");
     }
-}
-
-fn compact_repository_url(url: &str) -> String {
-    const MAX_CHARS: usize = 48;
-    if url.chars().count() <= MAX_CHARS {
-        return url.to_string();
-    }
-
-    let tail: String = url
-        .chars()
-        .rev()
-        .take(MAX_CHARS - 3)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    format!("...{tail}")
-}
-
-fn parse_repository_list_xml(
-    xml: &str,
-    url: &str,
-    revision: Option<&str>,
-) -> Result<RepositoryListResult, NovaError> {
-    let document = Document::parse(xml).map_err(|error| {
-        NovaError::command(
-            "SVN_LIST_XML_PARSE_FAILED",
-            "解析仓库目录失败",
-            Some(format!("svn list --xml 返回了无法解析的 XML：{error}")),
-            true,
-        )
-    })?;
-
-    let mut entries = Vec::new();
-    for entry in document
-        .descendants()
-        .filter(|node| node.has_tag_name("entry"))
-    {
-        let kind = entry.attribute("kind").unwrap_or("file").to_string();
-        let name = text_child(entry, "name").unwrap_or_default();
-        let commit = entry.children().find(|node| node.has_tag_name("commit"));
-        let revision = commit
-            .and_then(|node| node.attribute("revision"))
-            .unwrap_or("")
-            .to_string();
-        let author = commit
-            .and_then(|node| text_child(node, "author"))
-            .unwrap_or_default();
-        let date = commit
-            .and_then(|node| text_child(node, "date"))
-            .unwrap_or_default();
-
-        entries.push(RepositoryListEntry {
-            name,
-            kind,
-            revision,
-            author,
-            date,
-        });
-    }
-
-    entries.sort_by(|left, right| {
-        let left_dir = left.kind == "dir";
-        let right_dir = right.kind == "dir";
-        right_dir
-            .cmp(&left_dir)
-            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
-    });
-
-    Ok(RepositoryListResult {
-        url: url.to_string(),
-        revision: revision.map(ToString::to_string),
-        entries,
-    })
-}
-
-fn text_child(node: roxmltree::Node<'_, '_>, tag_name: &str) -> Option<String> {
-    node.children()
-        .find(|child| child.has_tag_name(tag_name))
-        .and_then(|child| child.text())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
 }

@@ -57,14 +57,12 @@ fn detect_version_with_fallbacks(
     user_configured: bool,
 ) -> Result<VersionDetection, NovaError> {
     match detect_version(executable) {
-        Ok(version) => {
-            return Ok(VersionDetection {
-                executable: executable.to_string(),
-                version,
-                resolved_path: resolve_executable_path(executable),
-            });
-        }
-        Err(error) if user_configured => return Err(error),
+        Ok(version) => Ok(VersionDetection {
+            executable: executable.to_string(),
+            version,
+            resolved_path: resolve_executable_path(executable),
+        }),
+        Err(error) if user_configured => Err(error),
         Err(first_error) => {
             for candidate in fallback_svn_candidates() {
                 if candidate == executable {
@@ -181,24 +179,6 @@ fn resolve_executable_path(executable: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn includes_common_macos_svn_locations() {
-        let candidates = fallback_svn_candidates();
-
-        assert!(candidates
-            .iter()
-            .any(|path| path == "/opt/homebrew/bin/svn"));
-        assert!(candidates.iter().any(|path| path == "/usr/local/bin/svn"));
-        assert!(candidates
-            .iter()
-            .any(|path| path.ends_with("/.homebrew/bin/svn")));
-    }
-}
-
 fn command_output_detail(executable: &str, output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -215,4 +195,22 @@ fn command_output_detail(executable: &str, output: &std::process::Output) -> Str
         "`{executable} --version --quiet` 返回退出码 {:?}，但没有输出。",
         output.status.code()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn includes_common_macos_svn_locations() {
+        let candidates = fallback_svn_candidates();
+
+        assert!(candidates
+            .iter()
+            .any(|path| path == "/opt/homebrew/bin/svn"));
+        assert!(candidates.iter().any(|path| path == "/usr/local/bin/svn"));
+        assert!(candidates
+            .iter()
+            .any(|path| path.ends_with("/.homebrew/bin/svn")));
+    }
 }

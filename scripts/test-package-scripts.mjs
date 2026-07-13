@@ -104,6 +104,7 @@ const requiredCheckSteps = [
   "npm run test:components",
   "npm run test:scripts",
   "npm run build",
+  "npm run lint:rust",
   "npm run test:rust",
 ];
 const requiredBundleTargets = ["nsis", "dmg"];
@@ -158,6 +159,14 @@ if (typeof checkCommand !== "string") {
 
 if (packageJson.scripts?.["test:rust"] !== "cargo test --manifest-path src-tauri/Cargo.toml") {
   console.error("test:rust 必须使用项目内 Cargo manifest，保证各平台入口一致");
+  failed = true;
+}
+
+if (
+  packageJson.scripts?.["lint:rust"] !==
+  "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings"
+) {
+  console.error("lint:rust 必须检查全部 Rust 目标并将 Clippy 告警视为错误");
   failed = true;
 }
 
