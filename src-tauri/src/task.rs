@@ -11,7 +11,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use roxmltree::Document;
@@ -38,6 +38,8 @@ const MAX_PERSISTED_TASKS: usize = 200;
 const MAX_PERSISTED_TASK_LOGS: usize = 500;
 const MAX_PERSISTED_TASK_LOG_BYTES: usize = 256 * 1024;
 const MAX_PERSISTED_TASK_ERROR_BYTES: usize = 64 * 1024;
+const TASK_COMMAND_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+const TASK_COMMAND_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 static APPLY_PATCH_SNAPSHOT_NONCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -5360,7 +5362,16 @@ fn run_task_command(
     task_id: &str,
     command: &mut Command,
 ) -> std::io::Result<Output> {
-    run_task_command_inner(state, task_id, command, true)
+    run_task_command_inner(
+        state,
+        task_id,
+        command,
+        true,
+        TaskCommandLimits {
+            timeout: TASK_COMMAND_TIMEOUT,
+            idle_timeout: Some(TASK_COMMAND_IDLE_TIMEOUT),
+        },
+    )
 }
 
 fn run_task_command_with_configured_stdout(
@@ -5368,7 +5379,32 @@ fn run_task_command_with_configured_stdout(
     task_id: &str,
     command: &mut Command,
 ) -> std::io::Result<Output> {
-    run_task_command_inner(state, task_id, command, false)
+    run_task_command_inner(
+        state,
+        task_id,
+        command,
+        false,
+        TaskCommandLimits {
+            timeout: TASK_COMMAND_TIMEOUT,
+            idle_timeout: None,
+        },
+    )
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TaskCommandLimits {
+    timeout: Duration,
+    idle_timeout: Option<Duration>,
+}
+
+#[cfg(test)]
+fn run_task_command_with_limits(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    command: &mut Command,
+    limits: TaskCommandLimits,
+) -> std::io::Result<Output> {
+    run_task_command_inner(state, task_id, command, true, limits)
 }
 
 fn run_task_command_inner(
@@ -5376,6 +5412,7 @@ fn run_task_command_inner(
     task_id: &str,
     command: &mut Command,
     capture_stdout: bool,
+    limits: TaskCommandLimits,
 ) -> std::io::Result<Output> {
     if state
         .lock()
@@ -5398,8 +5435,12 @@ fn run_task_command_inner(
     let mut child = command.spawn()?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let stdout_reader = thread::spawn(move || read_child_pipe(stdout));
-    let stderr_reader = thread::spawn(move || read_child_pipe(stderr));
+    let started_at = Instant::now();
+    let last_output_at = Arc::new(Mutex::new(started_at));
+    let stdout_activity = Arc::clone(&last_output_at);
+    let stderr_activity = Arc::clone(&last_output_at);
+    let stdout_reader = thread::spawn(move || read_child_pipe(stdout, stdout_activity));
+    let stderr_reader = thread::spawn(move || read_child_pipe(stderr, stderr_activity));
     let child = Arc::new(Mutex::new(child));
 
     let cancellation_requested = {
@@ -5417,19 +5458,50 @@ fn run_task_command_inner(
         terminate_process_tree(&child)?;
     }
 
-    let status = loop {
+    let mut status = None;
+    let mut execution_error = None;
+    loop {
         let result = child.lock().expect("SVN 子进程锁已损坏").try_wait();
         match result {
-            Ok(Some(status)) => break Ok(status),
-            Ok(None) => thread::sleep(Duration::from_millis(25)),
+            Ok(Some(exit_status)) => {
+                status = Some(exit_status);
+                break;
+            }
+            Ok(None) => {}
             Err(error) => {
-                let mut child = child.lock().expect("SVN 子进程锁已损坏");
-                child.kill().ok();
-                child.wait().ok();
-                break Err(error);
+                terminate_process_tree(&child).ok();
+                execution_error = Some(error);
+                break;
             }
         }
-    };
+
+        let now = Instant::now();
+        let timeout_message = if now.duration_since(started_at) >= limits.timeout {
+            Some(format!(
+                "SVN 命令运行超过{}，已终止进程树",
+                format_task_command_duration(limits.timeout)
+            ))
+        } else if let Some(idle_timeout) = limits.idle_timeout {
+            let last_output_at = *last_output_at.lock().expect("命令输出活动锁已损坏");
+            (now.duration_since(last_output_at) >= idle_timeout).then(|| {
+                format!(
+                    "SVN 命令连续{}无输出，已终止进程树",
+                    format_task_command_duration(idle_timeout)
+                )
+            })
+        } else {
+            None
+        };
+        if let Some(mut message) = timeout_message {
+            if let Err(error) = terminate_process_tree(&child) {
+                message.push_str(&format!("；终止时发生错误：{error}"));
+            }
+            execution_error = Some(std::io::Error::new(std::io::ErrorKind::TimedOut, message));
+            break;
+        }
+
+        thread::sleep(Duration::from_millis(25));
+    }
 
     {
         let mut queue = state.lock().expect("任务队列锁已损坏");
@@ -5444,19 +5516,41 @@ fn run_task_command_inner(
 
     let stdout = join_child_reader(stdout_reader, "stdout")?;
     let stderr = join_child_reader(stderr_reader, "stderr")?;
+    if let Some(error) = execution_error {
+        return Err(error);
+    }
     Ok(Output {
-        status: status?,
+        status: status.ok_or_else(|| std::io::Error::other("SVN 子进程未返回退出状态"))?,
         stdout,
         stderr,
     })
 }
 
-fn read_child_pipe(mut pipe: Option<impl Read>) -> std::io::Result<Vec<u8>> {
+fn read_child_pipe(
+    mut pipe: Option<impl Read>,
+    last_output_at: Arc<Mutex<Instant>>,
+) -> std::io::Result<Vec<u8>> {
     let mut output = Vec::new();
     if let Some(pipe) = pipe.as_mut() {
-        pipe.read_to_end(&mut output)?;
+        let mut buffer = [0_u8; 8 * 1024];
+        loop {
+            let read = pipe.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            output.extend_from_slice(&buffer[..read]);
+            *last_output_at.lock().expect("命令输出活动锁已损坏") = Instant::now();
+        }
     }
     Ok(output)
+}
+
+fn format_task_command_duration(duration: Duration) -> String {
+    if duration < Duration::from_secs(1) {
+        format!(" {} 毫秒", duration.as_millis())
+    } else {
+        format!(" {} 秒", duration.as_secs())
+    }
 }
 
 fn join_child_reader(
@@ -5500,7 +5594,12 @@ fn terminate_process_tree(process: &Arc<Mutex<Child>>) -> std::io::Result<()> {
         return Ok(());
     }
 
-    process.lock().expect("SVN 子进程锁已损坏").kill()
+    process.lock().expect("SVN 子进程锁已损坏").kill()?;
+    if wait_for_process_exit(process, Duration::from_secs(1))? {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("强制终止 Unix 子进程后仍未退出"))
+    }
 }
 
 #[cfg(unix)]
@@ -5537,12 +5636,22 @@ fn terminate_process_tree(process: &Arc<Mutex<Child>>) -> std::io::Result<()> {
         return Ok(());
     }
 
-    process.lock().expect("SVN 子进程锁已损坏").kill()
+    process.lock().expect("SVN 子进程锁已损坏").kill()?;
+    if wait_for_process_exit(process, Duration::from_secs(1))? {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("强制终止 Windows 子进程后仍未退出"))
+    }
 }
 
 #[cfg(not(any(unix, windows)))]
 fn terminate_process_tree(process: &Arc<Mutex<Child>>) -> std::io::Result<()> {
-    process.lock().expect("SVN 子进程锁已损坏").kill()
+    process.lock().expect("SVN 子进程锁已损坏").kill()?;
+    if wait_for_process_exit(process, Duration::from_secs(1))? {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("强制终止子进程后仍未退出"))
+    }
 }
 
 fn wait_for_process_exit(process: &Arc<Mutex<Child>>, timeout: Duration) -> std::io::Result<bool> {
@@ -8364,6 +8473,22 @@ mod tests {
         Command::new(path)
     }
 
+    #[cfg(unix)]
+    fn active_output_test_command(root: &Path) -> Command {
+        let path = root.join("active-output-task.sh");
+        fs::write(
+            &path,
+            "#!/bin/sh\nfor value in 1 2 3 4 5; do printf tick; sleep 0.08; done\n",
+        )
+        .expect("活动输出测试脚本应能写入");
+        let mut permissions = fs::metadata(&path)
+            .expect("活动输出测试脚本元数据应可读取")
+            .permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).expect("活动输出测试脚本应可执行");
+        Command::new(path)
+    }
+
     fn running_process_test_queue(task_id: &str) -> (TaskQueue, Arc<Mutex<TaskQueueState>>) {
         let state = Arc::new(Mutex::new(TaskQueueState {
             tasks: vec![persisted_test_task(
@@ -8476,6 +8601,79 @@ mod tests {
             .cancellation_requested
             .is_empty());
 
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn terminates_task_command_after_idle_timeout() {
+        let root = test_temp_dir("task-idle-timeout");
+        let state = Arc::new(Mutex::new(TaskQueueState::default()));
+        let mut command = slow_test_command(&root);
+        let error = run_task_command_with_limits(
+            &state,
+            "task-idle-timeout",
+            &mut command,
+            TaskCommandLimits {
+                timeout: Duration::from_secs(2),
+                idle_timeout: Some(Duration::from_millis(100)),
+            },
+        )
+        .expect_err("静默命令应触发无输出超时");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("无输出"));
+        assert!(state
+            .lock()
+            .expect("任务队列锁应可用")
+            .running_processes
+            .is_empty());
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_activity_renews_idle_timeout() {
+        let root = test_temp_dir("task-output-activity");
+        let state = Arc::new(Mutex::new(TaskQueueState::default()));
+        let mut command = active_output_test_command(&root);
+        let output = run_task_command_with_limits(
+            &state,
+            "task-output-activity",
+            &mut command,
+            TaskCommandLimits {
+                timeout: Duration::from_secs(2),
+                idle_timeout: Some(Duration::from_millis(150)),
+            },
+        )
+        .expect("持续输出命令不应触发空闲超时");
+
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "tickticktickticktick"
+        );
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminates_active_task_command_after_total_timeout() {
+        let root = test_temp_dir("task-total-timeout");
+        let state = Arc::new(Mutex::new(TaskQueueState::default()));
+        let mut command = active_output_test_command(&root);
+        let error = run_task_command_with_limits(
+            &state,
+            "task-total-timeout",
+            &mut command,
+            TaskCommandLimits {
+                timeout: Duration::from_millis(180),
+                idle_timeout: Some(Duration::from_millis(150)),
+            },
+        )
+        .expect_err("持续输出命令仍应受总时限约束");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("运行超过"));
         fs::remove_dir_all(root).ok();
     }
 
