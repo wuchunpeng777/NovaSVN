@@ -3,13 +3,12 @@ use std::{
     fs,
     hash::{Hash, Hasher},
     path::PathBuf,
-    process::Command,
 };
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::{error::NovaError, executable::normalize_executable_setting};
+use crate::{error::NovaError, executable::normalize_executable_setting, svn};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ShadowWorkspaceRequest {
@@ -44,7 +43,7 @@ pub fn shadow_status(
     }
 
     let executable = svn_executable(request)?;
-    let output = Command::new(&executable)
+    let output = svn::command(&executable)
         .args(["info", "--xml"])
         .arg(&shadow_path)
         .output()

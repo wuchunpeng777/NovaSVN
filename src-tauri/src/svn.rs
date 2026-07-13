@@ -4,6 +4,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{error::NovaError, executable::normalize_executable_setting};
 
+pub(crate) fn command(executable: &str) -> Command {
+    let mut command = Command::new(executable);
+    command.arg("--non-interactive");
+    command
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SvnDetection {
     pub available: bool,
@@ -200,6 +206,18 @@ fn command_output_detail(executable: &str, output: &std::process::Output) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adds_non_interactive_before_svn_subcommand() {
+        let mut command = command("svn");
+        command.arg("status").arg("--").arg("working-copy");
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args, ["--non-interactive", "status", "--", "working-copy"]);
+    }
 
     #[test]
     fn includes_common_macos_svn_locations() {

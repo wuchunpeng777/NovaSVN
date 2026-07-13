@@ -24,6 +24,7 @@ use crate::{
     executable::normalize_executable_setting,
     path_utils,
     shadow::{self, ShadowWorkspaceRequest},
+    svn,
 };
 
 const REVISION_DIFF_PREVIEW_MAX_BYTES: usize = 2 * 1024 * 1024;
@@ -2481,7 +2482,7 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
 
     let root = PathBuf::from(&payload.working_copy_root);
     let targets: Vec<PathBuf> = payload.files.iter().map(|file| root.join(file)).collect();
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command.arg("commit");
     for target in &targets {
         command.arg(target);
@@ -2535,7 +2536,7 @@ fn run_svn_operation_task(
     );
 
     let root = PathBuf::from(&payload.working_copy_root);
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     match payload.kind {
         SvnOperationKind::Update => {
             command.arg("update").arg(&root);
@@ -2924,7 +2925,7 @@ fn run_svn_batch_operation_task(
     );
 
     let root = PathBuf::from(&payload.working_copy_root);
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     match &payload.kind {
         SvnBatchOperationKind::Revert => {
             command.arg("revert");
@@ -3258,7 +3259,7 @@ fn run_shadow_workspace_task(
         }
     };
     let exists = shadow_path.join(".svn").exists();
-    let mut command = Command::new(&executable);
+    let mut command = svn::command(&executable);
 
     if exists {
         command.arg("update");
@@ -3398,7 +3399,7 @@ fn run_partial_commit_task(
     }
 
     append_task_log(state, task_id, "清理影子工作副本本地改动");
-    let mut revert_command = Command::new(&executable);
+    let mut revert_command = svn::command(&executable);
     revert_command
         .arg("revert")
         .arg("-R")
@@ -3472,7 +3473,7 @@ fn run_partial_commit_task(
     }
 
     append_task_log(state, task_id, "在影子工作副本执行 svn commit");
-    let mut commit = Command::new(&executable);
+    let mut commit = svn::command(&executable);
     commit.arg("commit");
     for file in &payload.files {
         commit.arg(shadow_path.join(file));
@@ -3534,7 +3535,7 @@ fn run_repository_list_task(
         &format!("执行 svn list --xml -r {revision_label}：{}", payload.url),
     );
 
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command.args(["list", "--xml"]);
     if let Some(revision) = payload.revision.as_deref() {
         command.args(["-r", revision]);
@@ -3664,7 +3665,7 @@ fn run_repository_file_task(
             }
         };
 
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command.arg("cat");
     if let Some(revision) = payload.revision.as_deref() {
         command.args(["-r", revision]);
@@ -3889,7 +3890,7 @@ fn run_repository_copy_task(
 
     let source = repository_url_with_peg_revision(&payload.source_url, payload.revision.as_deref());
     let target = repository_url_with_peg_revision(&payload.target_url, None);
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command.arg("copy");
     if let Some(revision) = payload.revision.as_deref() {
         command.arg("-r").arg(revision);
@@ -3952,7 +3953,7 @@ fn run_repository_mkdir_task(
     append_task_log(state, task_id, &format!("执行 svn mkdir：{}", payload.url));
 
     let target = repository_url_with_peg_revision(&payload.url, None);
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command
         .arg("mkdir")
         .arg("-m")
@@ -4029,7 +4030,7 @@ fn run_repository_import_task(
     );
 
     let target = repository_url_with_peg_revision(&payload.target_url, None);
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command
         .arg("import")
         .arg("-m")
@@ -4102,7 +4103,7 @@ fn run_repository_move_task(
 
     let source = repository_url_with_peg_revision(&payload.source_url, None);
     let target = repository_url_with_peg_revision(&payload.target_url, None);
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command
         .arg("move")
         .arg("-m")
@@ -4163,7 +4164,7 @@ fn run_repository_delete_task(
     append_task_log(state, task_id, &format!("执行 svn delete：{}", payload.url));
 
     let target = repository_url_with_peg_revision(&payload.url, None);
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command
         .arg("delete")
         .arg("-m")
@@ -4221,7 +4222,7 @@ fn run_revision_diff_task(
         None,
     );
 
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command.arg("diff");
     let target = match payload.mode {
         RevisionDiffMode::Revisions => {
@@ -4523,7 +4524,7 @@ fn execute_revert_revision(
 
     let source_url = read_revert_revision_info_item(&payload.svn_executable, &root, "url", false)?;
     let source_url = normalize_repository_url(&source_url)?;
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command
         .args(["merge", "--ignore-ancestry", "-r"])
         .arg(format!("{base_number}:{target_number}"))
@@ -4556,7 +4557,7 @@ fn read_revert_revision_info_item(
     item: &str,
     repository_head: bool,
 ) -> Result<String, NovaError> {
-    let mut command = Command::new(executable);
+    let mut command = svn::command(executable);
     command.args(["info", "--show-item", item]);
     if repository_head {
         command.args(["--revision", "HEAD"]);
@@ -4645,7 +4646,7 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
         }
     }
 
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command.arg("merge");
     if let Some(range) = merge_revision_arg(&payload.start_revision, &payload.end_revision) {
         command.arg("-r").arg(range);
@@ -5009,7 +5010,7 @@ fn run_branch_checkout_task(
         ),
     );
 
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command.arg("checkout");
     if let Some(revision) = payload.revision.as_deref() {
         command.arg("-r").arg(revision);
@@ -5082,7 +5083,7 @@ fn run_repository_checkout_task(
             payload.url, payload.local_path
         ),
     );
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command.arg("checkout");
     if let Some(revision) = payload.revision.as_deref() {
         command.arg("-r").arg(revision);
@@ -5156,7 +5157,7 @@ fn run_repository_export_task(
         task_id,
         &format!("执行 svn export：{} -> {}", payload.url, payload.local_path),
     );
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command.arg("export");
     if let Some(revision) = payload.revision.as_deref() {
         command.arg("-r").arg(revision);
@@ -5252,7 +5253,7 @@ fn run_svn_switch_task(
     );
 
     let root = PathBuf::from(&payload.working_copy_root);
-    let mut command = Command::new(&payload.svn_executable);
+    let mut command = svn::command(&payload.svn_executable);
     command
         .arg("switch")
         .arg(&payload.target_url)
@@ -5295,7 +5296,7 @@ fn run_shadow_checkout_or_update(
     executable: &str,
 ) -> bool {
     let exists = shadow_path.join(".svn").exists();
-    let mut command = Command::new(executable);
+    let mut command = svn::command(executable);
     if exists {
         command.arg("update");
         if let Some(revision) = request
@@ -6067,7 +6068,7 @@ fn svn_status_xml_for_guard(
     root: &Path,
     status_error_code: &'static str,
 ) -> Result<String, NovaError> {
-    let output = Command::new(executable)
+    let output = svn::command(executable)
         .args(["status", "--xml"])
         .arg(root)
         .current_dir(root)
@@ -6356,7 +6357,7 @@ fn validate_apply_patch_working_copy_root(
     svn_executable: &str,
     working_copy_root: &Path,
 ) -> Result<(), NovaError> {
-    let output = Command::new(svn_executable)
+    let output = svn::command(svn_executable)
         .args(["info", "--xml"])
         .arg(working_copy_root)
         .current_dir(working_copy_root)
@@ -6906,7 +6907,7 @@ fn validate_delete_target(
     validate_delete_target_ancestors(working_copy_root, relative_path)?;
 
     let target = working_copy_root.join(relative_path);
-    let output = Command::new(svn_executable)
+    let output = svn::command(svn_executable)
         .args(["info", "--xml"])
         .arg(&target)
         .current_dir(working_copy_root)
@@ -8106,7 +8107,7 @@ fn svn_patch_command(
     patch_file: &Path,
     working_copy_root: &Path,
 ) -> Command {
-    let mut command = Command::new(executable);
+    let mut command = svn::command(executable);
     configure_svn_patch_command(&mut command, dry_run, patch_file, working_copy_root);
     command
 }

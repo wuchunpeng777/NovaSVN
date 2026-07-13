@@ -20,6 +20,7 @@ use tauri::{AppHandle, Manager};
 use crate::{
     error::NovaError,
     executable::normalize_executable_setting,
+    svn,
     task::{
         normalize_repository_list_revision, normalize_repository_url,
         repository_url_with_peg_revision,
@@ -322,7 +323,7 @@ pub fn open_workspace(
     let path = normalize_workspace_path(&request.path)?;
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
-    let output = Command::new(&executable)
+    let output = svn::command(&executable)
         .args(["info", "--xml"])
         .arg(&path)
         .output()
@@ -371,7 +372,7 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
         .as_deref()
         .map(normalize_log_revision_value)
         .transpose()?;
-    let mut command = Command::new(&executable);
+    let mut command = svn::command(&executable);
     command
         .args(["log", "--xml", "--verbose", "--limit"])
         .arg((limit + 1).to_string());
@@ -435,7 +436,7 @@ pub fn get_repository_file_log(request: GetRepositoryFileLogRequest) -> Result<S
     }
     let effective_start_revision = start_revision.as_deref().or(revision.as_deref());
     let command_target = repository_url_with_peg_revision(&url, revision.as_deref());
-    let mut command = Command::new(&executable);
+    let mut command = svn::command(&executable);
     command
         .args(["log", "--xml", "--verbose", "--limit"])
         .arg((limit + 1).to_string());
@@ -477,7 +478,7 @@ pub fn get_svn_blame(request: GetSvnBlameRequest) -> Result<SvnBlame, NovaError>
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
     let max_lines = request.max_lines.unwrap_or(5000).clamp(1, 20000);
 
-    let blame_output = Command::new(&executable)
+    let blame_output = svn::command(&executable)
         .args(["blame", "--xml"])
         .arg(&target)
         .current_dir(&root)
@@ -500,7 +501,7 @@ pub fn get_svn_blame(request: GetSvnBlameRequest) -> Result<SvnBlame, NovaError>
         ));
     }
 
-    let content_output = Command::new(&executable)
+    let content_output = svn::command(&executable)
         .args(["cat", "-r", "BASE"])
         .arg(&target)
         .current_dir(&root)
@@ -552,7 +553,7 @@ pub fn get_repository_file_blame(
     let max_lines = request.max_lines.unwrap_or(5000).clamp(1, 20000);
     let command_target = repository_url_with_peg_revision(&url, revision.as_deref());
 
-    let mut blame_command = Command::new(&executable);
+    let mut blame_command = svn::command(&executable);
     blame_command.args(["blame", "--xml"]);
     if let Some(revision) = revision.as_deref() {
         blame_command.arg("-r").arg(format!("1:{revision}"));
@@ -578,7 +579,7 @@ pub fn get_repository_file_blame(
         ));
     }
 
-    let mut content_command = Command::new(&executable);
+    let mut content_command = svn::command(&executable);
     content_command.arg("cat");
     if let Some(revision) = revision.as_deref() {
         content_command.args(["-r", revision]);
@@ -635,7 +636,7 @@ pub fn get_svn_properties(request: GetSvnPropertiesRequest) -> Result<SvnPropert
         .unwrap_or_else(|| root.clone());
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
-    let output = Command::new(&executable)
+    let output = svn::command(&executable)
         .args(["proplist", "--xml"])
         .arg(&target)
         .current_dir(&root)
@@ -684,7 +685,7 @@ pub fn get_repository_file_properties(
     let revision = normalize_repository_list_revision(request.revision.as_deref())?;
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
     let command_target = repository_url_with_peg_revision(&url, revision.as_deref());
-    let mut command = Command::new(&executable);
+    let mut command = svn::command(&executable);
     command.args(["proplist", "--xml", "--verbose"]);
     if let Some(revision) = revision.as_deref() {
         command.args(["-r", revision]);
@@ -736,7 +737,7 @@ pub fn set_svn_property(request: SetSvnPropertyRequest) -> Result<SvnProperties,
     let operation = svn_property_write_operation(&request.value);
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
-    let mut command = Command::new(&executable);
+    let mut command = svn::command(&executable);
     command.arg(operation.command()).arg(&name);
     if let SvnPropertyWriteOperation::Set = operation {
         command.arg(&request.value);
@@ -792,7 +793,7 @@ pub fn ignore_workspace_path(
         .as_deref()
         .map(|parent| root.join(parent))
         .unwrap_or_else(|| root.clone());
-    let parent_info = Command::new(&executable)
+    let parent_info = svn::command(&executable)
         .args(["info", "--xml"])
         .arg(&parent_target)
         .current_dir(&root)
@@ -858,7 +859,7 @@ pub fn ignore_workspace_path(
             true,
         ));
     }
-    let status_output = Command::new(&executable)
+    let status_output = svn::command(&executable)
         .args(["status", "--xml", "--no-ignore"])
         .arg(&target)
         .current_dir(&root)
@@ -965,7 +966,7 @@ pub fn get_file_diff(request: GetFileDiffRequest) -> Result<FileDiff, NovaError>
     let target = root.join(&file_path);
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
-    let output = Command::new(&executable)
+    let output = svn::command(&executable)
         .arg("diff")
         .arg(&target)
         .current_dir(&root)
@@ -1118,7 +1119,7 @@ fn run_status_with_updates(
     executable: &str,
     path: &Path,
 ) -> Result<std::process::Output, NovaError> {
-    let output = Command::new(executable)
+    let output = svn::command(executable)
         .args(["status", "--xml", "--show-updates"])
         .arg(path)
         .output()
@@ -1138,7 +1139,7 @@ fn run_status_with_updates(
         return Ok(output);
     }
 
-    Command::new(executable)
+    svn::command(executable)
         .args(["status", "--xml"])
         .arg(path)
         .output()
@@ -1170,7 +1171,7 @@ fn read_versioned_workspace_paths(
             true,
         )
     })?;
-    let mut child = Command::new(executable)
+    let mut child = svn::command(executable)
         .args(["info", "--xml", "--depth", "infinity"])
         .arg(".")
         .current_dir(&canonical_root)
@@ -1933,7 +1934,7 @@ fn read_svn_base_text(
     target: &Path,
     max_bytes: u64,
 ) -> Result<LimitedText, NovaError> {
-    let output = Command::new(executable)
+    let output = svn::command(executable)
         .arg("cat")
         .arg(target)
         .current_dir(root)
@@ -3143,7 +3144,7 @@ fn get_svn_property_value(
     target: &Path,
     name: &str,
 ) -> Result<String, NovaError> {
-    let output = Command::new(executable)
+    let output = svn::command(executable)
         .arg("propget")
         .arg(name)
         .arg(target)
