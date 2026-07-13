@@ -22,6 +22,10 @@
   } from "@lucide/svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
+  import {
+    findSvnCertificateFailure,
+    svnCertificateFailureLabel,
+  } from "../../lib/svn-certificate";
   import type {
     ApplyPatchResult,
     BranchPool,
@@ -40,6 +44,8 @@
     SvnBlame,
     SvnDetection,
     SvnAuthenticationStatus,
+    SvnCertificateFailure,
+    SvnCertificateTrustStatus,
     SvnLog,
     SvnProperties,
     PendingSvnOperationKind,
@@ -326,6 +332,9 @@
   export let svnAuthenticationStatus: SvnAuthenticationStatus | null = null;
   export let svnAuthenticationError: CommandError | null = null;
   export let svnAuthenticationLoading = false;
+  export let svnCertificateTrustStatus: SvnCertificateTrustStatus | null = null;
+  export let svnCertificateTrustError: CommandError | null = null;
+  export let svnCertificateTrustLoading = false;
   export let appSettings: AppSettingsState = {
     svnExecutable: "",
     svnAuthenticationMode: "system",
@@ -551,6 +560,10 @@
   export let onSvnExecutableInput: (value: string) => void = () => {};
   export let onSvnAuthenticationPasswordInput: (value: string) => void = () => {};
   export let onApplySvnAuthentication: () => void = () => {};
+  export let onConfirmSvnCertificateTrust: (
+    failures: SvnCertificateFailure[],
+  ) => Promise<boolean> = async () => false;
+  export let onClearSvnCertificateTrust: () => void = () => {};
   export let onAppSettingInput: <K extends keyof AppSettingsState>(
     field: K,
     value: AppSettingsState[K],
@@ -630,6 +643,10 @@
   let themeMediaQuery: MediaQueryList | null = null;
   let resolvedTheme: "light" | "dark" = "light";
   let inspectorSelectionSignature = "";
+  let preparedCertificateSignature: string | null = null;
+  let dismissedCertificateSignature: string | null = null;
+  let selectedCertificateFailures: SvnCertificateFailure[] = [];
+  let certificateRiskConfirmed = false;
 
   $: if (appSettings.diffMode) {
     diffInline = appSettings.diffMode === "inline";
@@ -644,6 +661,51 @@
         ? "dark"
         : "light"
       : appSettings.themeMode;
+  $: detectedCertificateFailure = findSvnCertificateFailure([
+    commandErrorText(workspaceError),
+    commandErrorText(statusError),
+    repositoryError,
+    repositoryFileError,
+    commandErrorText(repositoryFileLogError),
+    commandErrorText(repositoryFileBlameError),
+    commandErrorText(repositoryFilePropertiesError),
+    ...Object.values(repositoryLayoutErrors),
+    repositoryCopyError,
+    repositoryMkdirError,
+    repositoryImportError,
+    repositoryDragExportError,
+    repositoryMoveError,
+    repositoryRenameError,
+    repositoryDeleteError,
+    repositoryCheckoutError,
+    repositoryExportError,
+    commandErrorText(svnLogError),
+    revisionDiffError,
+    branchCheckoutError,
+    mergeError,
+    selectedTask?.error,
+    commandErrorText(taskError),
+    commandErrorText(commandError),
+    commandErrorText(svnError),
+    commandErrorText(svnAuthenticationError),
+    svnSwitchError,
+  ]);
+  $: certificateDialogOpen =
+    detectedCertificateFailure !== null &&
+    detectedCertificateFailure.signature !== dismissedCertificateSignature;
+  $: if (
+    certificateDialogOpen &&
+    detectedCertificateFailure &&
+    detectedCertificateFailure.signature !== preparedCertificateSignature
+  ) {
+    preparedCertificateSignature = detectedCertificateFailure.signature;
+    selectedCertificateFailures = [...detectedCertificateFailure.failures];
+    certificateRiskConfirmed = false;
+  }
+  $: if (!detectedCertificateFailure) {
+    preparedCertificateSignature = null;
+    dismissedCertificateSignature = null;
+  }
   $: {
     const selected = selectedFilePath
       ? selectedFile ?? workingCopyStatus?.files.find((file) => file.path === selectedFilePath)
@@ -661,6 +723,54 @@
 
   function labelStatus(status: string) {
     return statusLabels[status] ?? status;
+  }
+
+  function commandErrorText(error: CommandError | null) {
+    if (!error) {
+      return null;
+    }
+    return [error.code, error.message, error.detail].filter(Boolean).join("\n");
+  }
+
+  function toggleCertificateFailure(failure: SvnCertificateFailure) {
+    selectedCertificateFailures = selectedCertificateFailures.includes(failure)
+      ? selectedCertificateFailures.filter((selected) => selected !== failure)
+      : [...selectedCertificateFailures, failure];
+  }
+
+  function dismissCertificateDialog() {
+    if (svnCertificateTrustLoading || !detectedCertificateFailure) {
+      return;
+    }
+    dismissedCertificateSignature = detectedCertificateFailure.signature;
+    certificateRiskConfirmed = false;
+  }
+
+  async function confirmCertificateTrust() {
+    if (
+      !detectedCertificateFailure ||
+      !certificateRiskConfirmed ||
+      selectedCertificateFailures.length === 0 ||
+      svnCertificateTrustLoading
+    ) {
+      return;
+    }
+    const applied = await onConfirmSvnCertificateTrust(selectedCertificateFailures);
+    if (applied) {
+      dismissedCertificateSignature = detectedCertificateFailure.signature;
+      certificateRiskConfirmed = false;
+    }
+  }
+
+  function focusCertificateDialog(node: HTMLElement) {
+    queueMicrotask(() => node.focus());
+  }
+
+  function handleCertificateDialogKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      dismissCertificateDialog();
+    }
   }
 
   function statusClass(status: string) {

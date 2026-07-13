@@ -458,6 +458,23 @@ export interface SvnAuthenticationStatus {
   remember_password: boolean;
 }
 
+export type SvnCertificateFailure =
+  | "unknown-ca"
+  | "cn-mismatch"
+  | "expired"
+  | "not-yet-valid"
+  | "other";
+
+export interface ConfigureSvnCertificateTrustRequest {
+  failures: SvnCertificateFailure[];
+  confirmed: boolean;
+}
+
+export interface SvnCertificateTrustStatus {
+  active: boolean;
+  failures: SvnCertificateFailure[];
+}
+
 export interface DetectSvnRequest {
   executable?: string;
 }

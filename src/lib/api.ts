@@ -4,6 +4,7 @@ import type {
   CommandError,
   CommandResponse,
   ConfigureSvnAuthenticationRequest,
+  ConfigureSvnCertificateTrustRequest,
   BranchPool,
   CreateApplyPatchTaskRequest,
   CreateMergeTaskRequest,
@@ -65,6 +66,7 @@ import type {
   SetSvnPropertyRequest,
   SvnDetection,
   SvnAuthenticationStatus,
+  SvnCertificateTrustStatus,
   SvnBlame,
   SvnLog,
   SvnProperties,
@@ -332,6 +334,16 @@ export function configureSvnAuthentication(
   request: ConfigureSvnAuthenticationRequest,
 ): Promise<SvnAuthenticationStatus> {
   return callBackend<SvnAuthenticationStatus>("configure_svn_authentication", { request });
+}
+
+export function configureSvnCertificateTrust(
+  request: ConfigureSvnCertificateTrustRequest,
+): Promise<SvnCertificateTrustStatus> {
+  return callBackend<SvnCertificateTrustStatus>("configure_svn_certificate_trust", { request });
+}
+
+export function clearSvnCertificateTrust(): Promise<SvnCertificateTrustStatus> {
+  return callBackend<SvnCertificateTrustStatus>("clear_svn_certificate_trust");
 }
 
 export function openWorkspace(

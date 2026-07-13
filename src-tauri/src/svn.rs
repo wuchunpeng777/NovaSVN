@@ -36,6 +36,41 @@ pub struct SvnAuthenticationStatus {
     pub remember_password: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SvnCertificateFailure {
+    UnknownCa,
+    CnMismatch,
+    Expired,
+    NotYetValid,
+    Other,
+}
+
+impl SvnCertificateFailure {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::UnknownCa => "unknown-ca",
+            Self::CnMismatch => "cn-mismatch",
+            Self::Expired => "expired",
+            Self::NotYetValid => "not-yet-valid",
+            Self::Other => "other",
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ConfigureSvnCertificateTrustRequest {
+    pub failures: Vec<SvnCertificateFailure>,
+    #[serde(default)]
+    pub confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SvnCertificateTrustStatus {
+    pub active: bool,
+    pub failures: Vec<SvnCertificateFailure>,
+}
+
 #[derive(Clone, Default)]
 struct SvnAuthentication {
     mode: SvnAuthenticationMode,
@@ -45,10 +80,12 @@ struct SvnAuthentication {
 }
 
 static SVN_AUTHENTICATION: OnceLock<RwLock<SvnAuthentication>> = OnceLock::new();
+static SVN_CERTIFICATE_TRUST: OnceLock<RwLock<Vec<SvnCertificateFailure>>> = OnceLock::new();
 
 pub(crate) fn command(executable: &str) -> Command {
     let authentication = current_authentication();
-    command_with_authentication(executable, &authentication)
+    let certificate_failures = current_certificate_trust();
+    command_with_configuration(executable, &authentication, &certificate_failures)
 }
 
 pub fn configure_authentication(
@@ -63,6 +100,47 @@ pub fn configure_authentication(
     Ok(status)
 }
 
+pub fn configure_certificate_trust(
+    request: ConfigureSvnCertificateTrustRequest,
+) -> Result<SvnCertificateTrustStatus, NovaError> {
+    if !request.confirmed {
+        return Err(NovaError::command(
+            "SVN_CERTIFICATE_CONFIRMATION_REQUIRED",
+            "必须明确确认证书风险",
+            None,
+            true,
+        ));
+    }
+    let failures = normalize_certificate_failures(&request.failures);
+    if failures.is_empty() {
+        return Err(NovaError::command(
+            "SVN_CERTIFICATE_FAILURES_REQUIRED",
+            "至少需要确认一种证书失败类型",
+            None,
+            true,
+        ));
+    }
+    let mut current = certificate_trust_store()
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *current = failures.clone();
+    Ok(SvnCertificateTrustStatus {
+        active: true,
+        failures,
+    })
+}
+
+pub fn clear_certificate_trust() -> SvnCertificateTrustStatus {
+    let mut current = certificate_trust_store()
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    current.clear();
+    SvnCertificateTrustStatus {
+        active: false,
+        failures: Vec::new(),
+    }
+}
+
 fn authentication_store() -> &'static RwLock<SvnAuthentication> {
     SVN_AUTHENTICATION.get_or_init(|| RwLock::new(SvnAuthentication::default()))
 }
@@ -72,6 +150,32 @@ fn current_authentication() -> SvnAuthentication {
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone()
+}
+
+fn certificate_trust_store() -> &'static RwLock<Vec<SvnCertificateFailure>> {
+    SVN_CERTIFICATE_TRUST.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+fn current_certificate_trust() -> Vec<SvnCertificateFailure> {
+    certificate_trust_store()
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+fn normalize_certificate_failures(
+    requested: &[SvnCertificateFailure],
+) -> Vec<SvnCertificateFailure> {
+    [
+        SvnCertificateFailure::UnknownCa,
+        SvnCertificateFailure::CnMismatch,
+        SvnCertificateFailure::Expired,
+        SvnCertificateFailure::NotYetValid,
+        SvnCertificateFailure::Other,
+    ]
+    .into_iter()
+    .filter(|failure| requested.contains(failure))
+    .collect()
 }
 
 fn normalize_authentication(
@@ -150,7 +254,16 @@ fn authentication_status(authentication: &SvnAuthentication) -> SvnAuthenticatio
     }
 }
 
+#[cfg(test)]
 fn command_with_authentication(executable: &str, authentication: &SvnAuthentication) -> Command {
+    command_with_configuration(executable, authentication, &[])
+}
+
+fn command_with_configuration(
+    executable: &str,
+    authentication: &SvnAuthentication,
+    certificate_failures: &[SvnCertificateFailure],
+) -> Command {
     let mut command = Command::new(executable);
     command.arg("--non-interactive");
     if let Some(username) = authentication.username.as_deref() {
@@ -161,6 +274,15 @@ fn command_with_authentication(executable: &str, authentication: &SvnAuthenticat
         if !authentication.remember_password {
             command.arg("--no-auth-cache");
         }
+    }
+    if !certificate_failures.is_empty() {
+        command.arg("--trust-server-cert-failures").arg(
+            certificate_failures
+                .iter()
+                .map(|failure| failure.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+        );
     }
     command
 }
@@ -460,6 +582,49 @@ mod tests {
         assert!(matches!(
             error,
             NovaError::Command { ref code, .. } if code == "SVN_AUTH_PASSWORD_REQUIRED"
+        ));
+    }
+
+    #[test]
+    fn adds_only_confirmed_certificate_failures_to_command() {
+        let failures = normalize_certificate_failures(&[
+            SvnCertificateFailure::Expired,
+            SvnCertificateFailure::UnknownCa,
+            SvnCertificateFailure::Expired,
+        ]);
+        let mut command =
+            command_with_configuration("svn", &SvnAuthentication::default(), &failures);
+        command.arg("list").arg("https://example.test/repository");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            [
+                "--non-interactive",
+                "--trust-server-cert-failures",
+                "unknown-ca,expired",
+                "list",
+                "https://example.test/repository",
+            ]
+        );
+    }
+
+    #[test]
+    fn requires_explicit_certificate_confirmation() {
+        let error = configure_certificate_trust(ConfigureSvnCertificateTrustRequest {
+            failures: vec![SvnCertificateFailure::UnknownCa],
+            confirmed: false,
+        })
+        .err()
+        .expect("未确认证书风险应失败");
+
+        assert!(matches!(
+            error,
+            NovaError::Command { ref code, .. }
+                if code == "SVN_CERTIFICATE_CONFIRMATION_REQUIRED"
         ));
     }
 
