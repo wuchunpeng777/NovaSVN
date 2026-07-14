@@ -881,10 +881,8 @@ impl TaskQueue {
                 "UPDATE_PATH_INVALID",
                 "Update 路径无效",
             )?),
-            SvnOperationKind::AddFile => Some(normalize_relative_file_path(
+            SvnOperationKind::AddFile => Some(normalize_add_path(
                 request.file_path.as_deref().unwrap_or_default(),
-                "ADD_FILE_PATH_INVALID",
-                "Add 文件路径无效",
             )?),
             SvnOperationKind::DeletePath => Some(normalize_delete_path(
                 request.file_path.as_deref().unwrap_or_default(),
@@ -939,6 +937,14 @@ impl TaskQueue {
             _ => None,
         };
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+        if matches!(&request.kind, SvnOperationKind::AddFile) {
+            working_copy_root = canonicalize_add_working_copy_root(&working_copy_root)?;
+            validate_add_target(
+                &svn_executable,
+                &working_copy_root,
+                file_path.as_deref().unwrap_or_default(),
+            )?;
+        }
         let delete_target_identity = if matches!(
             &request.kind,
             SvnOperationKind::DeletePath | SvnOperationKind::MovePath | SvnOperationKind::CopyPath
@@ -2580,6 +2586,16 @@ fn run_svn_operation_task(
                 );
                 return;
             };
+            if let Err(error) = validate_add_target(&payload.svn_executable, &root, file_path) {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "Add 安全校验失败",
+                    Some(nova_error_text(&error)),
+                );
+                return;
+            }
             command
                 .arg("add")
                 .arg("--parents")
@@ -6664,6 +6680,169 @@ fn normalize_relative_file_path(
     Ok(normalize_task_file_path_separators(file))
 }
 
+fn normalize_add_path(file: &str) -> Result<String, NovaError> {
+    let path = Path::new(file);
+    if !file.is_empty()
+        && (task_file_path_is_absolute(path, file) || task_file_path_has_parent_segment(file))
+    {
+        return Err(NovaError::command(
+            "ADD_TARGET_OUTSIDE_WORKING_COPY",
+            "Add 目标必须位于当前工作副本内",
+            Some("请使用不含 `..` 的工作副本相对路径。".to_string()),
+            true,
+        ));
+    }
+
+    normalize_relative_file_path(file, "ADD_FILE_PATH_INVALID", "Add 文件路径无效")
+}
+
+fn canonicalize_add_working_copy_root(root: &Path) -> Result<PathBuf, NovaError> {
+    let canonical_root = fs::canonicalize(root).map_err(|error| {
+        NovaError::command(
+            "ADD_WORKING_COPY_INVALID",
+            "无法解析 Add 目标工作副本",
+            Some(format!("路径：{}；错误：{error}", root.display())),
+            true,
+        )
+    })?;
+    if !canonical_root.is_absolute() {
+        return Err(NovaError::command(
+            "ADD_WORKING_COPY_INVALID",
+            "Add 目标工作副本不是绝对路径",
+            Some(format!("路径：{}", canonical_root.display())),
+            true,
+        ));
+    }
+
+    Ok(canonical_root)
+}
+
+fn validate_add_target(
+    svn_executable: &str,
+    working_copy_root: &Path,
+    relative_path: &str,
+) -> Result<(), NovaError> {
+    let canonical_root = canonicalize_add_working_copy_root(working_copy_root)?;
+    if canonical_root != working_copy_root {
+        return Err(NovaError::command(
+            "ADD_WORKING_COPY_CHANGED",
+            "Add 工作副本路径已发生变化",
+            Some(format!(
+                "任务路径：{}；当前路径：{}",
+                working_copy_root.display(),
+                canonical_root.display()
+            )),
+            true,
+        ));
+    }
+
+    let target = working_copy_root.join(relative_path);
+    match fs::symlink_metadata(&target) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(NovaError::command(
+                "ADD_TARGET_NOT_FOUND",
+                "Add 目标不存在",
+                Some(format!("路径：{}", target.display())),
+                true,
+            ));
+        }
+        Err(error) => {
+            return Err(NovaError::command(
+                "ADD_TARGET_CHECK_FAILED",
+                "无法检查 Add 目标",
+                Some(format!("路径：{}；错误：{error}", target.display())),
+                true,
+            ));
+        }
+    }
+
+    let canonical_target = fs::canonicalize(&target).map_err(|error| {
+        let (code, message) = if error.kind() == std::io::ErrorKind::NotFound {
+            ("ADD_TARGET_NOT_FOUND", "Add 目标不存在")
+        } else {
+            ("ADD_TARGET_CHECK_FAILED", "无法解析 Add 目标")
+        };
+        NovaError::command(
+            code,
+            message,
+            Some(format!("路径：{}；错误：{error}", target.display())),
+            true,
+        )
+    })?;
+    if !canonical_target.starts_with(working_copy_root) {
+        return Err(NovaError::command(
+            "ADD_TARGET_OUTSIDE_WORKING_COPY",
+            "Add 目标位于当前工作副本外",
+            Some(format!(
+                "工作副本：{}；目标：{}",
+                working_copy_root.display(),
+                canonical_target.display()
+            )),
+            true,
+        ));
+    }
+
+    let output = svn::command(svn_executable)
+        .args(["status", "--xml", "--no-ignore"])
+        .arg(&target)
+        .current_dir(working_copy_root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "ADD_TARGET_STATUS_FAILED",
+                "无法检查 Add 目标的 SVN 状态",
+                Some(format!(
+                    "无法执行 `{svn_executable} status --xml --no-ignore`：{error}"
+                )),
+                true,
+            )
+        })?;
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "ADD_TARGET_STATUS_FAILED",
+            "无法检查 Add 目标的 SVN 状态",
+            Some(command_output_error_detail(
+                svn_executable,
+                "status --xml --no-ignore",
+                &output,
+            )),
+            true,
+        ));
+    }
+
+    let xml = std::str::from_utf8(&output.stdout).map_err(|error| {
+        NovaError::command(
+            "ADD_TARGET_STATUS_INVALID",
+            "Add 目标的 SVN 状态不是有效 UTF-8",
+            Some(error.to_string()),
+            true,
+        )
+    })?;
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "ADD_TARGET_STATUS_INVALID",
+            "无法解析 Add 目标的 SVN 状态",
+            Some(format!("svn status --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+    let statuses = document
+        .descendants()
+        .filter(|node| node.has_tag_name("wc-status"))
+        .filter_map(|node| node.attribute("item"))
+        .collect::<Vec<_>>();
+    if statuses.contains(&"ignored") {
+        return Err(NovaError::command(
+            "ADD_TARGET_IGNORED",
+            "Add 目标已被 SVN 忽略",
+            Some(format!("路径：{relative_path}。请先调整 svn:ignore 规则。")),
+            true,
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 fn task_file_path_is_absolute(path: &Path, raw: &str) -> bool {
     path_utils::is_absolute_or_windows_path(path, raw)
@@ -10200,6 +10379,77 @@ mod tests {
         );
         let clean_status = run_test_command(Command::new("svn").arg("status").arg(&working_copy));
         assert!(clean_status.stdout.is_empty());
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn rejects_invalid_add_targets_in_real_working_copy() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-add-invalid-targets");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        run_test_command(
+            Command::new("svn")
+                .args(["propset", "svn:ignore", "ignored.tmp"])
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("ignored.tmp"), "ignored\n").expect("write ignored file");
+        fs::write(root.join("outside.txt"), "outside\n").expect("write outside file");
+
+        let queue = TaskQueue::new();
+        for (file_path, expected_code) in [
+            ("missing.txt", "ADD_TARGET_NOT_FOUND"),
+            ("ignored.tmp", "ADD_TARGET_IGNORED"),
+            ("../outside.txt", "ADD_TARGET_OUTSIDE_WORKING_COPY"),
+        ] {
+            let error = queue
+                .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                    working_copy_root: working_copy.display().to_string(),
+                    kind: SvnOperationKind::AddFile,
+                    file_path: Some(file_path.to_string()),
+                    target_path: None,
+                    svn_executable: None,
+                })
+                .expect_err("无效 Add 目标不得进入任务队列");
+            assert!(matches!(
+                error,
+                NovaError::Command { ref code, .. } if code == expected_code
+            ));
+        }
+
+        fs::write(working_copy.join("queued.txt"), "queued\n").expect("write queued file");
+        queue.create_mock_task(CreateMockTaskRequest {
+            title: Some("阻塞 Add 测试队列".to_string()),
+            outcome: MockTaskOutcome::Success,
+        });
+        let queued_add = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::AddFile,
+                file_path: Some("queued.txt".to_string()),
+                target_path: None,
+                svn_executable: None,
+            })
+            .expect("存在的未版本控制文件应进入 Add 队列");
+        fs::remove_file(working_copy.join("queued.txt")).expect("remove queued Add target");
+        let queued_add = wait_for_test_task(&queue, &queued_add.task_id);
+        assert!(matches!(queued_add.status, TaskStatus::Failed));
+        assert!(queued_add
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("Add 目标不存在")));
+
         fs::remove_dir_all(root).ok();
     }
 
