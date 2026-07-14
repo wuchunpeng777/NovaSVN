@@ -855,6 +855,34 @@ textarea {
   cursor: pointer;
 }
 
+.commit-target-control {
+  display: inline-flex;
+  min-width: 68px;
+  height: 22px;
+  align-items: center;
+  gap: 4px;
+  color: #2f6fab;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.commit-target-control input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #397cae;
+}
+
+.commit-target-control.active {
+  color: #195b91;
+  font-weight: 700;
+}
+
+.commit-target-control.disabled {
+  color: #8b96a2;
+  cursor: default;
+}
+
 .row-primary-action:hover,
 .row-menu-trigger:hover {
   border-color: #7ea5c8;
@@ -2587,9 +2615,14 @@ textarea {
 
 .versions-workbench[data-theme="dark"] .inline-row-actions button,
 .versions-workbench[data-theme="dark"] .inline-row-actions em,
+.versions-workbench[data-theme="dark"] .commit-target-control,
 .versions-workbench[data-theme="dark"] .timeline-entry-summary:hover,
 .versions-workbench[data-theme="dark"] .breadcrumbs button {
   color: #75b7ea;
+}
+
+.versions-workbench[data-theme="dark"] .commit-target-control.active {
+  color: #a6d7ff;
 }
 
 .versions-workbench[data-theme="dark"] .row-primary-action,

@@ -272,7 +272,7 @@ describe("MainWorkspace", () => {
       },
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: `Commit ${file.path}` }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: `提交目标 ${file.path}` }));
 
     expect(onSelectCommitFile).toHaveBeenCalledWith(file.path);
     expect(screen.getByRole("tab", { name: "Commit" })).toHaveAttribute(
@@ -1303,8 +1303,8 @@ Certificate information:
 
     expect(screen.getByText("提交目标", { exact: true })).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "取消 Commit src/main.ts" }),
-    ).toBeInTheDocument();
+      screen.getByRole("checkbox", { name: "提交目标 src/main.ts" }),
+    ).toBeChecked();
     expect(screen.queryByText("暂存", { exact: false })).not.toBeInTheDocument();
     for (const heading of ["Name", "Base", "Last", "Date", "Author", "Status", "Size"]) {
       expect(screen.getByText(heading, { exact: true })).toBeInTheDocument();
@@ -1315,7 +1315,7 @@ Certificate information:
     expect(mainFileRow).toHaveTextContent("2026-07-11 01:02");
     expect(mainFileRow).toHaveTextContent("alice");
 
-    await fireEvent.click(screen.getByRole("button", { name: "取消 Commit src/main.ts" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "提交目标 src/main.ts" }));
     await fireEvent.click(screen.getByRole("tab", { name: "Commit" }));
     await fireEvent.click(screen.getByRole("button", { name: "全选改动" }));
     await fireEvent.click(screen.getByRole("button", { name: "清除选择" }));
@@ -1369,7 +1369,9 @@ Certificate information:
       },
     });
 
-    expect(screen.queryByRole("button", { name: `Commit ${laterFile.path}` })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: `提交目标 ${laterFile.path}` }),
+    ).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: `选择文件 ${laterFile.path}` }));
     expect(onSelectFile).toHaveBeenCalledWith(laterFile.path);
     expect(onSelectWorkspacePath).not.toHaveBeenCalled();
@@ -1377,7 +1379,9 @@ Certificate information:
     await rerender({
       workingCopyStatus: makeStatus([firstFile, laterFile]),
     });
-    await fireEvent.click(screen.getByRole("button", { name: `Commit ${laterFile.path}` }));
+    await fireEvent.click(
+      screen.getByRole("checkbox", { name: `提交目标 ${laterFile.path}` }),
+    );
     expect(onSelectCommitFile).toHaveBeenCalledWith(laterFile.path);
   });
 
@@ -1403,15 +1407,13 @@ Certificate information:
       },
     });
 
-    expect(screen.getByRole("button", { name: "取消 Commit src/main.ts" })).toHaveClass(
-      "active",
-    );
+    expect(screen.getByRole("checkbox", { name: "提交目标 src/main.ts" })).toBeChecked();
 
     await rerender({
       commitFiles: [],
       selectedTask: nextTask,
     });
-    expect(screen.getByRole("button", { name: "Commit src/main.ts" })).not.toHaveClass("active");
+    expect(screen.getByRole("checkbox", { name: "提交目标 src/main.ts" })).not.toBeChecked();
     await fireEvent.click(screen.getByRole("tab", { name: "Commit" }));
     expect(screen.getByText("本次将提交 0 个文件")).toBeInTheDocument();
 
@@ -1436,7 +1438,7 @@ Certificate information:
       commitFiles: [],
     });
     expect(screen.queryByText("main.ts", { exact: true })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Commit src/next.ts" })).not.toHaveClass("active");
+    expect(screen.getByRole("checkbox", { name: "提交目标 src/next.ts" })).not.toBeChecked();
     expect(screen.getByText("本次将提交 0 个文件")).toBeInTheDocument();
   });
 
@@ -1505,12 +1507,16 @@ Certificate information:
     expect(bothRow).toHaveTextContent("远端 modify");
     expect(remotePropsRow).toHaveTextContent("远端 属性");
     expect(
-      within(remoteRow as HTMLElement).queryByRole("button", { name: /^Commit / }),
+      within(remoteRow as HTMLElement).queryByRole("checkbox", {
+        name: "提交目标 remote.txt",
+      }),
     ).not.toBeInTheDocument();
-    expect(within(bothRow as HTMLElement).getByRole("button", { name: "Commit both.txt" })).toBeInTheDocument();
+    expect(
+      within(bothRow as HTMLElement).getByRole("checkbox", { name: "提交目标 both.txt" }),
+    ).toBeInTheDocument();
     expect(within(bothRow as HTMLElement).getByRole("button", { name: "Update both.txt" })).toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Commit local.txt" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "提交目标 local.txt" }));
     await fireEvent.click(screen.getByRole("button", { name: "Update remote.txt" }));
     await fireEvent.click(screen.getByRole("button", { name: "Resolve conflict.txt" }));
     expect(onSelectCommitFile).toHaveBeenCalledWith("local.txt");

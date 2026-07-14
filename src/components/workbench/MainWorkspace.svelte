@@ -4454,19 +4454,24 @@
                           Resolve
                         </button>
                       {:else if isLocalChangedPath(node.path) && isCommittablePath(node.path)}
-                        <button
-                          type="button"
-                          class="row-primary-action"
+                        <label
+                          class="commit-target-control"
                           class:active={isCommitSelected(node.path, commitFiles)}
-                          aria-label={isCommitSelected(node.path, commitFiles) ? `取消 Commit ${node.path}` : `Commit ${node.path}`}
-                          disabled={statusLoading}
-                          on:click={() =>
-                            isCommitSelected(node.path, commitFiles)
-                              ? onUnselectCommitFile(node.path)
-                              : selectCommitFileAndOpen(node.path)}
+                          class:disabled={statusLoading}
+                          title="包含在本次提交"
                         >
-                          Commit{isCommitSelected(node.path, commitFiles) ? " ✓" : ""}
-                        </button>
+                          <input
+                            type="checkbox"
+                            aria-label={`提交目标 ${node.path}`}
+                            checked={isCommitSelected(node.path, commitFiles)}
+                            disabled={statusLoading}
+                            on:change={(event) =>
+                              event.currentTarget.checked
+                                ? selectCommitFileAndOpen(node.path)
+                                : onUnselectCommitFile(node.path)}
+                          />
+                          <span>Commit</span>
+                        </label>
                       {/if}
                       {#if node.change_scope === "remote" || node.change_scope === "both"}
                         <button
