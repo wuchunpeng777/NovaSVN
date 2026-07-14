@@ -299,18 +299,23 @@ describe("MainWorkspace", () => {
           nodes: [makeScopedNode(file.path, "modified", "local")],
         },
         commitFiles: [{ path: file.path, status: file.status }],
+        commitDisabled: true,
+        commitFormOpenDisabled: false,
         appSettings: makeAppSettings({ showInspector: false }),
         onAppSettingInput,
         onCommit,
       },
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "打开提交表单" }));
+    const openCommitForm = screen.getByRole("button", { name: "打开提交表单" });
+    expect(openCommitForm).toBeEnabled();
+    await fireEvent.click(openCommitForm);
     expect(onAppSettingInput).toHaveBeenCalledWith("showInspector", true);
     expect(onCommit).not.toHaveBeenCalled();
 
     await rerender({ appSettings: makeAppSettings({ showInspector: true }) });
     await waitFor(() => expect(screen.getByPlaceholderText("提交信息")).toHaveFocus());
+    expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
   });
 
   it("resolves the system theme and exposes persistent theme controls", async () => {

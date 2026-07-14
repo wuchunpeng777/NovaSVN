@@ -314,6 +314,7 @@
   export let commitHistory: string[] = [];
   export let commitMessage = "";
   export let commitError: string | null = null;
+  export let commitFormOpenDisabled = false;
   export let commitDisabled = false;
   export let partialCommitDisabled = false;
   export let tasks: TaskSummary[] = [];
@@ -4214,7 +4215,7 @@
               class="primary"
               aria-label="打开提交表单"
               on:click={openCommitForm}
-              disabled={commitDisabled}
+              disabled={commitFormOpenDisabled}
             >
               提交 {commitFileCount > 0 ? commitFileCount : ""}
             </button>

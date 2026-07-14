@@ -2238,6 +2238,10 @@
   commitHistory={$workspaceStore.commitHistory}
   commitMessage={$workspaceStore.commitMessage}
   commitError={$workspaceStore.commitError}
+  commitFormOpenDisabled={
+    $workspaceStore.commitFiles.length === 0 ||
+    $taskStore.snapshot.running_task_id !== null
+  }
   commitDisabled={
     $workspaceStore.commitFiles.length === 0 ||
     commitSafetyBlocked ||

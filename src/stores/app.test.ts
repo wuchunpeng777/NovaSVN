@@ -832,6 +832,40 @@ describe("workspaceStore safety warnings", () => {
       ]),
     );
   });
+
+  it("limits safety warnings to the currently selected commit targets", async () => {
+    const workspace = makeWorkspace();
+    const safeFile = makeFile({
+      path: "src/main.ts",
+      content_digest: "main-digest",
+    });
+    const generatedFile = makeFile({
+      path: "dist/generated.js",
+      content_digest: "generated-digest",
+    });
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValue(makeStatus([safeFile, generatedFile]));
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+
+    expect(get(workspaceStore).safetyCheck.warnings.map((item) => item.filePath)).toContain(
+      generatedFile.path,
+    );
+
+    workspaceStore.unselectCommitFile(generatedFile.path);
+    workspaceStore.setCommitMessage("仅提交安全目标");
+
+    expect(get(workspaceStore).commitFiles.map((file) => file.path)).toEqual([safeFile.path]);
+    expect(get(workspaceStore).safetyCheck.warnings).toEqual([]);
+    expect(get(workspaceStore).safetyCheck.confirmedWarningIds).toEqual([]);
+    expect(workspaceStore.validateCommitFiles()).toBe(true);
+
+    workspaceStore.selectCommitFile(generatedFile.path);
+    expect(get(workspaceStore).safetyCheck.warnings.map((item) => item.filePath)).toContain(
+      generatedFile.path,
+    );
+    expect(workspaceStore.validateCommitFiles()).toBe(false);
+  });
 });
 
 describe("workspaceStore review state", () => {
