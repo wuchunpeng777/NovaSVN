@@ -628,6 +628,8 @@
   let contextMenuY = 0;
   let fileBrowserElement: HTMLElement | null = null;
   let contextMenuElement: HTMLElement | null = null;
+  let commitMessageElement: HTMLTextAreaElement | null = null;
+  let commitMessageFocusRequested = false;
   let reportedActiveWorkspacePath: string | null | undefined;
   let selectionWorkspaceRoot: string | null = null;
   let selectionFileTree: WorkspaceFileTree | null = null;
@@ -705,6 +707,15 @@
   $: if (!detectedCertificateFailure) {
     preparedCertificateSignature = null;
     dismissedCertificateSignature = null;
+  }
+  $: if (
+    commitMessageFocusRequested &&
+    appSettings.showInspector &&
+    activeInspectorTab === "commit" &&
+    commitMessageElement
+  ) {
+    commitMessageFocusRequested = false;
+    queueMicrotask(() => commitMessageElement?.focus());
   }
   $: {
     const selected = selectedFilePath
@@ -951,6 +962,9 @@
   }
 
   function selectInspectorTab(tab: InspectorTab, focus = false) {
+    if (tab !== "commit") {
+      commitMessageFocusRequested = false;
+    }
     activeInspectorTab = tab;
     if (focus) {
       queueMicrotask(() => document.getElementById(`inspector-tab-${tab}`)?.focus());
@@ -1234,7 +1248,21 @@
       onUnselectCommitFiles(selectedCommittablePaths);
     } else {
       onSelectCommitFiles(selectedCommittablePaths);
+      openCommitForm();
     }
+  }
+
+  function openCommitForm() {
+    activeInspectorTab = "commit";
+    commitMessageFocusRequested = true;
+    if (!appSettings.showInspector) {
+      onAppSettingInput("showInspector", true);
+    }
+  }
+
+  function selectCommitFileAndOpen(path: string) {
+    onSelectCommitFile(path);
+    openCommitForm();
   }
 
   function rowDomId(path: string) {
@@ -4181,7 +4209,13 @@
                 更多改动
               </button>
             {/if}
-            <button type="button" class="primary" on:click={onCommit} disabled={commitDisabled}>
+            <button
+              type="button"
+              class="primary"
+              aria-label="打开提交表单"
+              on:click={openCommitForm}
+              disabled={commitDisabled}
+            >
               提交 {commitFileCount > 0 ? commitFileCount : ""}
             </button>
           </div>
@@ -4429,7 +4463,7 @@
                           on:click={() =>
                             isCommitSelected(node.path, commitFiles)
                               ? onUnselectCommitFile(node.path)
-                              : onSelectCommitFile(node.path)}
+                              : selectCommitFileAndOpen(node.path)}
                         >
                           Commit{isCommitSelected(node.path, commitFiles) ? " ✓" : ""}
                         </button>
@@ -4930,6 +4964,7 @@
                 </select>
               {/if}
               <textarea
+                bind:this={commitMessageElement}
                 rows="4"
                 value={commitMessage}
                 placeholder="提交信息"

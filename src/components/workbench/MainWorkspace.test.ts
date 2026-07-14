@@ -253,6 +253,66 @@ describe("MainWorkspace", () => {
     );
   });
 
+  it("opens the commit form and focuses its message after adding a commit target", async () => {
+    const file = makeFile("src/main.ts", "modified", "main-digest");
+    const onSelectCommitFile = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([file]),
+        workspaceFileTree: {
+          working_copy_root: "C:/repo/wc",
+          total_files: 1,
+          returned_files: 1,
+          truncated: false,
+          nodes: [makeScopedNode(file.path, "modified", "local")],
+        },
+        onSelectCommitFile,
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: `Commit ${file.path}` }));
+
+    expect(onSelectCommitFile).toHaveBeenCalledWith(file.path);
+    expect(screen.getByRole("tab", { name: "Commit" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await waitFor(() => expect(screen.getByPlaceholderText("提交信息")).toHaveFocus());
+  });
+
+  it("restores the hidden inspector before focusing the commit form", async () => {
+    const file = makeFile("src/main.ts", "modified", "main-digest");
+    const onAppSettingInput = vi.fn();
+    const onCommit = vi.fn();
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([file]),
+        workspaceFileTree: {
+          working_copy_root: "C:/repo/wc",
+          total_files: 1,
+          returned_files: 1,
+          truncated: false,
+          nodes: [makeScopedNode(file.path, "modified", "local")],
+        },
+        commitFiles: [{ path: file.path, status: file.status }],
+        appSettings: makeAppSettings({ showInspector: false }),
+        onAppSettingInput,
+        onCommit,
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "打开提交表单" }));
+    expect(onAppSettingInput).toHaveBeenCalledWith("showInspector", true);
+    expect(onCommit).not.toHaveBeenCalled();
+
+    await rerender({ appSettings: makeAppSettings({ showInspector: true }) });
+    await waitFor(() => expect(screen.getByPlaceholderText("提交信息")).toHaveFocus());
+  });
+
   it("resolves the system theme and exposes persistent theme controls", async () => {
     const originalMatchMedia = window.matchMedia;
     let themeListener: (event: MediaQueryListEvent) => void = () => {};

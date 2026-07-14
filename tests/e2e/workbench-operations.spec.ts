@@ -24,8 +24,10 @@ test("runs the main working-copy operations through the task workflow", async ({
     .poll(async () => (await backendCalls(page, "create_svn_operation_task")).length)
     .toBe(2);
 
-  await page.getByRole("tab", { name: "Commit" }).click();
-  await page.getByPlaceholder("提交信息").fill("E2E commit");
+  await page.getByRole("button", { name: "打开提交表单" }).click();
+  const commitMessage = page.getByPlaceholder("提交信息");
+  await expect(commitMessage).toBeFocused();
+  await commitMessage.fill("E2E commit");
   await page.getByRole("button", { name: "提交", exact: true }).click();
   await expect.poll(async () => (await backendCalls(page, "create_commit_task")).length).toBe(1);
 
