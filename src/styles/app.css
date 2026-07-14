@@ -1706,6 +1706,36 @@ textarea {
   padding: 12px;
 }
 
+.certificate-trust-settings {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+  border-top: 1px solid #d8dde3;
+  padding-top: 10px;
+}
+
+.certificate-trust-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.certificate-trust-heading span {
+  color: #687482;
+  font-size: 12px;
+}
+
+.certificate-failure-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 16px;
+  margin: 0;
+  padding-left: 18px;
+  color: #4f5b67;
+  font-size: 12px;
+}
+
 .repository-row > strong {
   min-width: 0;
   overflow: hidden;
@@ -2062,6 +2092,61 @@ textarea {
   justify-content: flex-end;
 }
 
+.certificate-dialog {
+  width: min(560px, calc(100vw - 48px));
+}
+
+.certificate-identity {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  border: 1px solid #d8dde3;
+  border-radius: 6px;
+}
+
+.certificate-identity > div {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 10px;
+  padding: 9px 10px;
+}
+
+.certificate-identity > div + div {
+  border-top: 1px solid #d8dde3;
+}
+
+.certificate-identity dt {
+  color: #687482;
+}
+
+.certificate-identity dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.certificate-failures {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  border: 1px solid #d8dde3;
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.certificate-failures legend {
+  padding: 0 5px;
+  font-weight: 700;
+}
+
+.certificate-risk-confirmation {
+  border: 1px solid #d5a656;
+  border-radius: 6px;
+  background: #fff7e8;
+  padding: 10px;
+}
+
 .patch-dialog-status {
   font-weight: 700;
 }
@@ -2174,6 +2259,24 @@ textarea {
 .versions-workbench[data-theme="dark"] .repository-file-properties-panel > header,
 .versions-workbench[data-theme="dark"] .repository-file-properties-list article {
   border-color: #30363d;
+}
+
+.versions-workbench[data-theme="dark"] .certificate-trust-settings,
+.versions-workbench[data-theme="dark"] .certificate-identity,
+.versions-workbench[data-theme="dark"] .certificate-identity > div + div,
+.versions-workbench[data-theme="dark"] .certificate-failures {
+  border-color: #4b5561;
+}
+
+.versions-workbench[data-theme="dark"] .certificate-failure-summary,
+.versions-workbench[data-theme="dark"] .certificate-trust-heading span,
+.versions-workbench[data-theme="dark"] .certificate-identity dt {
+  color: #aeb8c2;
+}
+
+.versions-workbench[data-theme="dark"] .certificate-risk-confirmation {
+  border-color: #80671f;
+  background: #3f351b;
 }
 
 .versions-workbench[data-theme="dark"] .repository-row-action,

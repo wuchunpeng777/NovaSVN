@@ -618,8 +618,7 @@ mod tests {
             failures: vec![SvnCertificateFailure::UnknownCa],
             confirmed: false,
         })
-        .err()
-        .expect("未确认证书风险应失败");
+        .expect_err("未确认证书风险应失败");
 
         assert!(matches!(
             error,

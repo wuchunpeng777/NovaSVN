@@ -9,7 +9,9 @@
   import {
     callBackend,
     choosePatchFile,
+    clearSvnCertificateTrust,
     configureSvnAuthentication,
+    configureSvnCertificateTrust,
     getStartupIntent,
     launchExternalTool,
     openFileLocation,
@@ -44,6 +46,8 @@
     RepositoryExportResult,
     SvnAuthenticationStatus,
     SvnBatchOperationKind,
+    SvnCertificateFailure,
+    SvnCertificateTrustStatus,
     SvnOperationKind,
     Task,
     TaskSnapshot,
@@ -70,6 +74,9 @@
   let svnAuthenticationStatus: SvnAuthenticationStatus | null = null;
   let svnAuthenticationError: CommandError | null = null;
   let svnAuthenticationLoading = false;
+  let svnCertificateTrustStatus: SvnCertificateTrustStatus | null = null;
+  let svnCertificateTrustError: CommandError | null = null;
+  let svnCertificateTrustLoading = false;
   const repositoryLayoutTaskChecks = new Set<string>();
   const applyPatchTaskChecks = new Set<string>();
   const missingSvnOperationTaskChecks = new Set<string>();
@@ -159,6 +166,35 @@
       svnAuthenticationError = error as CommandError;
     } finally {
       svnAuthenticationLoading = false;
+    }
+  }
+
+  async function confirmSvnCertificateTrust(failures: SvnCertificateFailure[]) {
+    svnCertificateTrustLoading = true;
+    svnCertificateTrustError = null;
+    try {
+      svnCertificateTrustStatus = await configureSvnCertificateTrust({
+        failures,
+        confirmed: true,
+      });
+      return true;
+    } catch (error) {
+      svnCertificateTrustError = error as CommandError;
+      return false;
+    } finally {
+      svnCertificateTrustLoading = false;
+    }
+  }
+
+  async function clearCurrentSvnCertificateTrust() {
+    svnCertificateTrustLoading = true;
+    svnCertificateTrustError = null;
+    try {
+      svnCertificateTrustStatus = await clearSvnCertificateTrust();
+    } catch (error) {
+      svnCertificateTrustError = error as CommandError;
+    } finally {
+      svnCertificateTrustLoading = false;
     }
   }
 
@@ -2227,6 +2263,9 @@
   {svnAuthenticationStatus}
   {svnAuthenticationError}
   {svnAuthenticationLoading}
+  {svnCertificateTrustStatus}
+  {svnCertificateTrustError}
+  {svnCertificateTrustLoading}
   appSettings={$appSettingsStore}
   svnSwitchTargetUrl={$workspaceStore.svnSwitchTargetUrl}
   svnSwitchError={$workspaceStore.svnSwitchError}
@@ -2365,6 +2404,8 @@
   onSvnExecutableInput={svnStore.setExecutableInput}
   onSvnAuthenticationPasswordInput={(value) => (svnAuthenticationPassword = value)}
   onApplySvnAuthentication={applySvnAuthentication}
+  onConfirmSvnCertificateTrust={confirmSvnCertificateTrust}
+  onClearSvnCertificateTrust={clearCurrentSvnCertificateTrust}
   onAppSettingInput={appSettingsStore.setField}
   onExportDiagnosticLog={appSettingsStore.exportDiagnosticLog}
 />

@@ -357,6 +357,102 @@ describe("MainWorkspace", () => {
     expect(screen.getByText("密码仅用于当前会话")).toBeInTheDocument();
   });
 
+  it("requires independent confirmation before allowing exact certificate failures", async () => {
+    const onConfirmSvnCertificateTrust = vi.fn().mockResolvedValue(true);
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        commandError: {
+          code: "SVN_COMMAND_FAILED",
+          message: "服务器证书验证失败",
+          detail: `svn: E230001: Error validating server certificate for 'https://svn.example.test/repo':
+ - The certificate is not issued by a trusted authority.
+ - The certificate hostname does not match.
+Certificate information:
+ - Hostname: svn.example.test
+ - Fingerprint: AA:BB:CC`,
+          recoverable: true,
+        },
+        onConfirmSvnCertificateTrust,
+      },
+    });
+
+    const dialog = screen.getByRole("dialog", { name: "确认服务器证书风险" });
+    expect(within(dialog).getAllByText("svn.example.test")).toHaveLength(2);
+    expect(within(dialog).getByText("AA:BB:CC")).toBeInTheDocument();
+    expect(within(dialog).getByRole("checkbox", { name: "未知签发机构" })).toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "主机名不匹配" })).toBeChecked();
+
+    const confirmButton = within(dialog).getByRole("button", { name: "仅本次会话允许" });
+    expect(confirmButton).toBeDisabled();
+    await fireEvent.click(confirmButton);
+    expect(onConfirmSvnCertificateTrust).not.toHaveBeenCalled();
+
+    await fireEvent.click(
+      within(dialog).getByRole("checkbox", {
+        name: "我已核对服务器身份，并同意仅在当前会话中允许以上证书失败类型",
+      }),
+    );
+    expect(confirmButton).toBeEnabled();
+    await fireEvent.click(confirmButton);
+
+    await waitFor(() =>
+      expect(onConfirmSvnCertificateTrust).toHaveBeenCalledWith([
+        "unknown-ca",
+        "cn-mismatch",
+      ]),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "确认服务器证书风险" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("can cancel certificate confirmation without changing trust", async () => {
+    const onConfirmSvnCertificateTrust = vi.fn().mockResolvedValue(true);
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        commandError: {
+          code: "SVN_COMMAND_FAILED",
+          message:
+            "svn: E230001: Server certificate verification failed for https://svn.example.test/repo",
+          recoverable: true,
+        },
+        onConfirmSvnCertificateTrust,
+      },
+    });
+
+    const dialog = screen.getByRole("dialog", { name: "确认服务器证书风险" });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+
+    expect(onConfirmSvnCertificateTrust).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("dialog", { name: "确认服务器证书风险" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows and clears current-session certificate failures in preferences", async () => {
+    const onClearSvnCertificateTrust = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.settings,
+        svnCertificateTrustStatus: {
+          active: true,
+          failures: ["unknown-ca", "expired"],
+        },
+        onClearSvnCertificateTrust,
+      },
+    });
+
+    const section = screen.getByLabelText("服务器证书例外");
+    expect(within(section).getByText("当前会话已启用")).toBeInTheDocument();
+    expect(within(section).getByText("未知签发机构")).toBeInTheDocument();
+    expect(within(section).getByText("证书已过期")).toBeInTheDocument();
+
+    await fireEvent.click(within(section).getByRole("button", { name: "清除会话证书例外" }));
+    expect(onClearSvnCertificateTrust).toHaveBeenCalledOnce();
+  });
+
   it("groups filtered Timeline revisions by local calendar date", async () => {
     const onPrepareRevisionDiffFromLog = vi.fn(() => true);
     const onRunRevisionDiff = vi.fn();

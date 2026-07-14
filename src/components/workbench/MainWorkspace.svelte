@@ -4055,6 +4055,29 @@
               {/if}
             </div>
             <ErrorNotice error={svnAuthenticationError} />
+            <section class="certificate-trust-settings" aria-label="服务器证书例外">
+              <div class="certificate-trust-heading">
+                <strong>服务器证书例外</strong>
+                <span>
+                  {svnCertificateTrustStatus?.active ? "当前会话已启用" : "未启用"}
+                </span>
+              </div>
+              {#if svnCertificateTrustStatus?.active}
+                <ul class="certificate-failure-summary">
+                  {#each svnCertificateTrustStatus.failures as failure}
+                    <li>{svnCertificateFailureLabel(failure)}</li>
+                  {/each}
+                </ul>
+                <button
+                  type="button"
+                  on:click={onClearSvnCertificateTrust}
+                  disabled={svnCertificateTrustLoading}
+                >
+                  {svnCertificateTrustLoading ? "正在清除" : "清除会话证书例外"}
+                </button>
+              {/if}
+              <ErrorNotice error={svnCertificateTrustError} />
+            </section>
           </article>
 
           <article>
@@ -5114,6 +5137,93 @@
           Delete{selectedDeletablePaths.length > 1 ? ` ${selectedDeletablePaths.length} 项` : ""}
         </button>
       {/if}
+    </div>
+  {/if}
+
+  {#if certificateDialogOpen && detectedCertificateFailure}
+    <div class="patch-dialog-backdrop certificate-dialog-backdrop">
+      <div
+        class="patch-dialog certificate-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="certificate-dialog-title"
+        tabindex="-1"
+        use:focusCertificateDialog
+        on:keydown={handleCertificateDialogKeydown}
+      >
+        <header>
+          <div>
+            <h2 id="certificate-dialog-title">确认服务器证书风险</h2>
+            <p>{detectedCertificateFailure.hostname ?? "未识别服务器"}</p>
+          </div>
+          <button
+            type="button"
+            class="dialog-close"
+            aria-label="关闭证书确认对话框"
+            title="关闭"
+            disabled={svnCertificateTrustLoading}
+            on:click={dismissCertificateDialog}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </header>
+
+        <dl class="certificate-identity">
+          <div>
+            <dt>服务器</dt>
+            <dd>{detectedCertificateFailure.hostname ?? "未知"}</dd>
+          </div>
+          <div>
+            <dt>指纹</dt>
+            <dd>{detectedCertificateFailure.fingerprint ?? "SVN 未提供"}</dd>
+          </div>
+        </dl>
+
+        <fieldset class="certificate-failures">
+          <legend>本次允许的失败类型</legend>
+          {#each detectedCertificateFailure.failures as failure}
+            <label class="checkbox-row">
+              <input
+                type="checkbox"
+                checked={selectedCertificateFailures.includes(failure)}
+                disabled={svnCertificateTrustLoading}
+                on:change={() => toggleCertificateFailure(failure)}
+              />
+              <span>{svnCertificateFailureLabel(failure)}</span>
+            </label>
+          {/each}
+        </fieldset>
+
+        <label class="checkbox-row certificate-risk-confirmation">
+          <input
+            type="checkbox"
+            bind:checked={certificateRiskConfirmed}
+            disabled={svnCertificateTrustLoading}
+          />
+          <span>我已核对服务器身份，并同意仅在当前会话中允许以上证书失败类型</span>
+        </label>
+        <ErrorNotice error={svnCertificateTrustError} />
+
+        <footer>
+          <button
+            type="button"
+            on:click={dismissCertificateDialog}
+            disabled={svnCertificateTrustLoading}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            class="primary"
+            on:click={confirmCertificateTrust}
+            disabled={svnCertificateTrustLoading ||
+              !certificateRiskConfirmed ||
+              selectedCertificateFailures.length === 0}
+          >
+            {svnCertificateTrustLoading ? "正在应用" : "仅本次会话允许"}
+          </button>
+        </footer>
+      </div>
     </div>
   {/if}
 

@@ -19,7 +19,9 @@ vi.mock("./lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/api")>();
   return {
     ...actual,
+    clearSvnCertificateTrust: vi.fn(),
     configureSvnAuthentication: vi.fn(),
+    configureSvnCertificateTrust: vi.fn(),
     createMergeTask: vi.fn(),
     createRepositoryCheckoutTask: vi.fn(),
     createRepositoryCopyTask: vi.fn(),
@@ -53,7 +55,9 @@ vi.mock("./lib/api", async (importOriginal) => {
 import { get } from "svelte/store";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import {
+  clearSvnCertificateTrust,
   configureSvnAuthentication,
+  configureSvnCertificateTrust,
   createMergeTask,
   createRepositoryCheckoutTask,
   createRepositoryCopyTask,
@@ -100,7 +104,9 @@ import type {
 import App from "./App.svelte";
 
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
+const clearSvnCertificateTrustMock = vi.mocked(clearSvnCertificateTrust);
 const configureSvnAuthenticationMock = vi.mocked(configureSvnAuthentication);
+const configureSvnCertificateTrustMock = vi.mocked(configureSvnCertificateTrust);
 const createMergeTaskMock = vi.mocked(createMergeTask);
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
 const createRepositoryCopyTaskMock = vi.mocked(createRepositoryCopyTask);
@@ -130,7 +136,9 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 const startDragMock = vi.mocked(startDrag);
 
 beforeEach(async () => {
+  clearSvnCertificateTrustMock.mockReset();
   configureSvnAuthenticationMock.mockReset();
+  configureSvnCertificateTrustMock.mockReset();
   createMergeTaskMock.mockReset();
   createSvnOperationTaskMock.mockReset();
   createRepositoryCheckoutTaskMock.mockReset();
@@ -213,6 +221,54 @@ describe("App SVN operation completion", () => {
     );
     await waitFor(() => expect(passwordInput).toHaveValue(""));
     expect(screen.getByText("密码仅用于当前会话")).toBeInTheDocument();
+  });
+
+  it("confirms exact certificate failures and can clear the session trust", async () => {
+    configureSvnCertificateTrustMock.mockResolvedValue({
+      active: true,
+      failures: ["unknown-ca", "cn-mismatch"],
+    });
+    clearSvnCertificateTrustMock.mockResolvedValue({
+      active: false,
+      failures: [],
+    });
+    scanWorkspaceStatusMock.mockRejectedValueOnce({
+      code: "SVN_COMMAND_FAILED",
+      message: "服务器证书验证失败",
+      detail: `svn: E230001: Error validating server certificate for 'https://svn.example.test/repo':
+ - The certificate is not issued by a trusted authority.
+ - The certificate hostname does not match.
+Certificate information:
+ - Hostname: svn.example.test
+ - Fingerprint: AA:BB:CC`,
+      recoverable: true,
+    });
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "刷新工作副本状态" }));
+    const riskConfirmation = await screen.findByRole("checkbox", {
+      name: "我已核对服务器身份，并同意仅在当前会话中允许以上证书失败类型",
+    });
+    await fireEvent.click(riskConfirmation);
+    await fireEvent.click(screen.getByRole("button", { name: "仅本次会话允许" }));
+
+    await waitFor(() =>
+      expect(configureSvnCertificateTrustMock).toHaveBeenCalledWith({
+        failures: ["unknown-ca", "cn-mismatch"],
+        confirmed: true,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "确认服务器证书风险" })).not.toBeInTheDocument(),
+    );
+
+    setCurrentView("settings");
+    const clearButton = await screen.findByRole("button", { name: "清除会话证书例外" });
+    expect(screen.getByText("当前会话已启用")).toBeInTheDocument();
+    await fireEvent.click(clearButton);
+
+    await waitFor(() => expect(clearSvnCertificateTrustMock).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByText("未启用")).toBeInTheDocument());
   });
 
   it("创建带 revision 范围和 tracking 参数的 Merge 任务", async () => {
