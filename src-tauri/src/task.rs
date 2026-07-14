@@ -23,6 +23,7 @@ use crate::{
     error::NovaError,
     executable::normalize_executable_setting,
     path_utils,
+    redaction::redact_credentials,
     shadow::{self, ShadowWorkspaceRequest},
     svn,
 };
@@ -700,13 +701,14 @@ impl From<&Task> for PersistedTask {
     fn from(task: &Task) -> Self {
         Self {
             task_id: task.task_id.clone(),
-            title: task.title.clone(),
+            title: redact_credentials(&task.title),
             status: task.status.clone(),
             logs: persisted_task_logs(&task.logs),
             error: task
                 .error
                 .as_deref()
-                .map(|error| persisted_task_text(error, MAX_PERSISTED_TASK_ERROR_BYTES)),
+                .map(redact_credentials)
+                .map(|error| persisted_task_text(&error, MAX_PERSISTED_TASK_ERROR_BYTES)),
             created_at: task.created_at,
             updated_at: task.updated_at,
         }
@@ -717,10 +719,17 @@ impl From<PersistedTask> for Task {
     fn from(task: PersistedTask) -> Self {
         Self {
             task_id: task.task_id,
-            title: task.title,
+            title: redact_credentials(&task.title),
             status: task.status,
-            logs: task.logs,
-            error: task.error,
+            logs: task
+                .logs
+                .into_iter()
+                .map(|log| TaskLog {
+                    message: redact_credentials(&log.message),
+                    created_at: log.created_at,
+                })
+                .collect(),
+            error: task.error.map(|error| redact_credentials(&error)),
             result: None,
             created_at: task.created_at,
             updated_at: task.updated_at,
@@ -2271,7 +2280,7 @@ fn persisted_task_logs(logs: &[TaskLog]) -> Vec<TaskLog> {
             break;
         }
         let remaining = MAX_PERSISTED_TASK_LOG_BYTES - persisted_bytes;
-        let message = persisted_task_text(&log.message, remaining);
+        let message = persisted_task_text(&redact_credentials(&log.message), remaining);
         persisted_bytes += message.len();
         persisted.push(TaskLog {
             message,
@@ -5578,33 +5587,13 @@ fn format_task_command(command: &Command) -> String {
             }
         }
 
-        parts.push(format!("{:?}", redact_task_command_url(&argument)));
+        parts.push(format!("{:?}", redact_credentials(&argument)));
     }
 
     bounded_text_preview(
         parts.join(" "),
         MAX_TASK_COMMAND_LOG_BYTES,
         "命令日志已截断",
-    )
-}
-
-fn redact_task_command_url(value: &str) -> String {
-    let Some(scheme_end) = value.find("://") else {
-        return value.to_string();
-    };
-    let authority_start = scheme_end + 3;
-    let authority_end = value[authority_start..]
-        .find(['/', '?', '#'])
-        .map(|index| authority_start + index)
-        .unwrap_or(value.len());
-    let authority = &value[authority_start..authority_end];
-    let Some(userinfo_end) = authority.rfind('@') else {
-        return value.to_string();
-    };
-    format!(
-        "{}<凭据>@{}",
-        &value[..authority_start],
-        &value[authority_start + userinfo_end + 1..]
     )
 }
 
@@ -5962,6 +5951,8 @@ fn update_task(
     message: &str,
     error: Option<String>,
 ) {
+    let message = redact_credentials(message);
+    let error = error.map(|error| redact_credentials(&error));
     let mut state = state.lock().expect("任务队列锁已损坏");
     let cancelled = state.cancellation_requested.contains(task_id)
         && !matches!(status, TaskStatus::Pending | TaskStatus::Running);
@@ -5984,7 +5975,7 @@ fn update_task(
             message: if cancelled {
                 "任务已取消，SVN 进程树已终止".to_string()
             } else {
-                message.to_string()
+                message
             },
             created_at: now,
         });
@@ -6000,12 +5991,13 @@ fn update_task(
 }
 
 fn append_task_log(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, message: &str) {
+    let message = redact_credentials(message);
     let mut state = state.lock().expect("任务队列锁已损坏");
     if let Some(task) = state.tasks.iter_mut().find(|task| task.task_id == task_id) {
         let now = timestamp_millis();
         task.updated_at = now;
         task.logs.push(TaskLog {
-            message: message.to_string(),
+            message,
             created_at: now,
         });
     }
@@ -8361,8 +8353,9 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
 
 fn compact_repository_url(url: &str) -> String {
     const MAX_CHARS: usize = 48;
+    let url = redact_credentials(url);
     if url.chars().count() <= MAX_CHARS {
-        return url.to_string();
+        return url;
     }
 
     let tail: String = url
@@ -8681,12 +8674,12 @@ mod tests {
             "private-log-message",
             "--config-option",
             "servers:global:http-auth-types=private-config",
-            "https://url-user:url-password@example.com/repository",
+            "https://url-user:url-password@example.com/repository?token=query-token",
         ]);
 
         let formatted = format_task_command(&command);
         assert!(formatted.contains("<已隐藏>"));
-        assert!(formatted.contains("https://<凭据>@example.com/repository"));
+        assert!(formatted.contains("https://<凭据>@example.com/repository?token=<已隐藏>"));
         for secret in [
             "private-user",
             "private-password",
@@ -8694,8 +8687,69 @@ mod tests {
             "private-config",
             "url-user",
             "url-password",
+            "query-token",
         ] {
             assert!(!formatted.contains(secret));
+        }
+    }
+
+    #[test]
+    fn redacts_task_logs_errors_and_recovered_history() {
+        let state = Arc::new(Mutex::new(TaskQueueState {
+            tasks: vec![persisted_test_task(
+                "task-redaction",
+                TaskStatus::Running,
+                timestamp_millis(),
+            )],
+            ..TaskQueueState::default()
+        }));
+        append_task_log(
+            &state,
+            "task-redaction",
+            "svn: https://log-user:log-password@example.test/repo --password log-secret",
+        );
+        update_task(
+            &state,
+            "task-redaction",
+            TaskStatus::Failed,
+            "Authorization: Bearer terminal-secret",
+            Some("token=error-secret".to_string()),
+        );
+
+        let task = state.lock().expect("任务队列锁应可用").tasks[0].clone();
+        let serialized = serde_json::to_string(&PersistedTask::from(&task)).unwrap();
+        assert!(serialized.contains("<凭据>"));
+        assert!(serialized.contains("<已隐藏>"));
+        for secret in [
+            "log-user",
+            "log-password",
+            "log-secret",
+            "terminal-secret",
+            "error-secret",
+        ] {
+            assert!(!serialized.contains(secret));
+        }
+
+        let recovered = Task::from(PersistedTask {
+            task_id: "task-recovered-redaction".to_string(),
+            title: "https://title-user:title-password@example.test/repo".to_string(),
+            status: TaskStatus::Failed,
+            logs: vec![TaskLog {
+                message: "password=legacy-log-secret".to_string(),
+                created_at: 1,
+            }],
+            error: Some("Authorization: Basic legacy-error-secret".to_string()),
+            created_at: 1,
+            updated_at: 1,
+        });
+        let recovered_text = serde_json::to_string(&recovered).unwrap();
+        for secret in [
+            "title-user",
+            "title-password",
+            "legacy-log-secret",
+            "legacy-error-secret",
+        ] {
+            assert!(!recovered_text.contains(secret));
         }
     }
 

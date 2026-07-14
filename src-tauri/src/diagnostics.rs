@@ -9,6 +9,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::{
     error::NovaError,
+    redaction::redact_credentials,
     task::{Task, TaskQueue},
 };
 
@@ -140,7 +141,7 @@ fn build_diagnostics_content(app_version: &str, app_data_dir: &Path, tasks: &[Ta
     }
 
     lines.push(String::new());
-    lines.join("\n")
+    redact_credentials(&lines.join("\n"))
 }
 
 fn append_file_summary(lines: &mut Vec<String>, path: &Path) {
@@ -237,6 +238,7 @@ fn timestamp_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task::{CreateMockTaskRequest, MockTaskOutcome, TaskLog};
 
     #[test]
     fn diagnostic_content_includes_runtime_and_file_summaries() {
@@ -259,6 +261,49 @@ mod tests {
         assert!(content.contains("svn："));
         assert!(content.contains("panic sample"));
         assert!(content.contains("暂无任务。"));
+
+        let _ = fs::remove_dir_all(&app_data_dir);
+    }
+
+    #[test]
+    fn diagnostic_content_redacts_task_and_crash_credentials() {
+        let app_data_dir = std::env::temp_dir().join(format!(
+            "novasvn-diagnostics-redaction-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&app_data_dir);
+        fs::create_dir_all(&app_data_dir).unwrap();
+        fs::write(
+            app_data_dir.join("crash.log"),
+            "Authorization: Bearer crash-secret",
+        )
+        .unwrap();
+        let queue = TaskQueue::new();
+        let mut task = queue.create_mock_task(CreateMockTaskRequest {
+            title: Some("访问 https://title-user:title-password@example.test/repo".to_string()),
+            outcome: MockTaskOutcome::Success,
+        });
+        task.error = Some("password=task-error-secret".to_string());
+        task.logs.push(TaskLog {
+            message: "svn: https://log-user:log-password@example.test/repo".to_string(),
+            created_at: 1,
+        });
+
+        let content = build_diagnostics_content("9.8.7", &app_data_dir, &[task]);
+
+        assert!(content.contains("https://<凭据>@example.test/repo"));
+        assert!(content.contains("password=<已隐藏>"));
+        assert!(content.contains("Authorization: <已隐藏>"));
+        for secret in [
+            "title-user",
+            "title-password",
+            "task-error-secret",
+            "log-user",
+            "log-password",
+            "crash-secret",
+        ] {
+            assert!(!content.contains(secret));
+        }
 
         let _ = fs::remove_dir_all(&app_data_dir);
     }
