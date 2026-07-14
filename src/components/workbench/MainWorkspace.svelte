@@ -1107,7 +1107,7 @@
     if (node.kind !== "file") {
       return;
     }
-    if (isChangedPath(node.path)) {
+    if (node.changed || isChangedPath(node.path)) {
       onSelectFile(node.path);
       return;
     }

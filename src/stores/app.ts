@@ -1956,11 +1956,13 @@ function createWorkspaceStore() {
   let openPathGeneration = 0;
   let statusRefreshGeneration = 0;
   let fileTreeRefreshGeneration = 0;
+  let fileSelectionGeneration = 0;
   let repositoryFileLogGeneration = 0;
   let repositoryFileBlameGeneration = 0;
   let repositoryFilePropertiesGeneration = 0;
 
   async function loadRecent() {
+    fileSelectionGeneration += 1;
     update((state) => ({ ...state, loading: true, error: null }));
 
     try {
@@ -2093,6 +2095,7 @@ function createWorkspaceStore() {
     const requestGeneration = ++openPathGeneration;
     statusRefreshGeneration += 1;
     fileTreeRefreshGeneration += 1;
+    fileSelectionGeneration += 1;
     update((state) => ({
       ...state,
       loading: true,
@@ -2415,7 +2418,22 @@ function createWorkspaceStore() {
   }
 
   async function selectFile(path: string, svnExecutable?: string | null) {
-    let root = "";
+    const requestGeneration = ++fileSelectionGeneration;
+    const initialState = get({ subscribe });
+    const root = initialState.current?.working_copy_root ?? "";
+    if (root && !initialState.status?.files.some((file) => file.path === path)) {
+      await loadStatusUntilFile(path, svnExecutable, root, requestGeneration);
+    }
+    const currentState = get({ subscribe });
+    if (
+      requestGeneration !== fileSelectionGeneration ||
+      (root &&
+        (!currentState.current ||
+          !isSameWorkingCopyRoot(root, currentState.current.working_copy_root)))
+    ) {
+      return;
+    }
+
     update((state) => ({
       ...state,
       selectedFileDiff: null,
@@ -2426,10 +2444,6 @@ function createWorkspaceStore() {
       ...clearSvnBlameState(),
       ...clearSvnPropertiesState(),
     }));
-    update((state) => {
-      root = state.current?.working_copy_root ?? "";
-      return state;
-    });
 
     if (root) {
       await Promise.all([
@@ -2441,6 +2455,7 @@ function createWorkspaceStore() {
   }
 
   function selectPathOnly(path: string) {
+    fileSelectionGeneration += 1;
     update((state) => ({
       ...state,
       selectedFileDiff: null,
@@ -3906,12 +3921,14 @@ function createWorkspaceStore() {
     }
   }
 
-  async function loadMoreStatus(svnExecutable?: string | null) {
+  async function loadMoreStatus(
+    svnExecutable?: string | null,
+  ): Promise<WorkingCopyStatus | null> {
     const state = get({ subscribe });
     const root = state.current?.working_copy_root;
     const currentStatus = state.status;
     if (!root || !currentStatus || currentStatus.files.length >= currentStatus.total) {
-      return;
+      return currentStatus ?? null;
     }
 
     const requestGeneration = ++statusRefreshGeneration;
@@ -3931,7 +3948,7 @@ function createWorkspaceStore() {
         limit: 500,
       });
       if (!isCurrentStatusRequest(requestGeneration, root)) {
-        return;
+        return null;
       }
       const existingPaths = new Set(currentStatus.files.map((file) => file.path));
       const mergedStatus = {
@@ -3945,16 +3962,50 @@ function createWorkspaceStore() {
           ...nextPage.files.filter((file) => !existingPaths.has(file.path)),
         ],
       };
-      applyStatusResult(mergedStatus, state.selectedFilePath);
+      applyStatusResult(mergedStatus, get({ subscribe }).selectedFilePath, true);
+      return mergedStatus;
     } catch (error) {
       if (!isCurrentStatusRequest(requestGeneration, root)) {
-        return;
+        return null;
       }
       update((current) => ({
         ...current,
         statusLoading: false,
         statusError: error as CommandError,
       }));
+      return null;
+    }
+  }
+
+  async function loadStatusUntilFile(
+    path: string,
+    svnExecutable: string | null | undefined,
+    workingCopyRoot: string,
+    selectionGeneration: number,
+  ) {
+    while (true) {
+      const state = get({ subscribe });
+      if (
+        selectionGeneration !== fileSelectionGeneration ||
+        !state.current ||
+        !isSameWorkingCopyRoot(workingCopyRoot, state.current.working_copy_root)
+      ) {
+        return false;
+      }
+      const status = state.status;
+      if (status?.files.some((file) => file.path === path)) {
+        return true;
+      }
+      if (!status || status.files.length >= status.total) {
+        return false;
+      }
+
+      const previousCount = status.files.length;
+      await loadMoreStatus(svnExecutable);
+      const nextStatus = get({ subscribe }).status;
+      if (!nextStatus || nextStatus.files.length <= previousCount) {
+        return false;
+      }
     }
   }
 
@@ -4258,8 +4309,12 @@ function createWorkspaceStore() {
   function applyStatusResult(
     status: WorkingCopyStatus,
     previousSelectedFilePath: string | null,
+    preserveUnloadedSelection = false,
   ) {
-    const selectedFilePath = resolveSelectedFilePath(status.files, previousSelectedFilePath);
+    const selectedFilePath =
+      preserveUnloadedSelection && previousSelectedFilePath
+        ? previousSelectedFilePath
+        : resolveSelectedFilePath(status.files, previousSelectedFilePath);
     update((state) => {
       const previousCommittableFiles = state.status?.files.filter(isCommittable) ?? [];
       const hadEveryFileSelected =

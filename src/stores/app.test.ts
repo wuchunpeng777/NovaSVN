@@ -689,6 +689,97 @@ describe("workspaceStore safety warnings", () => {
     );
   });
 
+  it("loads later status pages when selecting the 501st changed file", async () => {
+    const workspace = makeWorkspace();
+    const firstFiles = Array.from({ length: 500 }, (_, index) =>
+      makeFile({
+        path: `src/file-${String(index + 1).padStart(3, "0")}.ts`,
+        content_digest: `digest-${index + 1}`,
+      }),
+    );
+    const laterFile = makeFile({
+      path: "src/file-501.ts",
+      content_digest: "digest-501",
+    });
+    const firstPage = makeStatus(firstFiles, {
+      total: 501,
+      returned: 500,
+      offset: 0,
+      limit: 500,
+    });
+    const secondPage = makeStatus([laterFile], {
+      total: 501,
+      returned: 1,
+      offset: 500,
+      limit: 500,
+    });
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage);
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    workspaceStore.clearCommitFiles();
+
+    await workspaceStore.selectFile(laterFile.path);
+
+    expect(scanWorkspaceStatusMock).toHaveBeenLastCalledWith({
+      working_copy_root: "C:/repo/wc",
+      svn_executable: undefined,
+      offset: 500,
+      limit: 500,
+    });
+    expect(get(workspaceStore).selectedFilePath).toBe(laterFile.path);
+    expect(get(workspaceStore).status?.files).toHaveLength(501);
+
+    workspaceStore.selectCommitFile(laterFile.path);
+    expect(get(workspaceStore).commitFiles).toEqual([
+      {
+        path: laterFile.path,
+        status: "modified",
+        contentDigest: "digest-501",
+      },
+    ]);
+  });
+
+  it("does not override a newer selection when an automatic status page finishes", async () => {
+    const workspace = makeWorkspace();
+    const firstFile = makeFile({
+      path: "src/file-001.ts",
+      content_digest: "digest-001",
+    });
+    const laterFile = makeFile({
+      path: "src/file-501.ts",
+      content_digest: "digest-501",
+    });
+    const firstPage = makeStatus([firstFile], {
+      total: 2,
+      returned: 1,
+      offset: 0,
+      limit: 1,
+    });
+    const secondPage = makeStatus([laterFile], {
+      total: 2,
+      returned: 1,
+      offset: 1,
+      limit: 1,
+    });
+    const pendingPage = deferred<WorkingCopyStatus>();
+
+    openWorkspaceMock.mockResolvedValue(workspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(firstPage).mockReturnValueOnce(pendingPage.promise);
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+
+    const pendingSelection = workspaceStore.selectFile(laterFile.path);
+    await vi.waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(2));
+    workspaceStore.selectPathOnly("README.md");
+    pendingPage.resolve(secondPage);
+    await pendingSelection;
+
+    expect(get(workspaceStore).selectedFilePath).toBe("README.md");
+    expect(get(workspaceStore).status?.files).toHaveLength(2);
+  });
+
   it("warns about large binary files and generated project directories", async () => {
     const workspace = makeWorkspace();
     const status = makeStatus([

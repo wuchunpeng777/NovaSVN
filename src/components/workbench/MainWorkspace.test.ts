@@ -1278,6 +1278,49 @@ Certificate information:
     ).not.toBeInTheDocument();
   });
 
+  it("loads and enables operations for a changed file outside the first status page", async () => {
+    const firstFile = makeFile("src/file-001.ts", "modified", "digest-001");
+    const laterFile = makeFile("src/file-501.ts", "modified", "digest-501");
+    const onSelectFile = vi.fn();
+    const onSelectWorkspacePath = vi.fn();
+    const onSelectCommitFile = vi.fn();
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: {
+          ...makeStatus([firstFile]),
+          total: 501,
+          returned: 500,
+        },
+        workspaceFileTree: {
+          working_copy_root: "C:/repo/wc",
+          total_files: 501,
+          returned_files: 501,
+          truncated: false,
+          nodes: [
+            makeScopedNode(firstFile.path, "modified", "local"),
+            makeScopedNode(laterFile.path, "modified", "local"),
+          ],
+        },
+        onSelectFile,
+        onSelectWorkspacePath,
+        onSelectCommitFile,
+      },
+    });
+
+    expect(screen.queryByRole("button", { name: `Commit ${laterFile.path}` })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: `选择文件 ${laterFile.path}` }));
+    expect(onSelectFile).toHaveBeenCalledWith(laterFile.path);
+    expect(onSelectWorkspacePath).not.toHaveBeenCalled();
+
+    await rerender({
+      workingCopyStatus: makeStatus([firstFile, laterFile]),
+    });
+    await fireEvent.click(screen.getByRole("button", { name: `Commit ${laterFile.path}` }));
+    expect(onSelectCommitFile).toHaveBeenCalledWith(laterFile.path);
+  });
+
   it("does not retain commit target visuals across task or workspace switches", async () => {
     const originalFile = makeFile("src/main.ts", "modified", "main-digest");
     const nextFile = makeFile("src/next.ts", "modified", "next-digest");
