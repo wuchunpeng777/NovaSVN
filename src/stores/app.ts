@@ -1574,6 +1574,8 @@ export interface WorkspaceStoreState {
   commitMessage: string;
   commitError: string | null;
   pendingCommitTaskId: string | null;
+  pendingCommitFiles: string[];
+  pendingCommitWorkingCopyRoot: string | null;
   pendingPartialCommitTaskId: string | null;
   pendingSvnOperationTaskId: string | null;
   pendingSvnOperationKind: PendingSvnOperationKind | null;
@@ -1781,6 +1783,8 @@ const initialWorkspaceState: WorkspaceStoreState = {
   commitMessage: "",
   commitError: null,
   pendingCommitTaskId: null,
+  pendingCommitFiles: [],
+  pendingCommitWorkingCopyRoot: null,
   pendingPartialCommitTaskId: null,
   pendingSvnOperationTaskId: null,
   pendingSvnOperationKind: null,
@@ -1992,6 +1996,8 @@ function createWorkspaceStore() {
         commitMessage: draft.commitMessage || commitSettings.template,
         commitError: null,
         pendingCommitTaskId: null,
+        pendingCommitFiles: [],
+        pendingCommitWorkingCopyRoot: null,
         pendingPartialCommitTaskId: null,
         pendingSvnOperationTaskId: null,
         pendingSvnOperationKind: null,
@@ -2142,7 +2148,6 @@ function createWorkspaceStore() {
         commitHistory: commitSettings.history,
         commitMessage: draft.commitMessage || commitSettings.template,
         commitError: null,
-        pendingCommitTaskId: null,
         pendingPartialCommitTaskId: null,
         ...emptyApplyPatchState(),
         repositoryUrlInput: current.repository_root,
@@ -2830,11 +2835,31 @@ function createWorkspaceStore() {
     });
   }
 
-  function markCommitTask(taskId: string | null) {
+  function markCommitTask(
+    taskId: string | null,
+    files?: string[],
+    workingCopyRoot?: string | null,
+  ) {
     update((state) => ({
       ...state,
       pendingCommitTaskId: taskId,
+      pendingCommitFiles: taskId
+        ? [...(files ?? state.commitFiles.map((file) => file.path))]
+        : [],
+      pendingCommitWorkingCopyRoot: taskId
+        ? (workingCopyRoot ?? state.current?.working_copy_root ?? null)
+        : null,
       commitError: null,
+    }));
+  }
+
+  function failCommitTask(message: string) {
+    update((state) => ({
+      ...state,
+      pendingCommitTaskId: null,
+      pendingCommitFiles: [],
+      pendingCommitWorkingCopyRoot: null,
+      commitError: message,
     }));
   }
 
@@ -3799,6 +3824,8 @@ function createWorkspaceStore() {
         commitMessage: state.commitTemplate,
         commitError: null,
         pendingCommitTaskId: null,
+        pendingCommitFiles: [],
+        pendingCommitWorkingCopyRoot: null,
         pendingPartialCommitTaskId: null,
       };
     });
@@ -5273,6 +5300,7 @@ function createWorkspaceStore() {
     validateSelectedHunksForPartialCommit,
     confirmSafetyWarnings,
     markCommitTask,
+    failCommitTask,
     markPartialCommitTask,
     completePartialCommit,
     markSvnOperationTask,

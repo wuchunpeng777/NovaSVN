@@ -4284,7 +4284,7 @@
             <strong>{selectedRowPaths.size} 个已选</strong>
             <button
               type="button"
-              disabled={selectedCommittablePaths.length === 0 || statusLoading}
+              disabled={selectedCommittablePaths.length === 0 || statusLoading || toolbarLocked}
               on:click={toggleSelectedCommitPaths}
             >
               {allSelectedCommitTargets ? "移出 Commit" : "加入 Commit"}
@@ -4458,14 +4458,14 @@
                         <label
                           class="commit-target-control"
                           class:active={isCommitSelected(node.path, commitFiles)}
-                          class:disabled={statusLoading}
+                          class:disabled={statusLoading || toolbarLocked}
                           title="包含在本次提交"
                         >
                           <input
                             type="checkbox"
                             aria-label={`提交目标 ${node.path}`}
                             checked={isCommitSelected(node.path, commitFiles)}
-                            disabled={statusLoading}
+                            disabled={statusLoading || toolbarLocked}
                             on:change={(event) =>
                               event.currentTarget.checked
                                 ? selectCommitFileAndOpen(node.path)

@@ -411,7 +411,11 @@
       return;
     }
 
-    workspaceStore.markCommitTask(task.task_id);
+    workspaceStore.markCommitTask(
+      task.task_id,
+      files,
+      $workspaceStore.current.working_copy_root,
+    );
   }
 
   async function submitSelectedPatch() {
@@ -1599,16 +1603,31 @@
 
   $: consumePendingTask($workspaceStore.pendingCommitTaskId, $taskStore.snapshot, (task) => {
     if (task.status === "success") {
-      const committedPaths = $workspaceStore.commitFiles.map((file) => file.path);
-      const workingCopyRoot = $workspaceStore.current?.working_copy_root;
-      workspaceStore.clearCommittedFiles(committedPaths);
-      if (workingCopyRoot) {
+      const committedPaths = $workspaceStore.pendingCommitFiles;
+      const workingCopyRoot = $workspaceStore.pendingCommitWorkingCopyRoot;
+      const isCurrentWorkspace =
+        !!workingCopyRoot &&
+        workingCopyRoot === $workspaceStore.current?.working_copy_root;
+      if (isCurrentWorkspace) {
+        workspaceStore.clearCommittedFiles(committedPaths);
         void refreshStatusAndSyncBranchPool(workingCopyRoot);
+      } else {
+        workspaceStore.markCommitTask(null);
       }
       return;
     }
 
-    workspaceStore.markCommitTask(null);
+    if (task.status === "cancelled") {
+      workspaceStore.failCommitTask(task.error ?? "提交任务已取消");
+      return;
+    }
+    if (task.status === "interrupted") {
+      workspaceStore.failCommitTask(
+        task.error ?? "提交任务已中断，请检查工作副本状态后重试",
+      );
+      return;
+    }
+    workspaceStore.failCommitTask(task.error ?? "提交任务失败");
   });
 
   $: consumePendingTask(

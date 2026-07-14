@@ -560,6 +560,104 @@ Certificate information:
     expect(getTaskMock).toHaveBeenCalledWith("pending-commit");
   });
 
+  it("Commit 成功时只清理任务创建时的目标并刷新绑定的工作副本", async () => {
+    await showBatchOperationSource();
+    workspaceStore.setCommitMessage("提交 alpha");
+    workspaceStore.markCommitTask("pending-commit", ["alpha.txt"], "C:/repo/wc");
+
+    const refreshedStatus = {
+      ...get(workspaceStore).status!,
+      total: 1,
+      returned: 1,
+      local_changes: 1,
+      files: get(workspaceStore).status!.files.filter((file) => file.path === "beta.txt"),
+    };
+    scanWorkspaceStatusMock.mockResolvedValue(refreshedStatus);
+    const pendingTask = makeTask({
+      task_id: "pending-commit",
+      status: "success",
+    });
+    listTasksMock.mockResolvedValue(makeTaskSnapshot([pendingTask]));
+    getTaskMock.mockResolvedValue(pendingTask);
+    await taskStore.refresh();
+
+    render(App);
+
+    await waitFor(() => {
+      expect(get(workspaceStore).pendingCommitTaskId).toBeNull();
+      expect(scanWorkspaceStatusMock).toHaveBeenLastCalledWith({
+        working_copy_root: "C:/repo/wc",
+        svn_executable: undefined,
+        offset: 0,
+        limit: 500,
+      });
+    });
+    expect(get(workspaceStore).pendingCommitFiles).toEqual([]);
+    expect(get(workspaceStore).pendingCommitWorkingCopyRoot).toBeNull();
+    expect(get(workspaceStore).commitFiles.map((file) => file.path)).toEqual(["beta.txt"]);
+    expect(get(workspaceStore).commitMessage).toBe("");
+  });
+
+  it.each([
+    ["failed", "服务端拒绝提交", "服务端拒绝提交"],
+    ["cancelled", null, "提交任务已取消"],
+    ["interrupted", null, "提交任务已中断，请检查工作副本状态后重试"],
+  ] as const)("Commit 进入 %s 后清理 pending 并保留提交表单", async (status, error, expected) => {
+    await showBatchOperationSource();
+    workspaceStore.setCommitMessage("保留提交信息");
+    workspaceStore.markCommitTask("pending-commit", ["alpha.txt"], "C:/repo/wc");
+
+    const pendingTask = makeTask({
+      task_id: "pending-commit",
+      status,
+      error,
+    });
+    listTasksMock.mockResolvedValue(makeTaskSnapshot([pendingTask]));
+    getTaskMock.mockResolvedValue(pendingTask);
+    await taskStore.refresh();
+
+    render(App);
+
+    await waitFor(() => {
+      expect(get(workspaceStore).pendingCommitTaskId).toBeNull();
+    });
+    const state = get(workspaceStore);
+    expect(state.pendingCommitFiles).toEqual([]);
+    expect(state.pendingCommitWorkingCopyRoot).toBeNull();
+    expect(state.commitFiles.map((file) => file.path)).toEqual(["alpha.txt", "beta.txt"]);
+    expect(state.commitMessage).toBe("保留提交信息");
+    expect(state.commitError).toBe(expected);
+  });
+
+  it("切换工作副本后旧 Commit 成功不会清理或刷新新工作副本", async () => {
+    workspaceStore.markCommitTask("pending-commit", ["alpha.txt"], "C:/repo/wc");
+    openWorkspaceMock.mockResolvedValue({
+      ...makeWorkspace(),
+      local_path: "D:/repo/other",
+      working_copy_root: "D:/repo/other",
+    });
+    await workspaceStore.openPath(undefined, "D:/repo/other");
+    expect(get(workspaceStore).pendingCommitTaskId).toBe("pending-commit");
+
+    scanWorkspaceStatusMock.mockClear();
+    const pendingTask = makeTask({
+      task_id: "pending-commit",
+      status: "success",
+    });
+    listTasksMock.mockResolvedValue(makeTaskSnapshot([pendingTask]));
+    getTaskMock.mockResolvedValue(pendingTask);
+    await taskStore.refresh();
+
+    render(App);
+
+    await waitFor(() => {
+      expect(get(workspaceStore).pendingCommitTaskId).toBeNull();
+    });
+    expect(get(workspaceStore).current?.working_copy_root).toBe("D:/repo/other");
+    expect(get(workspaceStore).commitFiles).toEqual([]);
+    expect(scanWorkspaceStatusMock).not.toHaveBeenCalled();
+  });
+
   it("选中其他任务时仍应用 Repository List 完整结果", async () => {
     const pendingSummary = makeTaskSummary({
       task_id: "repository-list",
