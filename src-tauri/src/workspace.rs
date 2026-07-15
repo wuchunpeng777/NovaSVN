@@ -4532,6 +4532,80 @@ line two</property>
     }
 
     #[test]
+    fn preserves_sparse_working_copy_directories_without_inventing_files() {
+        if !svn_test_tools_available() {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-sparse-file-tree-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(import_dir.join("included")).expect("create included fixture");
+        fs::create_dir_all(import_dir.join("excluded")).expect("create excluded fixture");
+        fs::create_dir_all(import_dir.join("empty")).expect("create empty fixture");
+        fs::write(import_dir.join("included/visible.txt"), "visible")
+            .expect("write included fixture");
+        fs::write(import_dir.join("excluded/hidden.txt"), "hidden")
+            .expect("write excluded fixture");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .args(["--depth", "immediates"])
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("update")
+                .args(["--set-depth", "infinity"])
+                .arg(working_copy.join("included")),
+        );
+
+        let tree = list_workspace_files(ListWorkspaceFilesRequest {
+            working_copy_root: working_copy.display().to_string(),
+            svn_executable: None,
+            max_files: Some(100),
+        })
+        .expect("sparse file tree reads");
+
+        assert_eq!(tree.total_files, 1);
+        assert_eq!(tree.returned_files, 1);
+        assert!(!tree.truncated);
+        assert!(find_workspace_node(&tree.nodes, "included")
+            .is_some_and(|node| node.kind == "dir" && node.versioned));
+        assert!(find_workspace_node(&tree.nodes, "included/visible.txt")
+            .is_some_and(|node| node.kind == "file" && node.versioned));
+        for directory in ["excluded", "empty"] {
+            assert!(
+                find_workspace_node(&tree.nodes, directory).is_some_and(|node| {
+                    node.kind == "dir" && node.versioned && node.children.is_empty()
+                })
+            );
+        }
+        assert!(find_workspace_node(&tree.nodes, "excluded/hidden.txt").is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn appends_ignore_rule_and_returns_its_versioned_parent() {
         if !svn_test_tools_available() {
             return;
