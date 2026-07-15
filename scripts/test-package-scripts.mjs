@@ -603,7 +603,9 @@ if (
   !taskRs.includes("APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES") ||
   !taskRs.includes("APPLY_PATCH_TASK_LOG_MAX_BYTES") ||
   !taskRs.includes("APPLY_PATCH_TASK_LOG_MAX_LINES") ||
-  !taskRs.includes("append_apply_patch_command_output(state, task_id, &preflight_output)") ||
+  !taskRs.includes("run_apply_patch_command(state, task_id, &mut preflight_command)") ||
+  !taskRs.includes("append_apply_patch_analysis_logs(state, task_id, &preflight_output.analysis)") ||
+  !taskRs.includes("MAX_APPLY_PATCH_COMMAND_OUTPUT_BYTES") ||
   !taskRs.includes("fn bounded_apply_patch_output(") ||
   !taskRs.includes("offset_hunks") ||
   !taskRs.includes('root.join("offset.patch")') ||

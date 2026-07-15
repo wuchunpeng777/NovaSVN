@@ -38,6 +38,9 @@ const APPLY_PATCH_MAX_BYTES: u64 = 32 * 1024 * 1024;
 const APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES: usize = 256 * 1024;
 const APPLY_PATCH_TASK_LOG_MAX_BYTES: usize = 64 * 1024;
 const APPLY_PATCH_TASK_LOG_MAX_LINES: usize = 500;
+const MAX_APPLY_PATCH_COMMAND_OUTPUT_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_APPLY_PATCH_OUTPUT_LINE_BYTES: usize = 64 * 1024;
+const MAX_APPLY_PATCH_STATS_PATHS: usize = 100_000;
 const MAX_BATCH_OPERATION_PATHS: usize = 500;
 const MAX_BATCH_OPERATION_PATH_BYTES: usize = 24 * 1024;
 const TASK_HISTORY_FILE_VERSION: u32 = 1;
@@ -3734,6 +3737,54 @@ impl Drop for TaskCommandOutputFile {
     }
 }
 
+#[derive(Debug)]
+struct ApplyPatchCommandResult {
+    status: ExitStatus,
+    analysis: ApplyPatchOutputAnalysis,
+}
+
+fn run_apply_patch_command(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    command: &mut Command,
+) -> Result<ApplyPatchCommandResult, NovaError> {
+    let (stdout_file, stdout_writer) =
+        TaskCommandOutputFile::create(task_id, "patch-stdout", "log").map_err(|error| {
+            NovaError::command(
+                "APPLY_PATCH_OUTPUT_CREATE_FAILED",
+                "无法创建 Patch stdout 临时文件",
+                Some(error.to_string()),
+                true,
+            )
+        })?;
+    let (stderr_file, stderr_writer) =
+        TaskCommandOutputFile::create(task_id, "patch-stderr", "log").map_err(|error| {
+            NovaError::command(
+                "APPLY_PATCH_OUTPUT_CREATE_FAILED",
+                "无法创建 Patch stderr 临时文件",
+                Some(error.to_string()),
+                true,
+            )
+        })?;
+    command
+        .stdout(Stdio::from(stdout_writer))
+        .stderr(Stdio::from(stderr_writer));
+    let output =
+        run_task_command_with_configured_streams(state, task_id, command).map_err(|error| {
+            NovaError::command(
+                "APPLY_PATCH_COMMAND_FAILED",
+                "无法执行 SVN Patch 命令",
+                Some(error.to_string()),
+                true,
+            )
+        })?;
+    let analysis = analyze_apply_patch_output_files(&stdout_file, &stderr_file)?;
+    Ok(ApplyPatchCommandResult {
+        status: output.status,
+        analysis,
+    })
+}
+
 fn run_repository_file_task(
     state: &Arc<Mutex<TaskQueueState>>,
     task_id: &str,
@@ -5008,10 +5059,8 @@ fn run_apply_patch_task(
             snapshot_file.path(),
             &working_copy_root,
         );
-        // Patch 统计需要完整输出；结果预览和日志在后续步骤统一限流。
-        let preflight_output =
-            run_task_command_with_unbounded_output(state, task_id, &mut preflight_command);
-        let preflight_output = match preflight_output {
+        let preflight_output = match run_apply_patch_command(state, task_id, &mut preflight_command)
+        {
             Ok(output) => output,
             Err(error) => {
                 update_task(
@@ -5019,14 +5068,14 @@ fn run_apply_patch_task(
                     task_id,
                     TaskStatus::Failed,
                     "SVN patch 预检启动失败",
-                    Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+                    Some(nova_error_text(&error)),
                 );
                 return;
             }
         };
-        append_apply_patch_command_output(state, task_id, &preflight_output);
-        let preflight_text = apply_patch_output_from_command(&preflight_output);
-        let preflight_stats = parse_apply_patch_stats(&preflight_text);
+        append_apply_patch_analysis_logs(state, task_id, &preflight_output.analysis);
+        let preflight_text = preflight_output.analysis.preview_text.clone();
+        let preflight_stats = &preflight_output.analysis.stats;
         if !preflight_output.status.success() || !preflight_stats.allows_apply() {
             set_apply_patch_result(
                 state,
@@ -5034,12 +5083,13 @@ fn run_apply_patch_task(
                 &payload,
                 true,
                 preflight_text,
-                &preflight_stats,
+                preflight_output.analysis.output_truncated,
+                preflight_stats,
             );
             let detail = if preflight_output.status.success() {
-                format_apply_patch_guard_error(&preflight_stats)
+                format_apply_patch_guard_error(preflight_stats)
             } else {
-                apply_patch_command_error_detail(&payload.svn_executable, &preflight_output)
+                apply_patch_analysis_error_detail(&preflight_output.analysis)
             };
             update_task(
                 state,
@@ -5069,19 +5119,19 @@ fn run_apply_patch_task(
         snapshot_file.path(),
         &working_copy_root,
     );
-    // Patch 统计需要完整输出；结果预览和日志在后续步骤统一限流。
-    match run_task_command_with_unbounded_output(state, task_id, &mut patch_command) {
+    match run_apply_patch_command(state, task_id, &mut patch_command) {
         Ok(output) => {
-            append_apply_patch_command_output(state, task_id, &output);
-            let output_text = apply_patch_output_from_command(&output);
-            let stats = parse_apply_patch_stats(&output_text);
+            append_apply_patch_analysis_logs(state, task_id, &output.analysis);
+            let output_text = output.analysis.preview_text.clone();
+            let stats = &output.analysis.stats;
             set_apply_patch_result(
                 state,
                 task_id,
                 &payload,
                 payload.dry_run,
                 output_text,
-                &stats,
+                output.analysis.output_truncated,
+                stats,
             );
 
             if output.status.success() && (payload.dry_run || stats.allows_apply()) {
@@ -5101,9 +5151,9 @@ fn run_apply_patch_task(
                 );
             } else {
                 let detail = if output.status.success() {
-                    format_apply_patch_guard_error(&stats)
+                    format_apply_patch_guard_error(stats)
                 } else {
-                    apply_patch_command_error_detail(&payload.svn_executable, &output)
+                    apply_patch_analysis_error_detail(&output.analysis)
                 };
                 update_task(
                     state,
@@ -5136,9 +5186,10 @@ fn set_apply_patch_result(
     payload: &ApplyPatchTaskPayload,
     result_dry_run: bool,
     output_text: String,
+    output_truncated: bool,
     stats: &ApplyPatchStats,
 ) {
-    let (output_text, output_truncated) = bounded_apply_patch_output(output_text);
+    let output_text = bounded_apply_patch_output(output_text).0;
     set_task_result(
         state,
         task_id,
@@ -5557,6 +5608,7 @@ fn run_task_command(
             timeout: TASK_COMMAND_TIMEOUT,
             idle_timeout: Some(TASK_COMMAND_IDLE_TIMEOUT),
         },
+        true,
         Some(MAX_TASK_COMMAND_OUTPUT_BYTES),
     )
 }
@@ -5575,6 +5627,7 @@ fn run_task_command_with_unbounded_output(
             timeout: TASK_COMMAND_TIMEOUT,
             idle_timeout: Some(TASK_COMMAND_IDLE_TIMEOUT),
         },
+        true,
         None,
     )
 }
@@ -5593,7 +5646,27 @@ fn run_task_command_with_configured_stdout(
             timeout: TASK_COMMAND_TIMEOUT,
             idle_timeout: None,
         },
+        true,
         Some(MAX_TASK_COMMAND_OUTPUT_BYTES),
+    )
+}
+
+fn run_task_command_with_configured_streams(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    command: &mut Command,
+) -> std::io::Result<Output> {
+    run_task_command_inner(
+        state,
+        task_id,
+        command,
+        false,
+        TaskCommandLimits {
+            timeout: TASK_COMMAND_TIMEOUT,
+            idle_timeout: None,
+        },
+        false,
+        None,
     )
 }
 
@@ -5616,6 +5689,7 @@ fn run_task_command_with_limits(
         command,
         true,
         limits,
+        true,
         Some(MAX_TASK_COMMAND_OUTPUT_BYTES),
     )
 }
@@ -5626,6 +5700,7 @@ fn run_task_command_inner(
     command: &mut Command,
     capture_stdout: bool,
     limits: TaskCommandLimits,
+    capture_stderr: bool,
     output_limit: Option<usize>,
 ) -> std::io::Result<Output> {
     if state
@@ -5643,7 +5718,9 @@ fn run_task_command_inner(
     if capture_stdout {
         command.stdout(Stdio::piped());
     }
-    command.stderr(Stdio::piped());
+    if capture_stderr {
+        command.stderr(Stdio::piped());
+    }
     configure_task_process_group(command);
     append_task_log(
         state,
@@ -6027,16 +6104,15 @@ fn append_command_output(
     append_stream_lines(state, task_id, &String::from_utf8_lossy(&output.stderr));
 }
 
-fn append_apply_patch_command_output(
+fn append_apply_patch_analysis_logs(
     state: &Arc<Mutex<TaskQueueState>>,
     task_id: &str,
-    output: &std::process::Output,
+    analysis: &ApplyPatchOutputAnalysis,
 ) {
-    let (lines, truncated) = apply_patch_log_preview(&output.stdout, &output.stderr);
-    for line in lines {
-        append_task_log(state, task_id, &line);
+    for line in &analysis.log_lines {
+        append_task_log(state, task_id, line);
     }
-    if truncated {
+    if analysis.log_truncated {
         append_task_log(
             state,
             task_id,
@@ -6048,6 +6124,7 @@ fn append_apply_patch_command_output(
     }
 }
 
+#[cfg(test)]
 fn apply_patch_log_preview(stdout: &[u8], stderr: &[u8]) -> (Vec<String>, bool) {
     let mut lines = Vec::new();
     let mut bytes = 0usize;
@@ -6083,6 +6160,144 @@ fn apply_patch_log_preview(stdout: &[u8], stderr: &[u8]) -> (Vec<String>, bool) 
     }
 
     (lines, truncated)
+}
+
+#[derive(Debug)]
+struct ApplyPatchOutputAnalysis {
+    preview_text: String,
+    output_truncated: bool,
+    stats: ApplyPatchStats,
+    log_lines: Vec<String>,
+    log_truncated: bool,
+}
+
+#[derive(Debug, Default)]
+struct ApplyPatchOutputCollector {
+    preview: Vec<u8>,
+    line: Vec<u8>,
+    total_bytes: u64,
+    log_lines: Vec<String>,
+    log_bytes: usize,
+    log_truncated: bool,
+    stats: ApplyPatchStatsAccumulator,
+}
+
+impl ApplyPatchOutputCollector {
+    fn read_file(&mut self, path: &Path) -> Result<(), NovaError> {
+        let mut file = fs::File::open(path).map_err(|error| {
+            NovaError::command(
+                "APPLY_PATCH_OUTPUT_READ_FAILED",
+                "无法读取 Patch 命令输出",
+                Some(format!("路径：{}；错误：{error}", path.display())),
+                true,
+            )
+        })?;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer).map_err(|error| {
+                NovaError::command(
+                    "APPLY_PATCH_OUTPUT_READ_FAILED",
+                    "无法读取 Patch 命令输出",
+                    Some(error.to_string()),
+                    true,
+                )
+            })?;
+            if read == 0 {
+                break;
+            }
+            self.consume_bytes(&buffer[..read])?;
+        }
+        self.finish_line()
+    }
+
+    fn consume_bytes(&mut self, bytes: &[u8]) -> Result<(), NovaError> {
+        self.total_bytes = self.total_bytes.saturating_add(bytes.len() as u64);
+        if self.total_bytes > MAX_APPLY_PATCH_COMMAND_OUTPUT_BYTES {
+            return Err(NovaError::command(
+                "APPLY_PATCH_OUTPUT_LIMIT_EXCEEDED",
+                "Patch 命令输出过大",
+                Some(format!(
+                    "完整 Patch 输出超过安全上限 {MAX_APPLY_PATCH_COMMAND_OUTPUT_BYTES} 字节"
+                )),
+                true,
+            ));
+        }
+        let remaining = APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES.saturating_sub(self.preview.len());
+        if remaining > 0 {
+            self.preview
+                .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
+        }
+
+        for byte in bytes {
+            self.line.push(*byte);
+            if self.line.len() > MAX_APPLY_PATCH_OUTPUT_LINE_BYTES {
+                return Err(NovaError::command(
+                    "APPLY_PATCH_OUTPUT_LINE_LIMIT_EXCEEDED",
+                    "Patch 命令输出单行过长",
+                    Some(format!(
+                        "单行输出超过 {MAX_APPLY_PATCH_OUTPUT_LINE_BYTES} 字节"
+                    )),
+                    true,
+                ));
+            }
+            if *byte == b'\n' {
+                self.finish_line()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish_line(&mut self) -> Result<(), NovaError> {
+        if self.line.is_empty() {
+            return Ok(());
+        }
+        let line = String::from_utf8_lossy(&self.line);
+        self.stats.consume_line(&line)?;
+        let line = line.trim();
+        if !line.is_empty() {
+            if self.log_lines.len() >= APPLY_PATCH_TASK_LOG_MAX_LINES
+                || self.log_bytes >= APPLY_PATCH_TASK_LOG_MAX_BYTES
+            {
+                self.log_truncated = true;
+            } else {
+                let remaining = APPLY_PATCH_TASK_LOG_MAX_BYTES - self.log_bytes;
+                let preview = truncate_utf8(line, remaining);
+                if preview.len() < line.len() {
+                    self.log_truncated = true;
+                }
+                self.log_bytes += preview.len();
+                self.log_lines.push(preview);
+            }
+        }
+        self.line.clear();
+        Ok(())
+    }
+
+    fn finish(self) -> Result<ApplyPatchOutputAnalysis, NovaError> {
+        let output_truncated = self.total_bytes > APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES as u64;
+        let preview_text = bounded_text_preview(
+            String::from_utf8_lossy(&self.preview).into_owned(),
+            APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES,
+            "Patch 输出预览已截断",
+        );
+        Ok(ApplyPatchOutputAnalysis {
+            preview_text,
+            output_truncated,
+            stats: self.stats.finish(),
+            log_lines: self.log_lines,
+            log_truncated: self.log_truncated,
+        })
+    }
+}
+
+fn analyze_apply_patch_output_files(
+    stdout: &TaskCommandOutputFile,
+    stderr: &TaskCommandOutputFile,
+) -> Result<ApplyPatchOutputAnalysis, NovaError> {
+    let mut collector = ApplyPatchOutputCollector::default();
+    collector.read_file(stdout.path())?;
+    collector.read_file(stderr.path())?;
+    collector.finish()
 }
 
 fn append_stream_lines(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, text: &str) {
@@ -6146,9 +6361,12 @@ fn format_repository_write_error_detail(detail: &str) -> String {
     )
 }
 
-fn apply_patch_command_error_detail(executable: &str, output: &std::process::Output) -> String {
+fn apply_patch_analysis_error_detail(analysis: &ApplyPatchOutputAnalysis) -> String {
+    if analysis.preview_text.trim().is_empty() {
+        return "svn patch 返回失败，但没有输出。".to_string();
+    }
     bounded_text_preview(
-        command_output_error_detail(executable, "patch", output),
+        analysis.preview_text.clone(),
         APPLY_PATCH_TASK_LOG_MAX_BYTES,
         "Patch 错误输出已截断",
     )
@@ -8586,24 +8804,6 @@ fn configure_svn_patch_command(
         .current_dir(working_copy_root);
 }
 
-fn apply_patch_output_text(stdout: &str, stderr: &str) -> String {
-    let stdout = stdout.trim();
-    let stderr = stderr.trim();
-    match (stdout.is_empty(), stderr.is_empty()) {
-        (false, false) => format!("{stdout}\n{stderr}"),
-        (false, true) => stdout.to_string(),
-        (true, false) => stderr.to_string(),
-        (true, true) => "svn patch 没有输出。".to_string(),
-    }
-}
-
-fn apply_patch_output_from_command(output: &std::process::Output) -> String {
-    apply_patch_output_text(
-        &String::from_utf8_lossy(&output.stdout),
-        &String::from_utf8_lossy(&output.stderr),
-    )
-}
-
 fn bounded_apply_patch_output(output_text: String) -> (String, bool) {
     let truncated = output_text.len() > APPLY_PATCH_OUTPUT_PREVIEW_MAX_BYTES;
     let preview = bounded_text_preview(
@@ -8629,51 +8829,93 @@ impl ApplyPatchStats {
     }
 }
 
+#[cfg(test)]
 fn parse_apply_patch_stats(output: &str) -> ApplyPatchStats {
-    let mut stats = ApplyPatchStats::default();
-    let mut applied_paths = HashSet::new();
-    let mut conflicted_paths = HashSet::new();
-    let mut conflict_summary = 0usize;
-    let mut skipped_summary = 0usize;
-
+    let mut accumulator = ApplyPatchStatsAccumulator::default();
     for line in output.lines() {
+        accumulator
+            .consume_line(line)
+            .expect("字符串 Patch 统计不应触发路径限制");
+    }
+    accumulator.finish()
+}
+
+#[derive(Debug, Default)]
+struct ApplyPatchStatsAccumulator {
+    stats: ApplyPatchStats,
+    applied_paths: HashSet<String>,
+    conflicted_paths: HashSet<String>,
+    conflict_summary: usize,
+    skipped_summary: usize,
+}
+
+impl ApplyPatchStatsAccumulator {
+    fn consume_line(&mut self, line: &str) -> Result<(), NovaError> {
         let trimmed = line.trim_start();
         if let Some((actions, path)) = parse_apply_patch_action_line(trimmed) {
+            if path.len() > MAX_APPLY_PATCH_OUTPUT_LINE_BYTES {
+                return Err(NovaError::command(
+                    "APPLY_PATCH_STATS_PATH_LIMIT_EXCEEDED",
+                    "Patch 统计路径过长",
+                    Some(format!(
+                        "单条路径超过 {MAX_APPLY_PATCH_OUTPUT_LINE_BYTES} 字节"
+                    )),
+                    true,
+                ));
+            }
             if actions.contains('C') {
-                conflicted_paths.insert(path.to_string());
+                self.conflicted_paths.insert(path.to_string());
             } else if actions
                 .chars()
                 .any(|action| matches!(action, 'A' | 'D' | 'U' | 'G'))
             {
-                applied_paths.insert(path.to_string());
+                self.applied_paths.insert(path.to_string());
+            }
+            if self.applied_paths.len().max(self.conflicted_paths.len())
+                > MAX_APPLY_PATCH_STATS_PATHS
+            {
+                return Err(NovaError::command(
+                    "APPLY_PATCH_STATS_PATH_LIMIT_EXCEEDED",
+                    "Patch 统计条目过多",
+                    Some(format!(
+                        "Patch 统计路径超过安全上限 {MAX_APPLY_PATCH_STATS_PATHS}"
+                    )),
+                    true,
+                ));
             }
         }
 
         let lowercase = trimmed.to_ascii_lowercase();
         if lowercase.contains("rejected hunk") {
-            stats.rejected += 1;
+            self.stats.rejected += 1;
         }
         if lowercase.contains("hunk") && lowercase.contains("offset") {
-            stats.offset_hunks += 1;
+            self.stats.offset_hunks += 1;
         }
         if lowercase.starts_with("skipped ") && !lowercase.starts_with("skipped paths:") {
-            stats.skipped += 1;
+            self.stats.skipped += 1;
         }
 
         for prefix in ["text conflicts:", "property conflicts:", "tree conflicts:"] {
             if let Some(count) = parse_apply_patch_summary_count(&lowercase, prefix) {
-                conflict_summary += count;
+                self.conflict_summary = self.conflict_summary.saturating_add(count);
             }
         }
         if let Some(count) = parse_apply_patch_summary_count(&lowercase, "skipped paths:") {
-            skipped_summary += count;
+            self.skipped_summary = self.skipped_summary.saturating_add(count);
         }
+        Ok(())
     }
 
-    stats.applied = applied_paths.difference(&conflicted_paths).count();
-    stats.conflicted = conflicted_paths.len().max(conflict_summary);
-    stats.skipped = stats.skipped.max(skipped_summary);
-    stats
+    fn finish(mut self) -> ApplyPatchStats {
+        self.stats.applied = self
+            .applied_paths
+            .difference(&self.conflicted_paths)
+            .count();
+        self.stats.conflicted = self.conflicted_paths.len().max(self.conflict_summary);
+        self.stats.skipped = self.stats.skipped.max(self.skipped_summary);
+        self.stats
+    }
 }
 
 fn parse_apply_patch_action_line(line: &str) -> Option<(&str, &str)> {
@@ -12437,6 +12679,32 @@ mod tests {
         assert!(log_truncated);
         assert_eq!(lines.len(), APPLY_PATCH_TASK_LOG_MAX_LINES);
         assert!(lines.iter().map(String::len).sum::<usize>() <= APPLY_PATCH_TASK_LOG_MAX_BYTES);
+    }
+
+    #[test]
+    fn streams_apply_patch_output_statistics_and_limits_preview() {
+        let mut collector = ApplyPatchOutputCollector::default();
+        collector
+            .consume_bytes(
+                b"U         src/one.txt\n>         applied hunk with offset 2\nC         src/two.txt\n",
+            )
+            .expect("Patch 输出应能流式统计");
+        collector.finish_line().expect("最后一行应能完成");
+        let analysis = collector.finish().expect("Patch 输出分析应成功");
+        assert_eq!(analysis.stats.applied, 1);
+        assert_eq!(analysis.stats.offset_hunks, 1);
+        assert_eq!(analysis.stats.conflicted, 1);
+        assert!(!analysis.output_truncated);
+        assert_eq!(analysis.log_lines.len(), 3);
+
+        let mut oversized_line = ApplyPatchOutputCollector::default();
+        let error = oversized_line
+            .consume_bytes(&vec![b'x'; MAX_APPLY_PATCH_OUTPUT_LINE_BYTES + 1])
+            .expect_err("过长单行应被拒绝");
+        assert!(matches!(
+            error,
+            NovaError::Command { code, .. } if code == "APPLY_PATCH_OUTPUT_LINE_LIMIT_EXCEEDED"
+        ));
     }
 
     #[test]
