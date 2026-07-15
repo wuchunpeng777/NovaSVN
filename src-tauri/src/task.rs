@@ -10122,8 +10122,7 @@ mod tests {
 
         assert_eq!(result.total_bytes, input.len());
         assert!(result.truncated);
-        assert_eq!(result.bytes.len(), 4);
-        assert!(std::str::from_utf8(&result.bytes).is_ok());
+        assert_eq!(result.bytes, "中".as_bytes());
         assert!(
             *last_output_at.lock().expect("输出时间锁应可用")
                 > Instant::now() - Duration::from_secs(1)
