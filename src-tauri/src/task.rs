@@ -42,6 +42,7 @@ const MAX_PERSISTED_TASK_LOG_BYTES: usize = 256 * 1024;
 const MAX_PERSISTED_TASK_ERROR_BYTES: usize = 64 * 1024;
 const MAX_TASK_COMMAND_LOG_BYTES: usize = 16 * 1024;
 const MAX_TASK_COMMAND_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
+const MERGE_OUTPUT_PREVIEW_MAX_BYTES: usize = 256 * 1024;
 const MAX_RUNTIME_TASK_LOGS: usize = 500;
 const MAX_RUNTIME_TASK_LOG_BYTES: usize = 64 * 1024;
 const TASK_LOG_TRUNCATION_MARKER: &str = "任务日志已截断：仅保留最近 500 行和 64 KiB";
@@ -418,6 +419,8 @@ pub struct MergeResult {
     pub ignore_ancestry: bool,
     pub force: bool,
     pub output_text: String,
+    pub output_truncated: bool,
+    pub max_output_bytes: usize,
     pub file_count: usize,
     pub line_count: usize,
     pub added: usize,
@@ -4718,8 +4721,25 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
     match run_task_command_with_unbounded_output(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
-            let output_text = merge_output_text(&output);
-            let summary = summarize_merge_output(&output_text);
+            let full_output_text = merge_output_text(&output);
+            let summary = summarize_merge_output(&full_output_text);
+            let line_count = full_output_text.lines().count();
+            let output_truncated = full_output_text.len() > MERGE_OUTPUT_PREVIEW_MAX_BYTES;
+            let output_text = bounded_text_preview(
+                full_output_text,
+                MERGE_OUTPUT_PREVIEW_MAX_BYTES,
+                "Merge 输出预览已截断",
+            );
+            if output_truncated {
+                append_task_log(
+                    state,
+                    task_id,
+                    &format!(
+                        "Merge 输出预览已截断（最多 {} 字节）",
+                        MERGE_OUTPUT_PREVIEW_MAX_BYTES
+                    ),
+                );
+            }
             let result = MergeResult {
                 dry_run: payload.dry_run,
                 source_url: payload.source_url.clone(),
@@ -4730,8 +4750,10 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
                 record_only: payload.record_only,
                 ignore_ancestry: payload.ignore_ancestry,
                 force: payload.force,
+                output_truncated,
+                max_output_bytes: MERGE_OUTPUT_PREVIEW_MAX_BYTES,
                 file_count: summary.file_count,
-                line_count: output_text.lines().count(),
+                line_count,
                 added: summary.added,
                 deleted: summary.deleted,
                 updated: summary.updated,
@@ -12913,6 +12935,22 @@ mod tests {
 
         assert_eq!(truncated, "abc");
         assert!(truncated.is_char_boundary(truncated.len()));
+    }
+
+    #[test]
+    fn bounds_merge_result_preview_and_reports_truncation() {
+        let full_output = "U    中文文件.txt\n".repeat(MERGE_OUTPUT_PREVIEW_MAX_BYTES / 22 + 100);
+        let output_truncated = full_output.len() > MERGE_OUTPUT_PREVIEW_MAX_BYTES;
+        let preview = bounded_text_preview(
+            full_output,
+            MERGE_OUTPUT_PREVIEW_MAX_BYTES,
+            "Merge 输出预览已截断",
+        );
+
+        assert!(output_truncated);
+        assert!(preview.len() <= MERGE_OUTPUT_PREVIEW_MAX_BYTES);
+        assert!(preview.contains("Merge 输出预览已截断"));
+        assert!(preview.is_char_boundary(preview.len()));
     }
 
     #[test]

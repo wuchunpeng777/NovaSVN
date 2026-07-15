@@ -3850,6 +3850,9 @@
                 {#if mergeResult.record_only}<span>Record only</span>{/if}
                 {#if mergeResult.ignore_ancestry}<span>Ignore ancestry</span>{/if}
                 {#if mergeResult.force}<span>Force</span>{/if}
+                {#if mergeResult.output_truncated}
+                  <span>输出预览已截断（上限 {Math.round(mergeResult.max_output_bytes / 1024)} KiB）</span>
+                {/if}
               </div>
               <div class="merge-result-summary" aria-label="Merge 结果统计">
                 <span><strong>{mergeResult.file_count}</strong>条目</span>

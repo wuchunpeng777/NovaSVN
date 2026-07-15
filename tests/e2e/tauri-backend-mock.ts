@@ -137,6 +137,8 @@ export async function installWorkbenchBackendMock(page: Page) {
             ignore_ancestry: request.ignore_ancestry,
             force: request.force,
             output_text: "U    src/modified.txt",
+            output_truncated: false,
+            max_output_bytes: 256 * 1024,
             file_count: 1,
             line_count: 1,
             added: 0,

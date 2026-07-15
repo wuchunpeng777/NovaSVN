@@ -1602,6 +1602,8 @@ Certificate information:
           ignore_ancestry: false,
           force: false,
           output_text: "C    src/conflict.ts",
+          output_truncated: false,
+          max_output_bytes: 256 * 1024,
           file_count: 1,
           line_count: 1,
           added: 0,

@@ -2116,6 +2116,8 @@ Certificate information:
           ignore_ancestry: false,
           force: true,
           output_text: "U    src/main.ts",
+          output_truncated: true,
+          max_output_bytes: 256 * 1024,
           file_count: 1,
           line_count: 1,
           added: 0,
@@ -2141,6 +2143,7 @@ Certificate information:
     expect(screen.getByText("r10:12")).toBeInTheDocument();
     expect(screen.getByText("Record only", { selector: ".merge-result-meta span" }))
       .toBeInTheDocument();
+    expect(screen.getByText("输出预览已截断（上限 256 KiB）")).toBeInTheDocument();
     const summary = screen.getByLabelText("Merge 结果统计");
     expect(summary.children[0]).toHaveTextContent("1条目");
     expect(summary.children[1]).toHaveTextContent("1更新");

@@ -397,6 +397,8 @@ export interface MergeResult {
   ignore_ancestry: boolean;
   force: boolean;
   output_text: string;
+  output_truncated: boolean;
+  max_output_bytes: number;
   file_count: number;
   line_count: number;
   added: number;
