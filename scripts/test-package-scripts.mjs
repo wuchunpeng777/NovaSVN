@@ -53,6 +53,10 @@ const benchmarkScript = fs.readFileSync(
   path.join(root, "scripts", "benchmark-svn-workspace.ps1"),
   "utf8",
 );
+const performanceBenchmarkRs = fs.readFileSync(
+  path.join(root, "src-tauri", "src", "performance_benchmark.rs"),
+  "utf8",
+);
 const benchmarkDoc = fs.readFileSync(path.join(root, "doc", "性能基准.md"), "utf8");
 const syncVersionScript = fs.readFileSync(path.join(root, "scripts", "sync-version.mjs"), "utf8");
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, "src-tauri", "tauri.conf.json"), "utf8"));
@@ -112,7 +116,7 @@ const requiredCheckSteps = [
   "npm run test:rust",
 ];
 const requiredBundleTargets = ["nsis", "dmg"];
-const benchmarkScripts = ["benchmark:svn", "benchmark:svn:reset"];
+const benchmarkScripts = ["benchmark:svn", "benchmark:svn:quick", "benchmark:svn:reset"];
 const e2eSmokeAssertions = [
   "NovaSVN",
   "工作副本",
@@ -319,24 +323,45 @@ for (const scriptName of benchmarkScripts) {
     continue;
   }
 
-  if (!command.includes("scripts/benchmark-svn-workspace.ps1")) {
-    console.error(`${scriptName} 必须调用性能基准脚本`);
+  if (!command.includes("--example performance_benchmark")) {
+    console.error(`${scriptName} 必须调用跨平台 Rust 性能基准`);
     failed = true;
   }
 }
 
-if (!packageJson.scripts?.["benchmark:svn:reset"]?.includes("-Reset")) {
-  console.error("benchmark:svn:reset 必须传入 -Reset");
+if (!packageJson.scripts?.["benchmark:svn:reset"]?.includes("--reset")) {
+  console.error("benchmark:svn:reset 必须传入 --reset");
   failed = true;
 }
 
-if (!benchmarkScript.includes("benchmark-results.md")) {
-  console.error("性能基准脚本必须生成 Markdown 摘要");
+if (!packageJson.scripts?.["benchmark:svn:quick"]?.includes("--quick")) {
+  console.error("benchmark:svn:quick 必须传入 --quick");
+  failed = true;
+}
+if (!packageJson.scripts?.["benchmark:svn:quick"]?.includes(".benchmark/svn-quick")) {
+  console.error("快速性能基准必须使用独立数据集目录");
   failed = true;
 }
 
-if (!benchmarkScript.includes("revert -R")) {
-  console.error("性能基准脚本每次运行前必须还原工作副本，避免累积改动影响对比");
+for (const token of [
+  "benchmark-results.json",
+  "benchmark-results.md",
+  "scan_workspace_status",
+  "list_workspace_files",
+  "get_file_diff",
+  "get_svn_blame",
+  "get_svn_log",
+  "STATUS_PAGE_SIZE",
+  "threshold_ms",
+]) {
+  if (!performanceBenchmarkRs.includes(token)) {
+    console.error(`跨平台性能基准缺少：${token}`);
+    failed = true;
+  }
+}
+
+if (!performanceBenchmarkRs.includes('arg("revert")') || !performanceBenchmarkRs.includes('arg("-R")')) {
+  console.error("性能基准每次运行前必须还原工作副本，避免累积改动影响对比");
   failed = true;
 }
 
@@ -345,13 +370,13 @@ if (!benchmarkDoc.includes("benchmark-results.md")) {
   failed = true;
 }
 
-if (!benchmarkDoc.includes("svn revert -R")) {
+if (!benchmarkDoc.includes("svn revert -R") || !benchmarkDoc.includes("5000 行 Blame")) {
   console.error("性能基准文档必须说明脚本会在每次运行前还原工作副本");
   failed = true;
 }
 
-if (!benchmarkScript.includes('Measure-Step "svn info --xml --depth infinity"')) {
-  console.error("性能基准必须记录递归 svn info 耗时");
+if (!benchmarkScript.includes('"--example", "performance_benchmark"')) {
+  console.error("PowerShell 性能入口必须复用跨平台 Rust 基准");
   failed = true;
 }
 

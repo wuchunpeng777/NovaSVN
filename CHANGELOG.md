@@ -64,7 +64,7 @@
 - 主工作台 Playwright 端到端测试覆盖打开工作副本、Add、Delete、Commit、Revert、Update、Merge 和 Patch 的完整前端任务流。
 - Playwright smoke 已同步当前工作台无障碍名称，并提供 `npm run test:e2e:install` 安装 Chromium。
 - 真实临时 SVN 仓库测试完整覆盖 Add、Commit、Revert、Update、Merge 和 Patch 任务队列闭环。
-- 性能基准记录状态扫描、diff、虚拟列表准备和提交目标准备耗时。
+- 性能基准跨平台生成 50000 文件、5000 改动和 200 条历史，直接测量状态分页、文件树、Diff、5000 行 Blame 和 Timeline 生产路径，并输出带阈值判定的 JSON/Markdown 报告。
 
 ### 修复
 

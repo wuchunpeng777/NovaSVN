@@ -5,6 +5,7 @@ mod error;
 mod executable;
 mod external_tool;
 mod path_utils;
+pub mod performance_benchmark;
 mod redaction;
 mod shadow;
 mod svn;
