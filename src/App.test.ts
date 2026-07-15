@@ -439,6 +439,20 @@ Certificate information:
     expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("删除 2 个路径"));
   });
 
+  it("取消单路径 Delete 确认时不创建任务", async () => {
+    await showMoveableSource();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作 文件 source.txt" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "删除文件 source.txt" }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("source.txt"));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("未版本控制内容可能丢失"));
+    expect(createSvnOperationTaskMock).not.toHaveBeenCalled();
+    expect(get(workspaceStore).pendingSvnOperationTaskId).toBeNull();
+  });
+
   it("多选 Move 使用目标目录创建单个批量任务", async () => {
     await showBatchOperationSource();
     const task = makeTask({ task_id: "batch-move", status: "pending" });
