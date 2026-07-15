@@ -11,7 +11,7 @@
     "test:components": "vitest run --dir src",
     "test:svn": "powershell -ExecutionPolicy Bypass -File scripts/test-svn-workflow.ps1",
     "test:svn:partial": "powershell -ExecutionPolicy Bypass -File scripts/test-svn-partial-commit.ps1",
-    "test:scripts": "node scripts/test-package-scripts.mjs",
+    "test:scripts": "node scripts/test-package-scripts.mjs && node scripts/test-release-artifacts.mjs",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings",
@@ -25,6 +25,8 @@
     "version:sync": "node scripts/sync-version.mjs",
     "version:print": "node scripts/sync-version.mjs --print",
     "version:check": "node scripts/sync-version.mjs --check",
+    "release:manifest": "node scripts/release-artifacts.mjs generate",
+    "release:manifest:verify": "node scripts/release-artifacts.mjs verify",
     "release:windows": "npm run version:check && tauri build --bundles nsis",
     "release:macos": "npm run version:check && bash scripts/release-macos.sh",
     "release:macos:notarized": "npm run version:check && bash scripts/release-macos.sh --notarize"

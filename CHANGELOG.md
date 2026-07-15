@@ -86,8 +86,10 @@
 - macOS 安装包：`npm run release:macos`。
 - macOS 正式公证包：`npm run release:macos:notarized`，构建前强制检查 Developer ID Application 和钥匙串 notary profile，完成后验证 Gatekeeper 与 stapled ticket。
 - macOS 本地产物会自动验证 DMG、嵌套 Finder Sync 签名、Bundle Identifier、sandbox entitlement、CPU 架构和 8 个 Quick Actions，并生成 SHA-256。
+- 发布产物可生成并复验统一 JSON 清单，记录 NSIS/DMG 的平台、架构、字节数和流式 SHA-256，并拒绝路径逃逸、符号链接、重复目标和发布后篡改。
 - 版本同步：`npm run version:sync -- --set <version>`。
-- 版本校验：`npm run version:check`，同时覆盖 Finder Sync 的 Info.plist 和 Xcode target。
+- 版本校验：`npm run version:check`，同时覆盖 package-lock、Finder Sync 的 Info.plist 和 Xcode target。
+- 当前升级策略使用经过平台签名的手动安装包；只有在正式代码签名、独立 updater 密钥、HTTPS endpoint 和升级/回滚验收完成后才启用应用内自动更新。
 
 ### 已知限制
 

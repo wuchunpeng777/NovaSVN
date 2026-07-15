@@ -111,4 +111,8 @@ else
 fi
 
 shasum -a 256 "${DMG_PATH}" | tee "${DMG_PATH}.sha256"
+node "${ROOT_DIR}/scripts/release-artifacts.mjs" generate --root \
+  "${ROOT_DIR}/src-tauri/target/release/bundle" --require macos
+node "${ROOT_DIR}/scripts/release-artifacts.mjs" verify --root \
+  "${ROOT_DIR}/src-tauri/target/release/bundle" --require macos
 echo "macOS ${MODE} 产物验收通过"

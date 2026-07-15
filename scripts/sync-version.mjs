@@ -3,6 +3,7 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
 const packagePath = path.join(root, "package.json");
+const packageLockPath = path.join(root, "package-lock.json");
 const cargoPath = path.join(root, "src-tauri", "Cargo.toml");
 const tauriConfigPath = path.join(root, "src-tauri", "tauri.conf.json");
 const finderInfoPath = path.join(
@@ -49,11 +50,14 @@ if (shouldPrint && !requestedVersion) {
 if (shouldCheck) {
   const cargoToml = fs.readFileSync(cargoPath, "utf8");
   const cargoVersion = readPackageVersion(cargoToml);
+  const packageLock = readJson(packageLockPath);
   const tauriConfig = readJson(tauriConfigPath);
   const finderInfo = fs.readFileSync(finderInfoPath, "utf8");
   const finderProject = fs.readFileSync(finderProjectPath, "utf8");
   const mismatches = [
     ["src-tauri/Cargo.toml", cargoVersion],
+    ["package-lock.json", packageLock.version],
+    ["package-lock.json packages['']", packageLock.packages?.[""]?.version],
     ["src-tauri/tauri.conf.json", tauriConfig.version],
     [
       "src-tauri/macos-finder-sync/Info.plist CFBundleShortVersionString",
@@ -93,6 +97,14 @@ if (shouldCheck) {
 
 packageJson.version = version;
 writeJson(packagePath, packageJson);
+
+const packageLock = readJson(packageLockPath);
+packageLock.version = version;
+if (!packageLock.packages?.[""]) {
+  fail("package-lock.json 缺少根 package");
+}
+packageLock.packages[""].version = version;
+writeJson(packageLockPath, packageLock);
 
 const cargoToml = fs.readFileSync(cargoPath, "utf8");
 const updatedCargoToml = replacePackageVersion(cargoToml, version);

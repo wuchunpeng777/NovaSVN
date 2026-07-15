@@ -75,6 +75,14 @@ const performanceBenchmarkRs = fs.readFileSync(
 );
 const benchmarkDoc = fs.readFileSync(path.join(root, "doc", "性能基准.md"), "utf8");
 const syncVersionScript = fs.readFileSync(path.join(root, "scripts", "sync-version.mjs"), "utf8");
+const releaseArtifactsScript = fs.readFileSync(
+  path.join(root, "scripts", "release-artifacts.mjs"),
+  "utf8",
+);
+const releaseArtifactsTest = fs.readFileSync(
+  path.join(root, "scripts", "test-release-artifacts.mjs"),
+  "utf8",
+);
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, "src-tauri", "tauri.conf.json"), "utf8"));
 const tauriCargo = fs.readFileSync(path.join(root, "src-tauri", "Cargo.toml"), "utf8");
 const defaultCapability = fs.readFileSync(
@@ -388,11 +396,48 @@ for (const token of [
   "CFBundleVersion",
   "MARKETING_VERSION",
   "CURRENT_PROJECT_VERSION",
+  "package-lock.json",
 ]) {
   if (!syncVersionScript.includes(token)) {
     console.error(`版本同步未覆盖 Finder Sync：${token}`);
     failed = true;
   }
+}
+
+if (!packageJson.scripts?.["test:scripts"]?.includes("test-release-artifacts.mjs")) {
+  console.error("脚本门禁必须执行发布产物清单回归");
+  failed = true;
+}
+
+if (
+  packageJson.scripts?.["release:manifest"] !== "node scripts/release-artifacts.mjs generate" ||
+  packageJson.scripts?.["release:manifest:verify"] !== "node scripts/release-artifacts.mjs verify"
+) {
+  console.error("发布产物清单必须提供统一生成和校验入口");
+  failed = true;
+}
+
+for (const token of [
+  "schema_version",
+  "manual_signed_installer",
+  "sha256File",
+  "safeArtifactPath",
+  "isSymbolicLink",
+  "rejectDuplicateArtifacts",
+  "validateRequiredPlatforms",
+]) {
+  if (!releaseArtifactsScript.includes(token)) {
+    console.error(`发布产物清单缺少：${token}`);
+    failed = true;
+  }
+}
+
+if (
+  !releaseArtifactsTest.includes("产物被修改后必须校验失败") ||
+  !macosReleaseVerifyScript.includes("release-artifacts.mjs")
+) {
+  console.error("发布产物清单必须覆盖防篡改回归并接入 macOS 验收");
+  failed = true;
 }
 
 for (const scriptName of benchmarkScripts) {
