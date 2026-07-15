@@ -179,7 +179,7 @@
 				);
 				MACH_O_TYPE = mh_execute;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.novasvn.app.finder-sync;
+				PRODUCT_BUNDLE_IDENTIFIER = com.novasvn.client.finder-sync;
 				PRODUCT_NAME = NovaSVNFinderSync;
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = macosx;
@@ -204,7 +204,7 @@
 				);
 				MACH_O_TYPE = mh_execute;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.novasvn.app.finder-sync;
+				PRODUCT_BUNDLE_IDENTIFIER = com.novasvn.client.finder-sync;
 				PRODUCT_NAME = NovaSVNFinderSync;
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = macosx;

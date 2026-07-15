@@ -5,6 +5,19 @@ const root = path.resolve(import.meta.dirname, "..");
 const packagePath = path.join(root, "package.json");
 const cargoPath = path.join(root, "src-tauri", "Cargo.toml");
 const tauriConfigPath = path.join(root, "src-tauri", "tauri.conf.json");
+const finderInfoPath = path.join(
+  root,
+  "src-tauri",
+  "macos-finder-sync",
+  "Info.plist",
+);
+const finderProjectPath = path.join(
+  root,
+  "src-tauri",
+  "macos-finder-sync",
+  "NovaSVNFinderSync.xcodeproj",
+  "project.pbxproj",
+);
 
 const args = process.argv.slice(2);
 const setIndex = args.indexOf("--set");
@@ -22,6 +35,7 @@ if (requestedVersion && !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(requested
 
 const packageJson = readJson(packagePath);
 const version = requestedVersion ?? packageJson.version;
+const bundleVersion = version?.split(/[-+]/, 1)[0];
 
 if (!version) {
   fail("package.json 中缺少 version 字段");
@@ -36,14 +50,39 @@ if (shouldCheck) {
   const cargoToml = fs.readFileSync(cargoPath, "utf8");
   const cargoVersion = readPackageVersion(cargoToml);
   const tauriConfig = readJson(tauriConfigPath);
+  const finderInfo = fs.readFileSync(finderInfoPath, "utf8");
+  const finderProject = fs.readFileSync(finderProjectPath, "utf8");
   const mismatches = [
     ["src-tauri/Cargo.toml", cargoVersion],
     ["src-tauri/tauri.conf.json", tauriConfig.version],
-  ].filter(([, current]) => current !== version);
+    [
+      "src-tauri/macos-finder-sync/Info.plist CFBundleShortVersionString",
+      readPlistValue(finderInfo, "CFBundleShortVersionString"),
+    ],
+    [
+      "src-tauri/macos-finder-sync/Info.plist CFBundleVersion",
+      readPlistValue(finderInfo, "CFBundleVersion"),
+      bundleVersion,
+    ],
+  ].filter(([, current, expected = version]) => current !== expected);
+
+  for (const [setting, expected] of [
+    ["MARKETING_VERSION", version],
+    ["CURRENT_PROJECT_VERSION", bundleVersion],
+  ]) {
+    const values = readXcodeSettingValues(finderProject, setting);
+    if (values.length === 0 || values.some((current) => current !== expected)) {
+      mismatches.push([
+        `src-tauri/macos-finder-sync/NovaSVNFinderSync.xcodeproj ${setting}`,
+        values.join(", ") || "<missing>",
+        expected,
+      ]);
+    }
+  }
 
   if (mismatches.length > 0) {
-    for (const [filePath, current] of mismatches) {
-      console.error(`${filePath} 版本 ${current ?? "<missing>"} 与 package.json ${version} 不一致`);
+    for (const [filePath, current, expected = version] of mismatches) {
+      console.error(`${filePath} 版本 ${current ?? "<missing>"} 与预期 ${expected} 不一致`);
     }
     process.exit(1);
   }
@@ -62,6 +101,26 @@ fs.writeFileSync(cargoPath, updatedCargoToml);
 const tauriConfig = readJson(tauriConfigPath);
 tauriConfig.version = version;
 writeJson(tauriConfigPath, tauriConfig);
+
+const finderInfo = fs.readFileSync(finderInfoPath, "utf8");
+fs.writeFileSync(
+  finderInfoPath,
+  replacePlistValue(
+    replacePlistValue(finderInfo, "CFBundleShortVersionString", version),
+    "CFBundleVersion",
+    bundleVersion,
+  ),
+);
+
+const finderProject = fs.readFileSync(finderProjectPath, "utf8");
+fs.writeFileSync(
+  finderProjectPath,
+  replaceXcodeSetting(
+    replaceXcodeSetting(finderProject, "MARKETING_VERSION", version),
+    "CURRENT_PROJECT_VERSION",
+    bundleVersion,
+  ),
+);
 
 if (shouldPrint) {
   console.log(version);
@@ -118,6 +177,36 @@ function readPackageVersion(content) {
   }
 
   return null;
+}
+
+function readPlistValue(content, key) {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return content.match(
+    new RegExp(`<key>${escapedKey}</key>\\s*<string>([^<]+)</string>`),
+  )?.[1] ?? null;
+}
+
+function replacePlistValue(content, key, value) {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(<key>${escapedKey}</key>\\s*<string>)([^<]+)(</string>)`);
+  if (!pattern.test(content)) {
+    fail(`Finder Sync Info.plist 缺少 ${key}`);
+  }
+  return content.replace(pattern, (_match, prefix, _current, suffix) => `${prefix}${value}${suffix}`);
+}
+
+function readXcodeSettingValues(content, setting) {
+  const pattern = new RegExp(`\\b${setting}\\s*=\\s*([^;]+);`, "g");
+  return [...content.matchAll(pattern)].map((match) => match[1].trim());
+}
+
+function replaceXcodeSetting(content, setting, value) {
+  const pattern = new RegExp(`(\\b${setting}\\s*=\\s*)([^;]+)(;)`, "g");
+  if (!pattern.test(content)) {
+    fail(`Finder Sync Xcode 工程缺少 ${setting}`);
+  }
+  pattern.lastIndex = 0;
+  return content.replace(pattern, (_match, prefix, _current, suffix) => `${prefix}${value}${suffix}`);
 }
 
 function fail(message) {

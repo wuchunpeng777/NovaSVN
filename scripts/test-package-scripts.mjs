@@ -19,12 +19,28 @@ const macosFinderSyncDmgInjectScript = fs.readFileSync(
   path.join(root, "scripts", "inject-macos-finder-sync-into-dmg.sh"),
   "utf8",
 );
+const macosReleaseScript = fs.readFileSync(
+  path.join(root, "scripts", "release-macos.sh"),
+  "utf8",
+);
+const macosReleaseVerifyScript = fs.readFileSync(
+  path.join(root, "scripts", "verify-macos-release.sh"),
+  "utf8",
+);
+const macosNotarizeScript = fs.readFileSync(
+  path.join(root, "scripts", "notarize-macos-release.sh"),
+  "utf8",
+);
 const macosFinderSyncSource = fs.readFileSync(
   path.join(root, "src-tauri", "macos-finder-sync", "NovaSVNFinderSync.m"),
   "utf8",
 );
 const macosFinderSyncEntitlements = fs.readFileSync(
   path.join(root, "src-tauri", "macos-finder-sync", "NovaSVNFinderSync.entitlements"),
+  "utf8",
+);
+const macosFinderSyncInfo = fs.readFileSync(
+  path.join(root, "src-tauri", "macos-finder-sync", "Info.plist"),
   "utf8",
 );
 const macosFinderSyncXcodeProject = fs.readFileSync(
@@ -107,7 +123,7 @@ const externalToolRs = fs.readFileSync(
 const taskRs = fs.readFileSync(path.join(root, "src-tauri", "src", "task.rs"), "utf8");
 const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 
-const releaseScripts = ["release:windows", "release:macos"];
+const releaseScripts = ["release:windows", "release:macos", "release:macos:notarized"];
 const requiredCheckSteps = [
   "npm run test:components",
   "npm run test:scripts",
@@ -263,25 +279,41 @@ if (!packageJson.scripts?.["release:windows"]?.includes("--bundles nsis")) {
   failed = true;
 }
 
-if (!packageJson.scripts?.["release:macos"]?.includes("--bundles dmg")) {
-  console.error("release:macos 必须构建 DMG 安装包");
+if (!packageJson.scripts?.["release:macos"]?.includes("scripts/release-macos.sh")) {
+  console.error("release:macos 必须调用统一 macOS 发布脚本");
   failed = true;
 }
 
 if (
-  !packageJson.scripts?.["release:macos"]?.includes("build-macos-finder-sync.sh") ||
-  !packageJson.scripts?.["release:macos"]?.includes("inject-macos-finder-sync-into-dmg.sh")
+  !packageJson.scripts?.["release:macos:notarized"]?.includes("scripts/release-macos.sh --notarize") ||
+  !macosReleaseScript.includes("build-macos-finder-sync.sh") ||
+  !macosReleaseScript.includes("tauri build --bundles dmg --no-sign") ||
+  !macosReleaseScript.includes("inject-macos-finder-sync-into-dmg.sh") ||
+  !macosReleaseScript.includes("verify-macos-release.sh") ||
+  !macosReleaseScript.includes("notarize-macos-release.sh")
 ) {
-  console.error("release:macos 必须构建 Finder Sync 扩展并注入 DMG");
+  console.error("macOS 发布必须构建 Finder Sync、注入 DMG、分级验收并支持 notarization");
   failed = true;
 }
 
 if (
   !macosFinderSyncDmgInjectScript.includes("Contents/PlugIns") ||
   !macosFinderSyncDmgInjectScript.includes("codesign --force --sign -") ||
+  !macosFinderSyncDmgInjectScript.includes("APPLE_SIGNING_IDENTITY") ||
+  !macosFinderSyncDmgInjectScript.includes("--options runtime") ||
+  !macosFinderSyncDmgInjectScript.includes('sign "${SIGNING_IDENTITY}" "${DMG_PATH}"') ||
   !macosFinderSyncDmgInjectScript.includes("hdiutil convert")
 ) {
-  console.error("Finder Sync DMG 注入脚本必须嵌入扩展并重新签名 App");
+  console.error("Finder Sync DMG 注入脚本必须嵌入扩展并签名扩展、App 和 DMG");
+  failed = true;
+}
+
+if (
+  tauriConfig.identifier.endsWith(".app") ||
+  !macosFinderSyncInfo.includes(`${tauriConfig.identifier}.finder-sync`) ||
+  !macosFinderSyncXcodeProject.includes(`PRODUCT_BUNDLE_IDENTIFIER = ${tauriConfig.identifier}.finder-sync`)
+) {
+  console.error("macOS Bundle Identifier 必须稳定且 Finder Sync 必须使用应用标识前缀");
   failed = true;
 }
 
@@ -307,12 +339,60 @@ if (
 }
 
 if (
+  !macosFinderSyncBuildScript.includes("APPLE_SIGNING_IDENTITY") ||
+  !macosFinderSyncBuildScript.includes("--options runtime")
+) {
+  console.error("Finder Sync 构建必须支持 ad-hoc 与 Developer ID hardened runtime 签名");
+  failed = true;
+}
+
+if (
   !macosFinderSyncEntitlements.includes("com.apple.security.app-sandbox") ||
   !macosFinderSyncBuildScript.includes("--entitlements") ||
   !macosFinderSyncDmgInjectScript.includes("--entitlements")
 ) {
   console.error("Finder Sync 扩展必须启用 App Sandbox entitlement");
   failed = true;
+}
+
+for (const token of [
+  "codesign --verify --deep --strict",
+  "spctl --assess --type execute",
+  "stapler validate",
+  "macos-finder-quick-actions.sh",
+  "document.wflow",
+  "shasum -a 256",
+]) {
+  if (!macosReleaseVerifyScript.includes(token)) {
+    console.error(`macOS 发布验收缺少：${token}`);
+    failed = true;
+  }
+}
+
+for (const token of [
+  "notarytool submit",
+  "NOVASVN_NOTARY_PROFILE",
+  "--keychain-profile",
+  "stapler staple",
+  "stapler validate",
+]) {
+  if (!macosNotarizeScript.includes(token)) {
+    console.error(`macOS notarization 流程缺少：${token}`);
+    failed = true;
+  }
+}
+
+for (const token of [
+  "macos-finder-sync",
+  "CFBundleShortVersionString",
+  "CFBundleVersion",
+  "MARKETING_VERSION",
+  "CURRENT_PROJECT_VERSION",
+]) {
+  if (!syncVersionScript.includes(token)) {
+    console.error(`版本同步未覆盖 Finder Sync：${token}`);
+    failed = true;
+  }
 }
 
 for (const scriptName of benchmarkScripts) {

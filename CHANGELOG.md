@@ -84,10 +84,12 @@
 
 - Windows 安装包：`npm run release:windows`。
 - macOS 安装包：`npm run release:macos`。
+- macOS 正式公证包：`npm run release:macos:notarized`，构建前强制检查 Developer ID Application 和钥匙串 notary profile，完成后验证 Gatekeeper 与 stapled ticket。
+- macOS 本地产物会自动验证 DMG、嵌套 Finder Sync 签名、Bundle Identifier、sandbox entitlement、CPU 架构和 8 个 Quick Actions，并生成 SHA-256。
 - 版本同步：`npm run version:sync -- --set <version>`。
-- 版本校验：`npm run version:check`。
+- 版本校验：`npm run version:check`，同时覆盖 Finder Sync 的 Info.plist 和 Xcode target。
 
 ### 已知限制
 
-- Windows 代码签名、macOS 签名和 notarization 仍需按正式发布证书补齐。
+- Windows 代码签名仍需正式证书；macOS 正式流程已具备 Developer ID、notarization、stapling 和 Gatekeeper 门禁，但仍需实际发布身份和钥匙串凭据完成最终验收。
 - 第一版 SVN 集成通过本机 `svn` 命令行执行。

@@ -26,7 +26,8 @@
     "version:print": "node scripts/sync-version.mjs --print",
     "version:check": "node scripts/sync-version.mjs --check",
     "release:windows": "npm run version:check && tauri build --bundles nsis",
-    "release:macos": "npm run version:check && bash scripts/build-macos-finder-sync.sh && tauri build --bundles dmg && bash scripts/inject-macos-finder-sync-into-dmg.sh"
+    "release:macos": "npm run version:check && bash scripts/release-macos.sh",
+    "release:macos:notarized": "npm run version:check && bash scripts/release-macos.sh --notarize"
   },
   "dependencies": {
     "@crabnebula/tauri-plugin-drag": "^2.1.0",

@@ -9,7 +9,7 @@
   <key>CFBundleExecutable</key>
   <string>NovaSVNFinderSync</string>
   <key>CFBundleIdentifier</key>
-  <string>com.novasvn.app.finder-sync</string>
+  <string>com.novasvn.client.finder-sync</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
