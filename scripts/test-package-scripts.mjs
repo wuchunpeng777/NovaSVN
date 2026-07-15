@@ -556,7 +556,9 @@ if (
   !mainWorkspace.includes("revisionDiffResult.patch_file_path") ||
   !mainWorkspace.includes("显示完整 Patch 位置") ||
   !appStore.includes("完整 Patch 文件位置不可用") ||
-  !taskRs.includes("Err(error) if truncated") ||
+  !taskRs.includes("analyze_revision_diff_file") ||
+  !taskRs.includes("copy_revision_diff_patch") ||
+  !taskRs.includes("MAX_REVISION_DIFF_PATCH_BYTES") ||
   !taskRs.includes("Revision diff 完整 Patch 写入失败")
 ) {
   console.error("截断的 Revision Diff 必须保留完整 Patch，并在界面明确显示文件位置");

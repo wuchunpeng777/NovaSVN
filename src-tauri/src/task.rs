@@ -48,6 +48,7 @@ const MAX_PERSISTED_TASK_ERROR_BYTES: usize = 64 * 1024;
 const MAX_TASK_COMMAND_LOG_BYTES: usize = 16 * 1024;
 const MAX_TASK_COMMAND_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 const MERGE_OUTPUT_PREVIEW_MAX_BYTES: usize = 256 * 1024;
+const MAX_REVISION_DIFF_PATCH_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_REPOSITORY_LIST_XML_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_REPOSITORY_LIST_ENTRIES: usize = 100_000;
 const MAX_REPOSITORY_LIST_FIELD_BYTES: usize = 32 * 1024;
@@ -3710,6 +3711,10 @@ impl TaskCommandOutputFile {
         ))
     }
 
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
     fn open_reader(&self, max_bytes: u64) -> std::io::Result<BufReader<fs::File>> {
         let file = fs::File::open(&self.path)?;
         let bytes = file.metadata()?.len();
@@ -4408,19 +4413,47 @@ fn run_revision_diff_task(
     };
     append_task_log(state, task_id, &format!("执行 svn diff：{target}"));
 
-    // Revision Diff 需要将完整输出写入 Patch 文件，不能使用命令输出预览上限。
-    match run_task_command_with_unbounded_output(state, task_id, &mut command) {
+    let (output_file, writer) =
+        match TaskCommandOutputFile::create(task_id, "revision-diff", "patch") {
+            Ok(output_file) => output_file,
+            Err(error) => {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "创建 Revision diff 输出文件失败",
+                    Some(error.to_string()),
+                );
+                return;
+            }
+        };
+    command.stdout(std::process::Stdio::from(writer));
+    match run_task_command_with_configured_stdout(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_stream_lines(state, task_id, &String::from_utf8_lossy(&output.stderr));
-            let diff_text = String::from_utf8_lossy(&output.stdout).to_string();
-            let file_count = count_diff_files(&diff_text);
-            let line_count = diff_text.lines().count();
-            let truncated = diff_text.len() > REVISION_DIFF_PREVIEW_MAX_BYTES;
-            let preview_text = truncate_utf8(&diff_text, REVISION_DIFF_PREVIEW_MAX_BYTES);
-            let patch_file = match write_revision_diff_patch(&payload, task_id, &target, &diff_text)
-            {
+            let analysis = match analyze_revision_diff_file(output_file.path()) {
+                Ok(analysis) => analysis,
+                Err(error) => {
+                    let error = nova_error_message(&error);
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "Revision diff 输出分析失败",
+                        Some(error),
+                    );
+                    return;
+                }
+            };
+            let patch_file = match copy_revision_diff_patch(
+                &payload,
+                task_id,
+                &target,
+                output_file.path(),
+                analysis.total_bytes,
+            ) {
                 Ok(patch_file) => patch_file,
-                Err(error) if truncated => {
+                Err(error) if analysis.truncated => {
                     let error = nova_error_message(&error);
                     append_task_log(state, task_id, &format!("完整 patch 文件写入失败：{error}"));
                     update_task(
@@ -4444,10 +4477,10 @@ fn run_revision_diff_task(
             let result = RevisionDiffResult {
                 mode: revision_diff_mode_label(&payload.mode).to_string(),
                 target,
-                diff_text: preview_text,
-                file_count,
-                line_count,
-                truncated,
+                diff_text: analysis.preview_text,
+                file_count: analysis.file_count,
+                line_count: analysis.line_count,
+                truncated: analysis.truncated,
                 max_bytes: REVISION_DIFF_PREVIEW_MAX_BYTES,
                 patch_file_path: patch_file
                     .as_ref()
@@ -4457,7 +4490,7 @@ fn run_revision_diff_task(
                     .map(|file| file.dir.display().to_string()),
                 patch_file_name: patch_file.map(|file| file.name),
             };
-            if truncated {
+            if analysis.truncated {
                 append_task_log(
                     state,
                     task_id,
@@ -4467,7 +4500,7 @@ fn run_revision_diff_task(
                     ),
                 );
             }
-            if !diff_text.is_empty() {
+            if analysis.total_bytes > 0 {
                 if let Some(path) = result.patch_file_path.as_deref() {
                     append_task_log(state, task_id, &format!("完整 patch 已保存：{path}"));
                 }
@@ -4489,8 +4522,10 @@ fn run_revision_diff_task(
                 task_id,
                 TaskStatus::Success,
                 &format!(
-                    "Revision diff 完成，{file_count} 个文件，{line_count} 行{}",
-                    if truncated {
+                    "Revision diff 完成，{file_count} 个文件，{line_count} 行{suffix}",
+                    file_count = analysis.file_count,
+                    line_count = analysis.line_count,
+                    suffix = if analysis.truncated {
                         "，结果已截断预览"
                     } else {
                         ""
@@ -8684,13 +8719,121 @@ struct RevisionDiffPatchFile {
     name: String,
 }
 
-fn write_revision_diff_patch(
+#[derive(Debug, PartialEq, Eq)]
+struct RevisionDiffAnalysis {
+    preview_text: String,
+    file_count: usize,
+    line_count: usize,
+    total_bytes: u64,
+    truncated: bool,
+}
+
+fn analyze_revision_diff_file(path: &Path) -> Result<RevisionDiffAnalysis, NovaError> {
+    let file = fs::File::open(path).map_err(|error| {
+        NovaError::command(
+            "REVISION_DIFF_OUTPUT_READ_FAILED",
+            "无法读取 Revision Diff 输出",
+            Some(format!("路径：{}。错误：{error}", path.display())),
+            true,
+        )
+    })?;
+    analyze_revision_diff_reader(file)
+}
+
+fn analyze_revision_diff_reader<R: Read>(mut reader: R) -> Result<RevisionDiffAnalysis, NovaError> {
+    analyze_revision_diff_reader_with_limit(&mut reader, MAX_REVISION_DIFF_PATCH_BYTES)
+}
+
+fn analyze_revision_diff_reader_with_limit<R: Read>(
+    reader: &mut R,
+    max_patch_bytes: u64,
+) -> Result<RevisionDiffAnalysis, NovaError> {
+    const MAX_DIFF_PREFIX_BYTES: usize = 11;
+
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut preview = Vec::with_capacity(REVISION_DIFF_PREVIEW_MAX_BYTES);
+    let mut line_prefix = Vec::with_capacity(MAX_DIFF_PREFIX_BYTES);
+    let mut total_bytes = 0u64;
+    let mut line_count = 0usize;
+    let mut file_count = 0usize;
+    let mut ended_with_newline = false;
+
+    loop {
+        let read = reader.read(&mut buffer).map_err(|error| {
+            NovaError::command(
+                "REVISION_DIFF_OUTPUT_READ_FAILED",
+                "无法读取 Revision Diff 输出",
+                Some(error.to_string()),
+                true,
+            )
+        })?;
+        if read == 0 {
+            break;
+        }
+        total_bytes = total_bytes.saturating_add(read as u64);
+        if total_bytes > max_patch_bytes {
+            return Err(NovaError::command(
+                "REVISION_DIFF_OUTPUT_LIMIT_EXCEEDED",
+                "Revision Diff 输出过大",
+                Some(format!("完整 Patch 超过安全上限 {max_patch_bytes} 字节")),
+                true,
+            ));
+        }
+
+        let preview_remaining = REVISION_DIFF_PREVIEW_MAX_BYTES.saturating_sub(preview.len());
+        if preview_remaining > 0 {
+            preview.extend_from_slice(&buffer[..read.min(preview_remaining)]);
+        }
+
+        for byte in &buffer[..read] {
+            if line_prefix.len() < MAX_DIFF_PREFIX_BYTES {
+                line_prefix.push(*byte);
+            }
+            if *byte == b'\n' {
+                line_count = line_count.saturating_add(1);
+                if revision_diff_line_is_file_header(&line_prefix) {
+                    file_count = file_count.saturating_add(1);
+                }
+                line_prefix.clear();
+                ended_with_newline = true;
+            } else {
+                ended_with_newline = false;
+            }
+        }
+    }
+
+    if total_bytes > 0 && !ended_with_newline {
+        line_count = line_count.saturating_add(1);
+        if revision_diff_line_is_file_header(&line_prefix) {
+            file_count = file_count.saturating_add(1);
+        }
+    }
+
+    let preview_text = truncate_utf8(
+        &String::from_utf8_lossy(&preview),
+        REVISION_DIFF_PREVIEW_MAX_BYTES,
+    );
+    Ok(RevisionDiffAnalysis {
+        preview_text,
+        file_count,
+        line_count,
+        total_bytes,
+        truncated: total_bytes > REVISION_DIFF_PREVIEW_MAX_BYTES as u64,
+    })
+}
+
+fn revision_diff_line_is_file_header(prefix: &[u8]) -> bool {
+    prefix.starts_with(b"Index: ") || prefix.starts_with(b"diff --git ")
+}
+
+fn copy_revision_diff_patch(
     payload: &RevisionDiffTaskPayload,
     task_id: &str,
     target: &str,
-    diff_text: &str,
+    source_path: &Path,
+    total_bytes: u64,
 ) -> Result<Option<RevisionDiffPatchFile>, NovaError> {
-    if diff_text.is_empty() {
+    if total_bytes == 0 {
         return Ok(None);
     }
 
@@ -8709,7 +8852,7 @@ fn write_revision_diff_patch(
     let name =
         revision_diff_patch_file_name(revision_diff_mode_label(&payload.mode), target, task_id);
     let path = payload.patch_output_dir.join(&name);
-    fs::write(&path, diff_text).map_err(|error| {
+    let copied = fs::copy(source_path, &path).map_err(|error| {
         NovaError::command(
             "REVISION_DIFF_PATCH_WRITE_FAILED",
             "写入 Revision Diff patch 失败",
@@ -8717,6 +8860,15 @@ fn write_revision_diff_patch(
             true,
         )
     })?;
+    if copied != total_bytes {
+        fs::remove_file(&path).ok();
+        return Err(NovaError::command(
+            "REVISION_DIFF_PATCH_WRITE_FAILED",
+            "Revision Diff patch 写入不完整",
+            Some(format!("预期 {total_bytes} 字节，实际写入 {copied} 字节")),
+            true,
+        ));
+    }
 
     Ok(Some(RevisionDiffPatchFile {
         path,
@@ -8756,13 +8908,6 @@ fn sanitize_patch_file_part(value: &str) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-fn count_diff_files(diff_text: &str) -> usize {
-    diff_text
-        .lines()
-        .filter(|line| line.starts_with("Index: ") || line.starts_with("diff --git "))
-        .count()
 }
 
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {
@@ -13242,7 +13387,10 @@ mod tests {
     fn counts_svn_diff_files() {
         let diff = "Index: a.txt\n--- a.txt\n+++ a.txt\ndiff --git b/c b/c\n";
 
-        assert_eq!(count_diff_files(diff), 2);
+        let analysis =
+            analyze_revision_diff_reader(Cursor::new(diff.as_bytes())).expect("diff 输出应能分析");
+        assert_eq!(analysis.file_count, 2);
+        assert_eq!(analysis.line_count, 4);
     }
 
     #[test]
@@ -13290,9 +13438,18 @@ mod tests {
             "a".repeat(REVISION_DIFF_PREVIEW_MAX_BYTES + 1024)
         );
 
-        let patch = write_revision_diff_patch(&payload, "task-large", "r10:r12", &diff_text)
-            .expect("complete patch should be written")
-            .expect("non-empty diff should create a patch file");
+        let source_path = output_dir.join("source.patch");
+        fs::write(&source_path, &diff_text).expect("写入源 patch");
+        let analysis = analyze_revision_diff_file(&source_path).expect("分析完整 patch");
+        let patch = copy_revision_diff_patch(
+            &payload,
+            "task-large",
+            "r10:r12",
+            &source_path,
+            analysis.total_bytes,
+        )
+        .expect("complete patch should be written")
+        .expect("non-empty diff should create a patch file");
 
         assert!(diff_text.len() > REVISION_DIFF_PREVIEW_MAX_BYTES);
         assert_ne!(
@@ -13301,6 +13458,17 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&patch.path).unwrap(), diff_text);
         fs::remove_dir_all(output_dir).ok();
+    }
+
+    #[test]
+    fn rejects_revision_diff_output_beyond_patch_limit_without_buffering_it() {
+        let mut reader = Cursor::new(b"0123456789".to_vec());
+        let error = analyze_revision_diff_reader_with_limit(&mut reader, 4)
+            .expect_err("超过 Patch 限制应失败");
+        assert!(matches!(
+            error,
+            NovaError::Command { code, .. } if code == "REVISION_DIFF_OUTPUT_LIMIT_EXCEEDED"
+        ));
     }
 
     #[test]
