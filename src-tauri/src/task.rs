@@ -41,6 +41,10 @@ const MAX_PERSISTED_TASK_LOGS: usize = 500;
 const MAX_PERSISTED_TASK_LOG_BYTES: usize = 256 * 1024;
 const MAX_PERSISTED_TASK_ERROR_BYTES: usize = 64 * 1024;
 const MAX_TASK_COMMAND_LOG_BYTES: usize = 16 * 1024;
+const MAX_TASK_COMMAND_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
+const MAX_RUNTIME_TASK_LOGS: usize = 500;
+const MAX_RUNTIME_TASK_LOG_BYTES: usize = 64 * 1024;
+const TASK_LOG_TRUNCATION_MARKER: &str = "任务日志已截断：仅保留最近 500 行和 64 KiB";
 const TASK_COMMAND_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const TASK_COMMAND_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 static APPLY_PATCH_SNAPSHOT_NONCE: AtomicU64 = AtomicU64::new(1);
@@ -717,18 +721,20 @@ impl From<&Task> for PersistedTask {
 
 impl From<PersistedTask> for Task {
     fn from(task: PersistedTask) -> Self {
+        let mut logs = task
+            .logs
+            .into_iter()
+            .map(|log| TaskLog {
+                message: redact_credentials(&log.message),
+                created_at: log.created_at,
+            })
+            .collect::<Vec<_>>();
+        trim_task_logs(&mut logs);
         Self {
             task_id: task.task_id,
             title: redact_credentials(&task.title),
             status: task.status,
-            logs: task
-                .logs
-                .into_iter()
-                .map(|log| TaskLog {
-                    message: redact_credentials(&log.message),
-                    created_at: log.created_at,
-                })
-                .collect(),
+            logs,
             error: task.error.map(|error| redact_credentials(&error)),
             result: None,
             created_at: task.created_at,
@@ -773,10 +779,11 @@ impl TaskQueue {
                 );
                 task.result = None;
                 task.updated_at = now;
-                task.logs.push(TaskLog {
-                    message: "应用重启时检测到未完成任务，已标记为中断".to_string(),
-                    created_at: now,
-                });
+                push_task_log(
+                    task,
+                    "应用重启时检测到未完成任务，已标记为中断".to_string(),
+                    now,
+                );
                 interrupted = true;
             }
         }
@@ -2086,10 +2093,8 @@ impl TaskQueue {
                     task.status = TaskStatus::Cancelled;
                     release_apply_patch_snapshot(&mut task.payload);
                     task.updated_at = timestamp_millis();
-                    task.logs.push(TaskLog {
-                        message: "取消原因：用户在任务开始前取消".to_string(),
-                        created_at: task.updated_at,
-                    });
+                    let now = task.updated_at;
+                    push_task_log(task, "取消原因：用户在任务开始前取消".to_string(), now);
                     if let Err(error) = persist_task_history(&state) {
                         eprintln!("[NovaSVN] 保存取消后的任务历史失败：{error}");
                     }
@@ -2101,11 +2106,11 @@ impl TaskQueue {
                     }
                     let now = timestamp_millis();
                     state.tasks[task_index].updated_at = now;
-                    state.tasks[task_index].logs.push(TaskLog {
-                        message: "取消原因：用户请求取消运行中任务；正在终止 SVN 进程树"
-                            .to_string(),
-                        created_at: now,
-                    });
+                    push_task_log(
+                        &mut state.tasks[task_index],
+                        "取消原因：用户请求取消运行中任务；正在终止 SVN 进程树".to_string(),
+                        now,
+                    );
                     let process = state.running_processes.get(task_id).cloned();
                     if let Err(error) = persist_task_history(&state) {
                         eprintln!("[NovaSVN] 保存取消请求失败：{error}");
@@ -2147,10 +2152,7 @@ impl TaskQueue {
                 if let Some(task) = state.tasks.iter_mut().find(|task| task.task_id == task_id) {
                     let now = timestamp_millis();
                     task.updated_at = now;
-                    task.logs.push(TaskLog {
-                        message: format!("终止 SVN 进程树失败：{error}"),
-                        created_at: now,
-                    });
+                    push_task_log(task, format!("终止 SVN 进程树失败：{error}"), now);
                 }
                 if let Err(persist_error) = persist_task_history(&state) {
                     eprintln!("[NovaSVN] 保存取消失败状态失败：{persist_error}");
@@ -3568,7 +3570,8 @@ fn run_repository_list_task(
     let command_target =
         repository_url_with_peg_revision(&payload.url, payload.revision.as_deref());
     command.arg(command_target);
-    let output = run_task_command(state, task_id, &mut command);
+    // Repository List 需要完整 XML，不能使用命令输出预览上限。
+    let output = run_task_command_with_unbounded_output(state, task_id, &mut command);
 
     match output {
         Ok(output) if output.status.success() => {
@@ -4309,7 +4312,8 @@ fn run_revision_diff_task(
     };
     append_task_log(state, task_id, &format!("执行 svn diff：{target}"));
 
-    match run_task_command(state, task_id, &mut command) {
+    // Revision Diff 需要将完整输出写入 Patch 文件，不能使用命令输出预览上限。
+    match run_task_command_with_unbounded_output(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_stream_lines(state, task_id, &String::from_utf8_lossy(&output.stderr));
             let diff_text = String::from_utf8_lossy(&output.stdout).to_string();
@@ -4710,7 +4714,8 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
         ),
     );
 
-    match run_task_command(state, task_id, &mut command) {
+    // Merge 结果当前仍基于完整文本统计，暂时保留完整输出。
+    match run_task_command_with_unbounded_output(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
             let output_text = merge_output_text(&output);
@@ -4853,7 +4858,9 @@ fn run_apply_patch_task(
             snapshot_file.path(),
             &working_copy_root,
         );
-        let preflight_output = run_task_command(state, task_id, &mut preflight_command);
+        // Patch 统计需要完整输出；结果预览和日志在后续步骤统一限流。
+        let preflight_output =
+            run_task_command_with_unbounded_output(state, task_id, &mut preflight_command);
         let preflight_output = match preflight_output {
             Ok(output) => output,
             Err(error) => {
@@ -4912,7 +4919,8 @@ fn run_apply_patch_task(
         snapshot_file.path(),
         &working_copy_root,
     );
-    match run_task_command(state, task_id, &mut patch_command) {
+    // Patch 统计需要完整输出；结果预览和日志在后续步骤统一限流。
+    match run_task_command_with_unbounded_output(state, task_id, &mut patch_command) {
         Ok(output) => {
             append_apply_patch_command_output(state, task_id, &output);
             let output_text = apply_patch_output_from_command(&output);
@@ -5399,6 +5407,25 @@ fn run_task_command(
             timeout: TASK_COMMAND_TIMEOUT,
             idle_timeout: Some(TASK_COMMAND_IDLE_TIMEOUT),
         },
+        Some(MAX_TASK_COMMAND_OUTPUT_BYTES),
+    )
+}
+
+fn run_task_command_with_unbounded_output(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    command: &mut Command,
+) -> std::io::Result<Output> {
+    run_task_command_inner(
+        state,
+        task_id,
+        command,
+        true,
+        TaskCommandLimits {
+            timeout: TASK_COMMAND_TIMEOUT,
+            idle_timeout: Some(TASK_COMMAND_IDLE_TIMEOUT),
+        },
+        None,
     )
 }
 
@@ -5416,6 +5443,7 @@ fn run_task_command_with_configured_stdout(
             timeout: TASK_COMMAND_TIMEOUT,
             idle_timeout: None,
         },
+        Some(MAX_TASK_COMMAND_OUTPUT_BYTES),
     )
 }
 
@@ -5432,7 +5460,14 @@ fn run_task_command_with_limits(
     command: &mut Command,
     limits: TaskCommandLimits,
 ) -> std::io::Result<Output> {
-    run_task_command_inner(state, task_id, command, true, limits)
+    run_task_command_inner(
+        state,
+        task_id,
+        command,
+        true,
+        limits,
+        Some(MAX_TASK_COMMAND_OUTPUT_BYTES),
+    )
 }
 
 fn run_task_command_inner(
@@ -5441,6 +5476,7 @@ fn run_task_command_inner(
     command: &mut Command,
     capture_stdout: bool,
     limits: TaskCommandLimits,
+    output_limit: Option<usize>,
 ) -> std::io::Result<Output> {
     if state
         .lock()
@@ -5472,8 +5508,10 @@ fn run_task_command_inner(
     let last_output_at = Arc::new(Mutex::new(started_at));
     let stdout_activity = Arc::clone(&last_output_at);
     let stderr_activity = Arc::clone(&last_output_at);
-    let stdout_reader = thread::spawn(move || read_child_pipe(stdout, stdout_activity));
-    let stderr_reader = thread::spawn(move || read_child_pipe(stderr, stderr_activity));
+    let stdout_reader =
+        thread::spawn(move || read_child_pipe(stdout, stdout_activity, output_limit));
+    let stderr_reader =
+        thread::spawn(move || read_child_pipe(stderr, stderr_activity, output_limit));
     let child = Arc::new(Mutex::new(child));
 
     let cancellation_requested = {
@@ -5555,6 +5593,12 @@ fn run_task_command_inner(
 
     let stdout = join_child_reader(stdout_reader, "stdout");
     let stderr = join_child_reader(stderr_reader, "stderr");
+    if let Ok(result) = &stdout {
+        append_child_output_limit_log(state, task_id, "stdout", result);
+    }
+    if let Ok(result) = &stderr {
+        append_child_output_limit_log(state, task_id, "stderr", result);
+    }
     if let Some(status) = status.as_ref() {
         append_task_log(state, task_id, &format_task_exit_status(status));
     }
@@ -5564,8 +5608,8 @@ fn run_task_command_inner(
     }
     Ok(Output {
         status: status.ok_or_else(|| std::io::Error::other("SVN 子进程未返回退出状态"))?,
-        stdout: stdout?,
-        stderr: stderr?,
+        stdout: stdout?.bytes,
+        stderr: stderr?.bytes,
     })
 }
 
@@ -5630,11 +5674,21 @@ fn format_task_exit_status(status: &ExitStatus) -> String {
     "命令退出：系统未提供退出码".to_string()
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct ChildPipeReadResult {
+    bytes: Vec<u8>,
+    total_bytes: usize,
+    truncated: bool,
+}
+
 fn read_child_pipe(
     mut pipe: Option<impl Read>,
     last_output_at: Arc<Mutex<Instant>>,
-) -> std::io::Result<Vec<u8>> {
+    max_bytes: Option<usize>,
+) -> std::io::Result<ChildPipeReadResult> {
     let mut output = Vec::new();
+    let mut total_bytes = 0usize;
+    let mut truncated = false;
     if let Some(pipe) = pipe.as_mut() {
         let mut buffer = [0_u8; 8 * 1024];
         loop {
@@ -5642,11 +5696,31 @@ fn read_child_pipe(
             if read == 0 {
                 break;
             }
-            output.extend_from_slice(&buffer[..read]);
+            total_bytes = total_bytes.saturating_add(read);
+            if let Some(max_bytes) = max_bytes {
+                let remaining = max_bytes.saturating_sub(output.len());
+                if remaining > 0 {
+                    output.extend_from_slice(&buffer[..read.min(remaining)]);
+                }
+                if read > remaining {
+                    truncated = true;
+                }
+            } else {
+                output.extend_from_slice(&buffer[..read]);
+            }
             *last_output_at.lock().expect("命令输出活动锁已损坏") = Instant::now();
         }
     }
-    Ok(output)
+    if max_bytes.is_some() && truncated {
+        while !output.is_empty() && std::str::from_utf8(&output).is_err() {
+            output.pop();
+        }
+    }
+    Ok(ChildPipeReadResult {
+        bytes: output,
+        total_bytes,
+        truncated,
+    })
 }
 
 fn format_task_command_duration(duration: Duration) -> String {
@@ -5658,12 +5732,30 @@ fn format_task_command_duration(duration: Duration) -> String {
 }
 
 fn join_child_reader(
-    reader: thread::JoinHandle<std::io::Result<Vec<u8>>>,
+    reader: thread::JoinHandle<std::io::Result<ChildPipeReadResult>>,
     stream_name: &str,
-) -> std::io::Result<Vec<u8>> {
+) -> std::io::Result<ChildPipeReadResult> {
     reader
         .join()
         .map_err(|_| std::io::Error::other(format!("读取子进程 {stream_name} 的线程异常退出")))?
+}
+
+fn append_child_output_limit_log(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    stream_name: &str,
+    result: &ChildPipeReadResult,
+) {
+    if result.truncated {
+        append_task_log(
+            state,
+            task_id,
+            &format!(
+                "命令 {stream_name} 输出已截断：保留最多 {} 字节，实际读取 {} 字节",
+                MAX_TASK_COMMAND_OUTPUT_BYTES, result.total_bytes
+            ),
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -5987,14 +6079,15 @@ fn update_task(
             task.result = None;
         }
         task.updated_at = now;
-        task.logs.push(TaskLog {
-            message: if cancelled {
+        push_task_log(
+            task,
+            if cancelled {
                 "任务已取消，SVN 进程树已终止".to_string()
             } else {
                 message
             },
-            created_at: now,
-        });
+            now,
+        );
         true
     } else {
         false
@@ -6012,10 +6105,50 @@ fn append_task_log(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, message: &
     if let Some(task) = state.tasks.iter_mut().find(|task| task.task_id == task_id) {
         let now = timestamp_millis();
         task.updated_at = now;
-        task.logs.push(TaskLog {
-            message,
-            created_at: now,
-        });
+        push_task_log(task, message, now);
+    }
+}
+
+fn push_task_log(task: &mut Task, message: String, created_at: u64) {
+    task.logs.push(TaskLog {
+        message: bounded_text_preview(message, MAX_RUNTIME_TASK_LOG_BYTES, "任务日志内容已截断"),
+        created_at,
+    });
+    trim_task_logs(&mut task.logs);
+}
+
+fn trim_task_logs(logs: &mut Vec<TaskLog>) {
+    let mut removed = false;
+    while logs.len() > MAX_RUNTIME_TASK_LOGS
+        || logs.iter().map(|log| log.message.len()).sum::<usize>() > MAX_RUNTIME_TASK_LOG_BYTES
+    {
+        if logs.is_empty() {
+            break;
+        }
+        logs.remove(0);
+        removed = true;
+    }
+
+    if removed
+        && !logs
+            .iter()
+            .any(|log| log.message == TASK_LOG_TRUNCATION_MARKER)
+    {
+        logs.insert(
+            0,
+            TaskLog {
+                message: TASK_LOG_TRUNCATION_MARKER.to_string(),
+                created_at: timestamp_millis(),
+            },
+        );
+        while logs.len() > MAX_RUNTIME_TASK_LOGS
+            || logs.iter().map(|log| log.message.len()).sum::<usize>() > MAX_RUNTIME_TASK_LOG_BYTES
+        {
+            if logs.len() <= 1 {
+                break;
+            }
+            logs.remove(1);
+        }
     }
 }
 
@@ -8619,7 +8752,10 @@ mod tests {
     use super::*;
     #[cfg(not(windows))]
     use std::os::unix::fs::PermissionsExt;
-    use std::{fs, io::Write};
+    use std::{
+        fs,
+        io::{Cursor, Write},
+    };
 
     fn test_temp_dir(name: &str) -> PathBuf {
         let dir =
@@ -9055,6 +9191,79 @@ mod tests {
             "tickticktickticktick"
         );
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn bounds_child_pipe_preview_while_draining_all_bytes() {
+        let last_output_at = Arc::new(Mutex::new(Instant::now()));
+        let input = "中文输出".repeat(4).into_bytes();
+        let result = read_child_pipe(
+            Some(Cursor::new(input.clone())),
+            Arc::clone(&last_output_at),
+            Some(4),
+        )
+        .expect("读取有界输出应成功");
+
+        assert_eq!(result.total_bytes, input.len());
+        assert!(result.truncated);
+        assert_eq!(result.bytes.len(), 4);
+        assert!(std::str::from_utf8(&result.bytes).is_ok());
+        assert!(
+            *last_output_at.lock().expect("输出时间锁应可用")
+                > Instant::now() - Duration::from_secs(1)
+        );
+    }
+
+    #[test]
+    fn keeps_unbounded_child_pipe_output_for_structured_commands() {
+        let last_output_at = Arc::new(Mutex::new(Instant::now()));
+        let input = "structured output\n".repeat(1024).into_bytes();
+        let result = read_child_pipe(Some(Cursor::new(input.clone())), last_output_at, None)
+            .expect("读取完整输出应成功");
+
+        assert_eq!(result.bytes, input);
+        assert_eq!(result.total_bytes, result.bytes.len());
+        assert!(!result.truncated);
+    }
+
+    #[test]
+    fn bounds_runtime_task_logs_by_lines_and_bytes() {
+        let state = Arc::new(Mutex::new(TaskQueueState {
+            tasks: vec![persisted_test_task(
+                "task-runtime-log-limit",
+                TaskStatus::Running,
+                timestamp_millis(),
+            )],
+            ..TaskQueueState::default()
+        }));
+
+        for index in 0..(MAX_RUNTIME_TASK_LOGS + 20) {
+            append_task_log(
+                &state,
+                "task-runtime-log-limit",
+                &format!("日志行 {index}：{}", "x".repeat(256)),
+            );
+        }
+        append_task_log(
+            &state,
+            "task-runtime-log-limit",
+            &"超长日志".repeat(MAX_RUNTIME_TASK_LOG_BYTES),
+        );
+
+        let task = state.lock().expect("任务队列锁应可用").tasks[0].clone();
+        assert!(task.logs.len() <= MAX_RUNTIME_TASK_LOGS);
+        assert!(
+            task.logs.iter().map(|log| log.message.len()).sum::<usize>()
+                <= MAX_RUNTIME_TASK_LOG_BYTES
+        );
+        assert!(task
+            .logs
+            .iter()
+            .any(|log| log.message == TASK_LOG_TRUNCATION_MARKER));
+        assert!(task
+            .logs
+            .iter()
+            .all(|log| log.message.is_char_boundary(log.message.len())));
     }
 
     #[cfg(unix)]
