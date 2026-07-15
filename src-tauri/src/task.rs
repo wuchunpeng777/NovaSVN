@@ -2696,6 +2696,7 @@ fn run_svn_operation_task(
                 );
                 return;
             }
+            // SVN CLI 只能接收路径，无法绑定已校验句柄；最终复检必须紧邻命令启动。
             command
                 .arg("delete")
                 .arg("--force")
@@ -3058,6 +3059,7 @@ fn run_svn_batch_operation_task(
                 }
             }
 
+            // 批量目标同样无法原子绑定句柄，完成整组复检后不得插入其他外部操作。
             command.arg("delete").arg("--force");
             for file_path in &payload.file_paths {
                 command.arg(canonical_root.join(file_path));

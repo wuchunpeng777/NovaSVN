@@ -95,3 +95,4 @@
 
 - Windows 代码签名仍需正式证书；macOS 正式流程已具备 Developer ID、notarization、stapling 和 Gatekeeper 门禁，但仍需实际发布身份和钥匙串凭据完成最终验收。
 - 第一版 SVN 集成通过本机 `svn` 命令行执行。
+- Delete 会在入队和执行前复检工作副本及目标身份，但路径式 SVN CLI 无法原子绑定已校验句柄；同权限本机进程在复检与子进程解析路径之间替换目标的极短竞争窗口属于已记录边界。
