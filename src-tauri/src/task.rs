@@ -3,7 +3,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs,
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Output, Stdio},
     sync::{
@@ -14,6 +14,11 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use quick_xml::{
+    escape::{resolve_xml_entity, unescape},
+    events::Event,
+    Reader as XmlReader,
+};
 use roxmltree::Document;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -43,12 +48,17 @@ const MAX_PERSISTED_TASK_ERROR_BYTES: usize = 64 * 1024;
 const MAX_TASK_COMMAND_LOG_BYTES: usize = 16 * 1024;
 const MAX_TASK_COMMAND_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 const MERGE_OUTPUT_PREVIEW_MAX_BYTES: usize = 256 * 1024;
+const MAX_REPOSITORY_LIST_XML_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_REPOSITORY_LIST_ENTRIES: usize = 100_000;
+const MAX_REPOSITORY_LIST_FIELD_BYTES: usize = 32 * 1024;
+const MAX_REPOSITORY_LIST_TEXT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_RUNTIME_TASK_LOGS: usize = 500;
 const MAX_RUNTIME_TASK_LOG_BYTES: usize = 64 * 1024;
 const TASK_LOG_TRUNCATION_MARKER: &str = "任务日志已截断：仅保留最近 500 行和 64 KiB";
 const TASK_COMMAND_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const TASK_COMMAND_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 static APPLY_PATCH_SNAPSHOT_NONCE: AtomicU64 = AtomicU64::new(1);
+static TASK_COMMAND_OUTPUT_NONCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -3572,15 +3582,46 @@ fn run_repository_list_task(
     }
     let command_target =
         repository_url_with_peg_revision(&payload.url, payload.revision.as_deref());
-    command.arg(command_target);
-    // Repository List 需要完整 XML，不能使用命令输出预览上限。
-    let output = run_task_command_with_unbounded_output(state, task_id, &mut command);
+    let (output_file, writer) =
+        match TaskCommandOutputFile::create(task_id, "repository-list", "xml") {
+            Ok(output_file) => output_file,
+            Err(error) => {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "创建仓库目录输出文件失败",
+                    Some(error.to_string()),
+                );
+                return;
+            }
+        };
+    command
+        .arg(command_target)
+        .stdout(std::process::Stdio::from(writer));
+    let output = run_task_command_with_configured_stdout(state, task_id, &mut command);
 
     match output {
         Ok(output) if output.status.success() => {
             append_command_output(state, task_id, &output);
-            let xml = String::from_utf8_lossy(&output.stdout);
-            match parse_repository_list_xml(&xml, &payload.url, payload.revision.as_deref()) {
+            let reader = match output_file.open_reader(MAX_REPOSITORY_LIST_XML_BYTES) {
+                Ok(reader) => reader,
+                Err(error) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "读取仓库目录输出失败",
+                        Some(error.to_string()),
+                    );
+                    return;
+                }
+            };
+            match parse_repository_list_xml_reader(
+                reader,
+                &payload.url,
+                payload.revision.as_deref(),
+            ) {
                 Ok(result) => {
                     let count = result.entries.len();
                     set_task_result(
@@ -3609,7 +3650,7 @@ fn run_repository_list_task(
                         task_id,
                         TaskStatus::Failed,
                         "仓库目录 XML 解析失败",
-                        Some(error.to_string()),
+                        Some(nova_error_text(&error)),
                     );
                 }
             }
@@ -3633,6 +3674,58 @@ fn run_repository_list_task(
                 Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
             );
         }
+    }
+}
+
+struct TaskCommandOutputFile {
+    path: PathBuf,
+}
+
+impl TaskCommandOutputFile {
+    fn create(task_id: &str, purpose: &str, extension: &str) -> std::io::Result<(Self, fs::File)> {
+        let directory = std::env::temp_dir();
+        fs::create_dir_all(&directory)?;
+        for _ in 0..128 {
+            let nonce = TASK_COMMAND_OUTPUT_NONCE.fetch_add(1, Ordering::Relaxed);
+            let file_name = format!(
+                "novasvn-{purpose}-{}-{}-{nonce}.{extension}",
+                std::process::id(),
+                sanitize_patch_file_part(task_id)
+            );
+            let path = directory.join(file_name);
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            match options.open(&path) {
+                Ok(file) => return Ok((Self { path }, file)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "无法创建唯一的命令输出临时文件",
+        ))
+    }
+
+    fn open_reader(&self, max_bytes: u64) -> std::io::Result<BufReader<fs::File>> {
+        let file = fs::File::open(&self.path)?;
+        let bytes = file.metadata()?.len();
+        if bytes > max_bytes {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::FileTooLarge,
+                format!("命令输出文件超过安全上限 {max_bytes} 字节，实际 {bytes} 字节"),
+            ));
+        }
+        Ok(BufReader::new(file))
+    }
+}
+
+impl Drop for TaskCommandOutputFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
     }
 }
 
@@ -8703,46 +8796,213 @@ fn compact_repository_url(url: &str) -> String {
     format!("...{tail}")
 }
 
-fn parse_repository_list_xml(
-    xml: &str,
+fn parse_repository_list_xml_reader<R: BufRead>(
+    reader: R,
     url: &str,
     revision: Option<&str>,
 ) -> Result<RepositoryListResult, NovaError> {
-    let document = Document::parse(xml).map_err(|error| {
-        NovaError::command(
-            "SVN_LIST_XML_PARSE_FAILED",
-            "解析仓库目录失败",
-            Some(format!("svn list --xml 返回了无法解析的 XML：{error}")),
-            true,
-        )
-    })?;
+    parse_repository_list_xml_reader_with_limits(
+        reader,
+        url,
+        revision,
+        MAX_REPOSITORY_LIST_ENTRIES,
+        MAX_REPOSITORY_LIST_TEXT_BYTES,
+    )
+}
 
+#[derive(Debug, Default)]
+struct StreamingRepositoryListEntry {
+    name: String,
+    kind: String,
+    revision: String,
+    author: String,
+    date: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RepositoryListTextField {
+    Name,
+    Author,
+    Date,
+}
+
+fn parse_repository_list_xml_reader_with_limits<R: BufRead>(
+    reader: R,
+    url: &str,
+    revision: Option<&str>,
+    max_entries: usize,
+    max_text_bytes: usize,
+) -> Result<RepositoryListResult, NovaError> {
+    let mut reader = XmlReader::from_reader(reader);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
     let mut entries = Vec::new();
-    for entry in document
-        .descendants()
-        .filter(|node| node.has_tag_name("entry"))
-    {
-        let kind = entry.attribute("kind").unwrap_or("file").to_string();
-        let name = text_child(entry, "name").unwrap_or_default();
-        let commit = entry.children().find(|node| node.has_tag_name("commit"));
-        let revision = commit
-            .and_then(|node| node.attribute("revision"))
-            .unwrap_or("")
-            .to_string();
-        let author = commit
-            .and_then(|node| text_child(node, "author"))
-            .unwrap_or_default();
-        let date = commit
-            .and_then(|node| text_child(node, "date"))
-            .unwrap_or_default();
+    let mut current_entry: Option<StreamingRepositoryListEntry> = None;
+    let mut reading_field: Option<RepositoryListTextField> = None;
+    let mut entry_count = 0usize;
+    let mut total_text_bytes = 0usize;
 
-        entries.push(RepositoryListEntry {
-            name,
-            kind,
-            revision,
-            author,
-            date,
-        });
+    loop {
+        let event = reader.read_event_into(&mut buffer).map_err(|error| {
+            repository_list_xml_error(format!("svn list --xml 返回了无法解析的 XML：{error}"))
+        })?;
+        match event {
+            Event::Start(start) if start.name().as_ref() == b"entry" => {
+                entry_count = entry_count.saturating_add(1);
+                if entry_count > max_entries {
+                    return Err(NovaError::command(
+                        "SVN_LIST_ENTRY_LIMIT_EXCEEDED",
+                        "仓库目录包含过多条目",
+                        Some(format!("仓库目录条目数超过安全上限 {max_entries}")),
+                        true,
+                    ));
+                }
+                let mut entry = StreamingRepositoryListEntry {
+                    kind: "file".to_string(),
+                    ..StreamingRepositoryListEntry::default()
+                };
+                for attribute in start.attributes() {
+                    let attribute = attribute.map_err(|error| {
+                        repository_list_xml_error(format!("仓库条目属性无法解析：{error}"))
+                    })?;
+                    if attribute.key.as_ref() == b"kind" {
+                        entry.kind = attribute
+                            .decode_and_unescape_value(reader.decoder())
+                            .map_err(|error| {
+                                repository_list_xml_error(format!("仓库条目类型无法解码：{error}"))
+                            })?
+                            .into_owned();
+                        validate_repository_list_field(&entry.kind)?;
+                        account_repository_list_text(
+                            &entry.kind,
+                            &mut total_text_bytes,
+                            max_text_bytes,
+                        )?;
+                    }
+                }
+                current_entry = Some(entry);
+            }
+            Event::Start(start) if start.name().as_ref() == b"commit" => {
+                if let Some(entry) = current_entry.as_mut() {
+                    for attribute in start.attributes() {
+                        let attribute = attribute.map_err(|error| {
+                            repository_list_xml_error(format!("仓库提交属性无法解析：{error}"))
+                        })?;
+                        if attribute.key.as_ref() == b"revision" {
+                            entry.revision = attribute
+                                .decode_and_unescape_value(reader.decoder())
+                                .map_err(|error| {
+                                    repository_list_xml_error(format!(
+                                        "仓库提交 Revision 无法解码：{error}"
+                                    ))
+                                })?
+                                .into_owned();
+                            validate_repository_list_field(&entry.revision)?;
+                            account_repository_list_text(
+                                &entry.revision,
+                                &mut total_text_bytes,
+                                max_text_bytes,
+                            )?;
+                        }
+                    }
+                }
+            }
+            Event::Start(start) if start.name().as_ref() == b"name" => {
+                reading_field = current_entry
+                    .as_ref()
+                    .map(|_| RepositoryListTextField::Name);
+            }
+            Event::Start(start) if start.name().as_ref() == b"author" => {
+                reading_field = current_entry
+                    .as_ref()
+                    .map(|_| RepositoryListTextField::Author);
+            }
+            Event::Start(start) if start.name().as_ref() == b"date" => {
+                reading_field = current_entry
+                    .as_ref()
+                    .map(|_| RepositoryListTextField::Date);
+            }
+            Event::Text(text) if reading_field.is_some() => {
+                let decoded = text.decode().map_err(|error| {
+                    repository_list_xml_error(format!("仓库条目文本无法解码：{error}"))
+                })?;
+                let decoded = unescape(&decoded).map_err(|error| {
+                    repository_list_xml_error(format!("仓库条目转义字符无法解析：{error}"))
+                })?;
+                if let (Some(entry), Some(field)) = (current_entry.as_mut(), reading_field) {
+                    append_repository_list_text(
+                        entry,
+                        field,
+                        &decoded,
+                        &mut total_text_bytes,
+                        max_text_bytes,
+                    )?;
+                }
+            }
+            Event::CData(text) if reading_field.is_some() => {
+                let decoded = text.decode().map_err(|error| {
+                    repository_list_xml_error(format!("仓库条目 CDATA 无法解码：{error}"))
+                })?;
+                if let (Some(entry), Some(field)) = (current_entry.as_mut(), reading_field) {
+                    append_repository_list_text(
+                        entry,
+                        field,
+                        &decoded,
+                        &mut total_text_bytes,
+                        max_text_bytes,
+                    )?;
+                }
+            }
+            Event::GeneralRef(reference) if reading_field.is_some() => {
+                let decoded = reference.decode().map_err(|error| {
+                    repository_list_xml_error(format!("仓库条目实体无法解码：{error}"))
+                })?;
+                let resolved = if let Some(character) =
+                    reference.resolve_char_ref().map_err(|error| {
+                        repository_list_xml_error(format!("仓库条目字符引用无法解析：{error}"))
+                    })? {
+                    character.to_string()
+                } else {
+                    resolve_xml_entity(&decoded)
+                        .ok_or_else(|| {
+                            repository_list_xml_error(format!("仓库条目包含未知实体：&{decoded};"))
+                        })?
+                        .to_string()
+                };
+                if let (Some(entry), Some(field)) = (current_entry.as_mut(), reading_field) {
+                    append_repository_list_text(
+                        entry,
+                        field,
+                        &resolved,
+                        &mut total_text_bytes,
+                        max_text_bytes,
+                    )?;
+                }
+            }
+            Event::End(end) if matches!(end.name().as_ref(), b"name" | b"author" | b"date") => {
+                reading_field = None;
+            }
+            Event::End(end) if end.name().as_ref() == b"entry" => {
+                reading_field = None;
+                if let Some(mut entry) = current_entry.take() {
+                    entry.name = entry.name.trim().to_string();
+                    entry.kind = entry.kind.trim().to_string();
+                    entry.revision = entry.revision.trim().to_string();
+                    entry.author = entry.author.trim().to_string();
+                    entry.date = entry.date.trim().to_string();
+                    entries.push(RepositoryListEntry {
+                        name: entry.name,
+                        kind: entry.kind,
+                        revision: entry.revision,
+                        author: entry.author,
+                        date: entry.date,
+                    });
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
     }
 
     entries.sort_by(|left, right| {
@@ -8758,6 +9018,63 @@ fn parse_repository_list_xml(
         revision: revision.map(ToString::to_string),
         entries,
     })
+}
+
+fn append_repository_list_text(
+    entry: &mut StreamingRepositoryListEntry,
+    field: RepositoryListTextField,
+    value: &str,
+    total_text_bytes: &mut usize,
+    max_text_bytes: usize,
+) -> Result<(), NovaError> {
+    let target = match field {
+        RepositoryListTextField::Name => &mut entry.name,
+        RepositoryListTextField::Author => &mut entry.author,
+        RepositoryListTextField::Date => &mut entry.date,
+    };
+    target.push_str(value);
+    validate_repository_list_field(target)?;
+    account_repository_list_text(value, total_text_bytes, max_text_bytes)
+}
+
+fn validate_repository_list_field(value: &str) -> Result<(), NovaError> {
+    if value.len() <= MAX_REPOSITORY_LIST_FIELD_BYTES {
+        return Ok(());
+    }
+    Err(NovaError::command(
+        "SVN_LIST_FIELD_LIMIT_EXCEEDED",
+        "仓库目录包含过长字段",
+        Some(format!(
+            "单个名称、类型、Revision、作者或日期字段超过 {MAX_REPOSITORY_LIST_FIELD_BYTES} 字节"
+        )),
+        true,
+    ))
+}
+
+fn account_repository_list_text(
+    value: &str,
+    total_text_bytes: &mut usize,
+    max_text_bytes: usize,
+) -> Result<(), NovaError> {
+    *total_text_bytes = (*total_text_bytes).saturating_add(value.len());
+    if *total_text_bytes > max_text_bytes {
+        return Err(NovaError::command(
+            "SVN_LIST_TEXT_LIMIT_EXCEEDED",
+            "仓库目录文本数据过大",
+            Some(format!("累计文本超过安全上限 {max_text_bytes} 字节")),
+            true,
+        ));
+    }
+    Ok(())
+}
+
+fn repository_list_xml_error(detail: String) -> NovaError {
+    NovaError::command(
+        "SVN_LIST_XML_PARSE_FAILED",
+        "解析仓库目录失败",
+        Some(detail),
+        true,
+    )
 }
 
 fn text_child(node: roxmltree::Node<'_, '_>, tag_name: &str) -> Option<String> {
@@ -13007,8 +13324,12 @@ mod tests {
 </lists>
 "#;
 
-        let result = parse_repository_list_xml(xml, "https://example.com/svn", Some("8"))
-            .expect("list parses");
+        let result = parse_repository_list_xml_reader(
+            Cursor::new(xml.as_bytes()),
+            "https://example.com/svn",
+            Some("8"),
+        )
+        .expect("list parses");
 
         assert_eq!(result.url, "https://example.com/svn");
         assert_eq!(result.revision.as_deref(), Some("8"));
@@ -13020,5 +13341,58 @@ mod tests {
         assert_eq!(result.entries[0].revision, "7");
         assert_eq!(result.entries[0].author, "dev");
         assert_eq!(result.entries[0].date, "2026-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn streams_repository_list_xml_and_enforces_entry_limit() {
+        let xml = r#"
+<lists><list path="https://example.com/svn">
+  <entry kind="file"><name>one.txt</name><commit revision="1" /></entry>
+  <entry kind="file"><name>two.txt</name><commit revision="2" /></entry>
+</list></lists>
+"#;
+
+        let error = parse_repository_list_xml_reader_with_limits(
+            Cursor::new(xml.as_bytes()),
+            "https://example.com/svn",
+            None,
+            1,
+            MAX_REPOSITORY_LIST_TEXT_BYTES,
+        )
+        .expect_err("超过条目限制应失败");
+
+        assert!(matches!(
+            error,
+            NovaError::Command { code, .. } if code == "SVN_LIST_ENTRY_LIMIT_EXCEEDED"
+        ));
+    }
+
+    #[test]
+    fn streams_repository_list_entities_and_enforces_text_limit() {
+        let xml = r#"
+<lists><list path="https://example.com/svn">
+  <entry kind="file"><name>中文&amp;file.txt</name><commit revision="1"><author>dev</author></commit></entry>
+</list></lists>
+"#;
+        let result = parse_repository_list_xml_reader(
+            Cursor::new(xml.as_bytes()),
+            "https://example.com/svn",
+            None,
+        )
+        .expect("实体和中文应能流式解析");
+        assert_eq!(result.entries[0].name, "中文&file.txt");
+
+        let error = parse_repository_list_xml_reader_with_limits(
+            Cursor::new(xml.as_bytes()),
+            "https://example.com/svn",
+            None,
+            MAX_REPOSITORY_LIST_ENTRIES,
+            4,
+        )
+        .expect_err("超过文本限制应失败");
+        assert!(matches!(
+            error,
+            NovaError::Command { code, .. } if code == "SVN_LIST_TEXT_LIMIT_EXCEEDED"
+        ));
     }
 }

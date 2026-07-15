@@ -629,11 +629,24 @@ if (
   !mainWorkspace.includes("repositoryEntryKindLabel") ||
   !mainWorkspace.includes("title={entry.author || undefined}") ||
   !mainWorkspace.includes("title={entry.date || undefined}") ||
-  !taskRs.includes('let revision = commit') ||
-  !taskRs.includes('let author = commit') ||
-  !taskRs.includes('let date = commit')
+  !taskRs.includes("struct StreamingRepositoryListEntry") ||
+  !taskRs.includes("entry.revision = attribute") ||
+  !taskRs.includes("RepositoryListTextField::Author") ||
+  !taskRs.includes("RepositoryListTextField::Date")
 ) {
   console.error("Repository 条目必须显示 Last Revision、作者、日期和准确类型");
+  failed = true;
+}
+
+if (
+  !taskRs.includes('TaskCommandOutputFile::create(task_id, "repository-list", "xml")') ||
+  !taskRs.includes("parse_repository_list_xml_reader(") ||
+  !taskRs.includes("MAX_REPOSITORY_LIST_XML_BYTES") ||
+  !taskRs.includes("MAX_REPOSITORY_LIST_ENTRIES") ||
+  !taskRs.includes("MAX_REPOSITORY_LIST_FIELD_BYTES") ||
+  !taskRs.includes("MAX_REPOSITORY_LIST_TEXT_BYTES")
+) {
+  console.error("Repository List 必须使用受限临时文件和有界流式 XML 解析");
   failed = true;
 }
 
