@@ -1735,6 +1735,69 @@ Certificate information:
     );
   });
 
+  it("virtualizes 5000 file-tree and Blame rows while keeping the last row reachable", async () => {
+    const rowCount = 5000;
+    const fileNodes = Array.from({ length: rowCount }, (_, index) => {
+      const number = String(index + 1).padStart(5, "0");
+      return makeScopedNode(`src/file-${number}.txt`, "modified", "local");
+    });
+    const selectedFile = makeFile(fileNodes[0].path, "modified", "digest-1");
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([selectedFile]),
+        workspaceFileTree: {
+          working_copy_root: "C:/repo/wc",
+          total_files: rowCount,
+          returned_files: rowCount,
+          truncated: false,
+          nodes: fileNodes,
+        },
+        selectedFilePath: selectedFile.path,
+        selectedFile,
+        svnBlame: {
+          target: selectedFile.path,
+          total_lines: rowCount,
+          truncated: false,
+          lines: Array.from({ length: rowCount }, (_, index) => ({
+            line_number: index + 1,
+            revision: "12",
+            author: "dev",
+            date: "2026-07-11T01:02:03Z",
+            content: `line ${String(index + 1).padStart(5, "0")}`,
+          })),
+        },
+      },
+    });
+
+    const treegrid = screen.getByRole("treegrid", { name: "工作副本文件树" });
+    Object.defineProperty(treegrid, "clientHeight", { configurable: true, value: 320 });
+    expect(treegrid).toHaveAttribute("aria-rowcount", String(rowCount + 1));
+    expect(treegrid.querySelectorAll(".file-row").length).toBeLessThan(50);
+    expect(screen.queryByText("src/file-05000.txt", { exact: true })).not.toBeInTheDocument();
+
+    treegrid.scrollTop = rowCount * 32;
+    await fireEvent.scroll(treegrid);
+    await waitFor(() => {
+      expect(screen.getByText("src/file-05000.txt", { exact: true })).toBeInTheDocument();
+    });
+    expect(treegrid.querySelectorAll(".file-row").length).toBeLessThan(50);
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Blame" }));
+    const blameTable = screen.getByRole("table", { name: `${selectedFile.path} Blame` });
+    Object.defineProperty(blameTable, "clientHeight", { configurable: true, value: 300 });
+    expect(within(blameTable).getAllByRole("row").length).toBeLessThan(40);
+    expect(within(blameTable).queryByText("line 05000", { exact: true })).not.toBeInTheDocument();
+
+    blameTable.scrollTop = rowCount * 27;
+    await fireEvent.scroll(blameTable);
+    await waitFor(() => {
+      expect(within(blameTable).getByText("line 05000", { exact: true })).toBeInTheDocument();
+    });
+    expect(within(blameTable).getAllByRole("row").length).toBeLessThan(40);
+  });
+
   it("opens existing files on double click and keeps directories in the tree", async () => {
     const openFile = makeFile("open.txt", "modified", "open-digest");
     const missingFile = makeFile("missing.txt", "missing", "missing-digest");

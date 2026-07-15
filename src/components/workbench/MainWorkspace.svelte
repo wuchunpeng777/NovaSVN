@@ -599,6 +599,17 @@
   type WorkspaceTreeRow = WorkspaceFileNode & {
     depth: number;
   };
+  type VirtualWindow<T> = {
+    items: T[];
+    startIndex: number;
+    beforeHeight: number;
+    afterHeight: number;
+  };
+
+  const fileTreeHeaderHeight = 28;
+  const fileTreeRowHeight = 32;
+  const blameRowHeight = 27;
+  const virtualRowOverscan = 8;
 
   const inspectorTabs: Array<{ id: InspectorTab; label: string }> = [
     { id: "information", label: "Information" },
@@ -628,6 +639,15 @@
   let contextMenuX = 0;
   let contextMenuY = 0;
   let fileBrowserElement: HTMLElement | null = null;
+  let fileBrowserScrollTop = 0;
+  let fileBrowserViewportHeight = 720;
+  let workspaceBlameScrollTop = 0;
+  let workspaceBlameViewportHeight = 360;
+  let repositoryBlameScrollTop = 0;
+  let repositoryBlameViewportHeight = 300;
+  let virtualizedFileTreeSource: WorkspaceFileTree | null = null;
+  let virtualizedWorkspaceBlameSource: SvnBlame | null = null;
+  let virtualizedRepositoryBlameSource: SvnBlame | null = null;
   let contextMenuElement: HTMLElement | null = null;
   let commitMessageElement: HTMLTextAreaElement | null = null;
   let commitMessageFocusRequested = false;
@@ -1287,10 +1307,66 @@
   }
 
   function scrollActiveRowIntoView(path: string) {
+    const rowIndex = treeRows.findIndex((row) => row.path === path);
+    if (fileBrowserElement && rowIndex >= 0) {
+      const viewportHeight = fileBrowserElement.clientHeight || fileBrowserViewportHeight;
+      const rowTop = fileTreeHeaderHeight + rowIndex * fileTreeRowHeight;
+      const rowBottom = rowTop + fileTreeRowHeight;
+      const visibleTop = fileBrowserElement.scrollTop + fileTreeHeaderHeight;
+      const visibleBottom = fileBrowserElement.scrollTop + viewportHeight;
+      if (rowTop < visibleTop) {
+        fileBrowserElement.scrollTop = Math.max(0, rowTop - fileTreeHeaderHeight);
+      } else if (rowBottom > visibleBottom) {
+        fileBrowserElement.scrollTop = Math.max(0, rowBottom - viewportHeight);
+      }
+      fileBrowserScrollTop = fileBrowserElement.scrollTop;
+    }
     queueMicrotask(() => {
       const row = document.getElementById(rowDomId(path));
       row?.scrollIntoView?.({ block: "nearest" });
     });
+  }
+
+  function virtualWindow<T>(
+    items: T[],
+    scrollTop: number,
+    viewportHeight: number,
+    rowHeight: number,
+    headerHeight = 0,
+  ): VirtualWindow<T> {
+    if (items.length === 0) {
+      return { items: [], startIndex: 0, beforeHeight: 0, afterHeight: 0 };
+    }
+    const visibleRows = Math.max(1, Math.ceil(viewportHeight / rowHeight));
+    const windowSize = visibleRows + virtualRowOverscan * 2;
+    const firstVisible = Math.floor(Math.max(0, scrollTop - headerHeight) / rowHeight);
+    const maxStart = Math.max(0, items.length - windowSize);
+    const startIndex = Math.min(maxStart, Math.max(0, firstVisible - virtualRowOverscan));
+    const endIndex = Math.min(items.length, startIndex + windowSize);
+    return {
+      items: items.slice(startIndex, endIndex),
+      startIndex,
+      beforeHeight: startIndex * rowHeight,
+      afterHeight: (items.length - endIndex) * rowHeight,
+    };
+  }
+
+  function handleFileBrowserScroll(event: Event) {
+    const element = event.currentTarget as HTMLElement;
+    fileBrowserScrollTop = element.scrollTop;
+    fileBrowserViewportHeight = element.clientHeight || fileBrowserViewportHeight;
+  }
+
+  function handleWorkspaceBlameScroll(event: Event) {
+    const element = event.currentTarget as HTMLElement;
+    workspaceBlameScrollTop = element.scrollTop;
+    workspaceBlameViewportHeight = element.clientHeight || workspaceBlameViewportHeight;
+  }
+
+  function handleRepositoryBlameScroll(event: Event) {
+    const element = event.currentTarget as HTMLElement;
+    repositoryBlameScrollTop = element.scrollTop;
+    repositoryBlameViewportHeight = element.clientHeight || repositoryBlameViewportHeight;
   }
 
   function selectKeyboardRange(anchorPath: string, targetPath: string) {
@@ -1974,6 +2050,42 @@
     searchText,
   );
   $: treeRows = flattenTreeNodes(filteredTreeNodes, 0, collapsedTreePaths);
+  $: if (virtualizedFileTreeSource !== workspaceFileTree) {
+    virtualizedFileTreeSource = workspaceFileTree;
+    fileBrowserScrollTop = 0;
+    if (fileBrowserElement) {
+      fileBrowserElement.scrollTop = 0;
+    }
+  }
+  $: if (virtualizedWorkspaceBlameSource !== svnBlame) {
+    virtualizedWorkspaceBlameSource = svnBlame;
+    workspaceBlameScrollTop = 0;
+  }
+  $: if (virtualizedRepositoryBlameSource !== repositoryFileBlame) {
+    virtualizedRepositoryBlameSource = repositoryFileBlame;
+    repositoryBlameScrollTop = 0;
+  }
+  $: treeRowWindow = virtualWindow(
+    treeRows,
+    fileBrowserScrollTop,
+    fileBrowserViewportHeight,
+    fileTreeRowHeight,
+    fileTreeHeaderHeight,
+  );
+  $: workspaceBlameWindow = virtualWindow(
+    svnBlame?.lines ?? [],
+    workspaceBlameScrollTop,
+    workspaceBlameViewportHeight,
+    blameRowHeight,
+    blameRowHeight,
+  );
+  $: repositoryBlameWindow = virtualWindow(
+    repositoryFileBlame?.lines ?? [],
+    repositoryBlameScrollTop,
+    repositoryBlameViewportHeight,
+    blameRowHeight,
+    blameRowHeight,
+  );
   $: reconcileRowSelection(workspace?.working_copy_root ?? null, workspaceFileTree);
   $: reconcileActiveRow(treeRows, selectedFilePath);
   $: reportActiveWorkspacePath(activeRowPath);
@@ -3016,14 +3128,22 @@
                 {repositoryFileBlame.total_lines} 行
                 {repositoryFileBlame.truncated ? ` · 仅显示前 ${repositoryFileBlame.lines.length} 行` : ""}
               </p>
-              <div class="blame-table repository-file-blame-table" role="table" aria-label={`${repositoryFileBlame.target} Repository Blame`}>
+              <div
+                class="blame-table repository-file-blame-table"
+                role="table"
+                aria-label={`${repositoryFileBlame.target} Repository Blame`}
+                on:scroll={handleRepositoryBlameScroll}
+              >
                 <div class="blame-row blame-head" role="row">
                   <span role="columnheader">Revision</span>
                   <span role="columnheader">作者</span>
                   <span role="columnheader">行</span>
                   <span role="columnheader">内容</span>
                 </div>
-                {#each repositoryFileBlame.lines as line (line.line_number)}
+                {#if repositoryBlameWindow.beforeHeight > 0}
+                  <div class="virtual-list-spacer" style={`height: ${repositoryBlameWindow.beforeHeight}px`} aria-hidden="true"></div>
+                {/if}
+                {#each repositoryBlameWindow.items as line (line.line_number)}
                   <div class="blame-row" role="row" title={formatDate(line.date)}>
                     <span role="cell">{line.revision ? `r${line.revision}` : "-"}</span>
                     <span role="cell">{line.author || "-"}</span>
@@ -3033,6 +3153,9 @@
                     </span>
                   </div>
                 {/each}
+                {#if repositoryBlameWindow.afterHeight > 0}
+                  <div class="virtual-list-spacer" style={`height: ${repositoryBlameWindow.afterHeight}px`} aria-hidden="true"></div>
+                {/if}
               </div>
             {:else if repositoryFileBlameLoading}
               <article class="empty-state">正在读取文件 Blame</article>
@@ -4331,12 +4454,16 @@
             role="treegrid"
             tabindex="0"
             aria-label="工作副本文件树"
+            aria-rowcount={treeRows.length + 1}
             aria-multiselectable="true"
-            aria-activedescendant={activeRowPath ? rowDomId(activeRowPath) : undefined}
+            aria-activedescendant={activeRowPath && treeRowWindow.items.some((row) => row.path === activeRowPath)
+              ? rowDomId(activeRowPath)
+              : undefined}
             on:focus={handleFileTableFocus}
             on:keydown={handleFileTableKeydown}
+            on:scroll={handleFileBrowserScroll}
           >
-            <div class="file-table-head" role="row">
+            <div class="file-table-head" role="row" aria-rowindex="1">
               <span class="selection-cell" role="columnheader">
                 <input
                   type="checkbox"
@@ -4357,12 +4484,16 @@
               <span role="columnheader" aria-label="操作"></span>
             </div>
             {#if treeRows.length > 0}
-              {#each treeRows as node (node.path)}
+              {#if treeRowWindow.beforeHeight > 0}
+                <div class="virtual-list-spacer file-tree-spacer" style={`height: ${treeRowWindow.beforeHeight}px`} aria-hidden="true"></div>
+              {/if}
+              {#each treeRowWindow.items as node, index (node.path)}
                 <div
                   id={rowDomId(node.path)}
                   class="file-row"
                   role="row"
                   tabindex="-1"
+                  aria-rowindex={treeRowWindow.startIndex + index + 2}
                   aria-level={node.depth + 1}
                   aria-expanded={node.kind === "dir" ? !isTreeNodeCollapsed(node, collapsedTreePaths) : undefined}
                   aria-selected={isRowSelected(node.path, selectedRowPaths)}
@@ -4574,6 +4705,9 @@
                   </span>
                 </div>
               {/each}
+              {#if treeRowWindow.afterHeight > 0}
+                <div class="virtual-list-spacer file-tree-spacer" style={`height: ${treeRowWindow.afterHeight}px`} aria-hidden="true"></div>
+              {/if}
             {:else if workspaceFileTree}
               <article class="empty-state">没有匹配的文件</article>
             {:else if workspace}
@@ -4803,14 +4937,22 @@
                   <p class="muted">
                     {svnBlame.target} · {svnBlame.total_lines} 行
                   </p>
-                  <div class="blame-table" role="table" aria-label={`${svnBlame.target} Blame`}>
+                  <div
+                    class="blame-table"
+                    role="table"
+                    aria-label={`${svnBlame.target} Blame`}
+                    on:scroll={handleWorkspaceBlameScroll}
+                  >
                     <div class="blame-row blame-head" role="row">
                       <span role="columnheader">Revision</span>
                       <span role="columnheader">作者</span>
                       <span role="columnheader">行</span>
                       <span role="columnheader">内容</span>
                     </div>
-                    {#each svnBlame.lines as line (line.line_number)}
+                    {#if workspaceBlameWindow.beforeHeight > 0}
+                      <div class="virtual-list-spacer" style={`height: ${workspaceBlameWindow.beforeHeight}px`} aria-hidden="true"></div>
+                    {/if}
+                    {#each workspaceBlameWindow.items as line (line.line_number)}
                       <div class="blame-row" role="row" title={formatDate(line.date)}>
                         <span role="cell">{line.revision ? `r${line.revision}` : "-"}</span>
                         <span role="cell">{line.author || "-"}</span>
@@ -4820,6 +4962,9 @@
                         </span>
                       </div>
                     {/each}
+                    {#if workspaceBlameWindow.afterHeight > 0}
+                      <div class="virtual-list-spacer" style={`height: ${workspaceBlameWindow.afterHeight}px`} aria-hidden="true"></div>
+                    {/if}
                   </div>
                   {#if svnBlame.truncated}
                     <p class="muted">仅显示前 {svnBlame.lines.length} 行。</p>
