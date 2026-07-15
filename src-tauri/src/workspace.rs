@@ -2336,10 +2336,6 @@ fn read_workspace_children(
         })?;
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if should_skip_workspace_tree_entry(&name) {
-            continue;
-        }
-
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
             NovaError::command(
                 "WORKSPACE_FILE_TREE_FAILED",
@@ -2349,10 +2345,18 @@ fn read_workspace_children(
             )
         })?;
         let relative_path = workspace_tree_relative_path(root, &path);
+        let normalized_path = normalize_tree_path(&relative_path);
+        if should_skip_workspace_tree_entry(
+            &name,
+            metadata.is_dir(),
+            &normalized_path,
+            versioned_paths,
+        ) {
+            continue;
+        }
         let status_match = workspace_tree_status_for_path(&relative_path, status_by_path);
         let reparse_point = is_workspace_tree_reparse_point(&metadata);
         if metadata.is_dir() && !reparse_point {
-            let normalized_path = normalize_tree_path(&relative_path);
             let versioned = versioned_paths.contains(&normalized_path);
             let children =
                 read_workspace_children(root, &path, status_by_path, versioned_paths, read_state)?;
@@ -2687,11 +2691,20 @@ fn is_workspace_tree_reparse_point(_metadata: &fs::Metadata) -> bool {
     false
 }
 
-fn should_skip_workspace_tree_entry(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        ".svn" | ".git" | "node_modules" | "target" | "dist"
-    )
+fn should_skip_workspace_tree_entry(
+    name: &str,
+    is_directory: bool,
+    normalized_path: &str,
+    versioned_paths: &VersionedWorkspaceIndex,
+) -> bool {
+    if !is_directory {
+        return false;
+    }
+    match name.to_ascii_lowercase().as_str() {
+        ".svn" | ".git" => true,
+        "node_modules" | "target" | "dist" => !versioned_paths.contains(normalized_path),
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -4145,10 +4158,16 @@ line two</property>
         fs::create_dir_all(root.join("src")).unwrap();
         fs::create_dir_all(root.join("empty")).unwrap();
         fs::create_dir_all(root.join(".svn")).unwrap();
+        fs::create_dir_all(root.join("target")).unwrap();
+        fs::create_dir_all(root.join("dist")).unwrap();
+        fs::create_dir_all(root.join("node_modules")).unwrap();
         fs::write(root.join("src/main.rs"), "changed").unwrap();
         fs::write(root.join("src/lib.rs"), "normal").unwrap();
         fs::write(root.join("ignored.txt"), "ignored").unwrap();
         fs::write(root.join(".svn/entries"), "internal").unwrap();
+        fs::write(root.join("target/tracked.txt"), "tracked target").unwrap();
+        fs::write(root.join("dist/generated.txt"), "generated dist").unwrap();
+        fs::write(root.join("node_modules/tracked.js"), "tracked dependency").unwrap();
 
         let xml = format!(
             r#"
@@ -4184,6 +4203,10 @@ line two</property>
                 "src/main.rs",
                 "src/lib.rs",
                 "empty",
+                "target",
+                "target/tracked.txt",
+                "node_modules",
+                "node_modules/tracked.js",
                 "docs",
                 "docs/missing.md",
             ]
@@ -4207,9 +4230,20 @@ line two</property>
         add_missing_status_nodes(&mut nodes, &status_by_path, &versioned_paths);
         sort_workspace_nodes(&mut nodes);
 
-        assert_eq!(read_state.total_files, 3);
+        assert_eq!(read_state.total_files, 5);
         assert!(!read_state.truncated);
         assert!(nodes.iter().all(|node| node.name != ".svn"));
+        assert!(nodes.iter().all(|node| node.name != "dist"));
+        assert!(nodes
+            .iter()
+            .find(|node| node.name == "target")
+            .is_some_and(|node| node.versioned && node.children[0].path == "target/tracked.txt"));
+        assert!(nodes
+            .iter()
+            .find(|node| node.name == "node_modules")
+            .is_some_and(|node| {
+                node.versioned && node.children[0].path == "node_modules/tracked.js"
+            }));
         let src = nodes.iter().find(|node| node.name == "src").unwrap();
         assert!(src.changed);
         assert!(src.versioned);
@@ -4415,6 +4449,15 @@ line two</property>
         let import_dir = root.join("import");
         let working_copy = root.join("working-copy");
         fs::create_dir_all(import_dir.join("main/empty")).expect("create main import tree");
+        for directory in ["target", "dist", "node_modules"] {
+            fs::create_dir_all(import_dir.join("main").join(directory))
+                .expect("create tracked generated-name directory");
+            fs::write(
+                import_dir.join("main").join(directory).join("tracked.txt"),
+                directory,
+            )
+            .expect("write tracked generated-name file");
+        }
         fs::create_dir_all(import_dir.join("external")).expect("create external import tree");
         fs::write(import_dir.join("main/tracked.txt"), "tracked").expect("write tracked file");
         fs::write(import_dir.join("external/nested.txt"), "external").expect("write external file");
@@ -4470,6 +4513,14 @@ line two</property>
         assert!(tracked_node.last_changed_date.is_some());
         assert!(find_workspace_node(&tree.nodes, "empty")
             .is_some_and(|node| node.kind == "dir" && node.versioned));
+        for directory in ["target", "dist", "node_modules"] {
+            assert!(find_workspace_node(&tree.nodes, directory)
+                .is_some_and(|node| node.kind == "dir" && node.versioned));
+            assert!(
+                find_workspace_node(&tree.nodes, &format!("{directory}/tracked.txt"))
+                    .is_some_and(|node| node.kind == "file" && node.versioned)
+            );
+        }
         assert!(find_workspace_node(&tree.nodes, "ignored.txt")
             .is_some_and(|node| node.status == "normal" && !node.versioned));
         assert!(find_workspace_node(&tree.nodes, "external")
