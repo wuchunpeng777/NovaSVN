@@ -51,6 +51,8 @@ const MAX_PERSISTED_TASK_ERROR_BYTES: usize = 64 * 1024;
 const MAX_TASK_COMMAND_LOG_BYTES: usize = 16 * 1024;
 const MAX_TASK_COMMAND_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 const MERGE_OUTPUT_PREVIEW_MAX_BYTES: usize = 256 * 1024;
+const MAX_MERGE_COMMAND_OUTPUT_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_MERGE_OUTPUT_LINE_BYTES: usize = 64 * 1024;
 const MAX_REVISION_DIFF_PATCH_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_REPOSITORY_LIST_XML_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_REPOSITORY_LIST_ENTRIES: usize = 100_000;
@@ -3785,6 +3787,85 @@ fn run_apply_patch_command(
     })
 }
 
+#[derive(Debug)]
+struct MergeCommandResult {
+    status: ExitStatus,
+    analysis: MergeOutputAnalysis,
+}
+
+fn run_merge_command(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    command: &mut Command,
+) -> Result<MergeCommandResult, NovaError> {
+    let (stdout_file, stdout_writer) =
+        TaskCommandOutputFile::create(task_id, "merge-stdout", "log").map_err(|error| {
+            NovaError::command(
+                "MERGE_OUTPUT_CREATE_FAILED",
+                "无法创建 Merge stdout 临时文件",
+                Some(error.to_string()),
+                true,
+            )
+        })?;
+    let (stderr_file, stderr_writer) =
+        TaskCommandOutputFile::create(task_id, "merge-stderr", "log").map_err(|error| {
+            NovaError::command(
+                "MERGE_OUTPUT_CREATE_FAILED",
+                "无法创建 Merge stderr 临时文件",
+                Some(error.to_string()),
+                true,
+            )
+        })?;
+    command
+        .stdout(Stdio::from(stdout_writer))
+        .stderr(Stdio::from(stderr_writer));
+    let output =
+        run_task_command_with_configured_streams(state, task_id, command).map_err(|error| {
+            NovaError::command(
+                "MERGE_COMMAND_FAILED",
+                "无法执行 SVN Merge 命令",
+                Some(error.to_string()),
+                true,
+            )
+        })?;
+    let analysis = analyze_merge_output_files(&stdout_file, &stderr_file)?;
+    Ok(MergeCommandResult {
+        status: output.status,
+        analysis,
+    })
+}
+
+fn append_merge_analysis_logs(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    analysis: &MergeOutputAnalysis,
+) {
+    for line in &analysis.log_lines {
+        append_task_log(state, task_id, line);
+    }
+    if analysis.log_truncated {
+        append_task_log(
+            state,
+            task_id,
+            &format!(
+                "Merge 命令输出日志已截断（最多 {} 字节、{} 行）",
+                MAX_RUNTIME_TASK_LOG_BYTES, MAX_RUNTIME_TASK_LOGS
+            ),
+        );
+    }
+}
+
+fn merge_analysis_error_detail(analysis: &MergeOutputAnalysis) -> String {
+    if analysis.output_text.trim().is_empty() {
+        return "svn merge 返回失败，但没有输出。".to_string();
+    }
+    bounded_text_preview(
+        analysis.output_text.clone(),
+        MAX_RUNTIME_TASK_LOG_BYTES,
+        "Merge 错误输出已截断",
+    )
+}
+
 fn run_repository_file_task(
     state: &Arc<Mutex<TaskQueueState>>,
     task_id: &str,
@@ -4896,20 +4977,10 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
         ),
     );
 
-    // Merge 结果当前仍基于完整文本统计，暂时保留完整输出。
-    match run_task_command_with_unbounded_output(state, task_id, &mut command) {
+    match run_merge_command(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
-            append_command_output(state, task_id, &output);
-            let full_output_text = merge_output_text(&output);
-            let summary = summarize_merge_output(&full_output_text);
-            let line_count = full_output_text.lines().count();
-            let output_truncated = full_output_text.len() > MERGE_OUTPUT_PREVIEW_MAX_BYTES;
-            let output_text = bounded_text_preview(
-                full_output_text,
-                MERGE_OUTPUT_PREVIEW_MAX_BYTES,
-                "Merge 输出预览已截断",
-            );
-            if output_truncated {
+            append_merge_analysis_logs(state, task_id, &output.analysis);
+            if output.analysis.output_truncated {
                 append_task_log(
                     state,
                     task_id,
@@ -4929,15 +5000,15 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
                 record_only: payload.record_only,
                 ignore_ancestry: payload.ignore_ancestry,
                 force: payload.force,
-                output_truncated,
+                output_truncated: output.analysis.output_truncated,
                 max_output_bytes: MERGE_OUTPUT_PREVIEW_MAX_BYTES,
-                file_count: summary.file_count,
-                line_count,
-                added: summary.added,
-                deleted: summary.deleted,
-                updated: summary.updated,
-                conflicted: summary.conflicted,
-                output_text,
+                file_count: output.analysis.summary.file_count,
+                line_count: output.analysis.line_count,
+                added: output.analysis.summary.added,
+                deleted: output.analysis.summary.deleted,
+                updated: output.analysis.summary.updated,
+                conflicted: output.analysis.summary.conflicted,
+                output_text: output.analysis.output_text.clone(),
             };
             set_task_result(
                 state,
@@ -4964,7 +5035,7 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
             );
         }
         Ok(output) => {
-            append_command_output(state, task_id, &output);
+            append_merge_analysis_logs(state, task_id, &output.analysis);
             update_task(
                 state,
                 task_id,
@@ -4974,7 +5045,7 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
                 } else {
                     "Merge 执行失败"
                 },
-                Some(command_error_detail(&payload.svn_executable, &output)),
+                Some(merge_analysis_error_detail(&output.analysis)),
             );
         }
         Err(error) => {
@@ -4983,7 +5054,7 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
                 task_id,
                 TaskStatus::Failed,
                 "SVN merge 启动失败",
-                Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+                Some(nova_error_text(&error)),
             );
         }
     }
@@ -5610,25 +5681,6 @@ fn run_task_command(
         },
         true,
         Some(MAX_TASK_COMMAND_OUTPUT_BYTES),
-    )
-}
-
-fn run_task_command_with_unbounded_output(
-    state: &Arc<Mutex<TaskQueueState>>,
-    task_id: &str,
-    command: &mut Command,
-) -> std::io::Result<Output> {
-    run_task_command_inner(
-        state,
-        task_id,
-        command,
-        true,
-        TaskCommandLimits {
-            timeout: TASK_COMMAND_TIMEOUT,
-            idle_timeout: Some(TASK_COMMAND_IDLE_TIMEOUT),
-        },
-        true,
-        None,
     )
 }
 
@@ -8618,17 +8670,6 @@ fn validate_merge_tracking_options(
     Ok(())
 }
 
-fn merge_output_text(output: &std::process::Output) -> String {
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    match (stdout.is_empty(), stderr.is_empty()) {
-        (false, false) => format!("{stdout}\n{stderr}"),
-        (false, true) => stdout,
-        (true, false) => stderr,
-        (true, true) => "svn merge 没有输出。".to_string(),
-    }
-}
-
 #[derive(Debug, Default, PartialEq, Eq)]
 struct MergeOutputSummary {
     file_count: usize,
@@ -8638,33 +8679,182 @@ struct MergeOutputSummary {
     conflicted: usize,
 }
 
+#[cfg(test)]
 fn summarize_merge_output(output: &str) -> MergeOutputSummary {
     let mut summary = MergeOutputSummary::default();
 
     for line in output.lines() {
-        let status_columns: Vec<char> = line.chars().take(4).collect();
-        if status_columns.len() < 2
-            || !status_columns
-                .iter()
-                .any(|status| matches!(status, 'A' | 'D' | 'U' | 'C' | 'G' | 'M' | 'R' | 'E'))
-            || !status_columns.iter().any(|status| status.is_whitespace())
-        {
-            continue;
-        }
-
-        summary.file_count += 1;
-        if status_columns.contains(&'C') {
-            summary.conflicted += 1;
-        } else if status_columns.first() == Some(&'A') {
-            summary.added += 1;
-        } else if status_columns.first() == Some(&'D') {
-            summary.deleted += 1;
-        } else {
-            summary.updated += 1;
-        }
+        summarize_merge_output_line(line, &mut summary);
     }
 
     summary
+}
+
+fn summarize_merge_output_line(line: &str, summary: &mut MergeOutputSummary) {
+    let status_columns: Vec<char> = line.chars().take(4).collect();
+    if status_columns.len() < 2
+        || !status_columns
+            .iter()
+            .any(|status| matches!(status, 'A' | 'D' | 'U' | 'C' | 'G' | 'M' | 'R' | 'E'))
+        || !status_columns.iter().any(|status| status.is_whitespace())
+    {
+        return;
+    }
+
+    summary.file_count += 1;
+    if status_columns.contains(&'C') {
+        summary.conflicted += 1;
+    } else if status_columns.first() == Some(&'A') {
+        summary.added += 1;
+    } else if status_columns.first() == Some(&'D') {
+        summary.deleted += 1;
+    } else {
+        summary.updated += 1;
+    }
+}
+
+#[derive(Debug)]
+struct MergeOutputAnalysis {
+    output_text: String,
+    output_truncated: bool,
+    line_count: usize,
+    summary: MergeOutputSummary,
+    log_lines: Vec<String>,
+    log_truncated: bool,
+}
+
+#[derive(Debug, Default)]
+struct MergeOutputCollector {
+    preview: Vec<u8>,
+    line: Vec<u8>,
+    total_bytes: u64,
+    line_count: usize,
+    summary: MergeOutputSummary,
+    log_lines: Vec<String>,
+    log_bytes: usize,
+    log_truncated: bool,
+}
+
+impl MergeOutputCollector {
+    fn read_file(&mut self, path: &Path) -> Result<(), NovaError> {
+        let mut file = fs::File::open(path).map_err(|error| {
+            NovaError::command(
+                "MERGE_OUTPUT_READ_FAILED",
+                "无法读取 Merge 命令输出",
+                Some(format!("路径：{}；错误：{error}", path.display())),
+                true,
+            )
+        })?;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer).map_err(|error| {
+                NovaError::command(
+                    "MERGE_OUTPUT_READ_FAILED",
+                    "无法读取 Merge 命令输出",
+                    Some(error.to_string()),
+                    true,
+                )
+            })?;
+            if read == 0 {
+                break;
+            }
+            self.consume_bytes(&buffer[..read])?;
+        }
+        self.finish_line()
+    }
+
+    fn consume_bytes(&mut self, bytes: &[u8]) -> Result<(), NovaError> {
+        self.total_bytes = self.total_bytes.saturating_add(bytes.len() as u64);
+        if self.total_bytes > MAX_MERGE_COMMAND_OUTPUT_BYTES {
+            return Err(NovaError::command(
+                "MERGE_OUTPUT_LIMIT_EXCEEDED",
+                "Merge 命令输出过大",
+                Some(format!(
+                    "完整 Merge 输出超过安全上限 {MAX_MERGE_COMMAND_OUTPUT_BYTES} 字节"
+                )),
+                true,
+            ));
+        }
+        let remaining = MERGE_OUTPUT_PREVIEW_MAX_BYTES.saturating_sub(self.preview.len());
+        if remaining > 0 {
+            self.preview
+                .extend_from_slice(&bytes[..bytes.len().min(remaining)]);
+        }
+        for byte in bytes {
+            self.line.push(*byte);
+            if self.line.len() > MAX_MERGE_OUTPUT_LINE_BYTES {
+                return Err(NovaError::command(
+                    "MERGE_OUTPUT_LINE_LIMIT_EXCEEDED",
+                    "Merge 命令输出单行过长",
+                    Some(format!("单行输出超过 {MAX_MERGE_OUTPUT_LINE_BYTES} 字节")),
+                    true,
+                ));
+            }
+            if *byte == b'\n' {
+                self.finish_line()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish_line(&mut self) -> Result<(), NovaError> {
+        if self.line.is_empty() {
+            return Ok(());
+        }
+        let line = String::from_utf8_lossy(&self.line);
+        let line = line.trim_end_matches(['\r', '\n']);
+        if !line.trim().is_empty() {
+            self.line_count = self.line_count.saturating_add(1);
+            summarize_merge_output_line(line, &mut self.summary);
+            let log_line = line.trim();
+            if self.log_lines.len() >= MAX_RUNTIME_TASK_LOGS
+                || self.log_bytes >= MAX_RUNTIME_TASK_LOG_BYTES
+            {
+                self.log_truncated = true;
+            } else {
+                let remaining = MAX_RUNTIME_TASK_LOG_BYTES - self.log_bytes;
+                let preview = truncate_utf8(log_line, remaining);
+                if preview.len() < log_line.len() {
+                    self.log_truncated = true;
+                }
+                self.log_bytes += preview.len();
+                self.log_lines.push(preview);
+            }
+        }
+        self.line.clear();
+        Ok(())
+    }
+
+    fn finish(self) -> MergeOutputAnalysis {
+        let output_truncated = self.total_bytes > MERGE_OUTPUT_PREVIEW_MAX_BYTES as u64;
+        let output_text = if self.total_bytes == 0 {
+            "svn merge 没有输出。".to_string()
+        } else {
+            bounded_text_preview(
+                String::from_utf8_lossy(&self.preview).into_owned(),
+                MERGE_OUTPUT_PREVIEW_MAX_BYTES,
+                "Merge 输出预览已截断",
+            )
+        };
+        MergeOutputAnalysis {
+            output_text,
+            output_truncated,
+            line_count: self.line_count,
+            summary: self.summary,
+            log_lines: self.log_lines,
+            log_truncated: self.log_truncated,
+        }
+    }
+}
+
+fn analyze_merge_output_files(
+    stdout: &TaskCommandOutputFile,
+    stderr: &TaskCommandOutputFile,
+) -> Result<MergeOutputAnalysis, NovaError> {
+    let mut collector = MergeOutputCollector::default();
+    collector.read_file(stdout.path())?;
+    collector.read_file(stderr.path())?;
+    Ok(collector.finish())
 }
 
 struct ApplyPatchSnapshotFile {
@@ -13350,6 +13540,30 @@ mod tests {
                 conflicted: 1,
             }
         );
+    }
+
+    #[test]
+    fn streams_merge_output_statistics_and_limits_single_lines() {
+        let mut collector = MergeOutputCollector::default();
+        collector
+            .consume_bytes(b"U    src/a.txt\nC    src/conflict.txt\n")
+            .expect("Merge 输出应能流式统计");
+        collector.finish_line().expect("最后一行应能完成");
+        let analysis = collector.finish();
+        assert_eq!(analysis.summary.file_count, 2);
+        assert_eq!(analysis.summary.updated, 1);
+        assert_eq!(analysis.summary.conflicted, 1);
+        assert_eq!(analysis.line_count, 2);
+        assert!(!analysis.output_truncated);
+
+        let mut oversized_line = MergeOutputCollector::default();
+        let error = oversized_line
+            .consume_bytes(&vec![b'x'; MAX_MERGE_OUTPUT_LINE_BYTES + 1])
+            .expect_err("过长单行应被拒绝");
+        assert!(matches!(
+            error,
+            NovaError::Command { code, .. } if code == "MERGE_OUTPUT_LINE_LIMIT_EXCEEDED"
+        ));
     }
 
     #[test]

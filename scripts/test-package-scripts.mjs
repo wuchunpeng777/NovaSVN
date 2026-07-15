@@ -643,6 +643,17 @@ if (
 }
 
 if (
+  !taskRs.includes("run_merge_command(state, task_id, &mut command)") ||
+  !taskRs.includes("MAX_MERGE_COMMAND_OUTPUT_BYTES") ||
+  !taskRs.includes("analyze_merge_output_files") ||
+  !taskRs.includes("Merge 输出预览已截断") ||
+  !mainWorkspace.includes("mergeResult.output_truncated")
+) {
+  console.error("Merge 必须使用有界输出 collector，并明确标记截断预览");
+  failed = true;
+}
+
+if (
   !taskRs.includes('TaskCommandOutputFile::create(task_id, "repository-list", "xml")') ||
   !taskRs.includes("parse_repository_list_xml_reader(") ||
   !taskRs.includes("MAX_REPOSITORY_LIST_XML_BYTES") ||
