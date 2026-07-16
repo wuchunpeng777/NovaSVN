@@ -2820,3 +2820,947 @@ textarea {
     min-width: 892px;
   }
 }
+
+/* macOS 风格视觉层建立在现有布局之上，避免影响业务组件的结构。 */
+:root {
+  color: #1d1d1f;
+  background: #ececef;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue",
+    "Segoe UI", sans-serif;
+  font-size: 13px;
+  line-height: 1.38;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+.versions-workbench {
+  --mac-window: #f5f5f7;
+  --mac-toolbar: #f6f6f8;
+  --mac-sidebar: #ececef;
+  --mac-content: #ffffff;
+  --mac-panel: #f6f6f8;
+  --mac-control: #ffffff;
+  --mac-fill: #e9e9ec;
+  --mac-fill-hover: #dedee2;
+  --mac-text: #1d1d1f;
+  --mac-secondary: #6e6e73;
+  --mac-tertiary: #8e8e93;
+  --mac-separator: #d9d9dc;
+  --mac-hairline: #e8e8eb;
+  --mac-blue: #007aff;
+  --mac-blue-hover: #006bd6;
+  --mac-focus: #b9dcff;
+  --mac-selection: #dceeff;
+  --titlebar-height: 48px;
+  --locationbar-height: 44px;
+  --source-list-width: 224px;
+  --layout-divider-color: var(--mac-separator);
+  color: var(--mac-text);
+  background: var(--mac-window);
+  color-scheme: light;
+  letter-spacing: 0;
+}
+
+.versions-titlebar {
+  gap: 12px;
+  border-bottom-color: var(--mac-separator);
+  background: var(--mac-toolbar);
+  padding: 0 12px;
+}
+
+.window-identity strong {
+  color: var(--mac-text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.window-identity span {
+  margin-top: 1px;
+  color: var(--mac-secondary);
+  font-size: 10.5px;
+}
+
+.mode-switcher,
+.segmented-control {
+  min-height: 29px;
+  border-color: var(--mac-separator);
+  border-radius: 7px;
+  background: var(--mac-fill);
+  padding: 2px;
+}
+
+.mode-switcher button,
+.segmented-control button {
+  height: 25px;
+  border-radius: 5px;
+  background: var(--mac-fill);
+  color: #3a3a3c;
+  padding: 0 12px;
+  font-weight: 500;
+}
+
+.mode-switcher button:hover:not(:disabled),
+.segmented-control button:hover:not(:disabled) {
+  background: #f4f4f6;
+}
+
+.mode-switcher button.active,
+.segmented-control button.active {
+  background: var(--mac-control);
+  color: var(--mac-text);
+}
+
+.toolbar-actions .icon-button {
+  border-color: var(--mac-toolbar);
+  border-radius: 7px;
+  background: var(--mac-toolbar);
+  color: #3a3a3c;
+}
+
+.toolbar-actions .icon-button:not(:disabled):hover {
+  border-color: #e4e4e7;
+  background: #e4e4e7;
+}
+
+.toolbar-actions .icon-button:active:not(:disabled) {
+  background: #d8d8dc;
+}
+
+.toolbar-actions .icon-button:disabled {
+  border-color: var(--mac-toolbar);
+  background: var(--mac-toolbar);
+  color: #b1b1b6;
+}
+
+.toolbar-actions .icon-button:focus-visible,
+.file-browser:focus-visible,
+.file-name:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 3px solid var(--mac-focus);
+  outline-offset: 1px;
+}
+
+.toolbar-divider {
+  background: var(--mac-separator);
+}
+
+.toolbar-actions button,
+.workspace-location button,
+.pane-actions button,
+.button-row button,
+.repository-urlbar button,
+.changes-toolbar button,
+.revision-compare button,
+.advanced-section button,
+.advanced-card button,
+.settings-view button,
+.inspector button,
+.timeline-entry button,
+.repository-row,
+.branch-tags button,
+.quick-picks button,
+.task-list button,
+.property-list button,
+.branch-pick-row button {
+  min-height: 28px;
+  border-color: var(--mac-separator);
+  border-radius: 6px;
+  background: var(--mac-control);
+  color: var(--mac-text);
+  font-weight: 500;
+}
+
+.toolbar-actions button:hover:not(:disabled),
+.workspace-location button:hover:not(:disabled),
+.pane-actions button:hover:not(:disabled),
+.button-row button:hover:not(:disabled),
+.repository-urlbar button:hover:not(:disabled),
+.changes-toolbar button:hover:not(:disabled),
+.revision-compare button:hover:not(:disabled),
+.advanced-section button:hover:not(:disabled),
+.advanced-card button:hover:not(:disabled),
+.settings-view button:hover:not(:disabled),
+.inspector button:hover:not(:disabled) {
+  background: #f7f7f8;
+}
+
+button.primary,
+.workspace-location button.primary,
+.pane-actions button.primary,
+.revision-compare button.primary,
+.advanced-card button.primary,
+.settings-view button.primary,
+.inspector button.primary {
+  border-color: #006ee6;
+  background: var(--mac-blue);
+  color: #ffffff;
+}
+
+button.primary:hover:not(:disabled),
+.workspace-location button.primary:hover:not(:disabled),
+.pane-actions button.primary:hover:not(:disabled),
+.revision-compare button.primary:hover:not(:disabled),
+.advanced-card button.primary:hover:not(:disabled),
+.settings-view button.primary:hover:not(:disabled),
+.inspector button.primary:hover:not(:disabled) {
+  background: var(--mac-blue-hover);
+}
+
+button:disabled,
+button[disabled],
+.repository-row:disabled {
+  border-color: var(--mac-hairline);
+  background: #ededf0;
+  color: var(--mac-tertiary);
+}
+
+input,
+textarea,
+select {
+  min-height: 30px;
+  border-color: #cccccf;
+  border-radius: 6px;
+  background: var(--mac-control);
+  color: var(--mac-text);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--mac-tertiary);
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--mac-blue);
+}
+
+.workspace-location {
+  gap: 7px;
+  border-bottom-color: var(--mac-separator);
+  background: #fafafb;
+  padding: 7px 12px;
+}
+
+.workspace-location input {
+  border-color: #d4d4d7;
+  background: #ffffff;
+}
+
+.source-list {
+  gap: 18px;
+  border-right-color: var(--mac-separator);
+  background: var(--mac-sidebar);
+  padding: 13px 9px;
+}
+
+.source-list section {
+  gap: 4px;
+}
+
+.source-list h2 {
+  padding: 0 8px 3px;
+  color: var(--mac-secondary);
+  font-size: 10.5px;
+  font-weight: 650;
+  text-transform: none;
+}
+
+.source-item {
+  min-height: 44px;
+  border-color: var(--mac-sidebar);
+  border-radius: 6px;
+  background: var(--mac-sidebar);
+  padding: 5px 8px;
+}
+
+.source-item:hover:not(:disabled) {
+  background: #dddde0;
+}
+
+.source-item.active {
+  border-color: var(--mac-blue);
+  background: var(--mac-blue);
+  color: #ffffff;
+}
+
+.source-item.active:hover:not(:disabled) {
+  background: var(--mac-blue);
+}
+
+.source-item strong {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.source-item small,
+.source-item em {
+  color: var(--mac-secondary);
+  font-size: 10.5px;
+}
+
+.source-item.active small,
+.source-item.active em {
+  color: #d8ecff;
+}
+
+.source-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: #c6c8cd;
+  color: #4f5055;
+}
+
+.source-item.active .source-icon {
+  background: #3395ff;
+  color: #ffffff;
+}
+
+.source-sidebar-meta p,
+.source-empty,
+.muted {
+  color: var(--mac-secondary);
+}
+
+.content-pane {
+  background: var(--mac-content);
+}
+
+.pane-header {
+  min-height: 58px;
+  border-bottom-color: var(--mac-hairline);
+  background: var(--mac-content);
+  padding: 10px 16px;
+}
+
+.pane-header h1 {
+  color: var(--mac-text);
+  font-size: 19px;
+  font-weight: 650;
+}
+
+.pane-header p {
+  margin-top: 1px;
+  color: var(--mac-secondary);
+  font-size: 11.5px;
+}
+
+.summary-strip {
+  min-height: 31px;
+  gap: 17px;
+  border-bottom-color: var(--mac-hairline);
+  background: var(--mac-panel);
+  color: var(--mac-secondary);
+  padding: 6px 16px;
+  font-size: 11.5px;
+}
+
+.summary-strip strong {
+  color: var(--mac-text);
+  font-weight: 650;
+}
+
+.changes-toolbar,
+.timeline-filters,
+.repository-urlbar {
+  min-height: 43px;
+  border-bottom-color: var(--mac-hairline);
+  background: var(--mac-content);
+  padding: 6px 12px;
+}
+
+.changes-toolbar {
+  gap: 7px;
+}
+
+.changes-toolbar > input[type="search"] {
+  min-width: 170px;
+}
+
+.work-copy-grid {
+  background: var(--mac-content);
+}
+
+.file-browser {
+  background: var(--mac-content);
+}
+
+.file-table-head,
+.file-row {
+  grid-template-columns: 24px minmax(180px, 1fr) 40px 40px 84px 60px 106px 44px 112px;
+  min-width: 780px;
+}
+
+.file-tree-spacer {
+  min-width: 780px;
+}
+
+.file-table-head,
+.table-head {
+  min-height: 29px;
+  border-bottom-color: var(--mac-separator);
+  background: #f6f6f8;
+  color: var(--mac-secondary);
+  font-size: 10.5px;
+  font-weight: 650;
+  padding: 0 10px;
+}
+
+.file-row {
+  height: 35px;
+  min-height: 35px;
+  border-bottom-color: var(--mac-hairline);
+  background: var(--mac-content);
+  padding: 2px 8px;
+}
+
+.file-row.directory {
+  background: var(--mac-content);
+}
+
+.file-row:hover,
+.repository-row:hover {
+  background: #f5f8fc;
+}
+
+.file-row.selected {
+  background: var(--mac-selection);
+}
+
+.file-row.active-row {
+  outline-color: #5aa8f7;
+}
+
+.file-row.inspected::before {
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--mac-blue);
+}
+
+.selection-cell input,
+.commit-target-control input,
+.versions-workbench input[type="checkbox"] {
+  accent-color: var(--mac-blue);
+}
+
+.file-name {
+  border-radius: 4px;
+}
+
+.file-name strong {
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.tree-affordance.visible::before {
+  border-color: var(--mac-secondary);
+}
+
+.folder-icon::before {
+  border-color: #448fd5;
+  background: #68b4f5;
+}
+
+.folder-icon::after {
+  border-color: #448fd5;
+  background: #55a5ed;
+}
+
+.file-icon::before {
+  border-color: #9aa6b2;
+  background: #ffffff;
+}
+
+.file-icon::after {
+  border-color: #9aa6b2;
+  background: #e7edf3;
+}
+
+.metadata-cell,
+.file-row > span[role="gridcell"] {
+  color: #4d4d51;
+  font-size: 11px;
+}
+
+.status-pill {
+  min-width: 48px;
+  border: 0;
+  border-radius: 5px;
+  background: #e8e8eb;
+  padding: 2px 6px;
+  color: #55555a;
+  font-size: 10px;
+}
+
+.status-modified {
+  background: #fff0bd;
+  color: #755100;
+}
+
+.status-added,
+.status-unversioned {
+  background: #dff3e4;
+  color: #22613a;
+}
+
+.status-deleted,
+.status-missing {
+  background: #fce0df;
+  color: #8b2d2a;
+}
+
+.status-conflicted,
+.status-obstructed,
+.status-renamed {
+  background: #ffe2cb;
+  color: #874200;
+}
+
+.row-primary-action,
+.row-menu-trigger {
+  height: 24px;
+  border-color: var(--mac-separator);
+  border-radius: 5px;
+  background: var(--mac-control);
+  color: #0869c7;
+}
+
+.row-primary-action:hover,
+.row-menu-trigger:hover {
+  border-color: #70b3f7;
+  background: #ebf5ff;
+}
+
+.commit-target-control {
+  color: #0869c7;
+}
+
+.commit-target-control.active {
+  color: #005eb8;
+  font-weight: 600;
+}
+
+.row-action-menu,
+.workspace-context-menu {
+  border-color: var(--mac-separator);
+  border-radius: 8px;
+  background: #fcfcfd;
+}
+
+.row-action-menu button,
+.workspace-context-menu button {
+  background: #fcfcfd;
+}
+
+.row-action-menu button:hover,
+.workspace-context-menu button:hover,
+.workspace-context-menu button:focus-visible {
+  background: var(--mac-blue);
+  color: #ffffff;
+}
+
+.inspector-resizer {
+  border-right-color: var(--mac-separator);
+  border-left: 0;
+  background: var(--mac-panel);
+}
+
+.inspector-resizer:hover,
+.inspector-resizer:focus-visible {
+  background: #cfe5fb;
+}
+
+.inspector {
+  background: var(--mac-panel);
+}
+
+.inspector-tabs {
+  gap: 1px;
+  border-bottom-color: var(--mac-separator);
+  background: var(--mac-panel);
+  padding: 6px 7px 0;
+}
+
+.inspector-tabs button {
+  min-height: 31px;
+  border-bottom-color: var(--mac-panel);
+  border-radius: 5px 5px 0 0;
+  background: var(--mac-panel);
+  color: var(--mac-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.inspector-tabs button:hover {
+  background: #e9e9ec;
+  color: var(--mac-text);
+}
+
+.inspector-tabs button.active {
+  border-bottom-color: var(--mac-blue);
+  background: var(--mac-panel);
+  color: var(--mac-text);
+  font-weight: 600;
+}
+
+.inspector-tab-panel {
+  gap: 0;
+  padding: 0;
+}
+
+.inspector-section {
+  border: 0;
+  border-bottom: 1px solid var(--mac-hairline);
+  border-radius: 0;
+  background: var(--mac-panel);
+  padding: 14px 13px;
+}
+
+.inspector-section:last-child {
+  border-bottom: 0;
+}
+
+.inspector h2,
+.advanced-card h2,
+.settings-view h2,
+.revision-compare h2 {
+  color: var(--mac-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.file-card span,
+.file-card small,
+.information-list dt {
+  color: var(--mac-secondary);
+}
+
+.information-list,
+.blame-table,
+.monaco-diff-viewer,
+.text-diff,
+.revision-result + pre,
+.advanced-card pre {
+  border-color: var(--mac-separator);
+  border-radius: 7px;
+}
+
+.advanced-card,
+.revision-compare,
+.advanced-section {
+  border-color: var(--mac-separator);
+  border-radius: 8px;
+  background: var(--mac-content);
+}
+
+.settings-view article {
+  border: 0;
+  border-bottom: 1px solid var(--mac-hairline);
+  border-radius: 0;
+  background: var(--mac-content);
+}
+
+.timeline-list,
+.repository-table,
+.repository-row,
+.timeline-entry-summary,
+.repository-file-log-panel,
+.repository-file-blame-panel,
+.repository-file-properties-panel {
+  border-color: var(--mac-hairline);
+  background: var(--mac-content);
+}
+
+.timeline-day-header,
+.breadcrumbs,
+.blame-head {
+  border-color: var(--mac-separator);
+  background: var(--mac-panel);
+}
+
+.patch-dialog-backdrop {
+  background: #6a6a6e;
+}
+
+.patch-dialog {
+  border-color: var(--mac-separator);
+  border-radius: 8px;
+  background: #fcfcfd;
+}
+
+.error-notice {
+  border-radius: 7px;
+}
+
+.versions-workbench[data-theme="dark"] {
+  --mac-window: #1c1c1e;
+  --mac-toolbar: #2a2a2c;
+  --mac-sidebar: #262628;
+  --mac-content: #1f1f21;
+  --mac-panel: #29292b;
+  --mac-control: #353538;
+  --mac-fill: #3a3a3d;
+  --mac-fill-hover: #464649;
+  --mac-text: #f2f2f4;
+  --mac-secondary: #a9a9ae;
+  --mac-tertiary: #7c7c82;
+  --mac-separator: #505054;
+  --mac-hairline: #36363a;
+  --mac-blue: #0a84ff;
+  --mac-blue-hover: #2994ff;
+  --mac-focus: #315e88;
+  --mac-selection: #173d61;
+  color: var(--mac-text);
+  background: var(--mac-window);
+  color-scheme: dark;
+  scrollbar-color: #5a5a60 #252527;
+}
+
+.versions-workbench[data-theme="dark"] .versions-titlebar,
+.versions-workbench[data-theme="dark"] .workspace-location,
+.versions-workbench[data-theme="dark"] .inspector-resizer {
+  background: var(--mac-toolbar);
+}
+
+.versions-workbench[data-theme="dark"] .source-list,
+.versions-workbench[data-theme="dark"] .inspector,
+.versions-workbench[data-theme="dark"] .inspector-tabs,
+.versions-workbench[data-theme="dark"] .summary-strip,
+.versions-workbench[data-theme="dark"] .file-table-head,
+.versions-workbench[data-theme="dark"] .table-head,
+.versions-workbench[data-theme="dark"] .timeline-day-header,
+.versions-workbench[data-theme="dark"] .breadcrumbs,
+.versions-workbench[data-theme="dark"] .blame-head {
+  background: var(--mac-panel);
+}
+
+.versions-workbench[data-theme="dark"] .source-list {
+  background: var(--mac-sidebar);
+}
+
+.versions-workbench[data-theme="dark"] .content-pane,
+.versions-workbench[data-theme="dark"] .pane-header,
+.versions-workbench[data-theme="dark"] .changes-toolbar,
+.versions-workbench[data-theme="dark"] .timeline-filters,
+.versions-workbench[data-theme="dark"] .repository-urlbar,
+.versions-workbench[data-theme="dark"] .file-browser,
+.versions-workbench[data-theme="dark"] .file-row,
+.versions-workbench[data-theme="dark"] .file-row.directory,
+.versions-workbench[data-theme="dark"] .timeline-list,
+.versions-workbench[data-theme="dark"] .timeline-entry-summary,
+.versions-workbench[data-theme="dark"] .repository-table,
+.versions-workbench[data-theme="dark"] .repository-row,
+.versions-workbench[data-theme="dark"] .repository-file-log-panel,
+.versions-workbench[data-theme="dark"] .repository-file-blame-panel,
+.versions-workbench[data-theme="dark"] .repository-file-properties-panel,
+.versions-workbench[data-theme="dark"] .advanced-card,
+.versions-workbench[data-theme="dark"] .advanced-section,
+.versions-workbench[data-theme="dark"] .revision-compare {
+  background: var(--mac-content);
+}
+
+.versions-workbench[data-theme="dark"] .window-identity strong,
+.versions-workbench[data-theme="dark"] .pane-header h1,
+.versions-workbench[data-theme="dark"] .summary-strip strong,
+.versions-workbench[data-theme="dark"] .inspector h2,
+.versions-workbench[data-theme="dark"] .advanced-card h2,
+.versions-workbench[data-theme="dark"] .settings-view h2,
+.versions-workbench[data-theme="dark"] .revision-compare h2 {
+  color: var(--mac-text);
+}
+
+.versions-workbench[data-theme="dark"] .window-identity span,
+.versions-workbench[data-theme="dark"] .source-list h2,
+.versions-workbench[data-theme="dark"] .source-item small,
+.versions-workbench[data-theme="dark"] .source-item em,
+.versions-workbench[data-theme="dark"] .source-sidebar-meta p,
+.versions-workbench[data-theme="dark"] .pane-header p,
+.versions-workbench[data-theme="dark"] .summary-strip,
+.versions-workbench[data-theme="dark"] .muted,
+.versions-workbench[data-theme="dark"] .file-card span,
+.versions-workbench[data-theme="dark"] .file-card small,
+.versions-workbench[data-theme="dark"] .information-list dt,
+.versions-workbench[data-theme="dark"] .metadata-cell,
+.versions-workbench[data-theme="dark"] .file-row > span[role="gridcell"] {
+  color: var(--mac-secondary);
+}
+
+.versions-workbench[data-theme="dark"] .mode-switcher,
+.versions-workbench[data-theme="dark"] .segmented-control,
+.versions-workbench[data-theme="dark"] .mode-switcher button,
+.versions-workbench[data-theme="dark"] .segmented-control button {
+  border-color: var(--mac-separator);
+  background: var(--mac-fill);
+  color: #d6d6da;
+}
+
+.versions-workbench[data-theme="dark"] .mode-switcher button:hover:not(:disabled),
+.versions-workbench[data-theme="dark"] .segmented-control button:hover:not(:disabled) {
+  background: #464649;
+}
+
+.versions-workbench[data-theme="dark"] .mode-switcher button.active,
+.versions-workbench[data-theme="dark"] .segmented-control button.active {
+  background: #5a5a5f;
+  color: #ffffff;
+}
+
+.versions-workbench[data-theme="dark"] .toolbar-actions .icon-button {
+  border-color: var(--mac-toolbar);
+  background: var(--mac-toolbar);
+  color: #dedee2;
+}
+
+.versions-workbench[data-theme="dark"] .toolbar-actions .icon-button:hover:not(:disabled) {
+  border-color: #4a4a4e;
+  background: #4a4a4e;
+}
+
+.versions-workbench[data-theme="dark"] .toolbar-actions button,
+.versions-workbench[data-theme="dark"] .workspace-location button,
+.versions-workbench[data-theme="dark"] .pane-actions button,
+.versions-workbench[data-theme="dark"] .button-row button,
+.versions-workbench[data-theme="dark"] .repository-urlbar button,
+.versions-workbench[data-theme="dark"] .changes-toolbar button,
+.versions-workbench[data-theme="dark"] .revision-compare button,
+.versions-workbench[data-theme="dark"] .advanced-section button,
+.versions-workbench[data-theme="dark"] .advanced-card button,
+.versions-workbench[data-theme="dark"] .settings-view button,
+.versions-workbench[data-theme="dark"] .inspector button,
+.versions-workbench[data-theme="dark"] input,
+.versions-workbench[data-theme="dark"] textarea,
+.versions-workbench[data-theme="dark"] select {
+  border-color: var(--mac-separator);
+  background: var(--mac-control);
+  color: var(--mac-text);
+}
+
+.versions-workbench[data-theme="dark"] button.primary,
+.versions-workbench[data-theme="dark"] .workspace-location button.primary,
+.versions-workbench[data-theme="dark"] .pane-actions button.primary,
+.versions-workbench[data-theme="dark"] .revision-compare button.primary,
+.versions-workbench[data-theme="dark"] .advanced-card button.primary,
+.versions-workbench[data-theme="dark"] .settings-view button.primary,
+.versions-workbench[data-theme="dark"] .inspector button.primary {
+  border-color: #1688f7;
+  background: var(--mac-blue);
+  color: #ffffff;
+}
+
+.versions-workbench[data-theme="dark"] button:disabled,
+.versions-workbench[data-theme="dark"] button[disabled],
+.versions-workbench[data-theme="dark"] .repository-row:disabled {
+  border-color: var(--mac-hairline);
+  background: #303033;
+  color: var(--mac-tertiary);
+}
+
+.versions-workbench[data-theme="dark"] .source-item {
+  border-color: var(--mac-sidebar);
+  background: var(--mac-sidebar);
+}
+
+.versions-workbench[data-theme="dark"] .source-item:hover:not(.active):not(:disabled) {
+  background: #323236;
+}
+
+.versions-workbench[data-theme="dark"] .source-item.active,
+.versions-workbench[data-theme="dark"] .source-item.active:hover:not(:disabled) {
+  border-color: var(--mac-blue);
+  background: var(--mac-blue);
+}
+
+.versions-workbench[data-theme="dark"] .source-item.active small,
+.versions-workbench[data-theme="dark"] .source-item.active em {
+  color: #d8ecff;
+}
+
+.versions-workbench[data-theme="dark"] .file-row:hover,
+.versions-workbench[data-theme="dark"] .repository-row:hover {
+  background: #2b3035;
+}
+
+.versions-workbench[data-theme="dark"] .file-row.selected {
+  background: var(--mac-selection);
+}
+
+.versions-workbench[data-theme="dark"] .inspector-section,
+.versions-workbench[data-theme="dark"] .settings-view article {
+  border-color: var(--mac-hairline);
+  background: var(--mac-panel);
+}
+
+.versions-workbench[data-theme="dark"] .row-action-menu,
+.versions-workbench[data-theme="dark"] .workspace-context-menu,
+.versions-workbench[data-theme="dark"] .patch-dialog {
+  border-color: var(--mac-separator);
+  background: #2f2f32;
+}
+
+.versions-workbench[data-theme="dark"] .row-action-menu button,
+.versions-workbench[data-theme="dark"] .workspace-context-menu button {
+  background: #2f2f32;
+  color: var(--mac-text);
+}
+
+.versions-workbench[data-theme="dark"] .row-action-menu button:hover,
+.versions-workbench[data-theme="dark"] .workspace-context-menu button:hover,
+.versions-workbench[data-theme="dark"] .workspace-context-menu button:focus-visible {
+  background: var(--mac-blue);
+  color: #ffffff;
+}
+
+.versions-workbench[data-theme="dark"] .file-icon::before {
+  border-color: #72727a;
+  background: #38383b;
+}
+
+.versions-workbench[data-theme="dark"] .file-icon::after {
+  border-color: #72727a;
+  background: #55555b;
+}
+
+.versions-workbench[data-theme="dark"] .status-modified {
+  background: #4b3d16;
+  color: #ffd76b;
+}
+
+.versions-workbench[data-theme="dark"] .status-added,
+.versions-workbench[data-theme="dark"] .status-unversioned {
+  background: #1e442b;
+  color: #83e29c;
+}
+
+.versions-workbench[data-theme="dark"] .status-deleted,
+.versions-workbench[data-theme="dark"] .status-missing {
+  background: #4a2527;
+  color: #ffaaa7;
+}
+
+.versions-workbench[data-theme="dark"] .status-conflicted,
+.versions-workbench[data-theme="dark"] .status-obstructed,
+.versions-workbench[data-theme="dark"] .status-renamed {
+  background: #4c301d;
+  color: #ffbc7d;
+}
+
+@media (max-width: 1180px) {
+  .file-table-head,
+  .file-row {
+    grid-template-columns: 24px minmax(165px, 1fr) 38px 38px 80px 56px 98px 42px 104px;
+    min-width: 740px;
+  }
+
+  .file-tree-spacer {
+    min-width: 740px;
+  }
+}

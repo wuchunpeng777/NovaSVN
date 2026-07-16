@@ -4,6 +4,7 @@
     Download,
     Ellipsis,
     FileUp,
+    GitBranch,
     FolderOpen,
     GitCompareArrows,
     GitCommitHorizontal,
@@ -659,7 +660,7 @@
   const sourceListWidth = 220;
   const inspectorDividerWidth = 6;
   const fileBrowserMinWidth = 360;
-  let inspectorWidth = 400;
+  let inspectorWidth = 360;
   let inspectorMaximumWidth = inspectorMaxWidth;
   let resizingInspector = false;
   let systemPrefersDark = false;
@@ -2340,7 +2341,9 @@
           class:active={view.id === "changes"}
           on:click={() => onSelectView("changes")}
         >
-          <span class="source-icon">W</span>
+          <span class="source-icon" aria-hidden="true">
+            <FolderOpen size={16} strokeWidth={1.8} />
+          </span>
           <span>
             <strong>{workspace ? basename(workspace.working_copy_root) : "打开工作副本"}</strong>
             <small>{workspace?.working_copy_root ?? "选择或输入本地项目目录"}</small>
@@ -2354,7 +2357,9 @@
               class="source-item"
               on:click={() => onOpenBranchPoolEntry(entry.local_path)}
             >
-              <span class="source-icon">B</span>
+              <span class="source-icon" aria-hidden="true">
+                <GitBranch size={16} strokeWidth={1.8} />
+              </span>
               <span>
                 <strong>{branchName(entry)}</strong>
                 <small>{entry.local_path}</small>

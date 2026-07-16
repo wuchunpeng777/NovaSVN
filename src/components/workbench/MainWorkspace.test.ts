@@ -107,14 +107,14 @@ describe("MainWorkspace", () => {
       const resizer = screen.getByRole("slider", { name: "调整右侧面板宽度" });
       expect(resizer).toHaveAttribute("aria-valuemin", "300");
       expect(resizer).toHaveAttribute("aria-valuemax", "374");
-      expect(resizer).toHaveAttribute("aria-valuenow", "374");
+      expect(resizer).toHaveAttribute("aria-valuenow", "360");
       expect(resizer).toHaveAttribute("aria-orientation", "horizontal");
 
       await fireEvent.keyDown(resizer, { key: "ArrowLeft" });
-      expect(resizer).toHaveAttribute("aria-valuenow", "350");
+      expect(resizer).toHaveAttribute("aria-valuenow", "336");
 
       await fireEvent.keyDown(resizer, { key: "ArrowRight" });
-      expect(resizer).toHaveAttribute("aria-valuenow", "374");
+      expect(resizer).toHaveAttribute("aria-valuenow", "360");
 
       await fireEvent.keyDown(resizer, { key: "Home" });
       expect(resizer).toHaveAttribute("aria-valuenow", "300");
