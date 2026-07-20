@@ -151,7 +151,7 @@ describe("StandaloneCommitWindow", () => {
     expect(screen.getByLabelText("修改内容")).toHaveTextContent("+const value = 2;");
   });
 
-  it("从提交历史回填日志并提交用户选择的路径", async () => {
+  it("通过按钮从本地缓存获取历史日志并提交用户选择的路径", async () => {
     localStorage.setItem(
       "novasvn:commit-message-settings",
       JSON.stringify({ template: "默认模板", history: ["修复历史问题", "旧日志"] }),
@@ -159,8 +159,12 @@ describe("StandaloneCommitWindow", () => {
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
     await screen.findByText("other.ts");
 
-    const history = screen.getByRole("combobox", { name: "最近提交信息" });
+    await fireEvent.click(screen.getByRole("button", { name: "获取历史日志" }));
+    const dialog = screen.getByRole("dialog", { name: "选择历史提交日志" });
+    expect(within(dialog).getByText("历史日志来自本地缓存")).toBeInTheDocument();
+    const history = within(dialog).getByRole("listbox", { name: "历史提交日志" });
     await fireEvent.change(history, { target: { value: "修复历史问题" } });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "填充提交日志" }));
     expect(screen.getByRole("textbox", { name: "提交日志" })).toHaveValue("修复历史问题");
 
     const filePane = screen.getByLabelText("选择提交文件");
@@ -180,6 +184,16 @@ describe("StandaloneCommitWindow", () => {
     expect(JSON.parse(localStorage.getItem("novasvn:commit-message-settings") ?? "{}")).toMatchObject({
       history: ["修复历史问题", "旧日志"],
     });
+  });
+
+  it("本地没有缓存时显示历史日志空状态", async () => {
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    await screen.findByText("other.ts");
+
+    await fireEvent.click(screen.getByRole("button", { name: "获取历史日志" }));
+    const dialog = screen.getByRole("dialog", { name: "选择历史提交日志" });
+    expect(within(dialog).getByText("本地暂无缓存的提交日志")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "填充提交日志" })).toBeDisabled();
   });
 
   it("启动时读取 Log 窗口选择的提交日志", async () => {

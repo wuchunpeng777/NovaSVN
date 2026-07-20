@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { CheckSquare, RefreshCw, RotateCcw, Square, X } from "@lucide/svelte";
+  import { CheckSquare, History, RefreshCw, RotateCcw, Square, X } from "@lucide/svelte";
   import {
     cancelTask,
     createCommitTask,
@@ -59,6 +59,7 @@
   let commitTemplate = "";
   let commitMessage = "";
   let selectedHistoryMessage = "";
+  let historyPickerOpen = false;
   let initializing = true;
   let scanning = false;
   let error: CommandError | null = null;
@@ -308,10 +309,23 @@
     diffLoading = false;
   }
 
-  function applyHistoryMessage() {
-    if (selectedHistoryMessage) {
-      commitMessage = selectedHistoryMessage;
+  function openHistoryPicker() {
+    history = readCommitMessageSettings().history;
+    selectedHistoryMessage = history[0] ?? "";
+    historyPickerOpen = true;
+  }
+
+  function closeHistoryPicker() {
+    historyPickerOpen = false;
+  }
+
+  function useSelectedHistoryMessage() {
+    const message = selectedHistoryMessage.trim();
+    if (!message) {
+      return;
     }
+    commitMessage = message;
+    historyPickerOpen = false;
   }
 
   async function openFileContextMenu(event: MouseEvent, file: ChangedFile) {
@@ -403,6 +417,8 @@
     }
     if (revertCandidate) {
       cancelRevert();
+    } else if (historyPickerOpen) {
+      closeHistoryPicker();
     } else {
       closeFileContextMenu();
     }
@@ -730,18 +746,10 @@
           <h2>提交信息</h2>
           <p>提交前请确认文件选择和日志内容</p>
         </div>
+        <button type="button" on:click={openHistoryPicker}>
+          <History size={15} aria-hidden="true" /> 获取历史日志
+        </button>
       </header>
-      {#if history.length > 0}
-        <label class="history-field">
-          <span>历史日志</span>
-          <select bind:value={selectedHistoryMessage} on:change={applyHistoryMessage} aria-label="最近提交信息">
-            <option value="">从历史选择</option>
-            {#each history as message}
-              <option value={message}>{message}</option>
-            {/each}
-          </select>
-        </label>
-      {/if}
       <textarea
         bind:value={commitMessage}
         rows="8"
@@ -784,6 +792,52 @@
     <button type="button" role="menuitem" class="danger-action" on:click={requestContextFileRevert}>
       <RotateCcw size={15} aria-hidden="true" /> Revert
     </button>
+  </div>
+{/if}
+
+{#if historyPickerOpen}
+  <div class="history-backdrop" role="presentation" on:click|self={closeHistoryPicker}>
+    <div
+      class="history-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-label="选择历史提交日志"
+    >
+      <header>
+        <div>
+          <h2>选择历史提交日志</h2>
+          <p>历史日志来自本地缓存</p>
+        </div>
+        <button type="button" class="dialog-close" aria-label="关闭历史日志" title="关闭" on:click={closeHistoryPicker}>
+          <X size={16} aria-hidden="true" />
+        </button>
+      </header>
+      {#if history.length > 0}
+        <select
+          class="history-select"
+          size="8"
+          aria-label="历史提交日志"
+          bind:value={selectedHistoryMessage}
+        >
+          {#each history as message}
+            <option value={message}>{message}</option>
+          {/each}
+        </select>
+      {:else}
+        <div class="history-empty">本地暂无缓存的提交日志</div>
+      {/if}
+      <footer>
+        <button type="button" on:click={closeHistoryPicker}>取消</button>
+        <button
+          type="button"
+          class="primary"
+          disabled={!selectedHistoryMessage.trim()}
+          on:click={useSelectedHistoryMessage}
+        >
+          填充提交日志
+        </button>
+      </footer>
+    </div>
   </div>
 {/if}
 
@@ -908,7 +962,6 @@
   .diff-content :global(.monaco-diff-viewer) { width: 100%; height: 100%; border: 0; border-radius: 0; }
   .raw-diff { width: 100%; height: 100%; overflow: auto; box-sizing: border-box; margin: 0; padding: 10px 12px; background: var(--panel-subtle); color: var(--text); font-size: 11px; line-height: 1.45; user-select: text; -webkit-user-select: text; }
   .empty-files, .empty-diff, .empty-output { padding: 28px 16px; color: var(--secondary); text-align: center; font-size: 12px; }
-  .history-field { display: grid; gap: 6px; color: var(--secondary); font-size: 12px; }
   select, textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 4px; background: var(--control); color: var(--text); font: inherit; font-size: 13px; }
   select { min-height: 32px; padding: 5px 8px; }
   textarea { resize: vertical; min-height: 140px; padding: 9px 10px; line-height: 1.5; }
@@ -947,6 +1000,73 @@
   .danger-action,
   .danger-primary {
     color: #a12a2a;
+  }
+
+  .history-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: grid;
+    background: rgb(10 18 26 / 35%);
+    padding: 24px;
+    place-items: center;
+  }
+
+  .history-dialog {
+    display: grid;
+    grid-template-rows: auto minmax(180px, 1fr) auto;
+    width: min(560px, 100%);
+    max-height: min(560px, 100%);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    padding: 16px;
+  }
+
+  .history-dialog > header,
+  .history-dialog > footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .history-dialog > header {
+    align-items: flex-start;
+    padding-bottom: 12px;
+  }
+
+  .history-dialog > header p {
+    margin-top: 5px;
+    color: var(--secondary);
+    font-size: 12px;
+  }
+
+  .history-dialog > footer {
+    justify-content: flex-end;
+    padding-top: 12px;
+  }
+
+  .history-select {
+    min-height: 220px;
+    padding: 4px;
+    font-size: 12px;
+  }
+
+  .history-select option {
+    padding: 7px 8px;
+    white-space: pre-wrap;
+  }
+
+  .history-empty {
+    display: grid;
+    min-height: 220px;
+    border: 1px solid var(--border);
+    background: var(--panel-subtle);
+    color: var(--secondary);
+    font-size: 12px;
+    place-items: center;
   }
 
   .revert-backdrop {
