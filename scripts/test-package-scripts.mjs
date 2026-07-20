@@ -115,8 +115,16 @@ const standaloneLogWindow = fs.readFileSync(
   path.join(root, "src", "components", "StandaloneLogWindow.svelte"),
   "utf8",
 );
+const standaloneBlameWindow = fs.readFileSync(
+  path.join(root, "src", "components", "StandaloneBlameWindow.svelte"),
+  "utf8",
+);
 const standaloneCommitWindow = fs.readFileSync(
   path.join(root, "src", "components", "StandaloneCommitWindow.svelte"),
+  "utf8",
+);
+const commitMessageHistory = fs.readFileSync(
+  path.join(root, "src", "lib", "commit-message-history.ts"),
   "utf8",
 );
 const standaloneUpdateWindow = fs.readFileSync(
@@ -316,6 +324,17 @@ for (const action of ["Commit", "Log", "Update"]) {
       failed = true;
     }
   }
+}
+
+const blameRegistryPath = "Software\\Classes\\*\\shell\\NovaSVN.Blame";
+if (
+  !nsisHooks.includes(`WriteRegStr HKCU "${blameRegistryPath}"`) ||
+  !nsisHooks.includes(`DeleteRegKey HKCU "${blameRegistryPath}"`) ||
+  nsisHooks.includes("Software\\Classes\\Directory\\shell\\NovaSVN.Blame") ||
+  nsisHooks.includes("Software\\Classes\\Directory\\Background\\shell\\NovaSVN.Blame")
+) {
+  console.error("Windows Explorer Blame 必须仅注册到文件右键菜单并支持完整卸载");
+  failed = true;
 }
 
 if (
@@ -1230,6 +1249,14 @@ for (const action of systemIntegrationActions.filter(
   }
 }
 
+if (
+  !windowsExplorerScript.includes('Action = "blame"; FilesOnly = $true') ||
+  !windowsExplorerScript.includes('$item.FilesOnly -eq $true')
+) {
+  console.error("Windows Explorer 脚本必须仅为文件注册 Blame 菜单");
+  failed = true;
+}
+
 const standaloneLogStartupStart = appSvelte.indexOf('if (intent.action === "log")');
 const standaloneLogStartupEnd = appSvelte.indexOf('startupSurface = "main"', standaloneLogStartupStart);
 const standaloneLogStartup = appSvelte.slice(standaloneLogStartupStart, standaloneLogStartupEnd);
@@ -1248,6 +1275,32 @@ if (
   !workspaceRs.includes("pub fn get_path_svn_log(")
 ) {
   console.error("Explorer Log 必须打开不恢复工作副本、不扫描状态的独立日志窗口");
+  failed = true;
+}
+
+const standaloneBlameStartupStart = appSvelte.indexOf('if (intent.action === "blame")');
+const standaloneBlameStartupEnd = appSvelte.indexOf(
+  'if (intent.action === "log")',
+  standaloneBlameStartupStart,
+);
+const standaloneBlameStartup = appSvelte.slice(
+  standaloneBlameStartupStart,
+  standaloneBlameStartupEnd,
+);
+if (
+  standaloneBlameStartupStart < 0 ||
+  standaloneBlameStartupEnd < 0 ||
+  !standaloneBlameStartup.includes('startupSurface = "blame"') ||
+  !standaloneBlameStartup.includes("standaloneBlameReady = true") ||
+  standaloneBlameStartup.includes("workspaceStore") ||
+  !appSvelte.includes("<StandaloneBlameWindow") ||
+  !standaloneBlameWindow.includes("inspectUpdateTarget") ||
+  !standaloneBlameWindow.includes("getSvnBlame") ||
+  !standaloneBlameWindow.includes("max_lines: 5000") ||
+  !tauriLib.includes('Some("blame") => Some("NovaSVN Blame")') ||
+  !systemIntegrationRs.includes('"blame"')
+) {
+  console.error("Explorer Blame 必须仅为文件打开不恢复工作副本的独立逐行历史窗口");
   failed = true;
 }
 
@@ -1270,12 +1323,19 @@ if (
   !standaloneCommitWindow.includes("inspectUpdateTarget") ||
   !standaloneCommitWindow.includes("scanWorkspaceStatus") ||
   !standaloneCommitWindow.includes("createCommitTask") ||
+  !standaloneCommitWindow.includes("createSvnOperationTask") ||
+  !standaloneCommitWindow.includes('kind: "revert_file"') ||
+  !standaloneCommitWindow.includes("on:contextmenu") ||
   !standaloneCommitWindow.includes("selectedPaths") ||
   !standaloneCommitWindow.includes("commitMessage") ||
-  !standaloneCommitWindow.includes("novasvn:commit-message-settings") ||
+  !standaloneCommitWindow.includes("readCommitMessageSettings") ||
+  !standaloneCommitWindow.includes("consumePendingCommitMessage") ||
+  !standaloneLogWindow.includes("setPendingCommitMessage") ||
+  !commitMessageHistory.includes("novasvn:commit-message-settings") ||
+  !commitMessageHistory.includes("novasvn:pending-commit-message") ||
   !tauriLib.includes('Some("commit") => Some("NovaSVN Commit")')
 ) {
-  console.error("Explorer Commit 必须打开独立提交窗口并支持文件选择、日志历史和真实提交任务");
+  console.error("Explorer Commit 必须打开独立提交窗口并支持文件选择、跨窗口日志历史和真实提交任务");
   failed = true;
 }
 

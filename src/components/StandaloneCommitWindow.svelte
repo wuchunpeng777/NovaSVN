@@ -1,13 +1,20 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
-  import { CheckSquare, RefreshCw, Square } from "@lucide/svelte";
+  import { onDestroy, onMount, tick } from "svelte";
+  import { CheckSquare, RefreshCw, RotateCcw, Square, X } from "@lucide/svelte";
   import {
     cancelTask,
     createCommitTask,
+    createSvnOperationTask,
     getTask,
     inspectUpdateTarget,
     scanWorkspaceStatus,
   } from "../lib/api";
+  import {
+    COMMIT_MESSAGE_SELECTED_EVENT,
+    consumePendingCommitMessage,
+    readCommitMessageSettings,
+    writeCommitMessageSettings,
+  } from "../lib/commit-message-history";
   import type {
     ChangedFile,
     CommandError,
@@ -22,12 +29,18 @@
   export let svnExecutable: string | undefined = undefined;
   export let themeMode: "system" | "light" | "dark" = "system";
 
-  const commitSettingsKey = "novasvn:commit-message-settings";
   const terminalStatuses: TaskStatus[] = ["success", "failed", "cancelled", "interrupted"];
 
   let target: UpdateTargetSummary | null = null;
   let status: WorkingCopyStatus | null = null;
   let commitTask: Task | null = null;
+  let revertTask: Task | null = null;
+  let revertingPath: string | null = null;
+  let revertNotice: string | null = null;
+  let revertCandidate: ChangedFile | null = null;
+  let fileContextMenu: { file: ChangedFile; x: number; y: number } | null = null;
+  let fileContextMenuElement: HTMLDivElement | null = null;
+  let revertDialogElement: HTMLDivElement | null = null;
   let selectedPaths = new Set<string>();
   let history: string[] = [];
   let commitTemplate = "";
@@ -42,6 +55,7 @@
   let recordedTaskId: string | null = null;
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
+  let pendingMessageTimer: number | null = null;
 
   $: resolvedTheme =
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
@@ -50,18 +64,27 @@
   );
   $: selectedCount = committableFiles.filter((file) => selectedPaths.has(file.path)).length;
   $: commitRunning = isTaskRunning(commitTask);
-  $: taskStatus = taskStatusLabel(commitTask, initializing);
+  $: revertRunning = isTaskRunning(revertTask);
+  $: operationRunning = commitRunning || revertRunning;
+  $: taskStatus = revertRunning ? "正在 Revert" : taskStatusLabel(commitTask, initializing);
   $: allSelected = committableFiles.length > 0 && selectedCount === committableFiles.length;
   $: commitDisabled =
     initializing ||
     scanning ||
-    commitRunning ||
+    operationRunning ||
     !commitMessage.trim() ||
     selectedCount === 0 ||
     !target;
 
   onMount(() => {
     loadCommitSettings();
+    applyPendingCommitMessage();
+    window.addEventListener(COMMIT_MESSAGE_SELECTED_EVENT, applyPendingCommitMessage);
+    pendingMessageTimer = window.setInterval(applyPendingCommitMessage, 500);
+    window.addEventListener("click", closeFileContextMenu);
+    window.addEventListener("blur", closeFileContextMenu);
+    window.addEventListener("resize", closeFileContextMenu);
+    window.addEventListener("keydown", handleWindowKeydown);
     if (typeof window.matchMedia === "function") {
       themeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
       systemPrefersDark = themeMediaQuery.matches;
@@ -73,6 +96,15 @@
   onDestroy(() => {
     generation += 1;
     clearPollTimer();
+    if (pendingMessageTimer !== null) {
+      window.clearInterval(pendingMessageTimer);
+      pendingMessageTimer = null;
+    }
+    window.removeEventListener(COMMIT_MESSAGE_SELECTED_EVENT, applyPendingCommitMessage);
+    window.removeEventListener("click", closeFileContextMenu);
+    window.removeEventListener("blur", closeFileContextMenu);
+    window.removeEventListener("resize", closeFileContextMenu);
+    window.removeEventListener("keydown", handleWindowKeydown);
     themeMediaQuery?.removeEventListener("change", handleThemeChange);
   });
 
@@ -81,32 +113,23 @@
   }
 
   function loadCommitSettings() {
-    try {
-      const raw = window.localStorage.getItem(commitSettingsKey);
-      if (!raw) {
-        return;
-      }
-      const parsed = JSON.parse(raw) as { template?: unknown; history?: unknown };
-      commitTemplate = typeof parsed.template === "string" ? parsed.template : "";
-      history = Array.isArray(parsed.history)
-        ? parsed.history.filter((item): item is string => typeof item === "string").slice(0, 8)
-        : [];
-      commitMessage = commitTemplate;
-    } catch {
-      history = [];
-      commitTemplate = "";
-    }
+    const settings = readCommitMessageSettings();
+    commitTemplate = settings.template;
+    history = settings.history;
+    commitMessage = commitTemplate;
   }
 
   function saveCommitSettings(nextHistory: string[]) {
-    try {
-      window.localStorage.setItem(
-        commitSettingsKey,
-        JSON.stringify({ template: commitTemplate, history: nextHistory }),
-      );
-    } catch {
-      // 本地历史写入失败不应阻断提交结果。
+    writeCommitMessageSettings({ template: commitTemplate, history: nextHistory });
+  }
+
+  function applyPendingCommitMessage() {
+    const pending = consumePendingCommitMessage();
+    if (!pending) {
+      return;
     }
+    commitMessage = pending;
+    selectedHistoryMessage = pending;
   }
 
   function recordCommitHistory(message: string) {
@@ -127,6 +150,11 @@
     status = null;
     target = null;
     commitTask = null;
+    revertTask = null;
+    revertingPath = null;
+    revertNotice = null;
+    revertCandidate = null;
+    closeFileContextMenu();
     selectedPaths = new Set();
     recordedTaskId = null;
 
@@ -159,7 +187,7 @@
     }
   }
 
-  async function refreshStatus(currentGeneration = generation) {
+  async function refreshStatus(currentGeneration = generation, preserveSelection = false) {
     if (!target) {
       return;
     }
@@ -180,7 +208,9 @@
       const inScope = nextStatus.files
         .filter((file) => isCommittable(file) && isPathInCommitTarget(file.path))
         .map((file) => file.path);
-      selectedPaths = new Set(inScope);
+      selectedPaths = preserveSelection
+        ? new Set(inScope.filter((path) => selectedPaths.has(path)))
+        : new Set(inScope);
     } catch (caught) {
       if (currentGeneration === generation) {
         statusError = caught as CommandError;
@@ -216,6 +246,100 @@
     }
   }
 
+  async function openFileContextMenu(event: MouseEvent, file: ChangedFile) {
+    event.preventDefault();
+    if (operationRunning || scanning || initializing) {
+      return;
+    }
+    revertCandidate = null;
+    fileContextMenu = {
+      file,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 172)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 54)),
+    };
+    await tick();
+    fileContextMenuElement?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  }
+
+  function closeFileContextMenu() {
+    fileContextMenu = null;
+  }
+
+  function handleFileContextMenuKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeFileContextMenu();
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
+      return;
+    }
+    const buttons = Array.from(
+      fileContextMenuElement?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [],
+    );
+    if (buttons.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    const currentIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const offset = event.key === "ArrowDown" ? 1 : -1;
+    buttons[(currentIndex + offset + buttons.length) % buttons.length].focus();
+  }
+
+  async function requestContextFileRevert() {
+    const file = fileContextMenu?.file ?? null;
+    closeFileContextMenu();
+    if (!file) {
+      return;
+    }
+    revertCandidate = file;
+    await tick();
+    revertDialogElement?.focus();
+  }
+
+  function cancelRevert() {
+    if (!revertRunning) {
+      revertCandidate = null;
+    }
+  }
+
+  async function confirmRevert() {
+    if (!target || !revertCandidate || operationRunning) {
+      return;
+    }
+    const path = revertCandidate.path;
+    revertCandidate = null;
+    revertingPath = path;
+    revertNotice = null;
+    revertTask = null;
+    error = null;
+    statusError = null;
+    try {
+      const task = await createSvnOperationTask({
+        working_copy_root: target.working_copy_root,
+        kind: "revert_file",
+        file_path: path,
+        svn_executable: svnExecutable?.trim() || undefined,
+      });
+      revertTask = task;
+      schedulePoll(task.task_id, "revert", generation, 0);
+    } catch (caught) {
+      revertingPath = null;
+      error = caught as CommandError;
+    }
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape") {
+      return;
+    }
+    if (revertCandidate) {
+      cancelRevert();
+    } else {
+      closeFileContextMenu();
+    }
+  }
+
   async function submitCommit() {
     if (commitDisabled || !target) {
       return;
@@ -233,7 +357,7 @@
       });
       commitTask = task;
       recordedTaskId = null;
-      schedulePoll(task.task_id, generation, 0);
+      schedulePoll(task.task_id, "commit", generation, 0);
     } catch (caught) {
       error = caught as CommandError;
     }
@@ -246,7 +370,7 @@
     try {
       commitTask = await cancelTask(commitTask.task_id);
       if (isTaskRunning(commitTask)) {
-        schedulePoll(commitTask.task_id, generation, 200);
+        schedulePoll(commitTask.task_id, "commit", generation, 200);
       } else {
         clearPollTimer();
       }
@@ -255,23 +379,67 @@
     }
   }
 
-  function schedulePoll(taskId: string, currentGeneration: number, delay: number) {
-    clearPollTimer();
-    pollTimer = window.setTimeout(() => void pollTask(taskId, currentGeneration), delay);
+  async function stopRevert() {
+    if (!revertTask || !revertRunning) {
+      return;
+    }
+    try {
+      revertTask = await cancelTask(revertTask.task_id);
+      if (isTaskRunning(revertTask)) {
+        schedulePoll(revertTask.task_id, "revert", generation, 200);
+      } else {
+        clearPollTimer();
+        const revertedPath = revertingPath;
+        revertingPath = null;
+        if (revertTask.status === "success") {
+          revertNotice = revertedPath ? `已 Revert ${revertedPath}` : "Revert 完成";
+          await refreshStatus(generation, true);
+        }
+      }
+    } catch (caught) {
+      error = caught as CommandError;
+    }
   }
 
-  async function pollTask(taskId: string, currentGeneration: number) {
+  function schedulePoll(
+    taskId: string,
+    role: "commit" | "revert",
+    currentGeneration: number,
+    delay: number,
+  ) {
+    clearPollTimer();
+    pollTimer = window.setTimeout(() => void pollTask(taskId, role, currentGeneration), delay);
+  }
+
+  async function pollTask(
+    taskId: string,
+    role: "commit" | "revert",
+    currentGeneration: number,
+  ) {
     try {
       const task = await getTask(taskId);
       if (currentGeneration !== generation) {
         return;
       }
-      commitTask = task;
+      if (role === "commit") {
+        commitTask = task;
+      } else {
+        revertTask = task;
+      }
       if (!terminalStatuses.includes(task.status)) {
-        schedulePoll(taskId, currentGeneration, 350);
+        schedulePoll(taskId, role, currentGeneration, 350);
         return;
       }
       clearPollTimer();
+      if (role === "revert") {
+        const revertedPath = revertingPath;
+        revertingPath = null;
+        if (task.status === "success") {
+          revertNotice = revertedPath ? `已 Revert ${revertedPath}` : "Revert 完成";
+          await refreshStatus(currentGeneration, true);
+        }
+        return;
+      }
       if (task.status === "success" && recordedTaskId !== task.task_id) {
         recordedTaskId = task.task_id;
         recordCommitHistory(commitMessage);
@@ -355,13 +523,17 @@
       <p title={targetPath}>{target?.target_path ?? targetPath}</p>
     </div>
     <div class="commit-actions">
-      <span class:running={commitRunning}>{taskStatus}</span>
+      <span class:running={operationRunning}>{taskStatus}</span>
       {#if commitRunning}
         <button type="button" on:click={stopCommit}>
           <Square size={14} fill="currentColor" aria-hidden="true" /> 停止
         </button>
+      {:else if revertRunning}
+        <button type="button" on:click={stopRevert}>
+          <Square size={14} fill="currentColor" aria-hidden="true" /> 停止
+        </button>
       {:else}
-        <button type="button" disabled={initializing || scanning} on:click={startCommit}>
+        <button type="button" disabled={initializing || scanning || operationRunning} on:click={startCommit}>
           <RefreshCw size={15} aria-hidden="true" /> 刷新
         </button>
       {/if}
@@ -376,13 +548,19 @@
 
   <section
     class="commit-notices"
-    class:has-notices={Boolean(error || statusError || commitTask?.error)}
+    class:has-notices={Boolean(error || statusError || commitTask?.error || revertTask?.error || revertNotice)}
     aria-label="Commit 错误"
   >
     <ErrorNotice {error} />
     <ErrorNotice error={statusError} />
     {#if commitTask?.error}
       <div class="inline-error" role="alert">{commitTask.error}</div>
+    {/if}
+    {#if revertTask?.error}
+      <div class="inline-error" role="alert">{revertTask.error}</div>
+    {/if}
+    {#if revertNotice}
+      <div class="revert-notice" role="status">{revertNotice}</div>
     {/if}
   </section>
 
@@ -394,23 +572,27 @@
           <p>{committableFiles.length} 个可提交文件</p>
         </div>
         <div class="selection-actions">
-          <button type="button" on:click={selectAll} disabled={committableFiles.length === 0 || allSelected}>
+          <button type="button" on:click={selectAll} disabled={operationRunning || committableFiles.length === 0 || allSelected}>
             <CheckSquare size={15} aria-hidden="true" /> 全选
           </button>
-          <button type="button" on:click={clearSelection} disabled={selectedCount === 0}>
+          <button type="button" on:click={clearSelection} disabled={operationRunning || selectedCount === 0}>
             清除
           </button>
         </div>
       </header>
       <div class="file-list">
         {#each committableFiles as file (file.path)}
-          <label class="file-item">
+          <label
+            class="file-item"
+            class:reverting={revertingPath === file.path}
+            on:contextmenu={(event) => openFileContextMenu(event, file)}
+          >
             <input
               type="checkbox"
               aria-label={file.path}
               checked={selectedPaths.has(file.path)}
               on:change={() => toggleFile(file.path)}
-              disabled={commitRunning}
+              disabled={operationRunning}
             />
             <span class="file-status">{statusLabel(file)}</span>
             <span class="file-path" title={file.path}>{file.path}</span>
@@ -448,7 +630,7 @@
         rows="8"
         placeholder="请输入提交日志"
         aria-label="提交日志"
-        disabled={commitRunning}
+        disabled={operationRunning}
       ></textarea>
       <button type="button" class="primary" on:click={submitCommit} disabled={commitDisabled}>
         提交 {selectedCount} 个文件
@@ -470,6 +652,53 @@
       {/if}
     </aside>
   </div>
+
+{#if fileContextMenu}
+  <div
+    bind:this={fileContextMenuElement}
+    class="file-context-menu"
+    role="menu"
+    tabindex="-1"
+    aria-label={`文件菜单 ${fileContextMenu.file.path}`}
+    style={`left: ${fileContextMenu.x}px; top: ${fileContextMenu.y}px`}
+    on:click|stopPropagation
+    on:keydown={handleFileContextMenuKeydown}
+  >
+    <button type="button" role="menuitem" class="danger-action" on:click={requestContextFileRevert}>
+      <RotateCcw size={15} aria-hidden="true" /> Revert
+    </button>
+  </div>
+{/if}
+
+{#if revertCandidate}
+  <div class="revert-backdrop" role="presentation" on:click|self={cancelRevert}>
+    <div
+      bind:this={revertDialogElement}
+      class="revert-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="revert-dialog-title"
+      tabindex="-1"
+    >
+      <header>
+        <div>
+          <h2 id="revert-dialog-title">确认 Revert</h2>
+          <p>本地修改将被丢弃，NovaSVN 无法撤销此操作。</p>
+        </div>
+        <button type="button" class="dialog-close" aria-label="关闭 Revert 确认" title="关闭" on:click={cancelRevert}>
+          <X size={16} aria-hidden="true" />
+        </button>
+      </header>
+      <code title={revertCandidate.path}>{revertCandidate.path}</code>
+      <footer>
+        <button type="button" on:click={cancelRevert}>取消</button>
+        <button type="button" class="danger-primary" on:click={confirmRevert}>
+          <RotateCcw size={15} aria-hidden="true" /> 确认 Revert
+        </button>
+      </footer>
+    </div>
+  </div>
+{/if}
 </main>
 
 <style>
@@ -534,7 +763,9 @@
   .commit-notices { display: grid; gap: 8px; padding: 0 22px; background: var(--background); }
   .commit-notices.has-notices { padding-top: 10px; }
   .inline-error { border: 1px solid #df8b8b; background: #fff1f1; color: #a12a2a; padding: 8px 10px; font-size: 12px; }
+  .revert-notice { border: 1px solid #91bf9a; background: #eff9f1; color: #276b35; padding: 8px 10px; font-size: 12px; }
   [data-theme="dark"] .inline-error { background: #3b2424; color: #ffb0b0; }
+  [data-theme="dark"] .revert-notice { background: #213629; color: #9de3aa; }
   .commit-layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr); gap: 14px; min-height: 0; padding: 14px 22px 20px; }
   .file-pane, .message-pane { min-width: 0; min-height: 0; border: 1px solid var(--border); background: var(--panel); }
   .file-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); }
@@ -545,6 +776,7 @@
   .file-list { overflow: auto; padding: 6px; }
   .file-item { display: grid; grid-template-columns: 18px 72px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 36px; padding: 5px 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); cursor: pointer; font-size: 12px; }
   .file-item:hover { background: var(--panel-subtle); }
+  .file-item.reverting { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
   .file-item input { width: 15px; height: 15px; accent-color: var(--accent); }
   .file-status { color: var(--accent); font-weight: 600; }
   .file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -560,6 +792,107 @@
   .output-lines { overflow: auto; padding: 6px 10px; }
   .output-line { padding: 3px 0; font-size: 11px; }
   code { font-family: Consolas, "Courier New", monospace; white-space: pre-wrap; word-break: break-word; }
+
+  .file-context-menu {
+    position: fixed;
+    z-index: 20;
+    display: grid;
+    width: 164px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel);
+    padding: 4px;
+  }
+
+  .file-context-menu button {
+    justify-content: flex-start;
+    width: 100%;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .file-context-menu button:hover,
+  .file-context-menu button:focus-visible {
+    border-color: transparent;
+    background: var(--panel-subtle);
+  }
+
+  .danger-action,
+  .danger-primary {
+    color: #a12a2a;
+  }
+
+  .revert-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: grid;
+    background: rgb(10 18 26 / 35%);
+    padding: 24px;
+    place-items: center;
+  }
+
+  .revert-dialog {
+    display: grid;
+    gap: 18px;
+    width: min(520px, 100%);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    padding: 16px;
+  }
+
+  .revert-dialog > header,
+  .revert-dialog > footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .revert-dialog > header {
+    align-items: flex-start;
+  }
+
+  .revert-dialog > header p {
+    margin-top: 5px;
+    color: var(--secondary);
+    font-size: 12px;
+  }
+
+  .revert-dialog > code {
+    overflow-wrap: anywhere;
+    border: 1px solid var(--border);
+    background: var(--panel-subtle);
+    padding: 10px;
+    font-size: 12px;
+  }
+
+  .revert-dialog > footer {
+    justify-content: flex-end;
+  }
+
+  .dialog-close {
+    display: grid;
+    width: 30px;
+    flex: 0 0 30px;
+    padding: 0;
+    place-items: center;
+  }
+
+  button.danger-primary {
+    border-color: #b93d3d;
+    background: #b93d3d;
+    color: #ffffff;
+  }
+
+  button.danger-primary:hover:not(:disabled) {
+    border-color: #9f2f2f;
+    background: #9f2f2f;
+    color: #ffffff;
+  }
+
   @media (max-width: 800px) {
     .commit-titlebar { padding: 14px; }
     .commit-summary, .commit-notices { padding-left: 14px; padding-right: 14px; }

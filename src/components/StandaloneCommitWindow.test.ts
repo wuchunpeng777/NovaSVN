@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../lib/api", () => ({
   cancelTask: vi.fn(),
   createCommitTask: vi.fn(),
+  createSvnOperationTask: vi.fn(),
   getTask: vi.fn(),
   inspectUpdateTarget: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
@@ -11,6 +12,7 @@ vi.mock("../lib/api", () => ({
 
 import {
   createCommitTask,
+  createSvnOperationTask,
   getTask,
   inspectUpdateTarget,
   scanWorkspaceStatus,
@@ -19,6 +21,7 @@ import type { ChangedFile, Task, WorkingCopyStatus } from "../types/api";
 import StandaloneCommitWindow from "./StandaloneCommitWindow.svelte";
 
 const createCommitTaskMock = vi.mocked(createCommitTask);
+const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
 const getTaskMock = vi.mocked(getTask);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
@@ -26,6 +29,7 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 beforeEach(() => {
   localStorage.clear();
   createCommitTaskMock.mockReset();
+  createSvnOperationTaskMock.mockReset();
   getTaskMock.mockReset();
   inspectUpdateTargetMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
@@ -47,6 +51,9 @@ beforeEach(() => {
     }),
   );
   createCommitTaskMock.mockResolvedValue(makeTask("pending"));
+  createSvnOperationTaskMock.mockResolvedValue(
+    makeTask("pending", [], { task_id: "revert-1", title: "撤销文件 other.ts" }),
+  );
   getTaskMock.mockResolvedValue(makeTask("success", ["Committed revision 21."]));
 });
 
@@ -106,6 +113,46 @@ describe("StandaloneCommitWindow", () => {
     });
   });
 
+  it("启动时读取 Log 窗口选择的提交日志", async () => {
+    localStorage.setItem("novasvn:pending-commit-message", "从 Log 窗口选择的日志");
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "提交日志" })).toHaveValue(
+        "从 Log 窗口选择的日志",
+      );
+    });
+    expect(localStorage.getItem("novasvn:pending-commit-message")).toBeNull();
+  });
+
+  it("右键文件确认后执行 Revert 并刷新列表", async () => {
+    getTaskMock.mockResolvedValue(
+      makeTask("success", [], { task_id: "revert-1", title: "撤销文件 other.ts" }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const filePath = await screen.findByText("other.ts");
+
+    await fireEvent.contextMenu(filePath, { clientX: 220, clientY: 180 });
+    const menu = screen.getByRole("menu", { name: "文件菜单 other.ts" });
+    await fireEvent.click(within(menu).getByRole("menuitem", { name: "Revert" }));
+
+    const dialog = screen.getByRole("dialog", { name: "确认 Revert" });
+    expect(within(dialog).getByText("other.ts")).toBeInTheDocument();
+    expect(createSvnOperationTaskMock).not.toHaveBeenCalled();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "确认 Revert" }));
+
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "revert_file",
+        file_path: "other.ts",
+        svn_executable: undefined,
+      });
+    });
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status")).toHaveTextContent("已 Revert other.ts");
+  });
+
   it("没有日志或文件选择时禁用提交", async () => {
     scanWorkspaceStatusMock.mockResolvedValue(makeStatus({ files: [] }));
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
@@ -144,7 +191,11 @@ function makeTarget(overrides = {}) {
   };
 }
 
-function makeTask(status: Task["status"], messages: string[] = []): Task {
+function makeTask(
+  status: Task["status"],
+  messages: string[] = [],
+  overrides: Partial<Task> = {},
+): Task {
   return {
     task_id: "commit-1",
     title: "提交工作副本",
@@ -154,6 +205,7 @@ function makeTask(status: Task["status"], messages: string[] = []): Task {
     result: null,
     created_at: 1,
     updated_at: 2,
+    ...overrides,
   };
 }
 

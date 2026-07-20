@@ -37,7 +37,15 @@ fn normalize_action(action: String) -> Option<String> {
     let value = action.trim();
     if matches!(
         value,
-        "open" | "commit" | "update" | "diff" | "log" | "revert" | "cleanup" | "branch-workspace"
+        "open"
+            | "commit"
+            | "update"
+            | "diff"
+            | "log"
+            | "blame"
+            | "revert"
+            | "cleanup"
+            | "branch-workspace"
     ) {
         Some(value.to_string())
     } else {
@@ -65,6 +73,19 @@ mod tests {
 
         assert_eq!(intent.action.as_deref(), Some("commit"));
         assert_eq!(intent.path.as_deref(), Some("C:\\wc"));
+    }
+
+    #[test]
+    fn accepts_file_blame_action() {
+        let intent = startup_intent_from_args([
+            "--novasvn-action",
+            "blame",
+            "--novasvn-path",
+            "C:\\wc\\src\\main.rs",
+        ]);
+
+        assert_eq!(intent.action.as_deref(), Some("blame"));
+        assert_eq!(intent.path.as_deref(), Some("C:\\wc\\src\\main.rs"));
     }
 
     #[test]

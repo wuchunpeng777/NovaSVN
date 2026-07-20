@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { ChevronDown, ChevronUp, RefreshCw } from "@lucide/svelte";
+  import { ChevronDown, ChevronUp, RefreshCw, X } from "@lucide/svelte";
   import { getPathSvnLog } from "../lib/api";
+  import {
+    cacheCommitMessages,
+    readCommitMessageSettings,
+    setPendingCommitMessage,
+  } from "../lib/commit-message-history";
   import type { CommandError, SvnLog, SvnLogEntry } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
 
@@ -18,6 +23,10 @@
   let dateToFilter = "";
   let limit = 50;
   let expandedRevisions = new Set<string>();
+  let cachedCommitMessages: string[] = [];
+  let historyPickerOpen = false;
+  let selectedHistoryMessage = "";
+  let historyNotice: string | null = null;
   let requestGeneration = 0;
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
@@ -40,6 +49,7 @@
   );
 
   onMount(() => {
+    cachedCommitMessages = readCommitMessageSettings().history;
     if (typeof window.matchMedia === "function") {
       themeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
       systemPrefersDark = themeMediaQuery.matches;
@@ -88,6 +98,9 @@
         return;
       }
       log = append && log ? mergeLogPage(log, page) : page;
+      cachedCommitMessages = cacheCommitMessages(
+        page.entries.map((entry) => entry.message).filter(Boolean),
+      );
     } catch (caught) {
       if (generation !== requestGeneration) {
         return;
@@ -197,6 +210,27 @@
     dateToFilter = "";
   }
 
+  function openHistoryPicker() {
+    cachedCommitMessages = readCommitMessageSettings().history;
+    selectedHistoryMessage = cachedCommitMessages[0] ?? "";
+    historyNotice = null;
+    historyPickerOpen = true;
+  }
+
+  function closeHistoryPicker() {
+    historyPickerOpen = false;
+  }
+
+  function useSelectedHistoryMessage() {
+    if (!selectedHistoryMessage.trim()) {
+      return;
+    }
+    setPendingCommitMessage(selectedHistoryMessage);
+    cachedCommitMessages = cacheCommitMessages([selectedHistoryMessage]);
+    historyNotice = "已填充到提交日志";
+    historyPickerOpen = false;
+  }
+
   function togglePaths(revision: string) {
     const next = new Set(expandedRevisions);
     if (next.has(revision)) {
@@ -247,6 +281,13 @@
         on:click={() => loadLog(true)}
       >
         加载更多
+      </button>
+      <button
+        type="button"
+        disabled={cachedCommitMessages.length === 0}
+        on:click={openHistoryPicker}
+      >
+        获取历史日志
       </button>
     </div>
   </header>
@@ -329,6 +370,49 @@
     {/if}
   </section>
 </main>
+
+{#if historyNotice}
+  <div class="history-notice" role="status">{historyNotice}</div>
+{/if}
+
+{#if historyPickerOpen}
+  <div class="history-backdrop" role="presentation" on:click|self={closeHistoryPicker}>
+    <div
+      class="history-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-label="选择历史提交日志"
+    >
+      <header>
+        <h2>选择历史提交日志</h2>
+        <button type="button" class="icon-button" aria-label="关闭" title="关闭" on:click={closeHistoryPicker}>
+          <X size={16} aria-hidden="true" />
+        </button>
+      </header>
+      <select
+        class="history-select"
+        size="8"
+        aria-label="历史提交日志"
+        bind:value={selectedHistoryMessage}
+      >
+        {#each cachedCommitMessages as message}
+          <option value={message}>{message}</option>
+        {/each}
+      </select>
+      <footer>
+        <button type="button" on:click={closeHistoryPicker}>取消</button>
+        <button
+          type="button"
+          class="primary-action"
+          disabled={!selectedHistoryMessage.trim()}
+          on:click={useSelectedHistoryMessage}
+        >
+          填充提交日志
+        </button>
+      </footer>
+    </div>
+  </div>
+{/if}
 
 <style>
   .standalone-log {
@@ -592,6 +676,88 @@
     min-height: 180px;
     color: var(--secondary);
     place-items: center;
+  }
+
+  .history-notice {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 3;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--panel);
+    box-shadow: 0 4px 14px rgb(0 0 0 / 14%);
+    color: var(--text);
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  .history-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    display: grid;
+    background: rgb(10 18 26 / 28%);
+    padding: 24px;
+    place-items: center;
+  }
+
+  .history-dialog {
+    display: grid;
+    grid-template-rows: auto minmax(180px, 1fr) auto;
+    width: min(560px, 100%);
+    max-height: min(560px, 100%);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    box-shadow: 0 12px 34px rgb(0 0 0 / 22%);
+    color: var(--text);
+    padding: 14px;
+  }
+
+  .history-dialog > header,
+  .history-dialog > footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .history-dialog > header {
+    padding-bottom: 10px;
+  }
+
+  .history-dialog > footer {
+    justify-content: flex-end;
+    padding-top: 10px;
+  }
+
+  .history-dialog h2 {
+    margin: 0;
+    font-size: 15px;
+  }
+
+  .history-select {
+    min-height: 220px;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--control);
+    color: var(--text);
+    padding: 4px;
+    font: inherit;
+    font-size: 12px;
+  }
+
+  .history-select option {
+    padding: 7px 8px;
+    white-space: pre-wrap;
+  }
+
+  .primary-action {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
   }
 
   @media (max-width: 1040px) {

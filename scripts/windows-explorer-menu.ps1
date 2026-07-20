@@ -20,6 +20,7 @@ $actions = @(
   @{ Key = "Update"; Label = "NovaSVN Update"; Action = "update" },
   @{ Key = "Diff"; Label = "NovaSVN Diff"; Action = "diff" },
   @{ Key = "Log"; Label = "NovaSVN Log"; Action = "log" },
+  @{ Key = "Blame"; Label = "NovaSVN Blame"; Action = "blame"; FilesOnly = $true },
   @{ Key = "Revert"; Label = "NovaSVN Revert"; Action = "revert" },
   @{ Key = "Cleanup"; Label = "NovaSVN Cleanup"; Action = "cleanup" },
   @{ Key = "BranchWorkspace"; Label = "NovaSVN Branch Workspace"; Action = "branch-workspace" }
@@ -33,6 +34,10 @@ $roots = @(
 
 foreach ($root in $roots) {
   foreach ($item in $actions) {
+    if ($item.FilesOnly -eq $true -and $root -ne "HKCU:\Software\Classes\*\shell") {
+      continue
+    }
+
     $keyPath = Join-Path $root "NovaSVN.$($item.Key)"
     if ($Mode -eq "Uninstall") {
       Remove-Item -LiteralPath $keyPath -Recurse -Force -ErrorAction SilentlyContinue

@@ -5,6 +5,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { startDrag } from "@crabnebula/tauri-plugin-drag";
   import dragPreviewIcon from "../src-tauri/icons/icon.png?inline";
+  import StandaloneBlameWindow from "./components/StandaloneBlameWindow.svelte";
   import StandaloneCommitWindow from "./components/StandaloneCommitWindow.svelte";
   import StandaloneLogWindow from "./components/StandaloneLogWindow.svelte";
   import StandaloneUpdateWindow from "./components/StandaloneUpdateWindow.svelte";
@@ -60,9 +61,10 @@
 
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
-  let startupSurface: "loading" | "main" | "commit" | "log" | "update" = hasTauriRuntime()
-    ? "loading"
-    : "main";
+  let startupSurface: "loading" | "main" | "blame" | "commit" | "log" | "update" =
+    hasTauriRuntime() ? "loading" : "main";
+  let standaloneBlamePath = "";
+  let standaloneBlameReady = false;
   let standaloneCommitPath = "";
   let standaloneCommitReady = false;
   let standaloneLogPath = "";
@@ -221,7 +223,7 @@
 
   function queueAppMenuStateSync(
     state: AppMenuState,
-    surface: "loading" | "main" | "commit" | "log" | "update",
+    surface: "loading" | "main" | "blame" | "commit" | "log" | "update",
   ) {
     if (!hasTauriRuntime() || surface !== "main") {
       return;
@@ -2081,6 +2083,17 @@
 
     window.addEventListener("contextmenu", preventNativeContextMenu, true);
 
+    if (intent.action === "blame") {
+      standaloneBlamePath = intent.path?.trim() ?? "";
+      startupSurface = "blame";
+      if ($appSettingsStore.svnAuthenticationMode !== "password") {
+        await applySvnAuthentication();
+      }
+      await svnStore.detectWithInputFallback();
+      standaloneBlameReady = true;
+      return;
+    }
+
     if (intent.action === "log") {
       standaloneLogPath = intent.path?.trim() ?? "";
       startupSurface = "log";
@@ -2173,13 +2186,16 @@
 </script>
 
 {#if startupSurface === "loading" ||
+  (startupSurface === "blame" && !standaloneBlameReady) ||
   (startupSurface === "commit" && !standaloneCommitReady) ||
   (startupSurface === "log" && !standaloneLogReady) ||
   (startupSurface === "update" && !standaloneUpdateReady)}
   <main class="startup-loading" aria-label="NovaSVN 启动中" role="status">
     <span></span>
     <p>
-      {startupSurface === "commit"
+      {startupSurface === "blame"
+        ? "正在准备 SVN Blame..."
+        : startupSurface === "commit"
         ? "正在准备 SVN Commit..."
         : startupSurface === "log"
         ? "正在准备 SVN Log..."
@@ -2188,6 +2204,12 @@
           : "正在启动 NovaSVN..."}
     </p>
   </main>
+{:else if startupSurface === "blame"}
+  <StandaloneBlameWindow
+    targetPath={standaloneBlamePath}
+    svnExecutable={currentSvnExecutable()}
+    themeMode={$appSettingsStore.themeMode}
+  />
 {:else if startupSurface === "commit"}
   <StandaloneCommitWindow
     targetPath={standaloneCommitPath}

@@ -34,6 +34,10 @@
   WriteRegStr HKCU "Software\Classes\*\shell\NovaSVN.Log" "MUIVerb" "NovaSVN Log"
   WriteRegStr HKCU "Software\Classes\*\shell\NovaSVN.Log" "Icon" "$INSTDIR\${MAINBINARYNAME}.exe,0"
   WriteRegStr HKCU "Software\Classes\*\shell\NovaSVN.Log\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --novasvn-action $\"log$\" --novasvn-path $\"%1$\""
+
+  WriteRegStr HKCU "Software\Classes\*\shell\NovaSVN.Blame" "MUIVerb" "NovaSVN Blame"
+  WriteRegStr HKCU "Software\Classes\*\shell\NovaSVN.Blame" "Icon" "$INSTDIR\${MAINBINARYNAME}.exe,0"
+  WriteRegStr HKCU "Software\Classes\*\shell\NovaSVN.Blame\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --novasvn-action $\"blame$\" --novasvn-path $\"%1$\""
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
@@ -48,4 +52,6 @@
   DeleteRegKey HKCU "Software\Classes\Directory\shell\NovaSVN.Log"
   DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\NovaSVN.Log"
   DeleteRegKey HKCU "Software\Classes\*\shell\NovaSVN.Log"
+
+  DeleteRegKey HKCU "Software\Classes\*\shell\NovaSVN.Blame"
 !macroend

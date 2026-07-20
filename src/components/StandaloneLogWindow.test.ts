@@ -12,6 +12,7 @@ import StandaloneLogWindow from "./StandaloneLogWindow.svelte";
 const getPathSvnLogMock = vi.mocked(getPathSvnLog);
 
 beforeEach(() => {
+  localStorage.clear();
   getPathSvnLogMock.mockReset();
 });
 
@@ -99,6 +100,28 @@ describe("StandaloneLogWindow", () => {
     });
     expect(screen.getByText("Older change")).toBeInTheDocument();
     expect(screen.getAllByText("r20")).toHaveLength(1);
+  });
+
+  it("选择历史日志并缓存为待填充的提交日志", async () => {
+    getPathSvnLogMock.mockResolvedValue(
+      makeLog({
+        entries: [
+          makeEntry("20", "alice", "2026-07-10T10:00:00Z", "Add log window"),
+          makeEntry("19", "bob", "2026-07-09T10:00:00Z", "Fix context menu"),
+        ],
+      }),
+    );
+    render(StandaloneLogWindow, { props: { targetPath: "C:\\repo" } });
+    await screen.findByText("Fix context menu");
+
+    await fireEvent.click(screen.getByRole("button", { name: "获取历史日志" }));
+    const dialog = screen.getByRole("dialog", { name: "选择历史提交日志" });
+    const history = within(dialog).getByRole("listbox", { name: "历史提交日志" });
+    await fireEvent.change(history, { target: { value: "Fix context menu" } });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "填充提交日志" }));
+
+    expect(localStorage.getItem("novasvn:pending-commit-message")).toBe("Fix context menu");
+    expect(screen.getByRole("status")).toHaveTextContent("已填充到提交日志");
   });
 
   it("显示可重试的 SVN 错误", async () => {

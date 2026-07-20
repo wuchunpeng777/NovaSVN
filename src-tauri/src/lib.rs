@@ -1043,6 +1043,7 @@ pub fn run() {
             let standalone_title = match startup_intent.action.as_deref() {
                 Some("commit") => Some("NovaSVN Commit"),
                 Some("log") => Some("NovaSVN Log"),
+                Some("blame") => Some("NovaSVN Blame"),
                 Some("update") => Some("NovaSVN Update"),
                 _ => None,
             };
