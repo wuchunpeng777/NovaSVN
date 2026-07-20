@@ -135,7 +135,7 @@ function createAppSettingsStore() {
     const settings = loadAppSettings();
     update((state) => ({ ...state, ...settings, loading: false }));
     svnStore.setExecutableInput(settings.svnExecutable);
-    workspaceStore.setCommitTemplate(settings.commitTemplate);
+    workspaceStore.setCommitTemplate(settings.commitTemplate, false);
   }
 
   function setField<K extends keyof AppSettingsState>(field: K, value: AppSettingsState[K]) {
@@ -2296,18 +2296,20 @@ function createWorkspaceStore() {
     });
   }
 
-  function setCommitTemplate(value: string) {
+  function setCommitTemplate(value: string, persist = true) {
     update((state) => {
       const commitTemplate = value;
-      saveCommitMessageSettings({
-        template: commitTemplate,
-        history: state.commitHistory,
-      });
       const commitMessage = state.commitMessage.trim() ? state.commitMessage : commitTemplate;
-      saveWorkspaceDraftFromState({
-        ...state,
-        commitMessage,
-      });
+      if (persist) {
+        saveCommitMessageSettings({
+          template: commitTemplate,
+          history: state.commitHistory,
+        });
+        saveWorkspaceDraftFromState({
+          ...state,
+          commitMessage,
+        });
+      }
 
       return {
         ...state,

@@ -356,6 +356,23 @@ describe("isSameRepositoryUrl", () => {
 });
 
 describe("appSettingsStore", () => {
+  it("加载应用设置时保留本地缓存的提交历史", () => {
+    window.localStorage.setItem(
+      "novasvn:commit-message-settings",
+      JSON.stringify({ template: "旧模板", history: ["应保留的缓存日志"] }),
+    );
+    window.localStorage.setItem(
+      "novasvn:app-settings",
+      JSON.stringify({ commitTemplate: "新模板" }),
+    );
+
+    appSettingsStore.load();
+
+    expect(JSON.parse(window.localStorage.getItem("novasvn:commit-message-settings") ?? "{}"))
+      .toEqual({ template: "旧模板", history: ["应保留的缓存日志"] });
+    expect(get(workspaceStore).commitTemplate).toBe("新模板");
+  });
+
   it("saves external tool and branch pool settings and validates invalid paths", () => {
     appSettingsStore.setField("externalDiffTool", "code");
     appSettingsStore.setField("externalMergeTool", "C:\\Tools\\merge.exe");
