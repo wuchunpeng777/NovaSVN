@@ -88,6 +88,19 @@ pub(crate) fn command(executable: &str) -> Command {
     command_with_configuration(executable, &authentication, &certificate_failures)
 }
 
+pub(crate) fn configure_hidden_console(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
 pub fn configure_authentication(
     request: ConfigureSvnAuthenticationRequest,
 ) -> Result<SvnAuthenticationStatus, NovaError> {
@@ -265,6 +278,7 @@ fn command_with_configuration(
     certificate_failures: &[SvnCertificateFailure],
 ) -> Command {
     let mut command = Command::new(executable);
+    configure_hidden_console(&mut command);
     command.arg("--non-interactive");
     if let Some(username) = authentication.username.as_deref() {
         command.arg("--username").arg(username);
@@ -367,7 +381,9 @@ fn detect_version_with_fallbacks(
 }
 
 fn detect_version(executable: &str) -> Result<String, NovaError> {
-    let output = Command::new(executable)
+    let mut command = Command::new(executable);
+    configure_hidden_console(&mut command);
+    let output = command
         .args(["--version", "--quiet"])
         .output()
         .map_err(|error| {
@@ -444,12 +460,17 @@ fn resolve_executable_path(executable: &str) -> Option<String> {
         return Some(executable.to_string());
     }
 
-    let output = if cfg!(windows) {
-        Command::new("where").arg(executable).output()
+    let mut command = if cfg!(windows) {
+        let mut command = Command::new("where");
+        command.arg(executable);
+        command
     } else {
-        Command::new("which").arg(executable).output()
-    }
-    .ok()?;
+        let mut command = Command::new("which");
+        command.arg(executable);
+        command
+    };
+    configure_hidden_console(&mut command);
+    let output = command.output().ok()?;
 
     if !output.status.success() {
         return None;

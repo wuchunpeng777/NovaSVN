@@ -84,6 +84,7 @@ const releaseArtifactsTest = fs.readFileSync(
   "utf8",
 );
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, "src-tauri", "tauri.conf.json"), "utf8"));
+const nsisHooks = fs.readFileSync(path.join(root, "src-tauri", "nsis-hooks.nsh"), "utf8");
 const tauriCargo = fs.readFileSync(path.join(root, "src-tauri", "Cargo.toml"), "utf8");
 const defaultCapability = fs.readFileSync(
   path.join(root, "src-tauri", "capabilities", "default.json"),
@@ -108,6 +109,18 @@ const frontendApi = fs.readFileSync(path.join(root, "src", "lib", "api.ts"), "ut
 const appMenuSource = fs.readFileSync(path.join(root, "src", "lib", "app-menu.ts"), "utf8");
 const mainWorkspace = fs.readFileSync(
   path.join(root, "src", "components", "workbench", "MainWorkspace.svelte"),
+  "utf8",
+);
+const standaloneLogWindow = fs.readFileSync(
+  path.join(root, "src", "components", "StandaloneLogWindow.svelte"),
+  "utf8",
+);
+const standaloneCommitWindow = fs.readFileSync(
+  path.join(root, "src", "components", "StandaloneCommitWindow.svelte"),
+  "utf8",
+);
+const standaloneUpdateWindow = fs.readFileSync(
+  path.join(root, "src", "components", "StandaloneUpdateWindow.svelte"),
   "utf8",
 );
 const appStore = fs.readFileSync(path.join(root, "src", "stores", "app.ts"), "utf8");
@@ -160,11 +173,8 @@ const systemIntegrationActions = [
   "branch-workspace",
 ];
 const startupActionViewChecks = [
-  { action: "commit", view: "changes" },
-  { action: "update", view: "changes", operation: "update" },
   { action: "cleanup", view: "changes", operation: "cleanup" },
   { action: "diff", view: "changes" },
-  { action: "log", view: "history", extra: "setSvnLogFileOnly(true)" },
   { action: "revert", view: "changes" },
   { action: "branch-workspace", view: "branches" },
 ];
@@ -284,6 +294,39 @@ for (const target of requiredBundleTargets) {
 
 if (!packageJson.scripts?.["release:windows"]?.includes("--bundles nsis")) {
   console.error("release:windows 必须构建 NSIS 安装包");
+  failed = true;
+}
+
+if (tauriConfig.bundle?.windows?.nsis?.installerHooks !== "nsis-hooks.nsh") {
+  console.error("Windows NSIS 安装包必须加载 Explorer 菜单钩子");
+  failed = true;
+}
+
+for (const action of ["Commit", "Log", "Update"]) {
+  for (const registryPath of [
+    `Software\\Classes\\Directory\\shell\\NovaSVN.${action}`,
+    `Software\\Classes\\Directory\\Background\\shell\\NovaSVN.${action}`,
+    `Software\\Classes\\*\\shell\\NovaSVN.${action}`,
+  ]) {
+    if (
+      !nsisHooks.includes(`WriteRegStr HKCU "${registryPath}"`) ||
+      !nsisHooks.includes(`DeleteRegKey HKCU "${registryPath}"`)
+    ) {
+      console.error(`Windows 安装/卸载缺少 Explorer ${action} 注册表入口：${registryPath}`);
+      failed = true;
+    }
+  }
+}
+
+if (
+  !nsisHooks.includes('"MUIVerb" "NovaSVN Commit"') ||
+  !nsisHooks.includes('"MUIVerb" "NovaSVN Log"') ||
+  !nsisHooks.includes('"MUIVerb" "NovaSVN Update"') ||
+  !nsisHooks.includes("--novasvn-action") ||
+  !nsisHooks.includes("%1") ||
+  !nsisHooks.includes("%V")
+) {
+  console.error("Windows Explorer Log 菜单必须传递文件、目录和目录背景路径");
   failed = true;
 }
 
@@ -1178,11 +1221,92 @@ if (
   failed = true;
 }
 
-for (const action of systemIntegrationActions.filter((value) => value !== "open")) {
+for (const action of systemIntegrationActions.filter(
+  (value) => value !== "open" && value !== "commit" && value !== "log" && value !== "update",
+)) {
   if (!appSvelte.includes(`case "${action}":`)) {
     console.error(`启动意图分发缺少 action：${action}`);
     failed = true;
   }
+}
+
+const standaloneLogStartupStart = appSvelte.indexOf('if (intent.action === "log")');
+const standaloneLogStartupEnd = appSvelte.indexOf('startupSurface = "main"', standaloneLogStartupStart);
+const standaloneLogStartup = appSvelte.slice(standaloneLogStartupStart, standaloneLogStartupEnd);
+if (
+  standaloneLogStartupStart < 0 ||
+  standaloneLogStartupEnd < 0 ||
+  !standaloneLogStartup.includes('startupSurface = "log"') ||
+  !standaloneLogStartup.includes("standaloneLogReady = true") ||
+  standaloneLogStartup.includes("workspaceStore") ||
+  !appSvelte.includes("<StandaloneLogWindow") ||
+  !standaloneLogWindow.includes("getPathSvnLog") ||
+  !standaloneLogWindow.includes("start_revision: startRevision") ||
+  !tauriLib.includes('Some("log") => Some("NovaSVN Log")') ||
+  !tauriLib.includes("window.set_title(title)") ||
+  !tauriLib.includes("app.remove_menu()") ||
+  !workspaceRs.includes("pub fn get_path_svn_log(")
+) {
+  console.error("Explorer Log 必须打开不恢复工作副本、不扫描状态的独立日志窗口");
+  failed = true;
+}
+
+const standaloneCommitStartupStart = appSvelte.indexOf('if (intent.action === "commit")');
+const standaloneCommitStartupEnd = appSvelte.indexOf(
+  'startupSurface = "main"',
+  standaloneCommitStartupStart,
+);
+const standaloneCommitStartup = appSvelte.slice(
+  standaloneCommitStartupStart,
+  standaloneCommitStartupEnd,
+);
+if (
+  standaloneCommitStartupStart < 0 ||
+  standaloneCommitStartupEnd < 0 ||
+  !standaloneCommitStartup.includes('startupSurface = "commit"') ||
+  !standaloneCommitStartup.includes("standaloneCommitReady = true") ||
+  standaloneCommitStartup.includes("workspaceStore") ||
+  !appSvelte.includes("<StandaloneCommitWindow") ||
+  !standaloneCommitWindow.includes("inspectUpdateTarget") ||
+  !standaloneCommitWindow.includes("scanWorkspaceStatus") ||
+  !standaloneCommitWindow.includes("createCommitTask") ||
+  !standaloneCommitWindow.includes("selectedPaths") ||
+  !standaloneCommitWindow.includes("commitMessage") ||
+  !standaloneCommitWindow.includes("novasvn:commit-message-settings") ||
+  !tauriLib.includes('Some("commit") => Some("NovaSVN Commit")')
+) {
+  console.error("Explorer Commit 必须打开独立提交窗口并支持文件选择、日志历史和真实提交任务");
+  failed = true;
+}
+
+const standaloneUpdateStartupStart = appSvelte.indexOf('if (intent.action === "update")');
+const standaloneUpdateStartupEnd = appSvelte.indexOf(
+  'startupSurface = "main"',
+  standaloneUpdateStartupStart,
+);
+const standaloneUpdateStartup = appSvelte.slice(
+  standaloneUpdateStartupStart,
+  standaloneUpdateStartupEnd,
+);
+if (
+  standaloneUpdateStartupStart < 0 ||
+  standaloneUpdateStartupEnd < 0 ||
+  !standaloneUpdateStartup.includes('startupSurface = "update"') ||
+  !standaloneUpdateStartup.includes("standaloneUpdateReady = true") ||
+  standaloneUpdateStartup.includes("workspaceStore") ||
+  !appSvelte.includes("<StandaloneUpdateWindow") ||
+  !standaloneUpdateWindow.includes("inspectUpdateTarget") ||
+  !standaloneUpdateWindow.includes('kind: target.relative_path ? "update_path" : "update"') ||
+  !standaloneUpdateWindow.includes("scanWorkspaceStatus") ||
+  !standaloneUpdateWindow.includes('"resolve_working"') ||
+  !standaloneUpdateWindow.includes('"resolve_mine_full"') ||
+  !standaloneUpdateWindow.includes('"resolve_theirs_full"') ||
+  !tauriLib.includes('Some("update") => Some("NovaSVN Update")') ||
+  !tauriLib.includes("inspect_update_target,") ||
+  !workspaceRs.includes("pub fn inspect_update_target(")
+) {
+  console.error("Explorer Update 必须自动执行路径级更新、展示输出并提供独立冲突处理窗口");
+  failed = true;
 }
 
 for (const check of startupActionViewChecks) {

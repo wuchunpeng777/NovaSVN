@@ -45,12 +45,12 @@ use task::{
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use tauri::{Emitter, Manager};
 use workspace::{
-    FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest,
+    FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, GetPathSvnLogRequest,
     GetRepositoryFileBlameRequest, GetRepositoryFileLogRequest, GetRepositoryFilePropertiesRequest,
     GetSvnBlameRequest, GetSvnLogRequest, GetSvnPropertiesRequest, IgnoreWorkspacePathRequest,
-    ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace, ScanWorkspaceStatusRequest,
-    SetSvnPropertyRequest, SvnBlame, SvnLog, SvnProperties, WorkingCopyStatus, WorkspaceFileTree,
-    WorkspaceSummary,
+    InspectUpdateTargetRequest, ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace,
+    ScanWorkspaceStatusRequest, SetSvnPropertyRequest, SvnBlame, SvnLog, SvnProperties,
+    UpdateTargetSummary, WorkingCopyStatus, WorkspaceFileTree, WorkspaceSummary,
 };
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -797,10 +797,28 @@ fn cancel_task(queue: tauri::State<'_, TaskQueue>, task_id: String) -> CommandRe
     Ok(CommandResponse::success(queue.cancel_task(&task_id)?))
 }
 
+async fn run_blocking_command<T, F>(label: &'static str, operation: F) -> Result<T, NovaError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, NovaError> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(operation)
+        .await
+        .map_err(|error| {
+            NovaError::command(
+                "BACKGROUND_COMMAND_FAILED",
+                format!("{label}异常结束"),
+                Some(error.to_string()),
+                true,
+            )
+        })?
+}
+
 #[tauri::command]
-fn detect_svn(request: DetectSvnRequest) -> CommandResult<SvnDetection> {
+async fn detect_svn(request: DetectSvnRequest) -> CommandResult<SvnDetection> {
     println!("[NovaSVN] detect_svn command received");
-    Ok(CommandResponse::success(SvnClient::detect(request)?))
+    let detection = run_blocking_command("检测 SVN", move || SvnClient::detect(request)).await?;
+    Ok(CommandResponse::success(detection))
 }
 
 #[tauri::command]
@@ -827,14 +845,28 @@ fn clear_svn_certificate_trust() -> CommandResult<SvnCertificateTrustStatus> {
 }
 
 #[tauri::command]
-fn open_workspace(
+async fn open_workspace(
     app: tauri::AppHandle,
     request: OpenWorkspaceRequest,
 ) -> CommandResult<WorkspaceSummary> {
     println!("[NovaSVN] open_workspace command received");
-    Ok(CommandResponse::success(workspace::open_workspace(
-        &app, request,
-    )?))
+    let workspace = run_blocking_command("打开工作副本", move || {
+        workspace::open_workspace(&app, request)
+    })
+    .await?;
+    Ok(CommandResponse::success(workspace))
+}
+
+#[tauri::command]
+async fn inspect_update_target(
+    request: InspectUpdateTargetRequest,
+) -> CommandResult<UpdateTargetSummary> {
+    println!("[NovaSVN] inspect_update_target command received");
+    let target = run_blocking_command("检查 Update 目标", move || {
+        workspace::inspect_update_target(request)
+    })
+    .await?;
+    Ok(CommandResponse::success(target))
 }
 
 #[tauri::command]
@@ -845,19 +877,27 @@ fn get_recent_workspace(app: tauri::AppHandle) -> CommandResult<RecentWorkspace>
 }
 
 #[tauri::command]
-fn scan_workspace_status(request: ScanWorkspaceStatusRequest) -> CommandResult<WorkingCopyStatus> {
+async fn scan_workspace_status(
+    request: ScanWorkspaceStatusRequest,
+) -> CommandResult<WorkingCopyStatus> {
     println!("[NovaSVN] scan_workspace_status command received");
-    Ok(CommandResponse::success(workspace::scan_workspace_status(
-        request,
-    )?))
+    let status = run_blocking_command("扫描工作副本状态", move || {
+        workspace::scan_workspace_status(request)
+    })
+    .await?;
+    Ok(CommandResponse::success(status))
 }
 
 #[tauri::command]
-fn list_workspace_files(request: ListWorkspaceFilesRequest) -> CommandResult<WorkspaceFileTree> {
+async fn list_workspace_files(
+    request: ListWorkspaceFilesRequest,
+) -> CommandResult<WorkspaceFileTree> {
     println!("[NovaSVN] list_workspace_files command received");
-    Ok(CommandResponse::success(workspace::list_workspace_files(
-        request,
-    )?))
+    let tree = run_blocking_command("读取工作副本文件树", move || {
+        workspace::list_workspace_files(request)
+    })
+    .await?;
+    Ok(CommandResponse::success(tree))
 }
 
 #[tauri::command]
@@ -875,9 +915,21 @@ fn get_file_content_diff(request: GetFileContentDiffRequest) -> CommandResult<Fi
 }
 
 #[tauri::command]
-fn get_svn_log(request: GetSvnLogRequest) -> CommandResult<SvnLog> {
+async fn get_svn_log(request: GetSvnLogRequest) -> CommandResult<SvnLog> {
     println!("[NovaSVN] get_svn_log command received");
-    Ok(CommandResponse::success(workspace::get_svn_log(request)?))
+    let log =
+        run_blocking_command("读取 SVN 日志", move || workspace::get_svn_log(request)).await?;
+    Ok(CommandResponse::success(log))
+}
+
+#[tauri::command]
+async fn get_path_svn_log(request: GetPathSvnLogRequest) -> CommandResult<SvnLog> {
+    println!("[NovaSVN] get_path_svn_log command received");
+    let log = run_blocking_command("读取路径 SVN 日志", move || {
+        workspace::get_path_svn_log(request)
+    })
+    .await?;
+    Ok(CommandResponse::success(log))
 }
 
 #[tauri::command]
@@ -987,12 +1039,26 @@ pub fn run() {
             let _ = app.emit("novasvn-menu", id.to_string());
         })
         .setup(|app| {
+            let startup_intent = system_integration::startup_intent();
+            let standalone_title = match startup_intent.action.as_deref() {
+                Some("commit") => Some("NovaSVN Commit"),
+                Some("log") => Some("NovaSVN Log"),
+                Some("update") => Some("NovaSVN Update"),
+                _ => None,
+            };
             let app_data_dir = app.path().app_data_dir()?;
             app.manage(TaskQueue::persistent(
                 app_data_dir.join("task-history.json"),
             ));
             diagnostics::install_panic_hook(app_data_dir);
+            if standalone_title.is_some() {
+                let _ = app.remove_menu();
+            }
             if let Some(window) = app.get_webview_window("main") {
+                if let Some(title) = standalone_title {
+                    let _ = window.set_title(title);
+                    let _ = window.set_size(tauri::LogicalSize::new(1120.0, 760.0));
+                }
                 let _ = window.show();
                 let _ = window.set_focus();
             }
@@ -1047,12 +1113,14 @@ pub fn run() {
             configure_svn_certificate_trust,
             clear_svn_certificate_trust,
             open_workspace,
+            inspect_update_target,
             get_recent_workspace,
             scan_workspace_status,
             list_workspace_files,
             get_file_diff,
             get_file_content_diff,
             get_svn_log,
+            get_path_svn_log,
             get_repository_file_log,
             get_svn_blame,
             get_repository_file_blame,

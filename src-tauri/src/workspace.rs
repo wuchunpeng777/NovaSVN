@@ -33,6 +33,12 @@ pub struct OpenWorkspaceRequest {
     pub svn_executable: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct InspectUpdateTargetRequest {
+    pub path: String,
+    pub svn_executable: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceSummary {
     pub local_path: String,
@@ -53,6 +59,17 @@ pub struct ScanWorkspaceStatusRequest {
     pub svn_executable: Option<String>,
     pub offset: Option<usize>,
     pub limit: Option<usize>,
+    pub check_remote_updates: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateTargetSummary {
+    pub target_path: String,
+    pub working_copy_root: String,
+    pub relative_path: Option<String>,
+    pub repository_url: String,
+    pub revision: String,
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -181,6 +198,14 @@ pub struct GetFileContentDiffRequest {
 pub struct GetSvnLogRequest {
     pub working_copy_root: String,
     pub file_path: Option<String>,
+    pub svn_executable: Option<String>,
+    pub limit: Option<usize>,
+    pub start_revision: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetPathSvnLogRequest {
+    pub path: String,
     pub svn_executable: Option<String>,
     pub limit: Option<usize>,
     pub start_revision: Option<String>,
@@ -322,10 +347,81 @@ pub fn open_workspace(
 ) -> Result<WorkspaceSummary, NovaError> {
     let path = normalize_workspace_path(&request.path)?;
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let summary = read_workspace_summary(&path, &executable)?;
+    save_recent_workspace(app, &summary)?;
+    Ok(summary)
+}
 
-    let output = svn::command(&executable)
+pub fn inspect_update_target(
+    request: InspectUpdateTargetRequest,
+) -> Result<UpdateTargetSummary, NovaError> {
+    let target = normalize_update_target_path(&request.path)?;
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let summary = read_workspace_summary(&target, &executable)?;
+    let canonical_target = fs::canonicalize(&target).map_err(|error| {
+        NovaError::command(
+            "UPDATE_TARGET_RESOLVE_FAILED",
+            "无法解析 Update 目标",
+            Some(format!("路径：{}；错误：{error}", target.display())),
+            true,
+        )
+    })?;
+    let canonical_root = fs::canonicalize(&summary.working_copy_root).map_err(|error| {
+        NovaError::command(
+            "UPDATE_WORKSPACE_ROOT_RESOLVE_FAILED",
+            "无法解析 Update 工作副本",
+            Some(format!(
+                "路径：{}；错误：{error}",
+                summary.working_copy_root
+            )),
+            true,
+        )
+    })?;
+    let relative_path = canonical_target
+        .strip_prefix(&canonical_root)
+        .map_err(|_| {
+            NovaError::command(
+                "UPDATE_TARGET_OUTSIDE_WORKSPACE",
+                "Update 目标不在工作副本内",
+                Some(format!(
+                    "目标：{}；工作副本：{}",
+                    canonical_target.display(),
+                    canonical_root.display()
+                )),
+                true,
+            )
+        })?
+        .to_str()
+        .ok_or_else(|| {
+            NovaError::command(
+                "UPDATE_TARGET_ENCODING_INVALID",
+                "Update 目标路径编码无效",
+                Some(format!("路径：{}", canonical_target.display())),
+                true,
+            )
+        })?
+        .trim_matches(['/', '\\'])
+        .to_string();
+
+    Ok(UpdateTargetSummary {
+        target_path: target.display().to_string(),
+        working_copy_root: summary.working_copy_root,
+        relative_path: (!relative_path.is_empty())
+            .then(|| normalize_runtime_separators(&relative_path)),
+        repository_url: summary.repository_url,
+        revision: summary.revision,
+        kind: if target.is_dir() {
+            "dir".to_string()
+        } else {
+            "file".to_string()
+        },
+    })
+}
+
+fn read_workspace_summary(path: &Path, executable: &str) -> Result<WorkspaceSummary, NovaError> {
+    let output = svn::command(executable)
         .args(["info", "--xml"])
-        .arg(&path)
+        .arg(path)
         .output()
         .map_err(|error| {
             NovaError::command(
@@ -343,15 +439,13 @@ pub fn open_workspace(
         return Err(NovaError::command(
             "WORKSPACE_NOT_SVN",
             "该目录不是可用的 SVN 工作副本",
-            Some(svn_info_error_detail(&executable, &path, &output)),
+            Some(svn_info_error_detail(executable, path, &output)),
             true,
         ));
     }
 
     let xml = String::from_utf8_lossy(&output.stdout);
-    let summary = parse_svn_info_xml(&xml, &path)?;
-    save_recent_workspace(app, &summary)?;
-    Ok(summary)
+    parse_svn_info_xml(&xml, path)
 }
 
 pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
@@ -372,14 +466,65 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
         .as_deref()
         .map(normalize_log_revision_value)
         .transpose()?;
-    let mut command = svn::command(&executable);
+    let display_target = display_status_path(&target.display().to_string(), &root);
+    run_svn_log(
+        &executable,
+        &target,
+        &root,
+        &display_target,
+        limit,
+        start_revision.as_deref(),
+    )
+}
+
+pub fn get_path_svn_log(request: GetPathSvnLogRequest) -> Result<SvnLog, NovaError> {
+    let target = normalize_svn_log_target_path(&request.path)?;
+    let current_dir = if target.is_dir() {
+        target.clone()
+    } else {
+        target.parent().map(Path::to_path_buf).ok_or_else(|| {
+            NovaError::command(
+                "SVN_LOG_TARGET_PARENT_MISSING",
+                "无法定位日志目标所在目录",
+                Some(format!("路径：{}", target.display())),
+                true,
+            )
+        })?
+    };
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let limit = request.limit.unwrap_or(50).clamp(1, 200);
+    let start_revision = request
+        .start_revision
+        .as_deref()
+        .map(normalize_log_revision_value)
+        .transpose()?;
+    let display_target = target.display().to_string();
+    run_svn_log(
+        &executable,
+        &target,
+        &current_dir,
+        &display_target,
+        limit,
+        start_revision.as_deref(),
+    )
+}
+
+fn run_svn_log(
+    executable: &str,
+    target: &Path,
+    current_dir: &Path,
+    display_target: &str,
+    limit: usize,
+    start_revision: Option<&str>,
+) -> Result<SvnLog, NovaError> {
+    let mut command = svn::command(executable);
     command
         .args(["log", "--xml", "--verbose", "--limit"])
         .arg((limit + 1).to_string());
-    if let Some(revision) = start_revision.as_deref() {
+    if let Some(revision) = start_revision {
         command.arg("-r").arg(format!("{revision}:0"));
     }
-    command.arg(&target).current_dir(&root);
+    command.arg("--").arg(target).current_dir(current_dir);
 
     let output = command.output().map_err(|error| {
         NovaError::command(
@@ -397,16 +542,13 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
         return Err(NovaError::command(
             "SVN_LOG_COMMAND_FAILED",
             "SVN 日志读取失败",
-            Some(command_error_detail(&executable, "log", &output)),
+            Some(command_error_detail(executable, "log", &output)),
             true,
         ));
     }
 
     let xml = String::from_utf8_lossy(&output.stdout);
-    let mut log = parse_svn_log_xml(
-        &xml,
-        &display_status_path(&target.display().to_string(), &root),
-    )?;
+    let mut log = parse_svn_log_xml(&xml, display_target)?;
     trim_svn_log_page(&mut log, limit);
     Ok(log)
 }
@@ -1049,7 +1191,11 @@ pub fn scan_workspace_status(
     let path = normalize_workspace_path(&request.working_copy_root)?;
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
-    let output = run_status_with_updates(&executable, &path)?;
+    let output = if request.check_remote_updates.unwrap_or(true) {
+        run_status_with_updates(&executable, &path)?
+    } else {
+        run_status_without_updates(&executable, &path)?
+    };
 
     if !output.status.success() {
         return Err(NovaError::command(
@@ -1081,6 +1227,7 @@ pub fn list_workspace_files(
         svn_executable: Some(executable.clone()),
         offset: Some(0),
         limit: Some(5000),
+        check_remote_updates: Some(false),
     })?;
     let status_by_path = status
         .files
@@ -1139,6 +1286,13 @@ fn run_status_with_updates(
         return Ok(output);
     }
 
+    run_status_without_updates(executable, path)
+}
+
+fn run_status_without_updates(
+    executable: &str,
+    path: &Path,
+) -> Result<std::process::Output, NovaError> {
     svn::command(executable)
         .args(["status", "--xml"])
         .arg(path)
@@ -1840,6 +1994,75 @@ fn normalize_log_revision_value(revision: &str) -> Result<String, NovaError> {
     }
 
     Ok(value.to_string())
+}
+
+fn normalize_svn_log_target_path(path: &str) -> Result<PathBuf, NovaError> {
+    normalize_standalone_target_path(
+        path,
+        "SVN_LOG_TARGET_INVALID",
+        "SVN_LOG_TARGET_NOT_ABSOLUTE",
+        "SVN_LOG_TARGET_NOT_FOUND",
+        "SVN_LOG_TARGET_UNSUPPORTED",
+        "日志目标",
+    )
+}
+
+fn normalize_update_target_path(path: &str) -> Result<PathBuf, NovaError> {
+    normalize_standalone_target_path(
+        path,
+        "UPDATE_TARGET_INVALID",
+        "UPDATE_TARGET_NOT_ABSOLUTE",
+        "UPDATE_TARGET_NOT_FOUND",
+        "UPDATE_TARGET_UNSUPPORTED",
+        "Update 目标",
+    )
+}
+
+fn normalize_standalone_target_path(
+    path: &str,
+    invalid_code: &'static str,
+    absolute_code: &'static str,
+    not_found_code: &'static str,
+    unsupported_code: &'static str,
+    label: &str,
+) -> Result<PathBuf, NovaError> {
+    let value = path.trim();
+    if value.is_empty() || value.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            invalid_code,
+            format!("{label}路径无效"),
+            Some(format!("{label}必须是有效的本地文件或目录路径。")),
+            true,
+        ));
+    }
+
+    let target = PathBuf::from(value);
+    if !target.is_absolute() {
+        return Err(NovaError::command(
+            absolute_code,
+            format!("{label}必须是绝对路径"),
+            Some(format!("路径：{}", target.display())),
+            true,
+        ));
+    }
+    if !target.exists() {
+        return Err(NovaError::command(
+            not_found_code,
+            format!("{label}不存在"),
+            Some(format!("路径：{}", target.display())),
+            true,
+        ));
+    }
+    if !target.is_file() && !target.is_dir() {
+        return Err(NovaError::command(
+            unsupported_code,
+            format!("{label}不是文件或目录"),
+            Some(format!("路径：{}", target.display())),
+            true,
+        ));
+    }
+
+    Ok(target)
 }
 
 fn normalize_svn_executable(executable: Option<&str>) -> Result<String, NovaError> {
@@ -2715,7 +2938,9 @@ struct RevisionSummary {
 
 fn read_workspace_revision_summary(executable: &str, working_copy_root: &Path) -> RevisionSummary {
     let svnversion = svnversion_executable(executable);
-    let Ok(output) = Command::new(svnversion).arg(working_copy_root).output() else {
+    let mut command = Command::new(svnversion);
+    svn::configure_hidden_console(&mut command);
+    let Ok(output) = command.arg(working_copy_root).output() else {
         return RevisionSummary::default();
     };
 
@@ -4343,6 +4568,7 @@ line two</property>
             svn_executable: None,
             offset: Some(0),
             limit: Some(100),
+            check_remote_updates: Some(true),
         })
         .expect("real local and remote status reads");
 
@@ -4772,6 +4998,7 @@ line two</property>
             svn_executable: None,
             offset: Some(0),
             limit: Some(100),
+            check_remote_updates: Some(true),
         })
         .expect("real status reads");
         assert!(status
@@ -5075,6 +5302,35 @@ line two</property>
         assert!(normalize_log_revision_value(" 42 ").is_ok());
         assert!(normalize_log_revision_value("").is_err());
         assert!(normalize_log_revision_value("42:0").is_err());
+    }
+
+    #[test]
+    fn requires_existing_absolute_path_for_standalone_log() {
+        let absolute = std::env::temp_dir();
+        assert_eq!(
+            normalize_svn_log_target_path(&absolute.display().to_string()).unwrap(),
+            absolute
+        );
+
+        let error = normalize_svn_log_target_path("relative/path")
+            .expect_err("relative standalone log target must fail");
+        match error {
+            NovaError::Command { code, .. } => {
+                assert_eq!(code, "SVN_LOG_TARGET_NOT_ABSOLUTE");
+            }
+        }
+    }
+
+    #[test]
+    fn reports_update_specific_target_validation_errors() {
+        let error = normalize_update_target_path("relative/path")
+            .expect_err("relative standalone update target must fail");
+        match error {
+            NovaError::Command { code, message, .. } => {
+                assert_eq!(code, "UPDATE_TARGET_NOT_ABSOLUTE");
+                assert!(message.contains("Update 目标"));
+            }
+        }
     }
 
     #[test]

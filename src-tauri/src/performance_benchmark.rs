@@ -197,6 +197,7 @@ fn run(config: BenchmarkConfig) -> Result<(), String> {
                 svn_executable: Some(config.svn_executable.clone()),
                 offset: Some(0),
                 limit: Some(STATUS_PAGE_SIZE),
+                check_remote_updates: Some(true),
             })
             .map_err(|error| error.to_string())
         },
@@ -226,6 +227,7 @@ fn run(config: BenchmarkConfig) -> Result<(), String> {
                 svn_executable: Some(config.svn_executable.clone()),
                 offset: Some(last_offset),
                 limit: Some(STATUS_PAGE_SIZE),
+                check_remote_updates: Some(true),
             })
             .map_err(|error| error.to_string())
         },

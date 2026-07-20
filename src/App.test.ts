@@ -604,6 +604,7 @@ Certificate information:
         svn_executable: undefined,
         offset: 0,
         limit: 500,
+        check_remote_updates: true,
       });
     });
     expect(get(workspaceStore).pendingCommitFiles).toEqual([]);

@@ -6104,7 +6104,9 @@ fn terminate_process_tree(process: &Arc<Mutex<Child>>) -> std::io::Result<()> {
         }
         child.id()
     };
-    let output = Command::new("taskkill")
+    let mut command = Command::new("taskkill");
+    svn::configure_hidden_console(&mut command);
+    let output = command
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .output();
     if output.is_ok_and(|output| output.status.success())

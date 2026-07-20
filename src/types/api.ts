@@ -494,6 +494,20 @@ export interface OpenWorkspaceRequest {
   svn_executable?: string;
 }
 
+export interface InspectUpdateTargetRequest {
+  path: string;
+  svn_executable?: string;
+}
+
+export interface UpdateTargetSummary {
+  target_path: string;
+  working_copy_root: string;
+  relative_path: string | null;
+  repository_url: string;
+  revision: string;
+  kind: "file" | "dir" | string;
+}
+
 export interface RecentWorkspace {
   workspace: WorkspaceSummary | null;
 }
@@ -503,6 +517,7 @@ export interface ScanWorkspaceStatusRequest {
   svn_executable?: string;
   offset?: number;
   limit?: number;
+  check_remote_updates?: boolean;
 }
 
 export interface ListWorkspaceFilesRequest {
@@ -646,6 +661,13 @@ export interface GetFileContentDiffRequest {
 export interface GetSvnLogRequest {
   working_copy_root: string;
   file_path?: string;
+  svn_executable?: string;
+  limit?: number;
+  start_revision?: string;
+}
+
+export interface GetPathSvnLogRequest {
+  path: string;
   svn_executable?: string;
   limit?: number;
   start_revision?: string;

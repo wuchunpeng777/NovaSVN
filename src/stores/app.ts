@@ -2083,7 +2083,7 @@ function createWorkspaceStore() {
         error: null,
       }));
       if (root) {
-        await refreshStatus(null, root);
+        void refreshStatus(null, root, false);
       }
     } catch (error) {
       update((state) => ({
@@ -3834,6 +3834,7 @@ function createWorkspaceStore() {
   async function refreshStatus(
     svnExecutable?: string | null,
     workingCopyRoot?: string,
+    checkRemoteUpdates = true,
   ): Promise<WorkingCopyStatus | null> {
     const requestGeneration = ++statusRefreshGeneration;
     fileTreeRefreshGeneration += 1;
@@ -3879,6 +3880,7 @@ function createWorkspaceStore() {
         svn_executable: svnExecutable || undefined,
         offset: 0,
         limit: 500,
+        check_remote_updates: checkRemoteUpdates,
       });
       if (!isCurrentStatusRequest(requestGeneration, root)) {
         return null;
@@ -3973,6 +3975,7 @@ function createWorkspaceStore() {
         svn_executable: svnExecutable || undefined,
         offset: currentStatus.files.length,
         limit: 500,
+        check_remote_updates: currentStatus.remote_updates_checked,
       });
       if (!isCurrentStatusRequest(requestGeneration, root)) {
         return null;

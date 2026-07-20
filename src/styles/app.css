@@ -46,6 +46,17 @@ button {
   overflow: hidden;
   color: #17202a;
   background: #f6f7f8;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.versions-workbench input,
+.versions-workbench textarea,
+.versions-workbench select,
+.versions-workbench [contenteditable="true"],
+.versions-workbench .monaco-editor {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .versions-titlebar {

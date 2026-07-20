@@ -5,6 +5,9 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { startDrag } from "@crabnebula/tauri-plugin-drag";
   import dragPreviewIcon from "../src-tauri/icons/icon.png?inline";
+  import StandaloneCommitWindow from "./components/StandaloneCommitWindow.svelte";
+  import StandaloneLogWindow from "./components/StandaloneLogWindow.svelte";
+  import StandaloneUpdateWindow from "./components/StandaloneUpdateWindow.svelte";
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
   import {
     callBackend,
@@ -44,6 +47,7 @@
     ExternalToolKind,
     HealthPayload,
     RepositoryExportResult,
+    StartupIntent,
     SvnAuthenticationStatus,
     SvnBatchOperationKind,
     SvnCertificateFailure,
@@ -56,6 +60,15 @@
 
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
+  let startupSurface: "loading" | "main" | "commit" | "log" | "update" = hasTauriRuntime()
+    ? "loading"
+    : "main";
+  let standaloneCommitPath = "";
+  let standaloneCommitReady = false;
+  let standaloneLogPath = "";
+  let standaloneLogReady = false;
+  let standaloneUpdatePath = "";
+  let standaloneUpdateReady = false;
   let unlistenAppMenu: UnlistenFn | null = null;
   let unlistenDragDrop: UnlistenFn | null = null;
   let repositoryImportDropActive = false;
@@ -121,7 +134,7 @@
       $workspaceStore.applyPatchCreating ||
       $workspaceStore.pendingApplyPatchTaskId !== null,
   });
-  $: queueAppMenuStateSync(appMenuState);
+  $: queueAppMenuStateSync(appMenuState, startupSurface);
 
   async function pingBackend() {
     commandError = null;
@@ -206,8 +219,11 @@
     event.preventDefault();
   }
 
-  function queueAppMenuStateSync(state: AppMenuState) {
-    if (!hasTauriRuntime()) {
+  function queueAppMenuStateSync(
+    state: AppMenuState,
+    surface: "loading" | "main" | "commit" | "log" | "update",
+  ) {
+    if (!hasTauriRuntime() || surface !== "main") {
       return;
     }
     const signature = JSON.stringify(state);
@@ -1285,15 +1301,13 @@
     workspaceStore.markApplyPatchTask(task.task_id, dryRun);
   }
 
-  async function handleStartupIntent() {
-    const intent = await getStartupIntent();
+  async function handleStartupIntent(intent: StartupIntent) {
     const targetPath = intent.path?.trim();
-    let startupFileSelected = false;
     if (targetPath) {
       workspaceStore.setPathInput(targetPath);
       const workspace = await workspaceStore.openPath(currentSvnExecutable());
       if (workspace) {
-        startupFileSelected = await workspaceStore.selectStartupTargetFile(
+        await workspaceStore.selectStartupTargetFile(
           targetPath,
           currentSvnExecutable(),
         );
@@ -1301,15 +1315,6 @@
     }
 
     switch (intent.action) {
-      case "commit":
-        setCurrentView("changes");
-        break;
-      case "update":
-        setCurrentView("changes");
-        if ($workspaceStore.current) {
-          await runSvnOperation("update");
-        }
-        break;
       case "diff":
         setCurrentView("changes");
         break;
@@ -1318,13 +1323,6 @@
         if ($workspaceStore.current) {
           await runSvnOperation("cleanup");
         }
-        break;
-      case "log":
-        setCurrentView("history");
-        if (startupFileSelected) {
-          workspaceStore.setSvnLogFileOnly(true);
-        }
-        await workspaceStore.refreshSvnLog(currentSvnExecutable());
         break;
       case "revert":
         setCurrentView("changes");
@@ -2072,60 +2070,143 @@
     }
   }
 
+  async function initializeTauriApp() {
+    let intent: StartupIntent;
+    try {
+      intent = await getStartupIntent();
+    } catch (error) {
+      commandError = error as CommandError;
+      intent = { action: null, path: null };
+    }
+
+    window.addEventListener("contextmenu", preventNativeContextMenu, true);
+
+    if (intent.action === "log") {
+      standaloneLogPath = intent.path?.trim() ?? "";
+      startupSurface = "log";
+      if ($appSettingsStore.svnAuthenticationMode !== "password") {
+        await applySvnAuthentication();
+      }
+      await svnStore.detectWithInputFallback();
+      standaloneLogReady = true;
+      return;
+    }
+
+    if (intent.action === "commit") {
+      standaloneCommitPath = intent.path?.trim() ?? "";
+      startupSurface = "commit";
+      if ($appSettingsStore.svnAuthenticationMode !== "password") {
+        await applySvnAuthentication();
+      }
+      await svnStore.detectWithInputFallback();
+      standaloneCommitReady = true;
+      return;
+    }
+
+    if (intent.action === "update") {
+      standaloneUpdatePath = intent.path?.trim() ?? "";
+      startupSurface = "update";
+      if ($appSettingsStore.svnAuthenticationMode !== "password") {
+        await applySvnAuthentication();
+      }
+      await svnStore.detectWithInputFallback();
+      standaloneUpdateReady = true;
+      return;
+    }
+
+    startupSurface = "main";
+    void listen<string>("novasvn-menu", (event) => {
+      void handleAppMenuCommand(event.payload);
+    }).then((unlisten) => {
+      unlistenAppMenu = unlisten;
+    });
+    void getCurrentWindow()
+      .onDragDropEvent((event) => {
+        if ($currentView !== "repository") {
+          repositoryImportDropActive = false;
+          return;
+        }
+        if (event.payload.type === "enter" || event.payload.type === "over") {
+          repositoryImportDropActive = true;
+          return;
+        }
+        repositoryImportDropActive = false;
+        if (event.payload.type !== "drop") {
+          return;
+        }
+        if (event.payload.paths.length !== 1) {
+          workspaceStore.failRepositoryImportTask("每次只能拖入一个文件或目录");
+          return;
+        }
+        workspaceStore.prepareRepositoryImportFromDrop(event.payload.paths[0]);
+      })
+      .then((unlisten) => {
+        unlistenDragDrop = unlisten;
+      });
+    taskStore.startPolling();
+    if ($appSettingsStore.svnAuthenticationMode !== "password") {
+      void applySvnAuthentication();
+    }
+    void svnStore.detectWithInputFallback();
+    void branchPoolStore.load();
+    void taskWorkspaceStore.load();
+    void pingBackend();
+    await workspaceStore.loadRecent();
+    await handleStartupIntent(intent);
+  }
+
   onMount(() => {
     appSettingsStore.load();
     if (hasTauriRuntime()) {
-      window.addEventListener("contextmenu", preventNativeContextMenu);
-      void listen<string>("novasvn-menu", (event) => {
-        void handleAppMenuCommand(event.payload);
-      }).then((unlisten) => {
-        unlistenAppMenu = unlisten;
-      });
-      void getCurrentWindow()
-        .onDragDropEvent((event) => {
-          if ($currentView !== "repository") {
-            repositoryImportDropActive = false;
-            return;
-          }
-          if (event.payload.type === "enter" || event.payload.type === "over") {
-            repositoryImportDropActive = true;
-            return;
-          }
-          repositoryImportDropActive = false;
-          if (event.payload.type !== "drop") {
-            return;
-          }
-          if (event.payload.paths.length !== 1) {
-            workspaceStore.failRepositoryImportTask("每次只能拖入一个文件或目录");
-            return;
-          }
-          workspaceStore.prepareRepositoryImportFromDrop(event.payload.paths[0]);
-        })
-        .then((unlisten) => {
-          unlistenDragDrop = unlisten;
-        });
-      taskStore.startPolling();
-      if ($appSettingsStore.svnAuthenticationMode !== "password") {
-        void applySvnAuthentication();
-      }
-      void svnStore.detectWithInputFallback();
-      void workspaceStore.loadRecent().then(() => handleStartupIntent());
-      void branchPoolStore.load();
-      void taskWorkspaceStore.load();
-      void pingBackend();
+      void initializeTauriApp();
     } else {
       backendMessage = "浏览器预览模式";
     }
   });
 
   onDestroy(() => {
-    window.removeEventListener("contextmenu", preventNativeContextMenu);
+    window.removeEventListener("contextmenu", preventNativeContextMenu, true);
     unlistenAppMenu?.();
     unlistenDragDrop?.();
     taskStore.stopPolling();
   });
 </script>
 
+{#if startupSurface === "loading" ||
+  (startupSurface === "commit" && !standaloneCommitReady) ||
+  (startupSurface === "log" && !standaloneLogReady) ||
+  (startupSurface === "update" && !standaloneUpdateReady)}
+  <main class="startup-loading" aria-label="NovaSVN 启动中" role="status">
+    <span></span>
+    <p>
+      {startupSurface === "commit"
+        ? "正在准备 SVN Commit..."
+        : startupSurface === "log"
+        ? "正在准备 SVN Log..."
+        : startupSurface === "update"
+          ? "正在准备 SVN Update..."
+          : "正在启动 NovaSVN..."}
+    </p>
+  </main>
+{:else if startupSurface === "commit"}
+  <StandaloneCommitWindow
+    targetPath={standaloneCommitPath}
+    svnExecutable={currentSvnExecutable()}
+    themeMode={$appSettingsStore.themeMode}
+  />
+{:else if startupSurface === "log"}
+  <StandaloneLogWindow
+    targetPath={standaloneLogPath}
+    svnExecutable={currentSvnExecutable()}
+    themeMode={$appSettingsStore.themeMode}
+  />
+{:else if startupSurface === "update"}
+  <StandaloneUpdateWindow
+    targetPath={standaloneUpdatePath}
+    svnExecutable={currentSvnExecutable()}
+    themeMode={$appSettingsStore.themeMode}
+  />
+{:else}
 <MainWorkspace
   view={activeView}
   workspace={$workspaceStore.current}
@@ -2432,3 +2513,38 @@
   onAppSettingInput={appSettingsStore.setField}
   onExportDiagnosticLog={appSettingsStore.exportDiagnosticLog}
 />
+{/if}
+
+<style>
+  .startup-loading {
+    display: grid;
+    width: 100vw;
+    height: 100vh;
+    align-content: center;
+    justify-items: center;
+    gap: 12px;
+    overflow: hidden;
+    background: #f5f6f7;
+    color: #596674;
+  }
+
+  .startup-loading span {
+    width: 24px;
+    height: 24px;
+    border: 2px solid #c5ccd3;
+    border-top-color: #2674b9;
+    border-radius: 50%;
+    animation: startup-spin 800ms linear infinite;
+  }
+
+  .startup-loading p {
+    margin: 0;
+    font-size: 13px;
+  }
+
+  @keyframes startup-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+</style>

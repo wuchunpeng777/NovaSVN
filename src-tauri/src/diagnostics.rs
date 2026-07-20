@@ -163,7 +163,9 @@ fn append_file_summary(lines: &mut Vec<String>, path: &Path) {
 }
 
 fn append_svn_cli_summary(lines: &mut Vec<String>) {
-    match Command::new("svn").args(["--version", "--quiet"]).output() {
+    let mut command = Command::new("svn");
+    crate::svn::configure_hidden_console(&mut command);
+    match command.args(["--version", "--quiet"]).output() {
         Ok(output) if output.status.success() => {
             let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if version.is_empty() {

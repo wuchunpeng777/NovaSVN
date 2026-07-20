@@ -29,6 +29,7 @@ vi.mock("../lib/api", () => ({
   getSvnBlame: vi.fn(),
   getSvnLog: vi.fn(),
   getSvnProperties: vi.fn(),
+  getRecentWorkspace: vi.fn(),
   ignoreWorkspacePath: vi.fn(),
   getTaskWorkspaces: vi.fn(),
   listWorkspaceFiles: vi.fn(),
@@ -72,6 +73,7 @@ import {
   getSvnBlame,
   getSvnLog,
   getSvnProperties,
+  getRecentWorkspace,
   ignoreWorkspacePath,
   getTaskWorkspaces,
   listWorkspaceFiles,
@@ -137,6 +139,7 @@ const getRepositoryFilePropertiesMock = vi.mocked(getRepositoryFileProperties);
 const getSvnBlameMock = vi.mocked(getSvnBlame);
 const getSvnLogMock = vi.mocked(getSvnLog);
 const getSvnPropertiesMock = vi.mocked(getSvnProperties);
+const getRecentWorkspaceMock = vi.mocked(getRecentWorkspace);
 const ignoreWorkspacePathMock = vi.mocked(ignoreWorkspacePath);
 const getTaskWorkspacesMock = vi.mocked(getTaskWorkspaces);
 const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
@@ -177,6 +180,7 @@ beforeEach(() => {
   getSvnBlameMock.mockReset();
   getSvnLogMock.mockReset();
   getSvnPropertiesMock.mockReset();
+  getRecentWorkspaceMock.mockReset();
   ignoreWorkspacePathMock.mockReset();
   getTaskWorkspacesMock.mockReset();
   listWorkspaceFilesMock.mockReset();
@@ -727,6 +731,7 @@ describe("workspaceStore safety warnings", () => {
       svn_executable: undefined,
       offset: 500,
       limit: 500,
+      check_remote_updates: true,
     });
     expect(get(workspaceStore).selectedFilePath).toBe(laterFile.path);
     expect(get(workspaceStore).status?.files).toHaveLength(501);
@@ -2135,6 +2140,36 @@ describe("revision path targets", () => {
 });
 
 describe("workspaceStore SVN operation state", () => {
+  it("恢复最近工作副本后立即返回，并只在后台检查本地状态", async () => {
+    const workspace = makeWorkspace();
+    const pendingStatus = deferred<WorkingCopyStatus>();
+    const localStatus = makeStatus([], {
+      remote_updates_checked: false,
+      repository_revision: null,
+    });
+    getRecentWorkspaceMock.mockResolvedValueOnce({ workspace });
+    scanWorkspaceStatusMock.mockReturnValueOnce(pendingStatus.promise);
+
+    await workspaceStore.loadRecent();
+
+    expect(get(workspaceStore)).toMatchObject({
+      current: workspace,
+      loading: false,
+      statusLoading: true,
+    });
+    expect(scanWorkspaceStatusMock).toHaveBeenCalledWith({
+      working_copy_root: "C:/repo/wc",
+      svn_executable: undefined,
+      offset: 0,
+      limit: 500,
+      check_remote_updates: false,
+    });
+
+    pendingStatus.resolve(localStatus);
+    await vi.waitFor(() => expect(get(workspaceStore).statusLoading).toBe(false));
+    expect(get(workspaceStore).status?.remote_updates_checked).toBe(false);
+  });
+
   it("将 pending 任务与创建时工作副本根成对记录和清理", () => {
     workspaceStore.markSvnOperationTask("svn-1", "update", "C:/repo/original");
 

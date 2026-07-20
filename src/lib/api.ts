@@ -35,6 +35,7 @@ import type {
   GenerateSelectedPatchRequest,
   GetFileContentDiffRequest,
   GetFileDiffRequest,
+  GetPathSvnLogRequest,
   GetRepositoryFileLogRequest,
   GetRepositoryFilePropertiesRequest,
   GetRepositoryFileBlameRequest,
@@ -42,6 +43,7 @@ import type {
   GetSvnLogRequest,
   GetSvnPropertiesRequest,
   IgnoreWorkspacePathRequest,
+  InspectUpdateTargetRequest,
   ExternalToolLaunch,
   LaunchExternalToolRequest,
   ListWorkspaceFilesRequest,
@@ -77,6 +79,7 @@ import type {
   Task,
   TaskSnapshot,
   TaskWorkspaceList,
+  UpdateTargetSummary,
   WorkingCopyStatus,
   WorkspaceFileTree,
   WorkspaceSummary,
@@ -352,6 +355,12 @@ export function openWorkspace(
   return callBackend<WorkspaceSummary>("open_workspace", { request });
 }
 
+export function inspectUpdateTarget(
+  request: InspectUpdateTargetRequest,
+): Promise<UpdateTargetSummary> {
+  return callBackend<UpdateTargetSummary>("inspect_update_target", { request });
+}
+
 export function getRecentWorkspace(): Promise<RecentWorkspace> {
   return callBackend<RecentWorkspace>("get_recent_workspace");
 }
@@ -380,6 +389,10 @@ export function getFileContentDiff(
 
 export function getSvnLog(request: GetSvnLogRequest): Promise<SvnLog> {
   return callBackend<SvnLog>("get_svn_log", { request });
+}
+
+export function getPathSvnLog(request: GetPathSvnLogRequest): Promise<SvnLog> {
+  return callBackend<SvnLog>("get_path_svn_log", { request });
 }
 
 export function getSvnBlame(request: GetSvnBlameRequest): Promise<SvnBlame> {
