@@ -58,7 +58,7 @@
 - 支持 Windows Explorer 右键菜单入口和 macOS Finder Quick Actions 安装脚本。
 - Windows 安装包自动注册 `NovaSVN Log` 文件、目录和目录背景右键菜单，打开不恢复工作副本、不扫描状态的独立日志窗口。
 - Windows 安装包自动注册 `NovaSVN Update` 右键菜单，独立窗口自动更新所选路径、实时展示 SVN 输出，并支持打开和手动解决冲突。
-- Windows 安装包自动注册 `NovaSVN Commit` 右键菜单，独立窗口支持选择目标文件、复用提交历史、填写日志并执行提交任务。
+- Windows 安装包自动注册 `NovaSVN Commit` 右键菜单，独立窗口支持选择目标文件、点击文件预览修改内容、复用提交历史、填写日志并执行提交任务。
 - 支持二进制资源、大文件和生成目录提醒。
 - 支持 `svn:externals` 配置展示和 externals 状态提醒。
 - 支持设置持久化、SVN 路径、工作副本池默认路径、Diff 偏好、提交模板、大文件阈值和外部 diff/merge 工具路径。

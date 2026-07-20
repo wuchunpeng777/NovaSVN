@@ -1,10 +1,22 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("./workbench/MonacoDiffViewer.svelte", () => ({
+  default: vi.fn().mockImplementation((internals) => ({
+    c: vi.fn(),
+    m: vi.fn(),
+    p: vi.fn(),
+    d: vi.fn(),
+    ...internals,
+  })),
+}));
+
 vi.mock("../lib/api", () => ({
   cancelTask: vi.fn(),
   createCommitTask: vi.fn(),
   createSvnOperationTask: vi.fn(),
+  getFileContentDiff: vi.fn(),
+  getFileDiff: vi.fn(),
   getTask: vi.fn(),
   inspectUpdateTarget: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
@@ -13,6 +25,8 @@ vi.mock("../lib/api", () => ({
 import {
   createCommitTask,
   createSvnOperationTask,
+  getFileContentDiff,
+  getFileDiff,
   getTask,
   inspectUpdateTarget,
   scanWorkspaceStatus,
@@ -22,6 +36,8 @@ import StandaloneCommitWindow from "./StandaloneCommitWindow.svelte";
 
 const createCommitTaskMock = vi.mocked(createCommitTask);
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
+const getFileContentDiffMock = vi.mocked(getFileContentDiff);
+const getFileDiffMock = vi.mocked(getFileDiff);
 const getTaskMock = vi.mocked(getTask);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
@@ -30,6 +46,8 @@ beforeEach(() => {
   localStorage.clear();
   createCommitTaskMock.mockReset();
   createSvnOperationTaskMock.mockReset();
+  getFileContentDiffMock.mockReset();
+  getFileDiffMock.mockReset();
   getTaskMock.mockReset();
   inspectUpdateTargetMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
@@ -51,6 +69,21 @@ beforeEach(() => {
     }),
   );
   createCommitTaskMock.mockResolvedValue(makeTask("pending"));
+  getFileContentDiffMock.mockResolvedValue({
+    path: "src/main.ts",
+    original_text: "const value = 1;",
+    modified_text: "const value = 2;",
+    language: "typescript",
+    binary: false,
+    too_large: false,
+    max_bytes: 512 * 1024,
+  });
+  getFileDiffMock.mockResolvedValue({
+    path: "src/main.ts",
+    text: "@@ -1 +1 @@\n-const value = 1;\n+const value = 2;",
+    binary: false,
+    empty: false,
+  });
   createSvnOperationTaskMock.mockResolvedValue(
     makeTask("pending", [], { task_id: "revert-1", title: "撤销文件 other.ts" }),
   );
@@ -80,6 +113,42 @@ describe("StandaloneCommitWindow", () => {
     expect(within(pane).queryByText("src/ignored.ts")).not.toBeInTheDocument();
     expect(within(pane).getAllByRole("checkbox")).toHaveLength(2);
     expect(within(pane).getAllByRole("checkbox").every((input) => (input as HTMLInputElement).checked)).toBe(true);
+  });
+
+  it("点击文件条目加载并展示修改内容且不改变提交选择", async () => {
+    getFileContentDiffMock.mockResolvedValue({
+      path: "src/main.ts",
+      original_text: "const value = 1;",
+      modified_text: "const value = 1;",
+      language: "typescript",
+      binary: false,
+      too_large: false,
+      max_bytes: 512 * 1024,
+    });
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    const filePane = screen.getByLabelText("选择提交文件");
+    const checkbox = await within(filePane).findByRole("checkbox", { name: "src/main.ts" });
+    expect(checkbox).toBeChecked();
+    await fireEvent.click(
+      within(filePane).getByRole("button", { name: "查看修改 src/main.ts" }),
+    );
+
+    await waitFor(() => {
+      expect(getFileDiffMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        file_path: "src/main.ts",
+        svn_executable: undefined,
+      });
+      expect(getFileContentDiffMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        file_path: "src/main.ts",
+        svn_executable: undefined,
+        max_bytes: 512 * 1024,
+      });
+    });
+    expect(checkbox).toBeChecked();
+    expect(screen.getByLabelText("修改内容")).toHaveTextContent("+const value = 2;");
   });
 
   it("从提交历史回填日志并提交用户选择的路径", async () => {

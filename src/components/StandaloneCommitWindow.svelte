@@ -5,6 +5,8 @@
     cancelTask,
     createCommitTask,
     createSvnOperationTask,
+    getFileContentDiff,
+    getFileDiff,
     getTask,
     inspectUpdateTarget,
     scanWorkspaceStatus,
@@ -18,16 +20,21 @@
   import type {
     ChangedFile,
     CommandError,
+    FileContentDiff,
+    FileDiff,
     Task,
     TaskStatus,
     UpdateTargetSummary,
     WorkingCopyStatus,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
 
   export let targetPath: string;
   export let svnExecutable: string | undefined = undefined;
   export let themeMode: "system" | "light" | "dark" = "system";
+  export let diffMode: "side_by_side" | "inline" = "side_by_side";
+  export let showWhitespace = false;
 
   const terminalStatuses: TaskStatus[] = ["success", "failed", "cancelled", "interrupted"];
 
@@ -42,6 +49,12 @@
   let fileContextMenuElement: HTMLDivElement | null = null;
   let revertDialogElement: HTMLDivElement | null = null;
   let selectedPaths = new Set<string>();
+  let activeFilePath: string | null = null;
+  let selectedFileDiff: FileDiff | null = null;
+  let selectedFileContentDiff: FileContentDiff | null = null;
+  let diffLoading = false;
+  let diffError: CommandError | null = null;
+  let diffGeneration = 0;
   let history: string[] = [];
   let commitTemplate = "";
   let commitMessage = "";
@@ -156,6 +169,7 @@
     revertCandidate = null;
     closeFileContextMenu();
     selectedPaths = new Set();
+    clearFilePreview();
     recordedTaskId = null;
 
     try {
@@ -211,6 +225,17 @@
       selectedPaths = preserveSelection
         ? new Set(inScope.filter((path) => selectedPaths.has(path)))
         : new Set(inScope);
+      if (activeFilePath) {
+        const activeFile = nextStatus.files.find(
+          (file) =>
+            file.path === activeFilePath && isCommittable(file) && isPathInCommitTarget(file.path),
+        );
+        if (activeFile) {
+          void showFilePreview(activeFile, currentGeneration);
+        } else {
+          clearFilePreview();
+        }
+      }
     } catch (caught) {
       if (currentGeneration === generation) {
         statusError = caught as CommandError;
@@ -238,6 +263,49 @@
 
   function clearSelection() {
     selectedPaths = new Set();
+  }
+
+  function clearFilePreview() {
+    diffGeneration += 1;
+    activeFilePath = null;
+    selectedFileDiff = null;
+    selectedFileContentDiff = null;
+    diffLoading = false;
+    diffError = null;
+  }
+
+  async function showFilePreview(file: ChangedFile, currentGeneration = generation) {
+    if (!target) {
+      return;
+    }
+    const requestGeneration = ++diffGeneration;
+    const workingCopyRoot = target.working_copy_root;
+    activeFilePath = file.path;
+    selectedFileDiff = null;
+    selectedFileContentDiff = null;
+    diffLoading = true;
+    diffError = null;
+
+    const request = {
+      working_copy_root: workingCopyRoot,
+      file_path: file.path,
+      svn_executable: svnExecutable?.trim() || undefined,
+    };
+    const [diffResult, contentResult] = await Promise.allSettled([
+      getFileDiff(request),
+      getFileContentDiff({ ...request, max_bytes: 512 * 1024 }),
+    ]);
+    if (requestGeneration !== diffGeneration || currentGeneration !== generation) {
+      return;
+    }
+
+    selectedFileDiff = diffResult.status === "fulfilled" ? diffResult.value : null;
+    selectedFileContentDiff =
+      contentResult.status === "fulfilled" ? contentResult.value : null;
+    if (diffResult.status === "rejected" && contentResult.status === "rejected") {
+      diffError = contentResult.reason as CommandError;
+    }
+    diffLoading = false;
   }
 
   function applyHistoryMessage() {
@@ -565,47 +633,96 @@
   </section>
 
   <div class="commit-layout">
-    <section class="file-pane" aria-label="选择提交文件">
-      <header>
-        <div>
-          <h2>提交文件</h2>
-          <p>{committableFiles.length} 个可提交文件</p>
-        </div>
-        <div class="selection-actions">
-          <button type="button" on:click={selectAll} disabled={operationRunning || committableFiles.length === 0 || allSelected}>
-            <CheckSquare size={15} aria-hidden="true" /> 全选
-          </button>
-          <button type="button" on:click={clearSelection} disabled={operationRunning || selectedCount === 0}>
-            清除
-          </button>
-        </div>
-      </header>
-      <div class="file-list">
-        {#each committableFiles as file (file.path)}
-          <label
-            class="file-item"
-            class:reverting={revertingPath === file.path}
-            on:contextmenu={(event) => openFileContextMenu(event, file)}
-          >
-            <input
-              type="checkbox"
-              aria-label={file.path}
-              checked={selectedPaths.has(file.path)}
-              on:change={() => toggleFile(file.path)}
-              disabled={operationRunning}
-            />
-            <span class="file-status">{statusLabel(file)}</span>
-            <span class="file-path" title={file.path}>{file.path}</span>
-          </label>
-        {:else}
-          {#if scanning || initializing}
-            <div class="empty-files" role="status">正在扫描工作副本...</div>
+    <div class="review-pane">
+      <section class="file-pane" aria-label="选择提交文件">
+        <header>
+          <div>
+            <h2>提交文件</h2>
+            <p>{committableFiles.length} 个可提交文件</p>
+          </div>
+          <div class="selection-actions">
+            <button type="button" on:click={selectAll} disabled={operationRunning || committableFiles.length === 0 || allSelected}>
+              <CheckSquare size={15} aria-hidden="true" /> 全选
+            </button>
+            <button type="button" on:click={clearSelection} disabled={operationRunning || selectedCount === 0}>
+              清除
+            </button>
+          </div>
+        </header>
+        <div class="file-list">
+          {#each committableFiles as file (file.path)}
+            <div
+              class="file-item"
+              class:active={activeFilePath === file.path}
+              class:reverting={revertingPath === file.path}
+              role="group"
+              aria-label={`提交文件 ${file.path}`}
+              on:contextmenu={(event) => openFileContextMenu(event, file)}
+            >
+              <input
+                type="checkbox"
+                aria-label={file.path}
+                checked={selectedPaths.has(file.path)}
+                on:change={() => toggleFile(file.path)}
+                disabled={operationRunning}
+              />
+              <button
+                type="button"
+                class="file-preview-trigger"
+                class:active={activeFilePath === file.path}
+                aria-label={`查看修改 ${file.path}`}
+                aria-pressed={activeFilePath === file.path}
+                on:click={() => showFilePreview(file)}
+              >
+                <span class="file-status">{statusLabel(file)}</span>
+                <span class="file-path" title={file.path}>{file.path}</span>
+              </button>
+            </div>
           {:else}
-            <div class="empty-files">目标范围内没有可提交的文件</div>
+            {#if scanning || initializing}
+              <div class="empty-files" role="status">正在扫描工作副本...</div>
+            {:else}
+              <div class="empty-files">目标范围内没有可提交的文件</div>
+            {/if}
+          {/each}
+        </div>
+      </section>
+
+      <section class="diff-pane" aria-label="修改内容">
+        <header>
+          <div>
+            <h2>修改内容</h2>
+            <p title={activeFilePath ?? undefined}>{activeFilePath ?? "选择文件后查看"}</p>
+          </div>
+        </header>
+        <div class="diff-content">
+          {#if diffLoading}
+            <div class="empty-diff" role="status">正在读取修改内容...</div>
+          {:else if diffError}
+            <ErrorNotice error={diffError} />
+          {:else if selectedFileContentDiff?.binary || selectedFileDiff?.binary}
+            <div class="empty-diff">二进制文件无法预览文本修改</div>
+          {:else if selectedFileContentDiff?.too_large}
+            <div class="empty-diff">
+              文件内容超过 {Math.round(selectedFileContentDiff.max_bytes / 1024)} KB，无法在窗口中预览
+            </div>
+          {:else if selectedFileContentDiff && selectedFileContentDiff.original_text !== selectedFileContentDiff.modified_text}
+            <MonacoDiffViewer
+              contentDiff={selectedFileContentDiff}
+              inlineMode={diffMode === "inline"}
+              {showWhitespace}
+              theme={resolvedTheme}
+            />
+          {:else if selectedFileDiff?.text}
+            <pre class="raw-diff">{selectedFileDiff.text}</pre>
+          {:else if activeFilePath}
+            <div class="empty-diff">没有可显示的文本修改</div>
+          {:else}
+            <div class="empty-diff">点击文件条目查看修改内容</div>
           {/if}
-        {/each}
-      </div>
-    </section>
+        </div>
+      </section>
+    </div>
 
     <aside class="message-pane" aria-label="提交信息">
       <header>
@@ -766,21 +883,31 @@
   .revert-notice { border: 1px solid #91bf9a; background: #eff9f1; color: #276b35; padding: 8px 10px; font-size: 12px; }
   [data-theme="dark"] .inline-error { background: #3b2424; color: #ffb0b0; }
   [data-theme="dark"] .revert-notice { background: #213629; color: #9de3aa; }
-  .commit-layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr); gap: 14px; min-height: 0; padding: 14px 22px 20px; }
-  .file-pane, .message-pane { min-width: 0; min-height: 0; border: 1px solid var(--border); background: var(--panel); }
+  .commit-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, .7fr); gap: 14px; min-height: 0; padding: 14px 22px 20px; }
+  .review-pane { display: grid; grid-template-rows: minmax(150px, .42fr) minmax(220px, .58fr); gap: 12px; min-width: 0; min-height: 0; }
+  .file-pane, .diff-pane, .message-pane { min-width: 0; min-height: 0; border: 1px solid var(--border); background: var(--panel); }
   .file-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+  .diff-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); }
   .message-pane { display: flex; flex-direction: column; gap: 12px; padding: 14px; overflow: auto; }
-  .file-pane > header, .message-pane > header, .task-output > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 13px 14px; border-bottom: 1px solid var(--border); }
+  .file-pane > header, .diff-pane > header, .message-pane > header, .task-output > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 13px 14px; border-bottom: 1px solid var(--border); }
   .message-pane > header { padding: 0 0 12px; }
-  .file-pane header p, .message-pane header p { margin-top: 4px; color: var(--secondary); font-size: 12px; }
+  .file-pane header p, .diff-pane header p, .message-pane header p { margin-top: 4px; color: var(--secondary); font-size: 12px; }
+  .diff-pane header p { overflow: hidden; max-width: 52vw; text-overflow: ellipsis; white-space: nowrap; }
   .file-list { overflow: auto; padding: 6px; }
-  .file-item { display: grid; grid-template-columns: 18px 72px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 36px; padding: 5px 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); cursor: pointer; font-size: 12px; }
+  .file-item { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); font-size: 12px; }
   .file-item:hover { background: var(--panel-subtle); }
+  .file-item.active { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
   .file-item.reverting { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
   .file-item input { width: 15px; height: 15px; accent-color: var(--accent); }
+  button.file-preview-trigger { display: grid; grid-template-columns: 72px minmax(0, 1fr); justify-content: stretch; gap: 8px; width: 100%; min-height: 35px; border: 0; border-radius: 0; padding: 5px 0; background: transparent; color: var(--text); text-align: left; }
+  button.file-preview-trigger:hover:not(:disabled) { border-color: transparent; color: var(--text); }
+  button.file-preview-trigger:focus-visible { outline-offset: 0; }
   .file-status { color: var(--accent); font-weight: 600; }
   .file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .empty-files, .empty-output { padding: 28px 16px; color: var(--secondary); text-align: center; font-size: 12px; }
+  .diff-content { min-width: 0; min-height: 0; overflow: hidden; }
+  .diff-content :global(.monaco-diff-viewer) { width: 100%; height: 100%; border: 0; border-radius: 0; }
+  .raw-diff { width: 100%; height: 100%; overflow: auto; box-sizing: border-box; margin: 0; padding: 10px 12px; background: var(--panel-subtle); color: var(--text); font-size: 11px; line-height: 1.45; user-select: text; -webkit-user-select: text; }
+  .empty-files, .empty-diff, .empty-output { padding: 28px 16px; color: var(--secondary); text-align: center; font-size: 12px; }
   .history-field { display: grid; gap: 6px; color: var(--secondary); font-size: 12px; }
   select, textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 4px; background: var(--control); color: var(--text); font: inherit; font-size: 13px; }
   select { min-height: 32px; padding: 5px 8px; }
@@ -897,6 +1024,6 @@
     .commit-titlebar { padding: 14px; }
     .commit-summary, .commit-notices { padding-left: 14px; padding-right: 14px; }
     .commit-layout { grid-template-columns: 1fr; padding: 10px 14px 14px; overflow: auto; }
-    .file-pane { min-height: 320px; }
+    .review-pane { grid-template-rows: minmax(240px, 1fr) minmax(260px, 1fr); min-height: 520px; }
   }
 </style>

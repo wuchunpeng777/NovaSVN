@@ -2215,6 +2215,8 @@
     targetPath={standaloneCommitPath}
     svnExecutable={currentSvnExecutable()}
     themeMode={$appSettingsStore.themeMode}
+    diffMode={$appSettingsStore.diffMode}
+    showWhitespace={$appSettingsStore.showWhitespace}
   />
 {:else if startupSurface === "log"}
   <StandaloneLogWindow
