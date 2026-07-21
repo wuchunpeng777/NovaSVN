@@ -157,6 +157,8 @@ describe("StandaloneUpdateWindow", () => {
 
     await fireEvent.contextMenu(file, { clientX: 220, clientY: 180 });
     const menu = screen.getByRole("menu", { name: "文件菜单 src/main.ts" });
+    const updateWindow = screen.getByLabelText("NovaSVN Update");
+    expect(updateWindow).toContainElement(menu);
     await fireEvent.click(within(menu).getByRole("menuitem", { name: "显示 Log" }));
 
     await waitFor(() => {
@@ -168,6 +170,7 @@ describe("StandaloneUpdateWindow", () => {
       });
     });
     const dialog = await screen.findByRole("dialog", { name: "文件 Log src/main.ts" });
+    expect(updateWindow).toContainElement(dialog);
     expect(within(dialog).getByText("r20")).toBeInTheDocument();
     expect(within(dialog).getByText("修改 main.ts")).toBeInTheDocument();
   });

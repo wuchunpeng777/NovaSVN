@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { CheckSquare, History, Plus, RefreshCw, RotateCcw, Square, X } from "@lucide/svelte";
+  import { CheckSquare, History, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from "@lucide/svelte";
   import {
     cancelTask,
     createCommitTask,
@@ -42,14 +42,19 @@
   let status: WorkingCopyStatus | null = null;
   let commitTask: Task | null = null;
   let addTask: Task | null = null;
+  let deleteTask: Task | null = null;
   let revertTask: Task | null = null;
   let addingPath: string | null = null;
+  let deletingPath: string | null = null;
   let revertingPath: string | null = null;
+  let deleteNotice: string | null = null;
   let revertNotice: string | null = null;
   let addNotice: string | null = null;
+  let deleteCandidate: ChangedFile | null = null;
   let revertCandidate: ChangedFile | null = null;
   let fileContextMenu: { file: ChangedFile; x: number; y: number } | null = null;
   let fileContextMenuElement: HTMLDivElement | null = null;
+  let deleteDialogElement: HTMLDivElement | null = null;
   let revertDialogElement: HTMLDivElement | null = null;
   let selectedPaths = new Set<string>();
   let activeFilePath: string | null = null;
@@ -86,17 +91,29 @@
   $: selectedCount = committableFiles.filter((file) => selectedPaths.has(file.path)).length;
   $: commitRunning = isTaskRunning(commitTask);
   $: addRunning = isTaskRunning(addTask);
+  $: deleteRunning = isTaskRunning(deleteTask);
   $: revertRunning = isTaskRunning(revertTask);
-  $: operationRunning = commitRunning || addRunning || addingPath !== null || revertRunning;
+  $: operationRunning =
+    commitRunning ||
+    addRunning ||
+    addingPath !== null ||
+    deleteRunning ||
+    deletingPath !== null ||
+    revertRunning ||
+    revertingPath !== null;
   $: taskStatus = commitTask
     ? taskStatusLabel(commitTask, initializing)
-    : revertTask
-      ? taskStatusLabel(revertTask, initializing, "revert")
-      : addTask
-        ? taskStatusLabel(addTask, initializing, "add")
-        : addingPath
-          ? "正在准备 Add"
-          : taskStatusLabel(null, initializing);
+    : deleteTask
+      ? taskStatusLabel(deleteTask, initializing, "delete")
+      : revertTask
+        ? taskStatusLabel(revertTask, initializing, "revert")
+        : addTask
+          ? taskStatusLabel(addTask, initializing, "add")
+          : deletingPath
+            ? "正在准备 Delete"
+            : addingPath
+              ? "正在准备 Add"
+              : taskStatusLabel(null, initializing);
   $: allSelected = committableFiles.length > 0 && selectedCount === committableFiles.length;
   $: commitDisabled =
     initializing ||
@@ -181,11 +198,15 @@
     target = null;
     commitTask = null;
     addTask = null;
+    deleteTask = null;
     revertTask = null;
     addingPath = null;
+    deletingPath = null;
     revertingPath = null;
+    deleteNotice = null;
     revertNotice = null;
     addNotice = null;
+    deleteCandidate = null;
     revertCandidate = null;
     closeFileContextMenu();
     selectedPaths = new Set();
@@ -356,7 +377,7 @@
     fileContextMenu = {
       file,
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - 172)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 54)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 96)),
     };
     await tick();
     fileContextMenuElement?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
@@ -403,6 +424,49 @@
     closeFileContextMenu();
     if (file) {
       await addFile(file);
+    }
+  }
+
+  async function requestContextFileDelete() {
+    const file = fileContextMenu?.file ?? null;
+    closeFileContextMenu();
+    if (!file || file.status === "deleted") {
+      return;
+    }
+    deleteCandidate = file;
+    await tick();
+    deleteDialogElement?.focus();
+  }
+
+  function cancelDelete() {
+    if (!deleteRunning) {
+      deleteCandidate = null;
+    }
+  }
+
+  async function confirmDelete() {
+    if (!target || !deleteCandidate || operationRunning) {
+      return;
+    }
+    const file = deleteCandidate;
+    deleteCandidate = null;
+    deletingPath = file.path;
+    deleteNotice = null;
+    deleteTask = null;
+    error = null;
+    statusError = null;
+    try {
+      const task = await createSvnOperationTask({
+        working_copy_root: target.working_copy_root,
+        kind: file.status === "unversioned" ? "delete_unversioned_file" : "delete_path",
+        file_path: file.path,
+        svn_executable: svnExecutable?.trim() || undefined,
+      });
+      deleteTask = task;
+      schedulePoll(task.task_id, "delete", generation, 0);
+    } catch (caught) {
+      deletingPath = null;
+      error = caught as CommandError;
     }
   }
 
@@ -465,7 +529,9 @@
     if (event.key !== "Escape") {
       return;
     }
-    if (revertCandidate) {
+    if (deleteCandidate) {
+      cancelDelete();
+    } else if (revertCandidate) {
       cancelRevert();
     } else if (historyPickerOpen) {
       closeHistoryPicker();
@@ -530,6 +596,28 @@
     }
   }
 
+  async function stopDelete() {
+    if (!deleteTask || !deleteRunning) {
+      return;
+    }
+    try {
+      deleteTask = await cancelTask(deleteTask.task_id);
+      if (isTaskRunning(deleteTask)) {
+        schedulePoll(deleteTask.task_id, "delete", generation, 200);
+      } else {
+        clearPollTimer();
+        const deletedPath = deletingPath;
+        deletingPath = null;
+        if (deleteTask.status === "success") {
+          deleteNotice = deletedPath ? `已 Delete ${deletedPath}` : "Delete 完成";
+          await refreshStatus(generation, true);
+        }
+      }
+    } catch (caught) {
+      error = caught as CommandError;
+    }
+  }
+
   async function stopRevert() {
     if (!revertTask || !revertRunning) {
       return;
@@ -554,7 +642,7 @@
 
   function schedulePoll(
     taskId: string,
-    role: "commit" | "revert" | "add",
+    role: "commit" | "revert" | "add" | "delete",
     currentGeneration: number,
     delay: number,
   ) {
@@ -564,7 +652,7 @@
 
   async function pollTask(
     taskId: string,
-    role: "commit" | "revert" | "add",
+    role: "commit" | "revert" | "add" | "delete",
     currentGeneration: number,
   ) {
     try {
@@ -576,6 +664,8 @@
         commitTask = task;
       } else if (role === "revert") {
         revertTask = task;
+      } else if (role === "delete") {
+        deleteTask = task;
       } else {
         addTask = task;
       }
@@ -589,6 +679,15 @@
         revertingPath = null;
         if (task.status === "success") {
           revertNotice = revertedPath ? `已 Revert ${revertedPath}` : "Revert 完成";
+          await refreshStatus(currentGeneration, true);
+        }
+        return;
+      }
+      if (role === "delete") {
+        const deletedPath = deletingPath;
+        deletingPath = null;
+        if (task.status === "success") {
+          deleteNotice = deletedPath ? `已 Delete ${deletedPath}` : "Delete 完成";
           await refreshStatus(currentGeneration, true);
         }
         return;
@@ -625,16 +724,16 @@
     return task?.status === "pending" || task?.status === "running";
   }
 
-  function taskStatusLabel(task: Task | null, isInitializing: boolean, role: "commit" | "revert" | "add" = "commit") {
+  function taskStatusLabel(task: Task | null, isInitializing: boolean, role: "commit" | "revert" | "add" | "delete" = "commit") {
     switch (task?.status) {
       case "pending":
         return "等待执行";
       case "running":
-        return role === "add" ? "正在 Add" : role === "revert" ? "正在 Revert" : "正在提交";
+        return role === "add" ? "正在 Add" : role === "delete" ? "正在 Delete" : role === "revert" ? "正在 Revert" : "正在提交";
       case "success":
-        return role === "add" ? "Add 完成" : role === "revert" ? "Revert 完成" : "提交完成";
+        return role === "add" ? "Add 完成" : role === "delete" ? "Delete 完成" : role === "revert" ? "Revert 完成" : "提交完成";
       case "failed":
-        return role === "add" ? "Add 失败" : role === "revert" ? "Revert 失败" : "提交失败";
+        return role === "add" ? "Add 失败" : role === "delete" ? "Delete 失败" : role === "revert" ? "Revert 失败" : "提交失败";
       case "cancelled":
         return "已取消";
       case "interrupted":
@@ -652,6 +751,10 @@
 
   function isVisibleFile(file: ChangedFile) {
     return isCommittable(file) || file.status === "unversioned";
+  }
+
+  function isRevertableFile(file: ChangedFile) {
+    return file.status === "modified" || file.status === "property_modified";
   }
 
   function isPathInCommitTarget(path: string) {
@@ -699,6 +802,10 @@
         <button type="button" on:click={stopAdd}>
           <Square size={14} fill="currentColor" aria-hidden="true" /> 停止
         </button>
+      {:else if deleteRunning}
+        <button type="button" on:click={stopDelete}>
+          <Square size={14} fill="currentColor" aria-hidden="true" /> 停止
+        </button>
       {:else if revertRunning}
         <button type="button" on:click={stopRevert}>
           <Square size={14} fill="currentColor" aria-hidden="true" /> 停止
@@ -719,7 +826,7 @@
 
   <section
     class="commit-notices"
-    class:has-notices={Boolean(error || statusError || commitTask?.error || addTask?.error || revertTask?.error || addNotice || revertNotice)}
+    class:has-notices={Boolean(error || statusError || commitTask?.error || addTask?.error || deleteTask?.error || revertTask?.error || addNotice || deleteNotice || revertNotice)}
     aria-label="Commit 错误"
   >
     <ErrorNotice {error} />
@@ -730,6 +837,9 @@
     {#if addTask?.error}
       <div class="inline-error" role="alert">{addTask.error}</div>
     {/if}
+    {#if deleteTask?.error}
+      <div class="inline-error" role="alert">{deleteTask.error}</div>
+    {/if}
     {#if revertTask?.error}
       <div class="inline-error" role="alert">{revertTask.error}</div>
     {/if}
@@ -738,6 +848,9 @@
     {/if}
     {#if addNotice}
       <div class="revert-notice" role="status">{addNotice}</div>
+    {/if}
+    {#if deleteNotice}
+      <div class="revert-notice" role="status">{deleteNotice}</div>
     {/if}
   </section>
 
@@ -766,6 +879,7 @@
               class:unversioned={file.status === "unversioned"}
               class:reverting={revertingPath === file.path}
               class:adding={addingPath === file.path}
+              class:deleting={deletingPath === file.path}
               role="group"
               aria-label={`提交文件 ${file.path}`}
               on:contextmenu={(event) => openFileContextMenu(event, file)}
@@ -903,11 +1017,22 @@
       <button type="button" role="menuitem" on:click={requestContextFileAdd}>
         <Plus size={15} aria-hidden="true" /> Add
       </button>
-    {:else}
+    {:else if isRevertableFile(fileContextMenu.file)}
       <button type="button" role="menuitem" class="danger-action" on:click={requestContextFileRevert}>
         <RotateCcw size={15} aria-hidden="true" /> Revert
       </button>
     {/if}
+    <div role="separator"></div>
+    <button
+      type="button"
+      role="menuitem"
+      class="danger-action"
+      disabled={fileContextMenu.file.status === "deleted"}
+      title={fileContextMenu.file.status === "deleted" ? "文件已经处于删除状态" : undefined}
+      on:click={requestContextFileDelete}
+    >
+      <Trash2 size={15} aria-hidden="true" /> Delete
+    </button>
   </div>
 {/if}
 
@@ -951,6 +1076,40 @@
           on:click={useSelectedHistoryMessage}
         >
           填充提交日志
+        </button>
+      </footer>
+    </div>
+  </div>
+{/if}
+
+{#if deleteCandidate}
+  <div class="revert-backdrop" role="presentation" on:click|self={cancelDelete}>
+    <div
+      bind:this={deleteDialogElement}
+      class="revert-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-dialog-title"
+      tabindex="-1"
+    >
+      <header>
+        <div>
+          <h2 id="delete-dialog-title">确认 Delete</h2>
+          <p>
+            {deleteCandidate.status === "unversioned"
+              ? "未版本控制文件将从磁盘永久删除，NovaSVN 无法撤销此操作。"
+              : "文件将被标记为 SVN 删除，并保留为待提交变更。"}
+          </p>
+        </div>
+        <button type="button" class="dialog-close" aria-label="关闭 Delete 确认" title="关闭" on:click={cancelDelete}>
+          <X size={16} aria-hidden="true" />
+        </button>
+      </header>
+      <code title={deleteCandidate.path}>{deleteCandidate.path}</code>
+      <footer>
+        <button type="button" on:click={cancelDelete}>取消</button>
+        <button type="button" class="danger-primary" on:click={confirmDelete}>
+          <Trash2 size={15} aria-hidden="true" /> 确认 Delete
         </button>
       </footer>
     </div>
@@ -1007,6 +1166,7 @@
     color: var(--text);
     user-select: none;
     -webkit-user-select: none;
+    isolation: isolate;
   }
 
   .standalone-commit input,
@@ -1069,6 +1229,7 @@
   .file-item.active { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
   .file-item.reverting { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
   .file-item.adding { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+  .file-item.deleting { background: color-mix(in srgb, #b93d3d 12%, var(--panel)); }
   .file-item input { width: 15px; height: 15px; accent-color: var(--accent); }
   .file-selection-placeholder { width: 15px; height: 15px; }
   button.file-preview-trigger { display: grid; grid-template-columns: 72px minmax(0, 1fr); justify-content: stretch; gap: 8px; width: 100%; min-height: 35px; border: 0; border-radius: 0; padding: 5px 0; background: transparent; color: var(--text); text-align: left; }
@@ -1094,7 +1255,7 @@
 
   .file-context-menu {
     position: fixed;
-    z-index: 20;
+    z-index: 3000;
     display: grid;
     width: 164px;
     border: 1px solid var(--border);
@@ -1116,6 +1277,12 @@
     background: var(--panel-subtle);
   }
 
+  .file-context-menu [role="separator"] {
+    height: 1px;
+    margin: 3px 5px;
+    background: var(--border);
+  }
+
   .danger-action,
   .danger-primary {
     color: #a12a2a;
@@ -1124,7 +1291,7 @@
   .history-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 30;
+    z-index: 3100;
     display: grid;
     background: rgb(10 18 26 / 35%);
     padding: 24px;
@@ -1191,7 +1358,7 @@
   .revert-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 30;
+    z-index: 3100;
     display: grid;
     background: rgb(10 18 26 / 35%);
     padding: 24px;

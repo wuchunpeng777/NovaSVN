@@ -142,6 +142,7 @@ pub enum SvnOperationKind {
     Cleanup,
     AddFile,
     DeletePath,
+    DeleteUnversionedFile,
     MovePath,
     CopyPath,
     RevertFile,
@@ -502,6 +503,7 @@ struct SvnOperationTaskPayload {
     target_path: Option<String>,
     svn_executable: String,
     delete_target_identity: Option<Box<DeleteTargetIdentity>>,
+    unversioned_file_identity: Option<Box<UnversionedFileIdentity>>,
     destination_identity: Option<Box<WorkingCopyDestinationIdentity>>,
 }
 
@@ -546,6 +548,13 @@ enum DeleteFilesystemNodeKind {
     Symlink,
     ReparsePoint,
     Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UnversionedFileIdentity {
+    canonical_path: PathBuf,
+    bytes: u64,
+    sha256: String,
 }
 
 #[derive(Debug, Clone)]
@@ -913,6 +922,11 @@ impl TaskQueue {
             SvnOperationKind::DeletePath => Some(normalize_delete_path(
                 request.file_path.as_deref().unwrap_or_default(),
             )?),
+            SvnOperationKind::DeleteUnversionedFile => Some(normalize_strict_working_copy_path(
+                request.file_path.as_deref().unwrap_or_default(),
+                "DELETE_UNVERSIONED_FILE_PATH_INVALID",
+                "未版本控制文件删除路径无效",
+            )?),
             SvnOperationKind::MovePath => Some(normalize_move_path(
                 request.file_path.as_deref().unwrap_or_default(),
                 "MOVE_SOURCE_PATH_INVALID",
@@ -1003,6 +1017,17 @@ impl TaskQueue {
         } else {
             None
         };
+        let unversioned_file_identity =
+            if matches!(&request.kind, SvnOperationKind::DeleteUnversionedFile) {
+                working_copy_root = canonicalize_delete_working_copy_root(&working_copy_root)?;
+                Some(Box::new(validate_unversioned_file_delete_target(
+                    &svn_executable,
+                    &working_copy_root,
+                    file_path.as_deref().unwrap_or_default(),
+                )?))
+            } else {
+                None
+            };
         let destination_identity = if matches!(
             &request.kind,
             SvnOperationKind::MovePath | SvnOperationKind::CopyPath
@@ -1053,6 +1078,7 @@ impl TaskQueue {
                 target_path,
                 svn_executable,
                 delete_target_identity,
+                unversioned_file_identity,
                 destination_identity,
             }),
         };
@@ -2706,6 +2732,87 @@ fn run_svn_operation_task(
                 task_id,
                 &format!("执行 svn delete --force：{file_path}"),
             );
+        }
+        SvnOperationKind::DeleteUnversionedFile => {
+            let Some(file_path) = payload.file_path.as_deref() else {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "删除未版本控制文件失败",
+                    Some("缺少要删除的文件路径。".to_string()),
+                );
+                return;
+            };
+            let Some(expected_identity) = payload.unversioned_file_identity.as_deref() else {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "删除未版本控制文件失败",
+                    Some("删除任务缺少文件身份快照。".to_string()),
+                );
+                return;
+            };
+            let current_identity = match validate_unversioned_file_delete_target(
+                &payload.svn_executable,
+                &root,
+                file_path,
+            ) {
+                Ok(identity) => identity,
+                Err(error) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "删除未版本控制文件安全校验失败",
+                        Some(nova_error_text(&error)),
+                    );
+                    return;
+                }
+            };
+            if &current_identity != expected_identity {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "未版本控制文件已发生变化",
+                    Some(format!(
+                        "排队时：{} 字节 / {}；当前：{} 字节 / {}",
+                        expected_identity.bytes,
+                        expected_identity.sha256,
+                        current_identity.bytes,
+                        current_identity.sha256
+                    )),
+                );
+                return;
+            }
+            if let Err(error) = fs::remove_file(&current_identity.canonical_path) {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "删除未版本控制文件失败",
+                    Some(format!(
+                        "删除 `{}` 失败：{error}",
+                        current_identity.canonical_path.display()
+                    )),
+                );
+                return;
+            }
+            append_task_log(
+                state,
+                task_id,
+                &format!("从磁盘删除未版本控制文件：{file_path}"),
+            );
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Success,
+                "未版本控制文件已删除",
+                None,
+            );
+            return;
         }
         SvnOperationKind::MovePath | SvnOperationKind::CopyPath => {
             let (command_name, code_prefix, label) = match &payload.kind {
@@ -7627,6 +7734,164 @@ fn canonicalize_delete_working_copy_root(root: &Path) -> Result<PathBuf, NovaErr
     Ok(canonical_root)
 }
 
+fn validate_unversioned_file_delete_target(
+    svn_executable: &str,
+    working_copy_root: &Path,
+    relative_path: &str,
+) -> Result<UnversionedFileIdentity, NovaError> {
+    validate_delete_target_ancestors(working_copy_root, relative_path)?;
+
+    let target = working_copy_root.join(relative_path);
+    let metadata = fs::symlink_metadata(&target).map_err(|error| {
+        let (code, message) = if error.kind() == std::io::ErrorKind::NotFound {
+            ("DELETE_UNVERSIONED_FILE_NOT_FOUND", "未版本控制文件不存在")
+        } else {
+            (
+                "DELETE_UNVERSIONED_FILE_CHECK_FAILED",
+                "无法检查未版本控制文件",
+            )
+        };
+        NovaError::command(
+            code,
+            message,
+            Some(format!("路径：{}；错误：{error}", target.display())),
+            true,
+        )
+    })?;
+    if metadata.file_type().is_symlink() || metadata_is_reparse_point(&metadata) {
+        return Err(NovaError::command(
+            "DELETE_UNVERSIONED_FILE_UNSAFE",
+            "未版本控制文件不能安全删除",
+            Some("目标不能是符号链接或 reparse point。".to_string()),
+            true,
+        ));
+    }
+    if !metadata.is_file() {
+        return Err(NovaError::command(
+            "DELETE_UNVERSIONED_FILE_NOT_FILE",
+            "删除目标不是普通文件",
+            Some(format!("路径：{}", target.display())),
+            true,
+        ));
+    }
+
+    let canonical_path = fs::canonicalize(&target).map_err(|error| {
+        NovaError::command(
+            "DELETE_UNVERSIONED_FILE_CHECK_FAILED",
+            "无法解析未版本控制文件",
+            Some(format!("路径：{}；错误：{error}", target.display())),
+            true,
+        )
+    })?;
+    if !canonical_path.starts_with(working_copy_root) {
+        return Err(NovaError::command(
+            "DELETE_UNVERSIONED_FILE_OUTSIDE_WORKING_COPY",
+            "未版本控制文件位于当前工作副本外",
+            Some(format!(
+                "工作副本：{}；目标：{}",
+                working_copy_root.display(),
+                canonical_path.display()
+            )),
+            true,
+        ));
+    }
+
+    let output = svn::command(svn_executable)
+        .args(["status", "--xml", "--no-ignore", "--depth", "empty"])
+        .arg(&target)
+        .current_dir(working_copy_root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "DELETE_UNVERSIONED_FILE_STATUS_FAILED",
+                "无法检查文件的 SVN 状态",
+                Some(format!(
+                    "无法执行 `{svn_executable} status --xml --no-ignore --depth empty`：{error}"
+                )),
+                true,
+            )
+        })?;
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "DELETE_UNVERSIONED_FILE_STATUS_FAILED",
+            "无法检查文件的 SVN 状态",
+            Some(command_output_error_detail(
+                svn_executable,
+                "status --xml --no-ignore --depth empty",
+                &output,
+            )),
+            true,
+        ));
+    }
+    let xml = std::str::from_utf8(&output.stdout).map_err(|error| {
+        NovaError::command(
+            "DELETE_UNVERSIONED_FILE_STATUS_INVALID",
+            "文件的 SVN 状态不是有效 UTF-8",
+            Some(error.to_string()),
+            true,
+        )
+    })?;
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "DELETE_UNVERSIONED_FILE_STATUS_INVALID",
+            "无法解析文件的 SVN 状态",
+            Some(format!("svn status --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+    let statuses = document
+        .descendants()
+        .filter(|node| node.has_tag_name("wc-status"))
+        .filter_map(|node| node.attribute("item"))
+        .collect::<Vec<_>>();
+    if statuses.as_slice() != ["unversioned"] {
+        return Err(NovaError::command(
+            "DELETE_UNVERSIONED_FILE_STATUS_CHANGED",
+            "删除目标不再是未版本控制文件",
+            Some(format!(
+                "路径：{relative_path}；当前状态：{}",
+                if statuses.is_empty() {
+                    "normal".to_string()
+                } else {
+                    statuses.join(", ")
+                }
+            )),
+            true,
+        ));
+    }
+
+    let mut file = fs::File::open(&canonical_path).map_err(|error| {
+        NovaError::command(
+            "DELETE_UNVERSIONED_FILE_READ_FAILED",
+            "无法读取未版本控制文件",
+            Some(format!("路径：{}；错误：{error}", canonical_path.display())),
+            true,
+        )
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| {
+            NovaError::command(
+                "DELETE_UNVERSIONED_FILE_READ_FAILED",
+                "无法读取未版本控制文件",
+                Some(format!("路径：{}；错误：{error}", canonical_path.display())),
+                true,
+            )
+        })?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+
+    Ok(UnversionedFileIdentity {
+        canonical_path,
+        bytes: metadata.len(),
+        sha256: format!("{:x}", hasher.finalize()),
+    })
+}
+
 fn validate_delete_target(
     svn_executable: &str,
     working_copy_root: &Path,
@@ -8069,6 +8334,9 @@ fn operation_title(
         }
         SvnOperationKind::DeletePath => {
             format!("删除 {}", file_path.unwrap_or_default())
+        }
+        SvnOperationKind::DeleteUnversionedFile => {
+            format!("删除未版本控制文件 {}", file_path.unwrap_or_default())
         }
         SvnOperationKind::MovePath => format!(
             "移动 {} 到 {}",
@@ -11361,6 +11629,10 @@ mod tests {
             (SvnOperationKind::UpdatePath, "UPDATE_PATH_INVALID"),
             (SvnOperationKind::AddFile, "ADD_FILE_PATH_INVALID"),
             (SvnOperationKind::DeletePath, "DELETE_PATH_INVALID"),
+            (
+                SvnOperationKind::DeleteUnversionedFile,
+                "DELETE_UNVERSIONED_FILE_PATH_INVALID",
+            ),
             (SvnOperationKind::MovePath, "MOVE_SOURCE_PATH_INVALID"),
             (SvnOperationKind::CopyPath, "COPY_SOURCE_PATH_INVALID"),
             (SvnOperationKind::LockFile, "LOCK_FILE_PATH_INVALID"),
@@ -12206,6 +12478,100 @@ mod tests {
                 NovaError::Command { ref code, .. } if code == "DELETE_PATH_INVALID"
             ));
         }
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn deletes_unversioned_regular_file_and_rejects_versioned_or_changed_targets() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-delete-unversioned-integration");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+
+        let tracked = working_copy.join("tracked.txt");
+        fs::write(&tracked, "tracked\n").expect("write tracked file");
+        run_test_command(Command::new("svn").arg("add").arg(&tracked));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .args(["-m", "初始化未版本控制删除测试"])
+                .arg(&working_copy),
+        );
+
+        let unversioned = working_copy.join("unversioned.txt");
+        fs::write(&unversioned, "unversioned\n").expect("write unversioned file");
+        let queue = TaskQueue::new();
+        let unversioned_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::DeleteUnversionedFile,
+                file_path: Some("unversioned.txt".to_string()),
+                target_path: None,
+                svn_executable: None,
+            })
+            .expect("unversioned file delete task should be created");
+        assert_eq!(unversioned_task.title, "删除未版本控制文件 unversioned.txt");
+        let unversioned_task = wait_for_test_task(&queue, &unversioned_task.task_id);
+        assert!(
+            matches!(unversioned_task.status, TaskStatus::Success),
+            "未版本控制文件删除任务失败：{:?}",
+            unversioned_task.error
+        );
+        assert!(!unversioned.exists());
+
+        let tracked_error = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::DeleteUnversionedFile,
+                file_path: Some("tracked.txt".to_string()),
+                target_path: None,
+                svn_executable: None,
+            })
+            .expect_err("versioned file must not be treated as unversioned");
+        assert!(matches!(
+            tracked_error,
+            NovaError::Command { ref code, .. } if code == "DELETE_UNVERSIONED_FILE_STATUS_CHANGED"
+        ));
+        assert!(tracked.exists());
+
+        let changing = working_copy.join("changing.txt");
+        fs::write(&changing, "before\n").expect("write changing file");
+        queue.create_mock_task(CreateMockTaskRequest {
+            title: Some("阻塞未版本控制删除身份测试队列".to_string()),
+            outcome: MockTaskOutcome::Success,
+        });
+        let changing_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::DeleteUnversionedFile,
+                file_path: Some("changing.txt".to_string()),
+                target_path: None,
+                svn_executable: None,
+            })
+            .expect("changing unversioned file delete task should be created");
+        fs::write(&changing, "after\n").expect("change queued file");
+        let changing_task = wait_for_test_task(&queue, &changing_task.task_id);
+        assert!(
+            matches!(changing_task.status, TaskStatus::Failed),
+            "排队后变更的未版本控制文件必须拒绝删除"
+        );
+        assert!(changing_task
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("发生变化")));
+        assert!(changing.exists());
 
         fs::remove_dir_all(root).ok();
     }

@@ -259,6 +259,94 @@ describe("StandaloneCommitWindow", () => {
     expect(screen.getByRole("status")).toHaveTextContent("已 Revert other.ts");
   });
 
+  it("根据文件状态显示 Revert、Add 和 Delete 菜单项", async () => {
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const filePane = screen.getByLabelText("选择提交文件");
+
+    await fireEvent.contextMenu(await within(filePane).findByText("other.ts"));
+    let menu = screen.getByRole("menu", { name: "文件菜单 other.ts" });
+    expect(within(menu).getByRole("menuitem", { name: "Revert" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+    await fireEvent.keyDown(menu, { key: "Escape" });
+
+    await fireEvent.contextMenu(await within(filePane).findByText("src/nested.ts"));
+    menu = screen.getByRole("menu", { name: "文件菜单 src/nested.ts" });
+    expect(within(menu).queryByRole("menuitem", { name: "Revert" })).not.toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+    await fireEvent.keyDown(menu, { key: "Escape" });
+
+    await fireEvent.contextMenu(await within(filePane).findByText("src/ignored.ts"));
+    menu = screen.getByRole("menu", { name: "文件菜单 src/ignored.ts" });
+    expect(within(menu).getByRole("menuitem", { name: "Add" })).toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Revert" })).not.toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+  });
+
+  it("右键版本化文件确认后执行 Delete 并刷新列表", async () => {
+    createSvnOperationTaskMock.mockResolvedValue(
+      makeTask("pending", [], { task_id: "delete-1", title: "删除文件 src/nested.ts" }),
+    );
+    getTaskMock.mockResolvedValue(makeTask("success", [], { task_id: "delete-1" }));
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const filePane = screen.getByLabelText("选择提交文件");
+    await fireEvent.contextMenu(await within(filePane).findByText("src/nested.ts"));
+    const menu = screen.getByRole("menu", { name: "文件菜单 src/nested.ts" });
+    await fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete" }));
+    const dialog = screen.getByRole("dialog", { name: "确认 Delete" });
+    expect(within(dialog).getByText("文件将被标记为 SVN 删除，并保留为待提交变更。")).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "确认 Delete" }));
+
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "delete_path",
+        file_path: "src/nested.ts",
+        svn_executable: undefined,
+      });
+    });
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status")).toHaveTextContent("已 Delete src/nested.ts");
+  });
+
+  it("右键未版本控制文件确认后执行磁盘 Delete", async () => {
+    createSvnOperationTaskMock.mockResolvedValue(
+      makeTask("pending", [], { task_id: "delete-unversioned-1", title: "删除未版本控制文件" }),
+    );
+    getTaskMock.mockResolvedValue(
+      makeTask("success", [], { task_id: "delete-unversioned-1" }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const filePane = screen.getByLabelText("选择提交文件");
+    await fireEvent.contextMenu(await within(filePane).findByText("src/ignored.ts"));
+    const menu = screen.getByRole("menu", { name: "文件菜单 src/ignored.ts" });
+    await fireEvent.click(within(menu).getByRole("menuitem", { name: "Delete" }));
+    const dialog = screen.getByRole("dialog", { name: "确认 Delete" });
+    expect(within(dialog).getByText("未版本控制文件将从磁盘永久删除，NovaSVN 无法撤销此操作。")).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "确认 Delete" }));
+
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "delete_unversioned_file",
+        file_path: "src/ignored.ts",
+        svn_executable: undefined,
+      });
+    });
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status")).toHaveTextContent("已 Delete src/ignored.ts");
+  });
+
+  it("已删除文件的 Delete 菜单项不可用", async () => {
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({ files: [makeFile("src/removed.ts", "deleted")], total: 1, returned: 1, local_changes: 1, deleted: 1 }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const filePane = screen.getByLabelText("选择提交文件");
+    await fireEvent.contextMenu(await within(filePane).findByText("src/removed.ts"));
+    const menu = screen.getByRole("menu", { name: "文件菜单 src/removed.ts" });
+    expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeDisabled();
+  });
+
   it("没有日志或文件选择时禁用提交", async () => {
     scanWorkspaceStatusMock.mockResolvedValue(makeStatus({ files: [] }));
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });

@@ -79,6 +79,7 @@ export type SvnOperationKind =
   | "cleanup"
   | "add_file"
   | "delete_path"
+  | "delete_unversioned_file"
   | "move_path"
   | "copy_path"
   | "revert_file"

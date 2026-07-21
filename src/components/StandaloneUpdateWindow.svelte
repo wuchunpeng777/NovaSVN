@@ -707,70 +707,70 @@
       {/if}
     </aside>
   </div>
-</main>
 
-{#if fileContextMenu}
-  <div
-    bind:this={fileContextMenuElement}
-    class="file-context-menu"
-    role="menu"
-    tabindex="-1"
-    aria-label={`文件菜单 ${fileContextMenu.path}`}
-    style={`left: ${fileContextMenu.x}px; top: ${fileContextMenu.y}px`}
-  >
-    <button type="button" role="menuitem" on:click={() => showFileLog(fileContextMenu?.path ?? "")}>
-      <History size={15} aria-hidden="true" /> 显示 Log
-    </button>
-  </div>
-{/if}
-
-{#if fileLogPath}
-  <div
-    class="file-log-backdrop"
-    role="presentation"
-    tabindex="-1"
-    on:click|self={closeFileLog}
-    on:keydown={(event) => event.key === "Escape" && closeFileLog()}
-  >
+  {#if fileContextMenu}
     <div
-      bind:this={fileLogDialogElement}
-      class="file-log-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`文件 Log ${fileLogPath}`}
+      bind:this={fileContextMenuElement}
+      class="file-context-menu"
+      role="menu"
       tabindex="-1"
+      aria-label={`文件菜单 ${fileContextMenu.path}`}
+      style={`left: ${fileContextMenu.x}px; top: ${fileContextMenu.y}px`}
     >
-      <header>
-        <div>
-          <h2>文件 Log</h2>
-          <code title={fileLogPath}>{fileLogPath}</code>
+      <button type="button" role="menuitem" on:click={() => showFileLog(fileContextMenu?.path ?? "")}>
+        <History size={15} aria-hidden="true" /> 显示 Log
+      </button>
+    </div>
+  {/if}
+
+  {#if fileLogPath}
+    <div
+      class="file-log-backdrop"
+      role="presentation"
+      tabindex="-1"
+      on:click|self={closeFileLog}
+      on:keydown={(event) => event.key === "Escape" && closeFileLog()}
+    >
+      <div
+        bind:this={fileLogDialogElement}
+        class="file-log-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`文件 Log ${fileLogPath}`}
+        tabindex="-1"
+      >
+        <header>
+          <div>
+            <h2>文件 Log</h2>
+            <code title={fileLogPath}>{fileLogPath}</code>
+          </div>
+          <button type="button" class="icon-button" aria-label="关闭文件 Log" title="关闭" on:click={closeFileLog}>
+            <X size={16} aria-hidden="true" />
+          </button>
+        </header>
+        <ErrorNotice error={fileLogError} />
+        <div class="file-log-list" aria-busy={fileLogLoading}>
+          {#if fileLogLoading}
+            <div class="empty-output" role="status">正在读取文件 Log...</div>
+          {:else if fileLog?.entries.length}
+            {#each fileLog.entries as entry (entry.revision)}
+              <article class="file-log-entry">
+                <header>
+                  <strong>r{entry.revision}</strong>
+                  <span>{entry.author || "-"}</span>
+                  <time datetime={entry.date}>{formatLogDate(entry.date)}</time>
+                </header>
+                <p>{entry.message || "无提交信息"}</p>
+              </article>
+            {/each}
+          {:else if !fileLogError}
+            <div class="empty-output">没有可显示的 Log</div>
+          {/if}
         </div>
-        <button type="button" class="icon-button" aria-label="关闭文件 Log" title="关闭" on:click={closeFileLog}>
-          <X size={16} aria-hidden="true" />
-        </button>
-      </header>
-      <ErrorNotice error={fileLogError} />
-      <div class="file-log-list" aria-busy={fileLogLoading}>
-        {#if fileLogLoading}
-          <div class="empty-output" role="status">正在读取文件 Log...</div>
-        {:else if fileLog?.entries.length}
-          {#each fileLog.entries as entry (entry.revision)}
-            <article class="file-log-entry">
-              <header>
-                <strong>r{entry.revision}</strong>
-                <span>{entry.author || "-"}</span>
-                <time datetime={entry.date}>{formatLogDate(entry.date)}</time>
-              </header>
-              <p>{entry.message || "无提交信息"}</p>
-            </article>
-          {/each}
-        {:else if !fileLogError}
-          <div class="empty-output">没有可显示的 Log</div>
-        {/if}
       </div>
     </div>
-  </div>
-{/if}
+  {/if}
+</main>
 
 <style>
   .standalone-update {
@@ -787,6 +787,7 @@
     width: 100vw;
     height: 100vh;
     overflow: hidden;
+    isolation: isolate;
     background: var(--background);
     color: var(--text);
     user-select: none;
@@ -1189,7 +1190,7 @@
 
   .file-context-menu {
     position: fixed;
-    z-index: 20;
+    z-index: 3000;
     min-width: 170px;
     border: 1px solid var(--border);
     border-radius: 5px;
@@ -1215,7 +1216,7 @@
 
   .file-log-backdrop {
     position: fixed;
-    z-index: 30;
+    z-index: 3100;
     inset: 0;
     display: grid;
     background: rgb(0 0 0 / 38%);
