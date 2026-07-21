@@ -1429,6 +1429,10 @@
     return !!node && node.kind === "file" && !["deleted", "missing"].includes(node.status);
   }
 
+  function canShowPathContextMenu(node: WorkspaceFileNode | null) {
+    return !!node && (node.kind !== "dir" || node.versioned);
+  }
+
   function openTreeNodeFromPointer(node: WorkspaceFileNode) {
     activeRowPath = node.path;
     rowSelectionAnchorPath = node.path;
@@ -1466,6 +1470,11 @@
   }
 
   function openContextMenuAt(node: WorkspaceTreeRow, clientX: number, clientY: number) {
+    if (!canShowPathContextMenu(node)) {
+      closeContextMenu();
+      openRowMenuPath = null;
+      return;
+    }
     activeRowPath = node.path;
     rowSelectionAnchorPath = node.path;
     keyboardRangeAnchorPath = node.path;
@@ -4625,7 +4634,7 @@
                         </button>
                       {/if}
                     {/if}
-                    {#if isUnversionedPath(node.path) || isLocalChangedPath(node.path) || canMovePath(node)}
+                    {#if canShowPathContextMenu(node) && (isUnversionedPath(node.path) || isLocalChangedPath(node.path) || canMovePath(node))}
                       <button
                         type="button"
                         class="row-menu-trigger"
@@ -4642,7 +4651,7 @@
                         <Ellipsis size={14} strokeWidth={2} aria-hidden="true" />
                       </button>
                     {/if}
-                    {#if openRowMenuPath === node.path}
+                    {#if canShowPathContextMenu(node) && openRowMenuPath === node.path}
                       <div
                         class="row-action-menu"
                         role="menu"
@@ -5206,7 +5215,7 @@
     </main>
   </div>
 
-  {#if contextMenuNode}
+  {#if contextMenuNode && canShowPathContextMenu(contextMenuNode)}
     <div
       bind:this={contextMenuElement}
       class="workspace-context-menu"

@@ -2006,6 +2006,15 @@ Certificate information:
     expect(
       screen.queryByRole("button", { name: "Ignore 目录 external" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "更多操作 目录 external" }),
+    ).not.toBeInTheDocument();
+    await fireEvent.contextMenu(
+      document.getElementById("workspace-row-external") as HTMLElement,
+    );
+    expect(
+      screen.queryByRole("menu", { name: "路径菜单 external" }),
+    ).not.toBeInTheDocument();
     await clickRowMenuAction("更多操作 目录 empty", "删除目录 empty");
     expect(onDeletePath).toHaveBeenNthCalledWith(4, "empty");
     await clickRowMenuAction(
@@ -2020,8 +2029,7 @@ Certificate information:
     expect(onDeletePath).toHaveBeenNthCalledWith(6, "literal/name.txt");
   });
 
-  it("offers Ignore for an unversioned directory", async () => {
-    const onIgnorePath = vi.fn();
+  it("does not show path menus for an unversioned directory", async () => {
     const directory = makeFile("drafts", "unversioned", "drafts-digest");
     const tree = makeFileTree();
     tree.total_files = 1;
@@ -2047,15 +2055,19 @@ Certificate information:
         workspace: makeWorkspace(),
         workingCopyStatus: makeStatus([directory]),
         workspaceFileTree: tree,
-        onIgnorePath,
       },
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "未管理文件" }));
-    await fireEvent.click(screen.getByRole("button", { name: "更多操作 目录 drafts" }));
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Ignore 目录 drafts" }));
-
-    expect(onIgnorePath).toHaveBeenCalledWith("drafts");
+    expect(
+      screen.queryByRole("button", { name: "更多操作 目录 drafts" }),
+    ).not.toBeInTheDocument();
+    await fireEvent.contextMenu(
+      document.getElementById("workspace-row-drafts") as HTMLElement,
+    );
+    expect(
+      screen.queryByRole("menu", { name: "路径菜单 drafts" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps a Unix backslash filename intact in the inspector", () => {
