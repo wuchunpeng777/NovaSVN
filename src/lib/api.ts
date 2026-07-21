@@ -39,6 +39,7 @@ import type {
   GetRepositoryFileLogRequest,
   GetRepositoryFilePropertiesRequest,
   GetRepositoryFileBlameRequest,
+  GetRevisionFileContentDiffRequest,
   GetSvnBlameRequest,
   GetSvnLogRequest,
   GetSvnPropertiesRequest,
@@ -385,6 +386,12 @@ export function getFileContentDiff(
   request: GetFileContentDiffRequest,
 ): Promise<FileContentDiff> {
   return callBackend<FileContentDiff>("get_file_content_diff", { request });
+}
+
+export function getRevisionFileContentDiff(
+  request: GetRevisionFileContentDiffRequest,
+): Promise<FileContentDiff> {
+  return callBackend<FileContentDiff>("get_revision_file_content_diff", { request });
 }
 
 export function getSvnLog(request: GetSvnLogRequest): Promise<SvnLog> {

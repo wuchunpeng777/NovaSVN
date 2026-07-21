@@ -12,6 +12,7 @@ mod svn;
 mod system_integration;
 mod task;
 mod task_workspace;
+mod window_state;
 mod workspace;
 
 use branch_pool::{BranchPool, RemoveBranchPoolEntryRequest, SaveBranchPoolEntryRequest};
@@ -47,10 +48,11 @@ use tauri::{Emitter, Manager};
 use workspace::{
     FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, GetPathSvnLogRequest,
     GetRepositoryFileBlameRequest, GetRepositoryFileLogRequest, GetRepositoryFilePropertiesRequest,
-    GetSvnBlameRequest, GetSvnLogRequest, GetSvnPropertiesRequest, IgnoreWorkspacePathRequest,
-    InspectUpdateTargetRequest, ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace,
-    ScanWorkspaceStatusRequest, SetSvnPropertyRequest, SvnBlame, SvnLog, SvnProperties,
-    UpdateTargetSummary, WorkingCopyStatus, WorkspaceFileTree, WorkspaceSummary,
+    GetRevisionFileContentDiffRequest, GetSvnBlameRequest, GetSvnLogRequest,
+    GetSvnPropertiesRequest, IgnoreWorkspacePathRequest, InspectUpdateTargetRequest,
+    ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace, ScanWorkspaceStatusRequest,
+    SetSvnPropertyRequest, SvnBlame, SvnLog, SvnProperties, UpdateTargetSummary, WorkingCopyStatus,
+    WorkspaceFileTree, WorkspaceSummary,
 };
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -915,6 +917,18 @@ fn get_file_content_diff(request: GetFileContentDiffRequest) -> CommandResult<Fi
 }
 
 #[tauri::command]
+async fn get_revision_file_content_diff(
+    request: GetRevisionFileContentDiffRequest,
+) -> CommandResult<FileContentDiff> {
+    println!("[NovaSVN] get_revision_file_content_diff command received");
+    let content_diff = run_blocking_command("读取历史文件内容", move || {
+        workspace::get_revision_file_content_diff(request)
+    })
+    .await?;
+    Ok(CommandResponse::success(content_diff))
+}
+
+#[tauri::command]
 async fn get_svn_log(request: GetSvnLogRequest) -> CommandResult<SvnLog> {
     println!("[NovaSVN] get_svn_log command received");
     let log =
@@ -1040,6 +1054,7 @@ pub fn run() {
         })
         .setup(|app| {
             let startup_intent = system_integration::startup_intent();
+            let window_surface = window_state::surface_name(startup_intent.action.as_deref());
             let standalone_title = match startup_intent.action.as_deref() {
                 Some("commit") => Some("NovaSVN Commit"),
                 Some("log") => Some("NovaSVN Log"),
@@ -1051,14 +1066,18 @@ pub fn run() {
             app.manage(TaskQueue::persistent(
                 app_data_dir.join("task-history.json"),
             ));
-            diagnostics::install_panic_hook(app_data_dir);
+            diagnostics::install_panic_hook(app_data_dir.clone());
             if standalone_title.is_some() {
                 let _ = app.remove_menu();
             }
             if let Some(window) = app.get_webview_window("main") {
                 if let Some(title) = standalone_title {
                     let _ = window.set_title(title);
-                    let _ = window.set_size(tauri::LogicalSize::new(1120.0, 760.0));
+                    if !window_state::restore_and_track(&window, &app_data_dir, window_surface) {
+                        let _ = window.set_size(tauri::LogicalSize::new(1120.0, 760.0));
+                    }
+                } else {
+                    window_state::restore_and_track(&window, &app_data_dir, window_surface);
                 }
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -1120,6 +1139,7 @@ pub fn run() {
             list_workspace_files,
             get_file_diff,
             get_file_content_diff,
+            get_revision_file_content_diff,
             get_svn_log,
             get_path_svn_log,
             get_repository_file_log,

@@ -25,11 +25,16 @@
   } from "@lucide/svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
+  import { getRevisionFileContentDiff } from "../../lib/api";
   import {
     findSvnCertificateFailure,
     svnCertificateFailureLabel,
   } from "../../lib/svn-certificate";
-  import { summarizeSvnChangeActions } from "../../lib/svn-log";
+  import {
+    repositoryPathUrlAtRevision,
+    revisionBefore,
+    summarizeSvnChangeActions,
+  } from "../../lib/svn-log";
   import type {
     ApplyPatchResult,
     BranchPool,
@@ -631,6 +636,11 @@
   let showWhitespace = false;
   let workingCopyTreeFilter: WorkingCopyTreeFilter = "all";
   let selectedLogRevision: string | null = null;
+  let selectedRevisionFileDiff: { revision: string; path: string } | null = null;
+  let revisionFileContentDiff: FileContentDiff | null = null;
+  let revisionFileDiffLoading = false;
+  let revisionFileDiffError: CommandError | null = null;
+  let revisionFileDiffGeneration = 0;
   let expandedTimelineRevisions = new Set<string>();
   let selectedComparisonRevisions: string[] = [];
   let collapsedTreePaths = new Set<string>();
@@ -709,6 +719,7 @@
     repositoryExportError,
     commandErrorText(svnLogError),
     revisionDiffError,
+    commandErrorText(revisionFileDiffError),
     branchCheckoutError,
     mergeError,
     selectedTask?.error,
@@ -1867,6 +1878,9 @@
   }
 
   function selectLogEntry(revision: string) {
+    if (selectedRevisionFileDiff?.revision !== revision) {
+      clearRevisionFileDiff();
+    }
     selectedLogRevision = revision;
     onPrepareRevisionDiffFromLog(revision);
     toggleTimelineEntryPaths(revision);
@@ -1912,11 +1926,13 @@
   function runSelectedRevisionComparison() {
     const range = sortComparisonRevisions(selectedComparisonRevisions);
     if (range.length === 2 && onPrepareRevisionDiffRange(range[0], range[1])) {
+      clearRevisionFileDiff();
       onRunRevisionDiff();
     }
   }
 
   function selectWorkingCopyRevisionDiffMode() {
+    clearRevisionFileDiff();
     onRevisionDiffFormInput("mode", "working_copy_to_revision");
     onRevisionDiffFormInput("filePath", selectedRevisionComparisonFile ?? "");
   }
@@ -1926,19 +1942,81 @@
       selectedRevisionComparisonFile &&
       onPrepareWorkingCopyFileRevisionDiff(selectedRevisionComparisonFile, revision)
     ) {
+      clearRevisionFileDiff();
       onRunRevisionDiff();
     }
   }
 
-  function openChangedPathRevisionDiff(
+  function clearRevisionFileDiff() {
+    revisionFileDiffGeneration += 1;
+    selectedRevisionFileDiff = null;
+    revisionFileContentDiff = null;
+    revisionFileDiffLoading = false;
+    revisionFileDiffError = null;
+  }
+
+  async function openChangedPathRevisionDiff(
     revision: string,
     repositoryPath: string,
     action: string,
   ) {
     selectedLogRevision = revision;
-    if (onPrepareRevisionDiffFromLog(revision, repositoryPath, action)) {
-      onRunRevisionDiff();
+    selectedRevisionFileDiff = { revision, path: repositoryPath };
+    revisionFileContentDiff = null;
+    revisionFileDiffError = null;
+
+    const previousRevision = revisionBefore(revision);
+    const targetUrl = repositoryPathUrlAtRevision(
+      svnLog?.repository_root ?? workspace?.repository_root,
+      repositoryPath,
+      revision,
+      action,
+    );
+    if (!previousRevision || !targetUrl) {
+      revisionFileDiffError = {
+        code: "REVISION_DIFF_CONTEXT_MISSING",
+        message: "无法准备文件 Diff",
+        detail: "日志缺少仓库路径或 revision 信息，请刷新日志后重试。",
+        recoverable: true,
+      };
+      return;
     }
+
+    const generation = ++revisionFileDiffGeneration;
+    revisionFileDiffLoading = true;
+    try {
+      const contentDiff = await getRevisionFileContentDiff({
+        target_url: targetUrl,
+        file_path: repositoryPath,
+        left_revision: previousRevision,
+        right_revision: revision,
+        action,
+        svn_executable: appSettings.svnExecutable.trim() || undefined,
+        max_bytes: 512 * 1024,
+      });
+      if (generation === revisionFileDiffGeneration) {
+        revisionFileContentDiff = contentDiff;
+      }
+    } catch (error) {
+      if (generation === revisionFileDiffGeneration) {
+        revisionFileDiffError = normalizeRevisionFileDiffError(error);
+      }
+    } finally {
+      if (generation === revisionFileDiffGeneration) {
+        revisionFileDiffLoading = false;
+      }
+    }
+  }
+
+  function normalizeRevisionFileDiffError(error: unknown): CommandError {
+    if (typeof error === "object" && error !== null && "code" in error && "message" in error) {
+      return error as CommandError;
+    }
+    return {
+      code: "REVISION_FILE_DIFF_FAILED",
+      message: error instanceof Error ? error.message : "文件 Diff 读取失败",
+      recoverable: true,
+    };
   }
 
   function clearWorkingCopyFilters() {
@@ -2032,6 +2110,7 @@
   }
 
   onDestroy(() => {
+    revisionFileDiffGeneration += 1;
     stopInspectorResize();
     window.removeEventListener("resize", syncInspectorWidthToWindow);
     window.removeEventListener("resize", closeContextMenuOnWindowChange);
@@ -2536,7 +2615,7 @@
           </div>
         {/if}
 
-        <div class="timeline-layout">
+        <div class="timeline-layout" class:file-diff-open={selectedRevisionFileDiff !== null}>
           <section class="timeline-list" aria-label="Revision 列表">
             {#if timelineGroups.length > 0}
               {#each timelineGroups as group (group.key)}
@@ -2568,18 +2647,20 @@
                           aria-expanded={expandedTimelineRevisions.has(entry.revision)}
                           on:click={() => selectLogEntry(entry.revision)}
                         >
-                          <strong>r{entry.revision}</strong>
-                          <span class="timeline-author" title={entry.author || undefined}>{entry.author || "-"}</span>
-                          <time title={entry.date}>{formatTimelineTime(entry.date)}</time>
-                          <span class="timeline-path-count">
-                            <span>{entry.changed_paths.length} paths</span>
+                          <span class="timeline-revision">
+                            <strong>r{entry.revision}</strong>
                             {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
                               <span
                                 class="timeline-change-count"
                                 data-action={summary.action}
                                 aria-label={`${summary.action} ${summary.count}`}
-                              >{summary.action} {summary.count}</span>
+                              >{summary.action}{summary.count}</span>
                             {/each}
+                          </span>
+                          <span class="timeline-author" title={entry.author || undefined}>{entry.author || "-"}</span>
+                          <time title={entry.date}>{formatTimelineTime(entry.date)}</time>
+                          <span class="timeline-path-count">
+                            <span>{entry.changed_paths.length} paths</span>
                           </span>
                         </button>
                         <button
@@ -2636,7 +2717,7 @@
                                     type="button"
                                     class="timeline-changed-path-button"
                                     aria-label={`比较 r${entry.revision} 的 ${path.path}`}
-                                    disabled={revisionDiffLoading}
+                                    disabled={revisionFileDiffLoading}
                                     on:click={() => openChangedPathRevisionDiff(entry.revision, path.path, path.action)}
                                   >
                                     <code>{path.path}</code>
@@ -2683,7 +2764,7 @@
                             type="button"
                             class="revision-path-button"
                             aria-label={`比较 r${selectedLogEntry.revision} 的 ${path.path}`}
-                            disabled={revisionDiffLoading}
+                            disabled={revisionFileDiffLoading}
                             on:click={() => openChangedPathRevisionDiff(selectedLogEntry.revision, path.path, path.action)}
                           >
                             {path.path}
@@ -2701,6 +2782,47 @@
                 <p class="muted">选择一条日志后显示修改文件。</p>
               {/if}
             </section>
+            {#if selectedRevisionFileDiff}
+              <section class="revision-file-diff" aria-label="文件 Diff">
+                <header>
+                  <div>
+                    <h2>r{selectedRevisionFileDiff.revision} 文件 Diff</h2>
+                    <p title={selectedRevisionFileDiff.path}>{selectedRevisionFileDiff.path}</p>
+                  </div>
+                  <button
+                    type="button"
+                    class="icon-button"
+                    aria-label="关闭文件 Diff"
+                    title="关闭"
+                    on:click={clearRevisionFileDiff}
+                  >
+                    <X size={15} aria-hidden="true" />
+                  </button>
+                </header>
+                <div class="revision-file-diff-body">
+                  {#if revisionFileDiffLoading}
+                    <div class="revision-file-diff-empty" role="status">正在读取 Diff...</div>
+                  {:else if revisionFileDiffError}
+                    <ErrorNotice error={revisionFileDiffError} />
+                  {:else if revisionFileContentDiff?.binary}
+                    <div class="revision-file-diff-empty">二进制文件无法预览文本修改</div>
+                  {:else if revisionFileContentDiff?.too_large}
+                    <div class="revision-file-diff-empty">
+                      文件内容超过 {Math.round(revisionFileContentDiff.max_bytes / 1024)} KB，无法在窗口中预览
+                    </div>
+                  {:else if revisionFileContentDiff && revisionFileContentDiff.original_text !== revisionFileContentDiff.modified_text}
+                    <MonacoDiffViewer
+                      contentDiff={revisionFileContentDiff}
+                      inlineMode={diffInline}
+                      {showWhitespace}
+                      theme={resolvedTheme}
+                    />
+                  {:else if revisionFileContentDiff}
+                    <div class="revision-file-diff-empty">该文件在此 revision 没有文本 Diff</div>
+                  {/if}
+                </div>
+              </section>
+            {:else}
             <h2>比较</h2>
             <div class="segmented-control">
               <button
@@ -2836,6 +2958,7 @@
               </div>
             {/if}
             <pre>{revisionDiffResult?.diff_text || "暂无比较结果"}</pre>
+            {/if}
           </aside>
         </div>
       {:else if view.id === "repository"}

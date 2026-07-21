@@ -2239,6 +2239,8 @@
     targetPath={standaloneLogPath}
     svnExecutable={currentSvnExecutable()}
     themeMode={$appSettingsStore.themeMode}
+    diffMode={$appSettingsStore.diffMode}
+    showWhitespace={$appSettingsStore.showWhitespace}
   />
 {:else if startupSurface === "update"}
   <StandaloneUpdateWindow

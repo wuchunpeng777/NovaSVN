@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { ChevronDown, ChevronUp, RefreshCw, X } from "@lucide/svelte";
-  import { createRevisionDiffTask, getPathSvnLog, getTask } from "../lib/api";
+  import { getPathSvnLog, getRevisionFileContentDiff } from "../lib/api";
   import {
     repositoryPathUrlAtRevision,
     revisionBefore,
@@ -9,16 +9,19 @@
   } from "../lib/svn-log";
   import type {
     CommandError,
-    RevisionDiffResult,
+    FileContentDiff,
     SvnChangedPath,
     SvnLog,
     SvnLogEntry,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
 
   export let targetPath: string;
   export let svnExecutable: string | undefined = undefined;
   export let themeMode: "system" | "light" | "dark" = "system";
+  export let diffMode: "side_by_side" | "inline" = "side_by_side";
+  export let showWhitespace = false;
 
   let log: SvnLog | null = null;
   let loading = false;
@@ -30,7 +33,7 @@
   let limit = 50;
   let expandedRevisions = new Set<string>();
   let selectedDiff: { revision: string; path: string } | null = null;
-  let revisionDiff: RevisionDiffResult | null = null;
+  let revisionDiff: FileContentDiff | null = null;
   let revisionDiffLoading = false;
   let revisionDiffError: CommandError | null = null;
   let requestGeneration = 0;
@@ -240,7 +243,6 @@
       return;
     }
 
-    const workingCopyRoot = log?.working_copy_root?.trim();
     const previousRevision = revisionBefore(entry.revision);
     const targetUrl = repositoryPathUrlAtRevision(
       log?.repository_root,
@@ -252,11 +254,11 @@
     revisionDiff = null;
     revisionDiffError = null;
 
-    if (!workingCopyRoot || !previousRevision || !targetUrl) {
+    if (!previousRevision || !targetUrl) {
       revisionDiffError = {
         code: "REVISION_DIFF_CONTEXT_MISSING",
         message: "无法准备文件 Diff",
-        detail: "日志缺少工作副本或仓库路径信息，请刷新日志后重试。",
+        detail: "日志缺少仓库路径或 revision 信息，请刷新日志后重试。",
         recoverable: true,
       };
       return;
@@ -265,23 +267,19 @@
     const generation = ++diffRequestGeneration;
     revisionDiffLoading = true;
     try {
-      const task = await createRevisionDiffTask({
-        mode: "revisions",
-        working_copy_root: workingCopyRoot,
+      const contentDiff = await getRevisionFileContentDiff({
         target_url: targetUrl,
+        file_path: path.path,
         left_revision: previousRevision,
         right_revision: entry.revision,
+        action: path.action,
         svn_executable: svnExecutable?.trim() || undefined,
+        max_bytes: 512 * 1024,
       });
-      const completedTask = await waitForRevisionDiffTask(task.task_id, generation);
-      if (generation !== diffRequestGeneration || !completedTask) {
+      if (generation !== diffRequestGeneration) {
         return;
       }
-      const result = completedTask.result?.revision_diff;
-      if (!result) {
-        throw revisionDiffCommandError("Revision diff 任务没有返回结果");
-      }
-      revisionDiff = result;
+      revisionDiff = contentDiff;
     } catch (caught) {
       if (generation === diffRequestGeneration) {
         revisionDiffError = normalizeCommandError(caught);
@@ -291,20 +289,6 @@
         revisionDiffLoading = false;
       }
     }
-  }
-
-  async function waitForRevisionDiffTask(taskId: string, generation: number) {
-    while (generation === diffRequestGeneration) {
-      const task = await getTask(taskId);
-      if (task.status === "success") {
-        return task;
-      }
-      if (["failed", "cancelled", "interrupted"].includes(task.status)) {
-        throw revisionDiffCommandError(task.error ?? "Revision diff 失败");
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 250));
-    }
-    return null;
   }
 
   function normalizeCommandError(error: unknown): CommandError {
@@ -410,20 +394,22 @@
                 aria-expanded={expandedRevisions.has(entry.revision)}
                 on:click={() => togglePaths(entry.revision)}
               >
-                <strong>r{entry.revision}</strong>
+                <span class="entry-revision">
+                  <strong>r{entry.revision}</strong>
+                  <span class="change-counts">
+                    {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
+                      <span
+                        class="change-count"
+                        data-action={summary.action}
+                        aria-label={`${summary.action} ${summary.count}`}
+                      >{summary.action}{summary.count}</span>
+                    {/each}
+                  </span>
+                </span>
                 <span title={entry.author || undefined}>{entry.author || "-"}</span>
                 <time datetime={entry.date} title={entry.date}>{formatDate(entry.date)}</time>
               </button>
               <div class="entry-meta">
-                <span class="change-counts">
-                  {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
-                    <span
-                      class="change-count"
-                      data-action={summary.action}
-                      aria-label={`${summary.action} ${summary.count}`}
-                    >{summary.action} {summary.count}</span>
-                  {/each}
-                </span>
                 <em>{entry.changed_paths.length} paths</em>
                 {#if entry.changed_paths.length > 0}
                   <button
@@ -496,13 +482,21 @@
         <ErrorNotice error={revisionDiffError} />
         {#if revisionDiffLoading}
           <div class="diff-empty" role="status">正在读取 Diff...</div>
-        {:else if revisionDiff}
-          <div class="diff-summary">
-            <span>{revisionDiff.file_count} 文件</span>
-            <span>{revisionDiff.line_count} 行</span>
-            {#if revisionDiff.truncated}<strong>预览已截断</strong>{/if}
+        {:else if revisionDiff?.binary}
+          <div class="diff-empty">二进制文件无法预览文本修改</div>
+        {:else if revisionDiff?.too_large}
+          <div class="diff-empty">
+            文件内容超过 {Math.round(revisionDiff.max_bytes / 1024)} KB，无法在窗口中预览
           </div>
-          <pre>{revisionDiff.diff_text || "该文件在此 revision 没有文本 Diff"}</pre>
+        {:else if revisionDiff && revisionDiff.original_text !== revisionDiff.modified_text}
+          <MonacoDiffViewer
+            contentDiff={revisionDiff}
+            inlineMode={diffMode === "inline"}
+            {showWhitespace}
+            theme={resolvedTheme}
+          />
+        {:else if revisionDiff}
+          <div class="diff-empty">该文件在此 revision 没有文本 Diff</div>
         {:else if !revisionDiffError}
           <div class="diff-empty">选择文件查看 Diff</div>
         {/if}
@@ -711,7 +705,7 @@
 
   .entry-summary {
     display: grid;
-    grid-template-columns: 84px minmax(100px, 160px) 150px;
+    grid-template-columns: minmax(130px, auto) minmax(100px, 160px) 150px;
     align-items: center;
     gap: 10px;
     min-width: 0;
@@ -746,6 +740,17 @@
     justify-content: flex-end;
     gap: 8px;
     min-width: 0;
+  }
+
+  .entry-revision {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+  }
+
+  .entry-revision strong {
+    flex: 0 0 auto;
   }
 
   .change-counts {
@@ -929,35 +934,15 @@
     overflow: hidden;
   }
 
+  .diff-body :global(.monaco-diff-viewer) {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+
   .diff-body :global(.error-notice) {
     margin: 8px 10px 0;
-  }
-
-  .diff-summary {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    border-bottom: 1px solid var(--border);
-    color: var(--secondary);
-    padding: 6px 10px;
-    font-size: 11px;
-  }
-
-  .diff-summary strong {
-    color: #a12f2b;
-    font-weight: 600;
-  }
-
-  .log-diff pre {
-    min-width: 0;
-    min-height: 0;
-    overflow: auto;
-    margin: 0;
-    background: var(--panel);
-    padding: 10px;
-    user-select: text;
-    -webkit-user-select: text;
-    white-space: pre;
   }
 
   .diff-empty {

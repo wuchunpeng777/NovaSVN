@@ -659,6 +659,16 @@ export interface GetFileContentDiffRequest {
   max_bytes?: number;
 }
 
+export interface GetRevisionFileContentDiffRequest {
+  target_url: string;
+  file_path: string;
+  left_revision: string;
+  right_revision: string;
+  action: string;
+  svn_executable?: string;
+  max_bytes?: number;
+}
+
 export interface GetSvnLogRequest {
   working_copy_root: string;
   file_path?: string;

@@ -195,6 +195,17 @@ pub struct GetFileContentDiffRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct GetRevisionFileContentDiffRequest {
+    pub target_url: String,
+    pub file_path: String,
+    pub left_revision: String,
+    pub right_revision: String,
+    pub action: String,
+    pub svn_executable: Option<String>,
+    pub max_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct GetSvnLogRequest {
     pub working_copy_root: String,
     pub file_path: Option<String>,
@@ -1191,6 +1202,49 @@ pub fn get_file_content_diff(
     })
 }
 
+pub fn get_revision_file_content_diff(
+    request: GetRevisionFileContentDiffRequest,
+) -> Result<FileContentDiff, NovaError> {
+    let target_url = normalize_repository_url(&request.target_url)?;
+    let file_path = normalize_revision_diff_path(&request.file_path)?;
+    let left_revision = normalize_revision_diff_revision(&request.left_revision)?;
+    let right_revision = normalize_revision_diff_revision(&request.right_revision)?;
+    let action = request.action.trim().to_ascii_uppercase();
+    let max_bytes = request.max_bytes.unwrap_or(512 * 1024);
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+
+    let original = if action == "A" {
+        LimitedText::empty()
+    } else {
+        read_repository_revision_text(&executable, &target_url, &left_revision, max_bytes)?
+    };
+    let modified = if action == "D" {
+        LimitedText::empty()
+    } else {
+        read_repository_revision_text(&executable, &target_url, &right_revision, max_bytes)?
+    };
+    let binary = original.binary || modified.binary;
+    let too_large = original.too_large || modified.too_large;
+
+    Ok(FileContentDiff {
+        path: file_path.clone(),
+        original_text: if binary || too_large {
+            String::new()
+        } else {
+            original.text
+        },
+        modified_text: if binary || too_large {
+            String::new()
+        } else {
+            modified.text
+        },
+        language: language_for_path(&file_path),
+        binary,
+        too_large,
+        max_bytes,
+    })
+}
+
 pub fn scan_workspace_status(
     request: ScanWorkspaceStatusRequest,
 ) -> Result<WorkingCopyStatus, NovaError> {
@@ -2110,6 +2164,16 @@ struct LimitedText {
     too_large: bool,
 }
 
+impl LimitedText {
+    fn empty() -> Self {
+        Self {
+            text: String::new(),
+            binary: false,
+            too_large: false,
+        }
+    }
+}
+
 fn read_limited_text_file(path: &Path, max_bytes: u64) -> Result<LimitedText, NovaError> {
     if !path.exists() {
         return Ok(LimitedText {
@@ -2197,6 +2261,83 @@ fn read_svn_base_text(
     }
 
     bytes_to_limited_text(output.stdout, false)
+}
+
+fn read_repository_revision_text(
+    executable: &str,
+    target_url: &str,
+    revision: &str,
+    max_bytes: u64,
+) -> Result<LimitedText, NovaError> {
+    let output = svn::command(executable)
+        .args(["cat", "-r", revision, "--"])
+        .arg(target_url)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "REVISION_FILE_CONTENT_FAILED",
+                "无法读取历史文件内容",
+                Some(format!(
+                    "执行 `{executable} cat -r {revision}` 失败：{error}"
+                )),
+                true,
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "REVISION_FILE_CONTENT_COMMAND_FAILED",
+            "历史文件内容读取失败",
+            Some(command_error_detail(executable, "cat", &output)),
+            true,
+        ));
+    }
+
+    if output.stdout.len() as u64 > max_bytes {
+        return Ok(LimitedText {
+            text: String::new(),
+            binary: false,
+            too_large: true,
+        });
+    }
+
+    bytes_to_limited_text(output.stdout, false)
+}
+
+fn normalize_revision_diff_path(path: &str) -> Result<String, NovaError> {
+    let value = path.trim();
+    if value.is_empty() || value.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "REVISION_FILE_PATH_INVALID",
+            "历史文件路径无效",
+            Some("文件路径不能为空或包含控制字符。".to_string()),
+            true,
+        ));
+    }
+    Ok(value.to_string())
+}
+
+fn normalize_revision_diff_revision(revision: &str) -> Result<String, NovaError> {
+    let value = revision.trim();
+    if value.is_empty() || !value.chars().all(|character| character.is_ascii_digit()) {
+        return Err(NovaError::command(
+            "REVISION_FILE_REVISION_INVALID",
+            "历史文件 Revision 无效",
+            Some("Revision 必须是单个数字版本号。".to_string()),
+            true,
+        ));
+    }
+    value
+        .parse::<u64>()
+        .map(|value| value.to_string())
+        .map_err(|error| {
+            NovaError::command(
+                "REVISION_FILE_REVISION_INVALID",
+                "历史文件 Revision 无效",
+                Some(error.to_string()),
+                true,
+            )
+        })
 }
 
 fn bytes_to_limited_text(bytes: Vec<u8>, too_large: bool) -> Result<LimitedText, NovaError> {
@@ -3701,6 +3842,86 @@ mod tests {
                 .arg("--quiet")
                 .output()
                 .is_ok()
+    }
+
+    #[test]
+    fn reads_revision_file_content_for_modified_added_and_deleted_files() {
+        if !svn_test_tools_available() {
+            return;
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-revision-file-content-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(&import_dir).expect("create import directory");
+        fs::write(import_dir.join("modified.txt"), "before").expect("write baseline");
+        fs::write(import_dir.join("deleted.txt"), "deleted").expect("write deleted baseline");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("modified.txt"), "after").expect("modify file");
+        fs::write(working_copy.join("added.txt"), "added").expect("write added file");
+        run_test_command(
+            Command::new("svn")
+                .arg("add")
+                .arg(working_copy.join("added.txt")),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("delete")
+                .arg(working_copy.join("deleted.txt")),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "mixed changes"]),
+        );
+
+        let request = |name: &str, peg: &str, action: &str| {
+            get_revision_file_content_diff(GetRevisionFileContentDiffRequest {
+                target_url: format!("{repository_url}/{name}@{peg}"),
+                file_path: format!("/{name}"),
+                left_revision: "1".to_string(),
+                right_revision: "2".to_string(),
+                action: action.to_string(),
+                svn_executable: None,
+                max_bytes: Some(1024),
+            })
+            .expect("revision content diff reads")
+        };
+
+        let modified = request("modified.txt", "2", "M");
+        assert_eq!(modified.original_text, "before");
+        assert_eq!(modified.modified_text, "after");
+
+        let added = request("added.txt", "2", "A");
+        assert_eq!(added.original_text, "");
+        assert_eq!(added.modified_text, "added");
+
+        let deleted = request("deleted.txt", "1", "D");
+        assert_eq!(deleted.original_text, "deleted");
+        assert_eq!(deleted.modified_text, "");
+
+        let _ = fs::remove_dir_all(root);
     }
 
     fn create_ignore_test_working_copy(test_name: &str) -> (PathBuf, PathBuf) {

@@ -1319,6 +1319,10 @@ textarea {
   min-height: 0;
 }
 
+.timeline-layout.file-diff-open {
+  grid-template-columns: minmax(0, 1fr) minmax(480px, 48vw);
+}
+
 .timeline-list {
   min-height: 0;
   overflow: auto;
@@ -1412,7 +1416,7 @@ textarea {
 
 .timeline-entry-summary {
   display: grid;
-  grid-template-columns: 68px minmax(80px, 110px) 76px minmax(148px, 1fr);
+  grid-template-columns: minmax(130px, 170px) minmax(80px, 110px) 76px minmax(90px, 1fr);
   align-items: center;
   gap: 6px;
   width: 100%;
@@ -1437,6 +1441,18 @@ textarea {
   gap: 4px;
   color: #6b7784;
   text-align: right;
+}
+
+.timeline-revision {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.timeline-revision strong {
+  flex: 0 0 auto;
+  margin-right: 2px;
 }
 
 .timeline-change-count {
@@ -1660,6 +1676,77 @@ textarea {
   color: #536070;
   font-size: 11px;
   font-weight: 700;
+}
+
+.revision-file-diff {
+  display: grid;
+  grid-template-rows: auto minmax(360px, 1fr);
+  min-width: 0;
+  min-height: 420px;
+  overflow: hidden;
+  border: 1px solid #d8dde3;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.revision-file-diff > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  border-bottom: 1px solid #d8dde3;
+  padding: 7px 9px;
+}
+
+.revision-file-diff > header > div {
+  min-width: 0;
+}
+
+.revision-file-diff header p {
+  overflow: hidden;
+  margin: 2px 0 0;
+  color: #687482;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revision-file-diff .icon-button {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  place-items: center;
+}
+
+.revision-file-diff-body {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.revision-file-diff-body .monaco-diff-viewer {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.revision-file-diff-body .error-notice {
+  margin: 8px;
+}
+
+.revision-file-diff-empty {
+  display: grid;
+  min-height: 180px;
+  padding: 20px;
+  color: #687482;
+  font-size: 12px;
+  text-align: center;
+  place-items: center;
 }
 
 .change-action[data-action="A"],
@@ -2437,11 +2524,22 @@ textarea {
 .versions-workbench[data-theme="dark"] .monaco-diff-viewer,
 .versions-workbench[data-theme="dark"] .blame-table,
 .versions-workbench[data-theme="dark"] .revision-files,
+.versions-workbench[data-theme="dark"] .revision-file-diff,
+.versions-workbench[data-theme="dark"] .revision-file-diff > header,
 .versions-workbench[data-theme="dark"] .revision-file-list > div,
 .versions-workbench[data-theme="dark"] .breadcrumbs,
 .versions-workbench[data-theme="dark"] .patch-dialog,
 .versions-workbench[data-theme="dark"] .patch-summary {
   border-color: #414852;
+}
+
+.versions-workbench[data-theme="dark"] .revision-file-diff {
+  background: #202429;
+}
+
+.versions-workbench[data-theme="dark"] .revision-file-diff header p,
+.versions-workbench[data-theme="dark"] .revision-file-diff-empty {
+  color: #a9b3bd;
 }
 
 .versions-workbench[data-theme="dark"] .merge-result-summary {

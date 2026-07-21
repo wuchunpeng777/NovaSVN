@@ -11,6 +11,11 @@ vi.mock("./MonacoDiffViewer.svelte", () => ({
   })),
 }));
 
+vi.mock("../../lib/api", () => ({
+  getRevisionFileContentDiff: vi.fn(),
+}));
+
+import { getRevisionFileContentDiff } from "../../lib/api";
 import { workbenchViews } from "../../lib/workbench";
 import type { AppSettingsState } from "../../types/app";
 import type {
@@ -21,6 +26,8 @@ import type {
   WorkspaceSummary,
 } from "../../types/api";
 import MainWorkspace from "./MainWorkspace.svelte";
+
+const getRevisionFileContentDiffMock = vi.mocked(getRevisionFileContentDiff);
 
 describe("MainWorkspace", () => {
   it("renders accessible toolbar icons and exposes operation running states", async () => {
@@ -519,8 +526,15 @@ Certificate information:
   });
 
   it("groups filtered Timeline revisions by local calendar date", async () => {
-    const onPrepareRevisionDiffFromLog = vi.fn(() => true);
-    const onRunRevisionDiff = vi.fn();
+    getRevisionFileContentDiffMock.mockResolvedValue({
+      path: "/trunk/file-12-4.txt",
+      original_text: "before",
+      modified_text: "after",
+      language: "plaintext",
+      binary: false,
+      too_large: false,
+      max_bytes: 512 * 1024,
+    });
     render(MainWorkspace, {
       props: {
         view: workbenchViews.history,
@@ -536,8 +550,6 @@ Certificate information:
             makeLogEntry("9", "invalid-date", "carol", "旧数据"),
           ],
         },
-        onPrepareRevisionDiffFromLog,
-        onRunRevisionDiff,
       },
     });
 
@@ -552,6 +564,12 @@ Certificate information:
     expect(newestEntry).toHaveTextContent("完成菜单");
     expect(newestEntry).toHaveTextContent("5 paths");
     expect(within(newestEntry).getByLabelText("M 5")).toHaveAttribute("data-action", "M");
+    expect(
+      within(newestEntry)
+        .getByText("r12")
+        .closest(".timeline-revision")
+        ?.textContent?.replace(/\s/g, ""),
+    ).toBe("r12M5");
     expect(newestEntry).not.toHaveTextContent("/trunk/file-12-1.txt");
     await fireEvent.click(
       within(newestEntry).getByRole("button", { name: "展开 r12 日志" }),
@@ -565,12 +583,16 @@ Certificate information:
         name: "比较 r12 的 /trunk/file-12-4.txt",
       }),
     );
-    expect(onPrepareRevisionDiffFromLog).toHaveBeenLastCalledWith(
-      "12",
-      "/trunk/file-12-4.txt",
-      "M",
-    );
-    expect(onRunRevisionDiff).toHaveBeenCalledOnce();
+    expect(getRevisionFileContentDiffMock).toHaveBeenLastCalledWith({
+      target_url: "https://example.com/svn/trunk/file-12-4.txt@12",
+      file_path: "/trunk/file-12-4.txt",
+      left_revision: "11",
+      right_revision: "12",
+      action: "M",
+      svn_executable: undefined,
+      max_bytes: 512 * 1024,
+    });
+    expect(await screen.findByLabelText("文件 Diff")).toBeInTheDocument();
 
     const priorDay = within(timeline).getByRole("group", { name: "2026年7月10日" });
     expect(priorDay).toHaveTextContent("1 revision");

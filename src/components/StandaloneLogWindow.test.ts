@@ -2,24 +2,31 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/sve
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
-  createRevisionDiffTask: vi.fn(),
   getPathSvnLog: vi.fn(),
-  getTask: vi.fn(),
+  getRevisionFileContentDiff: vi.fn(),
 }));
 
-import { createRevisionDiffTask, getPathSvnLog, getTask } from "../lib/api";
-import type { SvnLog, Task, TaskStatus } from "../types/api";
+vi.mock("./workbench/MonacoDiffViewer.svelte", () => ({
+  default: vi.fn().mockImplementation((internals) => ({
+    c: vi.fn(),
+    m: vi.fn(),
+    p: vi.fn(),
+    d: vi.fn(),
+    ...internals,
+  })),
+}));
+
+import { getPathSvnLog, getRevisionFileContentDiff } from "../lib/api";
+import type { SvnLog } from "../types/api";
 import StandaloneLogWindow from "./StandaloneLogWindow.svelte";
 
 const getPathSvnLogMock = vi.mocked(getPathSvnLog);
-const createRevisionDiffTaskMock = vi.mocked(createRevisionDiffTask);
-const getTaskMock = vi.mocked(getTask);
+const getRevisionFileContentDiffMock = vi.mocked(getRevisionFileContentDiff);
 
 beforeEach(() => {
   localStorage.clear();
   getPathSvnLogMock.mockReset();
-  createRevisionDiffTaskMock.mockReset();
-  getTaskMock.mockReset();
+  getRevisionFileContentDiffMock.mockReset();
 });
 
 describe("StandaloneLogWindow", () => {
@@ -132,6 +139,8 @@ describe("StandaloneLogWindow", () => {
     expect(screen.getByLabelText("A 1")).toBeInTheDocument();
     expect(screen.getByLabelText("M 2")).toBeInTheDocument();
     expect(screen.getByLabelText("D 1")).toBeInTheDocument();
+    const revision = screen.getByText("r20").closest(".entry-revision");
+    expect(revision?.textContent?.replace(/\s/g, "")).toBe("r20A1M2D1");
     await fireEvent.click(screen.getByRole("button", { name: "查看路径" }));
     const changedPaths = screen.getByLabelText("r20 改变路径");
     expect(changedPaths.querySelector('[data-action="A"]')).toHaveTextContent("A");
@@ -141,8 +150,15 @@ describe("StandaloneLogWindow", () => {
 
   it("点击文件后读取并显示该 revision 的 Diff", async () => {
     getPathSvnLogMock.mockResolvedValue(makeLog());
-    createRevisionDiffTaskMock.mockResolvedValue(makeRevisionDiffTask("running"));
-    getTaskMock.mockResolvedValue(makeRevisionDiffTask("success"));
+    getRevisionFileContentDiffMock.mockResolvedValue({
+      path: "/trunk/src/main.ts",
+      original_text: "before",
+      modified_text: "after",
+      language: "typescript",
+      binary: false,
+      too_large: false,
+      max_bytes: 512 * 1024,
+    });
     render(StandaloneLogWindow, {
       props: {
         targetPath: "C:\\repo\\src\\main.ts",
@@ -157,18 +173,18 @@ describe("StandaloneLogWindow", () => {
       }),
     );
 
-    expect(createRevisionDiffTaskMock).toHaveBeenCalledWith({
-      mode: "revisions",
-      working_copy_root: "C:\\repo",
+    expect(getRevisionFileContentDiffMock).toHaveBeenCalledWith({
       target_url: "https://svn.example.test/repo/trunk/src/main.ts@20",
+      file_path: "/trunk/src/main.ts",
       left_revision: "19",
       right_revision: "20",
+      action: "M",
       svn_executable: "C:\\Tools\\svn.exe",
+      max_bytes: 512 * 1024,
     });
-    expect(getTaskMock).toHaveBeenCalledWith("task-diff");
     const diffPanel = await screen.findByLabelText("文件 Diff");
     expect(within(diffPanel).getByText("r20 文件 Diff")).toBeInTheDocument();
-    expect(within(diffPanel).getByText("-before +after")).toBeInTheDocument();
+    expect(within(diffPanel).queryByText("-before +after")).not.toBeInTheDocument();
   });
 
   it("显示可重试的 SVN 错误", async () => {
@@ -215,36 +231,5 @@ function makeChangedPath(path: string, action: string) {
     kind: "file",
     copy_from_path: null,
     copy_from_revision: null,
-  };
-}
-
-function makeRevisionDiffTask(status: TaskStatus): Task {
-  return {
-    task_id: "task-diff",
-    title: "比较两个 revision",
-    status,
-    error: null,
-    created_at: 1,
-    updated_at: 2,
-    logs: [],
-    result:
-      status === "success"
-        ? {
-            repository_list: null,
-            repository_file: null,
-            repository_export: null,
-            revision_diff: {
-              mode: "revisions",
-              target: "/trunk/src/main.ts r19:r20",
-              diff_text: "-before\n+after",
-              file_count: 1,
-              line_count: 2,
-              truncated: false,
-              max_bytes: 1024,
-            },
-            merge_result: null,
-            apply_patch_result: null,
-          }
-        : null,
   };
 }
