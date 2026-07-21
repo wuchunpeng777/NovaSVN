@@ -2384,136 +2384,130 @@
 >
   <header class="versions-titlebar" inert={applyPatchDialogOpen}>
     <div class="window-identity">
-      <strong>NovaSVN</strong>
-      <span>{workspace ? basename(workspace.working_copy_root) : "Subversion Client"}</span>
+      <span class="app-mark" aria-hidden="true">
+        <GitCommitHorizontal size={20} strokeWidth={1.9} />
+      </span>
+      <span class="window-copy">
+        <strong>NovaSVN</strong>
+        <span>Subversion Client</span>
+      </span>
     </div>
-    <nav class="mode-switcher" aria-label="主视图">
-      <button
-        type="button"
-        class:active={view.id === "changes"}
-        on:click={() => onSelectView("changes")}
-      >
-        工作副本
-      </button>
-      <button
-        type="button"
-        class:active={view.id === "history"}
-        on:click={() => onSelectView("history")}
-      >
-        时间线
-      </button>
-      <button
-        type="button"
-        class:active={view.id === "repository"}
-        on:click={() => onSelectView("repository")}
-      >
-        仓库
-      </button>
-      <button
-        type="button"
-        class:active={view.id === "branches" || view.id === "settings"}
-        on:click={() => onSelectView("branches")}
-      >
-        更多
-      </button>
-    </nav>
-    <div class="toolbar-actions" aria-label="工作副本工具栏">
-      <button
-        type="button"
-        class="icon-button"
-        aria-label={appSettings.showSourceList ? "隐藏项目侧栏" : "显示项目侧栏"}
-        title={appSettings.showSourceList ? "隐藏项目侧栏" : "显示项目侧栏"}
-        on:click={toggleSourceList}
-      >
-        {#if appSettings.showSourceList}
-          <PanelLeftClose size={17} strokeWidth={1.8} aria-hidden="true" />
-        {:else}
-          <PanelLeftOpen size={17} strokeWidth={1.8} aria-hidden="true" />
-        {/if}
-      </button>
-      <button
-        type="button"
-        class="icon-button"
-        aria-label={appSettings.showInspector ? "隐藏检查器" : "显示检查器"}
-        title={view.id === "changes"
-          ? appSettings.showInspector
-            ? "隐藏检查器"
-            : "显示检查器"
-          : "检查器仅用于工作副本视图"}
-        on:click={toggleInspector}
-        disabled={view.id !== "changes"}
-      >
-        {#if appSettings.showInspector}
-          <PanelRightClose size={17} strokeWidth={1.8} aria-hidden="true" />
-        {:else}
-          <PanelRightOpen size={17} strokeWidth={1.8} aria-hidden="true" />
-        {/if}
-      </button>
-      <span class="toolbar-divider" aria-hidden="true"></span>
-      <button
-        type="button"
-        class="icon-button"
-        aria-label={statusLoading ? "正在刷新工作副本状态" : "刷新工作副本状态"}
-        aria-busy={statusLoading}
-        title={statusLoading ? "正在刷新工作副本状态" : "刷新工作副本状态"}
-        on:click={onRefreshStatus}
-        disabled={!workspace || statusLoading || toolbarLocked}
-      >
-        {#if statusLoading}
-          <LoaderCircle class="toolbar-spinner" size={17} strokeWidth={1.8} aria-hidden="true" />
-        {:else}
-          <RefreshCw size={17} strokeWidth={1.8} aria-hidden="true" />
-        {/if}
-      </button>
-      <button
-        type="button"
-        class="icon-button"
-        aria-label={updateRunning ? "正在更新工作副本" : "更新工作副本"}
-        aria-busy={updateRunning}
-        title={updateRunning ? "正在更新工作副本" : "更新工作副本"}
-        on:click={onUpdateWorkspace}
-        disabled={!workspace || statusLoading || toolbarLocked}
-      >
-        {#if updateRunning}
-          <LoaderCircle class="toolbar-spinner" size={17} strokeWidth={1.8} aria-hidden="true" />
-        {:else}
-          <Download size={17} strokeWidth={1.8} aria-hidden="true" />
-        {/if}
-      </button>
-      <button
-        type="button"
-        class="icon-button"
-        aria-label={applyPatchRunning ? "正在应用 Patch" : "应用 Patch"}
-        aria-busy={applyPatchRunning}
-        title={applyPatchRunning ? "正在应用 Patch" : "应用 Patch"}
-        on:click={onChooseApplyPatch}
-        disabled={!workspace || statusLoading || toolbarLocked}
-      >
-        {#if applyPatchRunning}
-          <LoaderCircle class="toolbar-spinner" size={17} strokeWidth={1.8} aria-hidden="true" />
-        {:else}
-          <FileUp size={17} strokeWidth={1.8} aria-hidden="true" />
-        {/if}
-      </button>
-      <button
-        type="button"
-        class="icon-button"
-        aria-label={cleanupRunning ? "正在清理工作副本" : "清理工作副本"}
-        aria-busy={cleanupRunning}
-        title={cleanupRunning ? "正在清理工作副本" : "清理工作副本"}
-        on:click={onCleanupWorkspace}
-        disabled={!workspace || statusLoading || toolbarLocked}
-      >
-        {#if cleanupRunning}
-          <LoaderCircle class="toolbar-spinner" size={17} strokeWidth={1.8} aria-hidden="true" />
-        {:else}
-          <Wrench size={17} strokeWidth={1.8} aria-hidden="true" />
-        {/if}
-      </button>
+    <div class="toolbar-surface" aria-label="工作副本工具栏">
+      <div class="toolbar-actions toolbar-leading">
+        <button
+          type="button"
+          class="icon-button toolbar-utility"
+          aria-label={appSettings.showSourceList ? "隐藏项目侧栏" : "显示项目侧栏"}
+          title={appSettings.showSourceList ? "隐藏项目侧栏" : "显示项目侧栏"}
+          on:click={toggleSourceList}
+        >
+          {#if appSettings.showSourceList}
+            <PanelLeftClose size={19} strokeWidth={1.8} aria-hidden="true" />
+          {:else}
+            <PanelLeftOpen size={19} strokeWidth={1.8} aria-hidden="true" />
+          {/if}
+          <span class="toolbar-label">侧栏</span>
+        </button>
+        <span class="toolbar-divider" aria-hidden="true"></span>
+        <button
+          type="button"
+          class="icon-button toolbar-command"
+          aria-label={statusLoading ? "正在刷新工作副本状态" : "刷新工作副本状态"}
+          aria-busy={statusLoading}
+          title={statusLoading ? "正在刷新工作副本状态" : "刷新工作副本状态"}
+          on:click={onRefreshStatus}
+          disabled={!workspace || statusLoading || toolbarLocked}
+        >
+          {#if statusLoading}
+            <LoaderCircle class="toolbar-spinner" size={19} strokeWidth={1.8} aria-hidden="true" />
+          {:else}
+            <RefreshCw size={19} strokeWidth={1.8} aria-hidden="true" />
+          {/if}
+          <span class="toolbar-label">刷新</span>
+        </button>
+        <button
+          type="button"
+          class="icon-button toolbar-command"
+          aria-label={updateRunning ? "正在更新工作副本" : "更新工作副本"}
+          aria-busy={updateRunning}
+          title={updateRunning ? "正在更新工作副本" : "更新工作副本"}
+          on:click={onUpdateWorkspace}
+          disabled={!workspace || statusLoading || toolbarLocked}
+        >
+          {#if updateRunning}
+            <LoaderCircle class="toolbar-spinner" size={19} strokeWidth={1.8} aria-hidden="true" />
+          {:else}
+            <Download size={19} strokeWidth={1.8} aria-hidden="true" />
+          {/if}
+          <span class="toolbar-label">更新</span>
+        </button>
+        <button
+          type="button"
+          class="icon-button toolbar-command"
+          aria-label={applyPatchRunning ? "正在应用 Patch" : "应用 Patch"}
+          aria-busy={applyPatchRunning}
+          title={applyPatchRunning ? "正在应用 Patch" : "应用 Patch"}
+          on:click={onChooseApplyPatch}
+          disabled={!workspace || statusLoading || toolbarLocked}
+        >
+          {#if applyPatchRunning}
+            <LoaderCircle class="toolbar-spinner" size={19} strokeWidth={1.8} aria-hidden="true" />
+          {:else}
+            <FileUp size={19} strokeWidth={1.8} aria-hidden="true" />
+          {/if}
+          <span class="toolbar-label">Patch</span>
+        </button>
+        <button
+          type="button"
+          class="icon-button toolbar-command"
+          aria-label={cleanupRunning ? "正在清理工作副本" : "清理工作副本"}
+          aria-busy={cleanupRunning}
+          title={cleanupRunning ? "正在清理工作副本" : "清理工作副本"}
+          on:click={onCleanupWorkspace}
+          disabled={!workspace || statusLoading || toolbarLocked}
+        >
+          {#if cleanupRunning}
+            <LoaderCircle class="toolbar-spinner" size={19} strokeWidth={1.8} aria-hidden="true" />
+          {:else}
+            <Wrench size={19} strokeWidth={1.8} aria-hidden="true" />
+          {/if}
+          <span class="toolbar-label">清理</span>
+        </button>
+      </div>
+
+      <div class="toolbar-context">
+        <strong>{workspace ? basename(workspace.working_copy_root) : view.title}</strong>
+        <span>{workspace ? view.title : "未打开工作副本"}</span>
+      </div>
+
+      <div class="toolbar-actions toolbar-trailing">
+        <button
+          type="button"
+          class="icon-button toolbar-utility"
+          aria-label={appSettings.showInspector ? "隐藏检查器" : "显示检查器"}
+          title={view.id === "changes"
+            ? appSettings.showInspector
+              ? "隐藏检查器"
+              : "显示检查器"
+            : "检查器仅用于工作副本视图"}
+          on:click={toggleInspector}
+          disabled={view.id !== "changes"}
+        >
+          {#if appSettings.showInspector}
+            <PanelRightClose size={19} strokeWidth={1.8} aria-hidden="true" />
+          {:else}
+            <PanelRightOpen size={19} strokeWidth={1.8} aria-hidden="true" />
+          {/if}
+          <span class="toolbar-label">检查器</span>
+        </button>
+      </div>
     </div>
   </header>
 
   <div class="workspace-location" inert={applyPatchDialogOpen}>
+    <span class="location-icon" aria-hidden="true">
+      <FolderOpen size={16} strokeWidth={1.8} />
+    </span>
     <input
       type="text"
       value={workspacePathInput}
@@ -2545,8 +2539,7 @@
         <h2>项目</h2>
         <button
           type="button"
-          class="source-item"
-          class:active={view.id === "changes"}
+          class="source-item workspace-source-item"
           on:click={() => onSelectView("changes")}
         >
           <span class="source-icon" aria-hidden="true">
@@ -2576,6 +2569,44 @@
             </button>
           {/each}
         {/if}
+      </section>
+
+      <section class="source-navigation-section">
+        <h2>浏览</h2>
+        <nav class="mode-switcher" aria-label="主视图">
+          <button
+            type="button"
+            class:active={view.id === "changes"}
+            on:click={() => onSelectView("changes")}
+          >
+            <ListChecks size={16} strokeWidth={1.8} aria-hidden="true" />
+            <span>工作副本</span>
+          </button>
+          <button
+            type="button"
+            class:active={view.id === "history"}
+            on:click={() => onSelectView("history")}
+          >
+            <History size={16} strokeWidth={1.8} aria-hidden="true" />
+            <span>时间线</span>
+          </button>
+          <button
+            type="button"
+            class:active={view.id === "repository"}
+            on:click={() => onSelectView("repository")}
+          >
+            <FolderOpen size={16} strokeWidth={1.8} aria-hidden="true" />
+            <span>仓库</span>
+          </button>
+          <button
+            type="button"
+            class:active={view.id === "branches" || view.id === "settings"}
+            on:click={() => onSelectView("branches")}
+          >
+            <GitBranch size={16} strokeWidth={1.8} aria-hidden="true" />
+            <span>更多</span>
+          </button>
+        </nav>
       </section>
 
       <section class="source-sidebar-meta">
@@ -4682,7 +4713,14 @@
               未管理文件
             </button>
           </div>
-          <button type="button" on:click={clearWorkingCopyFilters}>清除</button>
+          <button
+            type="button"
+            class="filter-clear-button"
+            aria-label="清除过滤条件"
+            on:click={clearWorkingCopyFilters}
+          >
+            <X size={15} strokeWidth={1.9} aria-hidden="true" />
+          </button>
           {#if selectedRowPaths.size > 0}
             <div class="batch-action-bar" role="toolbar" aria-label="所选路径批量操作">
             <strong>{selectedRowPaths.size} 个已选</strong>
@@ -4991,7 +5029,13 @@
             {:else if workspace}
               <article class="empty-state">点击“刷新”扫描工作副本</article>
             {:else}
-              <article class="empty-state">选择或输入 SVN 工作副本目录</article>
+              <article class="empty-state workspace-empty-state">
+                <span class="empty-state-icon" aria-hidden="true">
+                  <FolderOpen size={30} strokeWidth={1.55} />
+                </span>
+                <strong>未打开工作副本</strong>
+                <button type="button" class="primary" on:click={onChooseWorkspace}>选择目录</button>
+              </article>
             {/if}
           </div>
 
