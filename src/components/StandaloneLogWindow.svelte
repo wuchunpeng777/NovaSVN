@@ -928,8 +928,8 @@
   }
 
   .diff-body {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    width: 100%;
+    height: 100%;
     min-height: 0;
     overflow: hidden;
   }
@@ -947,7 +947,8 @@
 
   .diff-empty {
     display: grid;
-    grid-row: 1 / -1;
+    width: 100%;
+    height: 100%;
     min-height: 0;
     color: var(--secondary);
     place-items: center;
