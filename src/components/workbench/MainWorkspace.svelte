@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import {
+    ChevronDown,
+    ChevronUp,
     Download,
     Ellipsis,
     FileUp,
@@ -27,6 +29,7 @@
     findSvnCertificateFailure,
     svnCertificateFailureLabel,
   } from "../../lib/svn-certificate";
+  import { summarizeSvnChangeActions } from "../../lib/svn-log";
   import type {
     ApplyPatchResult,
     BranchPool,
@@ -515,6 +518,7 @@
   export let onPrepareRevisionDiffFromLog: (
     revision: string,
     repositoryPath?: string,
+    action?: string,
   ) => boolean = () => false;
   export let onPrepareRevisionDiffRange: (
     leftRevision: string,
@@ -962,15 +966,6 @@
       return "文件";
     }
     return kind || "未知";
-  }
-
-  function timelineEntryPaths(
-    entry: SvnLog["entries"][number],
-    expandedRevisions: Set<string>,
-  ) {
-    return expandedRevisions.has(entry.revision)
-      ? entry.changed_paths
-      : entry.changed_paths.slice(0, 3);
   }
 
   function toggleTimelineEntryPaths(revision: string) {
@@ -1874,6 +1869,7 @@
   function selectLogEntry(revision: string) {
     selectedLogRevision = revision;
     onPrepareRevisionDiffFromLog(revision);
+    toggleTimelineEntryPaths(revision);
   }
 
   function sortComparisonRevisions(revisions: string[]) {
@@ -1934,9 +1930,13 @@
     }
   }
 
-  function openChangedPathRevisionDiff(revision: string, repositoryPath: string) {
+  function openChangedPathRevisionDiff(
+    revision: string,
+    repositoryPath: string,
+    action: string,
+  ) {
     selectedLogRevision = revision;
-    if (onPrepareRevisionDiffFromLog(revision, repositoryPath)) {
+    if (onPrepareRevisionDiffFromLog(revision, repositoryPath, action)) {
       onRunRevisionDiff();
     }
   }
@@ -2564,12 +2564,23 @@
                           type="button"
                           class="timeline-entry-summary"
                           class:active={selectedLogEntry?.revision === entry.revision}
+                          aria-label={`${expandedTimelineRevisions.has(entry.revision) ? "收起" : "展开"} r${entry.revision} 日志`}
+                          aria-expanded={expandedTimelineRevisions.has(entry.revision)}
                           on:click={() => selectLogEntry(entry.revision)}
                         >
                           <strong>r{entry.revision}</strong>
                           <span class="timeline-author" title={entry.author || undefined}>{entry.author || "-"}</span>
                           <time title={entry.date}>{formatTimelineTime(entry.date)}</time>
-                          <span class="timeline-path-count">{entry.changed_paths.length} paths</span>
+                          <span class="timeline-path-count">
+                            <span>{entry.changed_paths.length} paths</span>
+                            {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
+                              <span
+                                class="timeline-change-count"
+                                data-action={summary.action}
+                                aria-label={`${summary.action} ${summary.count}`}
+                              >{summary.action} {summary.count}</span>
+                            {/each}
+                          </span>
                         </button>
                         <button
                           type="button"
@@ -2598,38 +2609,44 @@
                       </header>
                       <p class="timeline-message">{entry.message || "无提交信息"}</p>
                       {#if entry.changed_paths.length > 0}
-                        <div
-                          class="timeline-changed-paths"
-                          aria-label={`r${entry.revision} 改变路径`}
+                        <button
+                          type="button"
+                          class="timeline-path-toggle"
+                          aria-expanded={expandedTimelineRevisions.has(entry.revision)}
+                          on:click={() => toggleTimelineEntryPaths(entry.revision)}
                         >
-                          {#each timelineEntryPaths(entry, expandedTimelineRevisions) as path (`${entry.revision}:${path.path}:${path.action}`)}
-                            <div class="timeline-changed-path">
-                              <span class="change-action">{path.action || "-"}</span>
-                              <button
-                                type="button"
-                                class="timeline-changed-path-button"
-                                aria-label={`比较 r${entry.revision} 的 ${path.path}`}
-                                disabled={revisionDiffLoading}
-                                on:click={() => openChangedPathRevisionDiff(entry.revision, path.path)}
-                              >
-                                <code>{path.path}</code>
-                              </button>
-                              <small>{path.kind || "-"}</small>
-                            </div>
-                          {/each}
-                          {#if entry.changed_paths.length > 3}
-                            <button
-                              type="button"
-                              class="timeline-path-toggle"
-                              aria-expanded={expandedTimelineRevisions.has(entry.revision)}
-                              on:click={() => toggleTimelineEntryPaths(entry.revision)}
-                            >
-                              {expandedTimelineRevisions.has(entry.revision)
-                                ? "收起改变路径"
-                                : `展开其余 ${entry.changed_paths.length - 3} 条路径`}
-                            </button>
+                          {#if expandedTimelineRevisions.has(entry.revision)}
+                            <ChevronUp size={13} aria-hidden="true" /> 收起
+                          {:else}
+                            <ChevronDown size={13} aria-hidden="true" /> 查看路径
                           {/if}
-                        </div>
+                        </button>
+                        {#if expandedTimelineRevisions.has(entry.revision)}
+                          <div
+                            class="timeline-changed-paths"
+                            aria-label={`r${entry.revision} 改变路径`}
+                          >
+                            {#each entry.changed_paths as path (`${entry.revision}:${path.path}:${path.action}`)}
+                              <div class="timeline-changed-path">
+                                <span class="change-action" data-action={path.action}>{path.action || "-"}</span>
+                                {#if path.kind === "dir"}
+                                  <code>{path.path}</code>
+                                {:else}
+                                  <button
+                                    type="button"
+                                    class="timeline-changed-path-button"
+                                    aria-label={`比较 r${entry.revision} 的 ${path.path}`}
+                                    disabled={revisionDiffLoading}
+                                    on:click={() => openChangedPathRevisionDiff(entry.revision, path.path, path.action)}
+                                  >
+                                    <code>{path.path}</code>
+                                  </button>
+                                {/if}
+                                <small>{path.kind || "-"}</small>
+                              </div>
+                            {/each}
+                          </div>
+                        {/if}
                       {:else}
                         <p class="muted timeline-no-paths">没有改变路径</p>
                       {/if}
@@ -2657,17 +2674,21 @@
                 <div class="revision-file-list">
                   {#each selectedLogEntry.changed_paths as path (`${selectedLogEntry.revision}:${path.path}:${path.action}`)}
                     <div>
-                      <span class="change-action">{path.action || "-"}</span>
+                      <span class="change-action" data-action={path.action}>{path.action || "-"}</span>
                       <span>
-                        <button
-                          type="button"
-                          class="revision-path-button"
-                          aria-label={`比较 r${selectedLogEntry.revision} 的 ${path.path}`}
-                          disabled={revisionDiffLoading}
-                          on:click={() => openChangedPathRevisionDiff(selectedLogEntry.revision, path.path)}
-                        >
+                        {#if path.kind === "dir"}
                           {path.path}
-                        </button>
+                        {:else}
+                          <button
+                            type="button"
+                            class="revision-path-button"
+                            aria-label={`比较 r${selectedLogEntry.revision} 的 ${path.path}`}
+                            disabled={revisionDiffLoading}
+                            on:click={() => openChangedPathRevisionDiff(selectedLogEntry.revision, path.path, path.action)}
+                          >
+                            {path.path}
+                          </button>
+                        {/if}
                         <small>{path.kind || "-"}</small>
                       </span>
                     </div>

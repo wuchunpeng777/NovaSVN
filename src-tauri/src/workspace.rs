@@ -288,6 +288,8 @@ pub struct FileContentDiff {
 #[derive(Debug, Clone, Serialize)]
 pub struct SvnLog {
     pub target: String,
+    pub working_copy_root: Option<String>,
+    pub repository_root: Option<String>,
     pub entries: Vec<SvnLogEntry>,
     pub has_more: bool,
     pub next_start_revision: Option<String>,
@@ -492,6 +494,7 @@ pub fn get_path_svn_log(request: GetPathSvnLogRequest) -> Result<SvnLog, NovaErr
         })?
     };
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let workspace = read_workspace_summary(&target, &executable)?;
     let limit = request.limit.unwrap_or(50).clamp(1, 200);
     let start_revision = request
         .start_revision
@@ -499,14 +502,17 @@ pub fn get_path_svn_log(request: GetPathSvnLogRequest) -> Result<SvnLog, NovaErr
         .map(normalize_log_revision_value)
         .transpose()?;
     let display_target = target.display().to_string();
-    run_svn_log(
+    let mut log = run_svn_log(
         &executable,
         &target,
         &current_dir,
         &display_target,
         limit,
         start_revision.as_deref(),
-    )
+    )?;
+    log.working_copy_root = Some(workspace.working_copy_root);
+    log.repository_root = Some(workspace.repository_root);
+    Ok(log)
 }
 
 fn run_svn_log(
@@ -3223,6 +3229,8 @@ fn parse_svn_log_xml(xml: &str, target: &str) -> Result<SvnLog, NovaError> {
 
     Ok(SvnLog {
         target: target.to_string(),
+        working_copy_root: None,
+        repository_root: None,
         entries,
         has_more: false,
         next_start_revision: None,

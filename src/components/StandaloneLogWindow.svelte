@@ -1,13 +1,19 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { ChevronDown, ChevronUp, RefreshCw, X } from "@lucide/svelte";
-  import { getPathSvnLog } from "../lib/api";
+  import { createRevisionDiffTask, getPathSvnLog, getTask } from "../lib/api";
   import {
-    cacheCommitMessages,
-    readCommitMessageSettings,
-    setPendingCommitMessage,
-  } from "../lib/commit-message-history";
-  import type { CommandError, SvnLog, SvnLogEntry } from "../types/api";
+    repositoryPathUrlAtRevision,
+    revisionBefore,
+    summarizeSvnChangeActions,
+  } from "../lib/svn-log";
+  import type {
+    CommandError,
+    RevisionDiffResult,
+    SvnChangedPath,
+    SvnLog,
+    SvnLogEntry,
+  } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
 
   export let targetPath: string;
@@ -23,11 +29,12 @@
   let dateToFilter = "";
   let limit = 50;
   let expandedRevisions = new Set<string>();
-  let cachedCommitMessages: string[] = [];
-  let historyPickerOpen = false;
-  let selectedHistoryMessage = "";
-  let historyNotice: string | null = null;
+  let selectedDiff: { revision: string; path: string } | null = null;
+  let revisionDiff: RevisionDiffResult | null = null;
+  let revisionDiffLoading = false;
+  let revisionDiffError: CommandError | null = null;
   let requestGeneration = 0;
+  let diffRequestGeneration = 0;
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
 
@@ -49,7 +56,6 @@
   );
 
   onMount(() => {
-    cachedCommitMessages = readCommitMessageSettings().history;
     if (typeof window.matchMedia === "function") {
       themeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
       systemPrefersDark = themeMediaQuery.matches;
@@ -60,6 +66,7 @@
 
   onDestroy(() => {
     requestGeneration += 1;
+    diffRequestGeneration += 1;
     themeMediaQuery?.removeEventListener("change", handleThemeChange);
   });
 
@@ -85,6 +92,9 @@
     }
 
     const generation = ++requestGeneration;
+    if (!append) {
+      clearRevisionDiff();
+    }
     loading = true;
     error = null;
     try {
@@ -98,9 +108,6 @@
         return;
       }
       log = append && log ? mergeLogPage(log, page) : page;
-      cachedCommitMessages = cacheCommitMessages(
-        page.entries.map((entry) => entry.message).filter(Boolean),
-      );
     } catch (caught) {
       if (generation !== requestGeneration) {
         return;
@@ -210,27 +217,6 @@
     dateToFilter = "";
   }
 
-  function openHistoryPicker() {
-    cachedCommitMessages = readCommitMessageSettings().history;
-    selectedHistoryMessage = cachedCommitMessages[0] ?? "";
-    historyNotice = null;
-    historyPickerOpen = true;
-  }
-
-  function closeHistoryPicker() {
-    historyPickerOpen = false;
-  }
-
-  function useSelectedHistoryMessage() {
-    if (!selectedHistoryMessage.trim()) {
-      return;
-    }
-    setPendingCommitMessage(selectedHistoryMessage);
-    cachedCommitMessages = cacheCommitMessages([selectedHistoryMessage]);
-    historyNotice = "已填充到提交日志";
-    historyPickerOpen = false;
-  }
-
   function togglePaths(revision: string) {
     const next = new Set(expandedRevisions);
     if (next.has(revision)) {
@@ -239,6 +225,103 @@
       next.add(revision);
     }
     expandedRevisions = next;
+  }
+
+  function clearRevisionDiff() {
+    diffRequestGeneration += 1;
+    selectedDiff = null;
+    revisionDiff = null;
+    revisionDiffLoading = false;
+    revisionDiffError = null;
+  }
+
+  async function openChangedPathDiff(entry: SvnLogEntry, path: SvnChangedPath) {
+    if (path.kind === "dir") {
+      return;
+    }
+
+    const workingCopyRoot = log?.working_copy_root?.trim();
+    const previousRevision = revisionBefore(entry.revision);
+    const targetUrl = repositoryPathUrlAtRevision(
+      log?.repository_root,
+      path.path,
+      entry.revision,
+      path.action,
+    );
+    selectedDiff = { revision: entry.revision, path: path.path };
+    revisionDiff = null;
+    revisionDiffError = null;
+
+    if (!workingCopyRoot || !previousRevision || !targetUrl) {
+      revisionDiffError = {
+        code: "REVISION_DIFF_CONTEXT_MISSING",
+        message: "无法准备文件 Diff",
+        detail: "日志缺少工作副本或仓库路径信息，请刷新日志后重试。",
+        recoverable: true,
+      };
+      return;
+    }
+
+    const generation = ++diffRequestGeneration;
+    revisionDiffLoading = true;
+    try {
+      const task = await createRevisionDiffTask({
+        mode: "revisions",
+        working_copy_root: workingCopyRoot,
+        target_url: targetUrl,
+        left_revision: previousRevision,
+        right_revision: entry.revision,
+        svn_executable: svnExecutable?.trim() || undefined,
+      });
+      const completedTask = await waitForRevisionDiffTask(task.task_id, generation);
+      if (generation !== diffRequestGeneration || !completedTask) {
+        return;
+      }
+      const result = completedTask.result?.revision_diff;
+      if (!result) {
+        throw revisionDiffCommandError("Revision diff 任务没有返回结果");
+      }
+      revisionDiff = result;
+    } catch (caught) {
+      if (generation === diffRequestGeneration) {
+        revisionDiffError = normalizeCommandError(caught);
+      }
+    } finally {
+      if (generation === diffRequestGeneration) {
+        revisionDiffLoading = false;
+      }
+    }
+  }
+
+  async function waitForRevisionDiffTask(taskId: string, generation: number) {
+    while (generation === diffRequestGeneration) {
+      const task = await getTask(taskId);
+      if (task.status === "success") {
+        return task;
+      }
+      if (["failed", "cancelled", "interrupted"].includes(task.status)) {
+        throw revisionDiffCommandError(task.error ?? "Revision diff 失败");
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+    }
+    return null;
+  }
+
+  function normalizeCommandError(error: unknown): CommandError {
+    if (typeof error === "object" && error !== null && "code" in error && "message" in error) {
+      return error as CommandError;
+    }
+    return revisionDiffCommandError(
+      error instanceof Error ? error.message : "Revision diff 失败",
+    );
+  }
+
+  function revisionDiffCommandError(message: string): CommandError {
+    return {
+      code: "REVISION_DIFF_FAILED",
+      message,
+      recoverable: true,
+    };
   }
 
 </script>
@@ -282,13 +365,6 @@
       >
         加载更多
       </button>
-      <button
-        type="button"
-        disabled={cachedCommitMessages.length === 0}
-        on:click={openHistoryPicker}
-      >
-        获取历史日志
-      </button>
     </div>
   </header>
 
@@ -317,102 +393,124 @@
     {/if}
   </section>
 
-  <ErrorNotice {error} />
+  <div class="log-error">
+    <ErrorNotice {error} />
+  </div>
 
-  <section class="log-list" aria-label="Revision 列表" aria-busy={loading}>
-    {#if filteredEntries.length > 0}
-      {#each filteredEntries as entry (entry.revision)}
-        <article class="log-entry">
-          <header>
-            <strong>r{entry.revision}</strong>
-            <span title={entry.author || undefined}>{entry.author || "-"}</span>
-            <time datetime={entry.date} title={entry.date}>{formatDate(entry.date)}</time>
-            <div class="entry-meta">
-              <em>{entry.changed_paths.length} paths</em>
-              {#if entry.changed_paths.length > 0}
-                <button
-                  type="button"
-                  class="path-toggle"
-                  aria-expanded={expandedRevisions.has(entry.revision)}
-                  on:click={() => togglePaths(entry.revision)}
-                >
-                  {#if expandedRevisions.has(entry.revision)}
-                    <ChevronUp size={13} aria-hidden="true" /> 收起
-                  {:else}
-                    <ChevronDown size={13} aria-hidden="true" /> 查看路径
-                  {/if}
-                </button>
-              {/if}
-            </div>
-          </header>
-          <p>{entry.message || "无提交信息"}</p>
-          {#if entry.changed_paths.length > 0}
-            {#if expandedRevisions.has(entry.revision)}
+  <div class="log-layout" class:with-diff={selectedDiff !== null}>
+    <section class="log-list" aria-label="Revision 列表" aria-busy={loading}>
+      {#if filteredEntries.length > 0}
+        {#each filteredEntries as entry (entry.revision)}
+          <article class="log-entry">
+            <header>
+              <button
+                type="button"
+                class="entry-summary"
+                aria-label={`${expandedRevisions.has(entry.revision) ? "收起" : "展开"} r${entry.revision} 日志`}
+                aria-expanded={expandedRevisions.has(entry.revision)}
+                on:click={() => togglePaths(entry.revision)}
+              >
+                <strong>r{entry.revision}</strong>
+                <span title={entry.author || undefined}>{entry.author || "-"}</span>
+                <time datetime={entry.date} title={entry.date}>{formatDate(entry.date)}</time>
+              </button>
+              <div class="entry-meta">
+                <span class="change-counts">
+                  {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
+                    <span
+                      class="change-count"
+                      data-action={summary.action}
+                      aria-label={`${summary.action} ${summary.count}`}
+                    >{summary.action} {summary.count}</span>
+                  {/each}
+                </span>
+                <em>{entry.changed_paths.length} paths</em>
+                {#if entry.changed_paths.length > 0}
+                  <button
+                    type="button"
+                    class="path-toggle"
+                    aria-expanded={expandedRevisions.has(entry.revision)}
+                    on:click={() => togglePaths(entry.revision)}
+                  >
+                    {#if expandedRevisions.has(entry.revision)}
+                      <ChevronUp size={13} aria-hidden="true" /> 收起
+                    {:else}
+                      <ChevronDown size={13} aria-hidden="true" /> 查看路径
+                    {/if}
+                  </button>
+                {/if}
+              </div>
+            </header>
+            <p>{entry.message || "无提交信息"}</p>
+            {#if entry.changed_paths.length > 0 && expandedRevisions.has(entry.revision)}
               <div class="changed-paths" aria-label={`r${entry.revision} 改变路径`}>
                 {#each entry.changed_paths as path (`${entry.revision}:${path.action}:${path.path}`)}
                   <div class="changed-path">
-                    <span data-action={path.action}>{path.action || "-"}</span>
-                    <code>{path.path}</code>
+                    <span class="change-action" data-action={path.action}>{path.action || "-"}</span>
+                    {#if path.kind === "dir"}
+                      <code>{path.path}</code>
+                    {:else}
+                      <button
+                        type="button"
+                        class="changed-path-button"
+                        aria-label={`查看 r${entry.revision} 的 ${path.path} diff`}
+                        disabled={revisionDiffLoading}
+                        on:click={() => openChangedPathDiff(entry, path)}
+                      >
+                        <code>{path.path}</code>
+                      </button>
+                    {/if}
                     <small>{path.kind || "-"}</small>
                   </div>
                 {/each}
               </div>
             {/if}
-          {/if}
-        </article>
-      {/each}
-    {:else if loading}
-      <div class="log-empty" role="status">正在读取日志...</div>
-    {:else if log?.entries.length}
-      <div class="log-empty">没有符合当前过滤条件的 revision</div>
-    {:else if !error}
-      <div class="log-empty">没有可显示的日志记录</div>
-    {/if}
-  </section>
-</main>
-
-{#if historyNotice}
-  <div class="history-notice" role="status">{historyNotice}</div>
-{/if}
-
-{#if historyPickerOpen}
-  <div class="history-backdrop" role="presentation" on:click|self={closeHistoryPicker}>
-    <div
-      class="history-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="选择历史提交日志"
-    >
+          </article>
+        {/each}
+      {:else if loading}
+        <div class="log-empty" role="status">正在读取日志...</div>
+      {:else if log?.entries.length}
+        <div class="log-empty">没有符合当前过滤条件的 revision</div>
+      {:else if !error}
+        <div class="log-empty">没有可显示的日志记录</div>
+      {/if}
+    </section>
+  {#if selectedDiff}
+    <aside class="log-diff" aria-label="文件 Diff">
       <header>
-        <h2>选择历史提交日志</h2>
-        <button type="button" class="icon-button" aria-label="关闭" title="关闭" on:click={closeHistoryPicker}>
+        <div>
+          <h2>r{selectedDiff.revision} 文件 Diff</h2>
+          <p title={selectedDiff.path}>{selectedDiff.path}</p>
+        </div>
+        <button
+          type="button"
+          class="icon-button"
+          aria-label="关闭文件 Diff"
+          title="关闭"
+          on:click={clearRevisionDiff}
+        >
           <X size={16} aria-hidden="true" />
         </button>
       </header>
-      <select
-        class="history-select"
-        size="8"
-        aria-label="历史提交日志"
-        bind:value={selectedHistoryMessage}
-      >
-        {#each cachedCommitMessages as message}
-          <option value={message}>{message}</option>
-        {/each}
-      </select>
-      <footer>
-        <button type="button" on:click={closeHistoryPicker}>取消</button>
-        <button
-          type="button"
-          class="primary-action"
-          disabled={!selectedHistoryMessage.trim()}
-          on:click={useSelectedHistoryMessage}
-        >
-          填充提交日志
-        </button>
-      </footer>
-    </div>
+      <div class="diff-body">
+        <ErrorNotice error={revisionDiffError} />
+        {#if revisionDiffLoading}
+          <div class="diff-empty" role="status">正在读取 Diff...</div>
+        {:else if revisionDiff}
+          <div class="diff-summary">
+            <span>{revisionDiff.file_count} 文件</span>
+            <span>{revisionDiff.line_count} 行</span>
+            {#if revisionDiff.truncated}<strong>预览已截断</strong>{/if}
+          </div>
+          <pre>{revisionDiff.diff_text || "该文件在此 revision 没有文本 Diff"}</pre>
+        {:else if !revisionDiffError}
+          <div class="diff-empty">选择文件查看 Diff</div>
+        {/if}
+      </div>
+    </aside>
+  {/if}
   </div>
-{/if}
+</main>
 
 <style>
   .standalone-log {
@@ -573,8 +671,22 @@
     color: #b13a35;
   }
 
-  :global(.standalone-log > .error-notice) {
+  .log-error {
+    min-height: 0;
+  }
+
+  .log-error :global(.error-notice) {
     margin: 8px 14px 0;
+  }
+
+  .log-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .log-layout.with-diff {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 42vw);
   }
 
   .log-list {
@@ -591,10 +703,28 @@
 
   .log-entry > header {
     display: grid;
-    grid-template-columns: 84px minmax(100px, 160px) 150px minmax(72px, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(72px, auto);
     align-items: center;
     gap: 10px;
     min-width: 0;
+  }
+
+  .entry-summary {
+    display: grid;
+    grid-template-columns: 84px minmax(100px, 160px) 150px;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    min-height: 30px;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    text-align: left;
+  }
+
+  .entry-summary:hover,
+  .entry-summary:focus-visible {
+    color: var(--accent);
   }
 
   .log-entry > header span,
@@ -616,6 +746,20 @@
     justify-content: flex-end;
     gap: 8px;
     min-width: 0;
+  }
+
+  .change-counts {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .change-count {
+    border-radius: 4px;
+    padding: 2px 5px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.2;
   }
 
   .log-entry > p {
@@ -642,14 +786,75 @@
     font-size: 11px;
   }
 
-  .changed-path > span {
-    color: var(--accent);
+  .change-action {
+    display: grid;
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
     font-weight: 700;
+    place-items: center;
+  }
+
+  .changed-path code,
+  .changed-path-button {
+    min-width: 0;
   }
 
   .changed-path code {
     overflow-wrap: anywhere;
     font-family: "SFMono-Regular", Consolas, monospace;
+  }
+
+  .changed-path-button {
+    min-height: 0;
+    border: 0;
+    border-radius: 2px;
+    background: transparent;
+    color: var(--accent);
+    padding: 1px 2px;
+    text-align: left;
+  }
+
+  .changed-path-button:hover,
+  .changed-path-button:focus-visible {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+
+  .change-action[data-action="A"],
+  .change-count[data-action="A"] {
+    background: #dff2e4;
+    color: #24733a;
+  }
+
+  .change-action[data-action="M"],
+  .change-count[data-action="M"] {
+    background: #fff0c7;
+    color: #805900;
+  }
+
+  .change-action[data-action="D"],
+  .change-count[data-action="D"] {
+    background: #fbe0df;
+    color: #a12f2b;
+  }
+
+  .standalone-log[data-theme="dark"] .change-action[data-action="A"],
+  .standalone-log[data-theme="dark"] .change-count[data-action="A"] {
+    background: #1f4b2d;
+    color: #8fdaa2;
+  }
+
+  .standalone-log[data-theme="dark"] .change-action[data-action="M"],
+  .standalone-log[data-theme="dark"] .change-count[data-action="M"] {
+    background: #4b3b16;
+    color: #f6cf73;
+  }
+
+  .standalone-log[data-theme="dark"] .change-action[data-action="D"],
+  .standalone-log[data-theme="dark"] .change-count[data-action="D"] {
+    background: #522725;
+    color: #ffaaa7;
   }
 
   .changed-path small {
@@ -678,91 +883,106 @@
     place-items: center;
   }
 
-  .history-notice {
-    position: fixed;
-    right: 18px;
-    bottom: 18px;
-    z-index: 3;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--panel);
-    box-shadow: 0 4px 14px rgb(0 0 0 / 14%);
-    color: var(--text);
-    padding: 8px 12px;
-    font-size: 12px;
-  }
-
-  .history-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 2;
+  .log-diff {
     display: grid;
-    background: rgb(10 18 26 / 28%);
-    padding: 24px;
-    place-items: center;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    border-left: 1px solid var(--border);
+    background: var(--panel-subtle);
   }
 
-  .history-dialog {
-    display: grid;
-    grid-template-rows: auto minmax(180px, 1fr) auto;
-    width: min(560px, 100%);
-    max-height: min(560px, 100%);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--panel);
-    box-shadow: 0 12px 34px rgb(0 0 0 / 22%);
-    color: var(--text);
-    padding: 14px;
-  }
-
-  .history-dialog > header,
-  .history-dialog > footer {
+  .log-diff > header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
+    min-width: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    padding: 9px 10px;
   }
 
-  .history-dialog > header {
-    padding-bottom: 10px;
+  .log-diff > header > div {
+    min-width: 0;
   }
 
-  .history-dialog > footer {
-    justify-content: flex-end;
-    padding-top: 10px;
-  }
-
-  .history-dialog h2 {
+  .log-diff h2 {
     margin: 0;
-    font-size: 15px;
+    font-size: 13px;
   }
 
-  .history-select {
-    min-height: 220px;
-    width: 100%;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--control);
-    color: var(--text);
-    padding: 4px;
-    font: inherit;
-    font-size: 12px;
+  .log-diff header p {
+    overflow: hidden;
+    margin-top: 2px;
+    color: var(--secondary);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .history-select option {
-    padding: 7px 8px;
-    white-space: pre-wrap;
+  .diff-body {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+    overflow: hidden;
   }
 
-  .primary-action {
-    border-color: var(--accent);
-    background: var(--accent);
-    color: #fff;
+  .diff-body :global(.error-notice) {
+    margin: 8px 10px 0;
+  }
+
+  .diff-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--secondary);
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  .diff-summary strong {
+    color: #a12f2b;
+    font-weight: 600;
+  }
+
+  .log-diff pre {
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    margin: 0;
+    background: var(--panel);
+    padding: 10px;
+    user-select: text;
+    -webkit-user-select: text;
+    white-space: pre;
+  }
+
+  .diff-empty {
+    display: grid;
+    grid-row: 1 / -1;
+    min-height: 0;
+    color: var(--secondary);
+    place-items: center;
   }
 
   @media (max-width: 1040px) {
-    .log-entry > header {
-      grid-template-columns: 72px minmax(90px, 1fr) 145px auto;
+    .entry-summary {
+      grid-template-columns: 72px minmax(90px, 1fr) 145px;
+    }
+  }
+
+  @media (max-width: 820px) {
+    .log-layout.with-diff {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: minmax(220px, 1fr) minmax(240px, 1fr);
+    }
+
+    .log-diff {
+      border-top: 1px solid var(--border);
+      border-left: 0;
     }
   }
 </style>

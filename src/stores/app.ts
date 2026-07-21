@@ -100,6 +100,13 @@ import type {
   WorkspaceSummary,
 } from "../types/api";
 import { isSameWorkingCopyRoot } from "../lib/svn-operation-completion";
+import {
+  repositoryPathUrl,
+  repositoryPathUrlAtRevision,
+  revisionBefore,
+} from "../lib/svn-log";
+
+export { repositoryPathUrl } from "../lib/svn-log";
 
 export const currentView = writable<AppView>("changes");
 
@@ -4980,15 +4987,24 @@ function createWorkspaceStore() {
     }));
   }
 
-  function prepareRevisionDiffFromLog(revision: string, repositoryPath?: string) {
+  function prepareRevisionDiffFromLog(
+    revision: string,
+    repositoryPath?: string,
+    action?: string,
+  ) {
     const normalizedRevision = revision.trim();
-    const previousRevision = /^[1-9]\d*$/.test(normalizedRevision)
-      ? (BigInt(normalizedRevision) - 1n).toString()
-      : null;
+    const previousRevision = revisionBefore(normalizedRevision);
     let prepared = false;
     update((state) => {
       const targetUrl = repositoryPath
-        ? repositoryPathUrl(state.current?.repository_root, repositoryPath)
+        ? action
+          ? repositoryPathUrlAtRevision(
+              state.current?.repository_root,
+              repositoryPath,
+              normalizedRevision,
+              action,
+            )
+          : repositoryPathUrl(state.current?.repository_root, repositoryPath)
         : "";
       if (repositoryPath && !targetUrl) {
         return {
@@ -5428,28 +5444,6 @@ export function revisionDiffPatchFileName(result: Pick<RevisionDiffResult, "mode
   const mode = sanitizePatchFileNamePart(String(result.mode || "revision-diff"));
   const target = sanitizePatchFileNamePart(result.target || "target");
   return `novasvn-${mode}-${target}-${Date.now()}.patch`;
-}
-
-export function repositoryPathUrl(
-  repositoryRoot: string | null | undefined,
-  repositoryPath: string,
-) {
-  const root = repositoryRoot?.trim().replace(/\/+$/, "");
-  if (
-    !root ||
-    !repositoryPath.startsWith("/") ||
-    repositoryPath.includes("\\") ||
-    /[\u0000-\u001f\u007f]/.test(repositoryPath)
-  ) {
-    return null;
-  }
-  const segments = repositoryPath.split("/").filter(Boolean);
-  if (segments.some((segment) => segment === "." || segment === "..")) {
-    return null;
-  }
-  return segments.length > 0
-    ? `${root}/${segments.map((segment) => encodeURIComponent(segment)).join("/")}`
-    : root;
 }
 
 export function isSameRepositoryUrl(left: string | null | undefined, right: string | null | undefined) {

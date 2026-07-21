@@ -1412,7 +1412,7 @@ textarea {
 
 .timeline-entry-summary {
   display: grid;
-  grid-template-columns: 68px minmax(80px, 110px) 76px minmax(58px, 1fr);
+  grid-template-columns: 68px minmax(80px, 110px) 76px minmax(148px, 1fr);
   align-items: center;
   gap: 6px;
   width: 100%;
@@ -1431,8 +1431,21 @@ textarea {
 }
 
 .timeline-path-count {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
   color: #6b7784;
   text-align: right;
+}
+
+.timeline-change-count {
+  flex: 0 0 auto;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
 }
 
 .timeline-entry-summary:hover {
@@ -1513,8 +1526,13 @@ textarea {
 }
 
 .timeline-path-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   width: 100%;
   min-height: 27px;
+  margin-top: 7px;
   border: 0;
   border-radius: 0;
   background: #f1f4f6;
@@ -1642,6 +1660,24 @@ textarea {
   color: #536070;
   font-size: 11px;
   font-weight: 700;
+}
+
+.change-action[data-action="A"],
+.timeline-change-count[data-action="A"] {
+  background: #dff2e4;
+  color: #24733a;
+}
+
+.change-action[data-action="M"],
+.timeline-change-count[data-action="M"] {
+  background: #fff0c7;
+  color: #805900;
+}
+
+.change-action[data-action="D"],
+.timeline-change-count[data-action="D"] {
+  background: #fbe0df;
+  color: #a12f2b;
 }
 
 .repository-table {
@@ -2546,6 +2582,24 @@ textarea {
 .versions-workbench[data-theme="dark"] .timeline-path-count,
 .versions-workbench[data-theme="dark"] .timeline-changed-path small {
   color: #aeb8c2;
+}
+
+.versions-workbench[data-theme="dark"] .change-action[data-action="A"],
+.versions-workbench[data-theme="dark"] .timeline-change-count[data-action="A"] {
+  background: #1f4b2d;
+  color: #8fdaa2;
+}
+
+.versions-workbench[data-theme="dark"] .change-action[data-action="M"],
+.versions-workbench[data-theme="dark"] .timeline-change-count[data-action="M"] {
+  background: #4b3b16;
+  color: #f6cf73;
+}
+
+.versions-workbench[data-theme="dark"] .change-action[data-action="D"],
+.versions-workbench[data-theme="dark"] .timeline-change-count[data-action="D"] {
+  background: #522725;
+  color: #ffaaa7;
 }
 
 .versions-workbench[data-theme="dark"] .timeline-changed-paths {

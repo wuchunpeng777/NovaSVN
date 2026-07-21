@@ -551,12 +551,13 @@ Certificate information:
     expect(newestEntry).toHaveTextContent("15:20:00");
     expect(newestEntry).toHaveTextContent("完成菜单");
     expect(newestEntry).toHaveTextContent("5 paths");
+    expect(within(newestEntry).getByLabelText("M 5")).toHaveAttribute("data-action", "M");
+    expect(newestEntry).not.toHaveTextContent("/trunk/file-12-1.txt");
+    await fireEvent.click(
+      within(newestEntry).getByRole("button", { name: "展开 r12 日志" }),
+    );
     expect(newestEntry).toHaveTextContent("/trunk/file-12-1.txt");
     expect(newestEntry).toHaveTextContent("/trunk/file-12-3.txt");
-    expect(newestEntry).not.toHaveTextContent("/trunk/file-12-4.txt");
-    await fireEvent.click(
-      within(newestEntry).getByRole("button", { name: "展开其余 2 条路径" }),
-    );
     expect(newestEntry).toHaveTextContent("/trunk/file-12-4.txt");
     expect(newestEntry).toHaveTextContent("/trunk/file-12-5.txt");
     await fireEvent.click(
@@ -567,6 +568,7 @@ Certificate information:
     expect(onPrepareRevisionDiffFromLog).toHaveBeenLastCalledWith(
       "12",
       "/trunk/file-12-4.txt",
+      "M",
     );
     expect(onRunRevisionDiff).toHaveBeenCalledOnce();
 

@@ -87,7 +87,9 @@ describe("StandaloneUpdateWindow", () => {
     expect(screen.queryByRole("button", { name: "查看修改 src/main.ts" })).not.toBeInTheDocument();
     expect(screen.queryByText("SVN 操作开始执行")).not.toBeInTheDocument();
     expect(screen.queryByText("Updated to revision 21.")).not.toBeInTheDocument();
-    expect(screen.getByText("更新完成")).toBeInTheDocument();
+    expect(within(output).getByRole("status", { name: "更新完成" })).toHaveTextContent(
+      "工作副本已更新到 Revision 21",
+    );
     expect(scanWorkspaceStatusMock).toHaveBeenCalledWith({
       working_copy_root: "C:\\repo",
       svn_executable: "C:\\Tools\\svn.exe",
@@ -95,6 +97,45 @@ describe("StandaloneUpdateWindow", () => {
       limit: 5000,
       check_remote_updates: false,
     });
+  });
+
+  it("更新内容增加时自动滚动到底部", async () => {
+    getTaskMock
+      .mockResolvedValueOnce(makeTask("running", ["U    src/first.ts"]))
+      .mockResolvedValueOnce(
+        makeTask("success", ["U    src/first.ts", "A    src/second.ts"]),
+      );
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo" } });
+
+    await screen.findByRole("listitem", { name: "更新文件 src/first.ts" });
+    const outputLines = screen.getByRole("log");
+    Object.defineProperty(outputLines, "scrollHeight", { configurable: true, value: 500 });
+    Object.defineProperty(outputLines, "clientHeight", { configurable: true, value: 100 });
+    outputLines.scrollTop = 0;
+
+    await screen.findByRole("listitem", { name: "更新文件 src/second.ts" });
+    await waitFor(() => expect(outputLines.scrollTop).toBe(400));
+    expect(within(outputLines).getByRole("status", { name: "更新完成" })).toBeInTheDocument();
+  });
+
+  it("用户手动滚动后停止自动置底", async () => {
+    getTaskMock
+      .mockResolvedValueOnce(makeTask("running", ["U    src/first.ts"]))
+      .mockResolvedValueOnce(
+        makeTask("success", ["U    src/first.ts", "A    src/second.ts"]),
+      );
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo" } });
+
+    await screen.findByRole("listitem", { name: "更新文件 src/first.ts" });
+    const outputLines = screen.getByRole("log");
+    Object.defineProperty(outputLines, "scrollHeight", { configurable: true, value: 500 });
+    Object.defineProperty(outputLines, "clientHeight", { configurable: true, value: 100 });
+    outputLines.scrollTop = 80;
+    await fireEvent.scroll(outputLines);
+
+    await screen.findByRole("listitem", { name: "更新文件 src/second.ts" });
+    expect(outputLines.scrollTop).toBe(80);
+    expect(within(outputLines).getByRole("status", { name: "更新完成" })).toBeInTheDocument();
   });
 
   it("工作副本根目录使用完整 Update", async () => {

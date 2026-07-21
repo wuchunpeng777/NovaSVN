@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { FilePenLine, History, RefreshCw, RotateCw, Square, X } from "@lucide/svelte";
+  import { CircleCheck, FilePenLine, History, RefreshCw, RotateCw, Square, X } from "@lucide/svelte";
   import {
     cancelTask,
     createSvnOperationTask,
@@ -46,6 +46,9 @@
   let error: CommandError | null = null;
   let statusError: CommandError | null = null;
   let actionError: string | null = null;
+  let outputLinesElement: HTMLDivElement | null = null;
+  let autoFollowOutput = true;
+  let expectedAutoScrollTop: number | null = null;
   let pollTimer: number | null = null;
   let generation = 0;
   let systemPrefersDark = false;
@@ -106,6 +109,8 @@
     resolutionTask = null;
     resolutionHistory = [];
     resolutionPath = null;
+    autoFollowOutput = true;
+    expectedAutoScrollTop = null;
     closeFileContextMenu();
     closeFileLog();
 
@@ -173,6 +178,7 @@
       }
       if (role === "update") {
         updateTask = task;
+        void followUpdateOutput();
       } else {
         resolutionTask = task;
       }
@@ -392,6 +398,34 @@
     }
   }
 
+  async function followUpdateOutput() {
+    await tick();
+    if (!autoFollowOutput || !outputLinesElement) {
+      return;
+    }
+    const targetScrollTop = Math.max(
+      0,
+      outputLinesElement.scrollHeight - outputLinesElement.clientHeight,
+    );
+    expectedAutoScrollTop = targetScrollTop;
+    outputLinesElement.scrollTop = targetScrollTop;
+  }
+
+  function handleOutputScroll() {
+    if (!outputLinesElement) {
+      return;
+    }
+    if (
+      expectedAutoScrollTop !== null &&
+      Math.abs(outputLinesElement.scrollTop - expectedAutoScrollTop) <= 1
+    ) {
+      expectedAutoScrollTop = null;
+      return;
+    }
+    expectedAutoScrollTop = null;
+    autoFollowOutput = false;
+  }
+
   function isTaskRunning(task: Task | null) {
     return task?.status === "pending" || task?.status === "running";
   }
@@ -517,7 +551,13 @@
           <h2>更新内容</h2>
           <span>{updatedFiles.length} 个文件</span>
         </header>
-        <div class="output-lines" role="log" aria-live="polite">
+        <div
+          bind:this={outputLinesElement}
+          class="output-lines"
+          role="log"
+          aria-live="polite"
+          on:scroll={handleOutputScroll}
+        >
           {#if updatedFiles.length > 0}
             {#each updatedFiles as file (file.path)}
               <div
@@ -537,6 +577,13 @@
             <div class="empty-output" role="status">正在等待更新文件...</div>
           {:else}
             <div class="empty-output">没有更新文件</div>
+          {/if}
+          {#if updateTask?.status === "success"}
+            <div class="update-complete-line" role="status" aria-label="更新完成">
+              <CircleCheck size={18} strokeWidth={2.2} aria-hidden="true" />
+              <strong>更新完成</strong>
+              <span>工作副本已更新到 Revision {status?.revision_range ?? target?.revision ?? "-"}</span>
+            </div>
           {/if}
         </div>
       </section>
@@ -939,6 +986,34 @@
     min-height: 160px;
     color: var(--secondary);
     place-items: center;
+  }
+
+  .update-complete-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    margin-top: 8px;
+    border-top: 1px solid color-mix(in srgb, #24783d 35%, var(--border));
+    border-bottom: 1px solid color-mix(in srgb, #24783d 35%, var(--border));
+    background: color-mix(in srgb, #24783d 10%, var(--panel));
+    color: #24783d;
+    padding: 8px 12px;
+  }
+
+  .update-complete-line strong {
+    font-size: 13px;
+  }
+
+  .update-complete-line span {
+    color: var(--secondary);
+    font-size: 11px;
+  }
+
+  .standalone-update[data-theme="dark"] .update-complete-line {
+    border-color: #376d47;
+    background: #203729;
+    color: #8fdaa2;
   }
 
   .conflict-pane {
