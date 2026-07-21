@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../lib/api", () => ({
   cancelTask: vi.fn(),
   createSvnOperationTask: vi.fn(),
+  getFileContentDiff: vi.fn(),
+  getFileDiff: vi.fn(),
+  getSvnLog: vi.fn(),
   getTask: vi.fn(),
   inspectUpdateTarget: vi.fn(),
   openWorkspaceFile: vi.fn(),
@@ -12,6 +15,9 @@ vi.mock("../lib/api", () => ({
 
 import {
   createSvnOperationTask,
+  getFileContentDiff,
+  getFileDiff,
+  getSvnLog,
   getTask,
   inspectUpdateTarget,
   openWorkspaceFile,
@@ -21,6 +27,9 @@ import type { ChangedFile, Task, WorkingCopyStatus } from "../types/api";
 import StandaloneUpdateWindow from "./StandaloneUpdateWindow.svelte";
 
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
+const getFileContentDiffMock = vi.mocked(getFileContentDiff);
+const getFileDiffMock = vi.mocked(getFileDiff);
+const getSvnLogMock = vi.mocked(getSvnLog);
 const getTaskMock = vi.mocked(getTask);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 const openWorkspaceFileMock = vi.mocked(openWorkspaceFile);
@@ -28,6 +37,9 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(() => {
   createSvnOperationTaskMock.mockReset();
+  getFileContentDiffMock.mockReset();
+  getFileDiffMock.mockReset();
+  getSvnLogMock.mockReset();
   getTaskMock.mockReset();
   inspectUpdateTargetMock.mockReset();
   openWorkspaceFileMock.mockReset();
@@ -38,6 +50,35 @@ beforeEach(() => {
     makeTask("success", ["SVN 操作开始执行", "U    src/main.ts", "Updated to revision 21."]),
   );
   scanWorkspaceStatusMock.mockResolvedValue(makeStatus());
+  getFileContentDiffMock.mockResolvedValue({
+    path: "src/main.ts",
+    original_text: "const value = 1;",
+    modified_text: "const value = 1;",
+    language: "typescript",
+    binary: false,
+    too_large: false,
+    max_bytes: 512 * 1024,
+  });
+  getFileDiffMock.mockResolvedValue({
+    path: "src/main.ts",
+    text: "@@ -1 +1 @@\n-const value = 1;\n+const value = 2;",
+    binary: false,
+    empty: false,
+  });
+  getSvnLogMock.mockResolvedValue({
+    target: "src/main.ts",
+    has_more: false,
+    next_start_revision: null,
+    entries: [
+      {
+        revision: "20",
+        author: "dev",
+        date: "2026-01-01T00:00:00Z",
+        message: "修改 main.ts",
+        changed_paths: [],
+      },
+    ],
+  });
 });
 
 describe("StandaloneUpdateWindow", () => {
@@ -87,6 +128,48 @@ describe("StandaloneUpdateWindow", () => {
         svn_executable: undefined,
       });
     });
+  });
+
+  it("点击更新文件查看修改内容", async () => {
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo" } });
+
+    await fireEvent.click(await screen.findByRole("button", { name: "查看修改 src/main.ts" }));
+
+    await waitFor(() => {
+      expect(getFileDiffMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        file_path: "src/main.ts",
+        svn_executable: undefined,
+      });
+      expect(getFileContentDiffMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        file_path: "src/main.ts",
+        svn_executable: undefined,
+        max_bytes: 512 * 1024,
+      });
+    });
+    expect(screen.getByLabelText("修改内容")).toHaveTextContent("@@ -1 +1 @@");
+  });
+
+  it("右键更新文件后可打开该文件 Log", async () => {
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo" } });
+    const file = await screen.findByRole("button", { name: "查看修改 src/main.ts" });
+
+    await fireEvent.contextMenu(file, { clientX: 220, clientY: 180 });
+    const menu = screen.getByRole("menu", { name: "文件菜单 src/main.ts" });
+    await fireEvent.click(within(menu).getByRole("menuitem", { name: "显示 Log" }));
+
+    await waitFor(() => {
+      expect(getSvnLogMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        file_path: "src/main.ts",
+        svn_executable: undefined,
+        limit: 50,
+      });
+    });
+    const dialog = await screen.findByRole("dialog", { name: "文件 Log src/main.ts" });
+    expect(within(dialog).getByText("r20")).toBeInTheDocument();
+    expect(within(dialog).getByText("修改 main.ts")).toBeInTheDocument();
   });
 
   it("展示冲突并完成手动编辑和仓库版本处理", async () => {

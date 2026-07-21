@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
-  import { FilePenLine, RefreshCw, RotateCw, Square } from "@lucide/svelte";
+  import { onDestroy, onMount, tick } from "svelte";
+  import { FilePenLine, History, RefreshCw, RotateCw, Square, X } from "@lucide/svelte";
   import {
     cancelTask,
     createSvnOperationTask,
+    getFileContentDiff,
+    getFileDiff,
+    getSvnLog,
     getTask,
     inspectUpdateTarget,
     openWorkspaceFile,
@@ -12,17 +15,23 @@
   import type {
     ChangedFile,
     CommandError,
+    FileContentDiff,
+    FileDiff,
     SvnOperationKind,
+    SvnLog,
     Task,
     TaskStatus,
     UpdateTargetSummary,
     WorkingCopyStatus,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
 
   export let targetPath: string;
   export let svnExecutable: string | undefined = undefined;
   export let themeMode: "system" | "light" | "dark" = "system";
+  export let diffMode: "side_by_side" | "inline" = "side_by_side";
+  export let showWhitespace = false;
 
   let target: UpdateTargetSummary | null = null;
   let updateTask: Task | null = null;
@@ -31,6 +40,20 @@
   let resolutionPath: string | null = null;
   let status: WorkingCopyStatus | null = null;
   let conflicts: ChangedFile[] = [];
+  let activeFilePath: string | null = null;
+  let selectedFileDiff: FileDiff | null = null;
+  let selectedFileContentDiff: FileContentDiff | null = null;
+  let diffLoading = false;
+  let diffError: CommandError | null = null;
+  let diffGeneration = 0;
+  let fileContextMenu: { path: string; x: number; y: number } | null = null;
+  let fileContextMenuElement: HTMLDivElement | null = null;
+  let fileLog: SvnLog | null = null;
+  let fileLogPath: string | null = null;
+  let fileLogLoading = false;
+  let fileLogError: CommandError | null = null;
+  let fileLogGeneration = 0;
+  let fileLogDialogElement: HTMLDivElement | null = null;
   let initializing = true;
   let scanning = false;
   let error: CommandError | null = null;
@@ -61,13 +84,23 @@
       systemPrefersDark = themeMediaQuery.matches;
       themeMediaQuery.addEventListener("change", handleThemeChange);
     }
+    window.addEventListener("click", closeFileContextMenu);
+    window.addEventListener("blur", closeFileContextMenu);
+    window.addEventListener("resize", closeFileContextMenu);
+    window.addEventListener("keydown", handleWindowKeydown);
     void startUpdate();
   });
 
   onDestroy(() => {
     generation += 1;
+    diffGeneration += 1;
+    fileLogGeneration += 1;
     clearPollTimer();
     themeMediaQuery?.removeEventListener("change", handleThemeChange);
+    window.removeEventListener("click", closeFileContextMenu);
+    window.removeEventListener("blur", closeFileContextMenu);
+    window.removeEventListener("resize", closeFileContextMenu);
+    window.removeEventListener("keydown", handleWindowKeydown);
   });
 
   function handleThemeChange(event: MediaQueryListEvent) {
@@ -87,6 +120,9 @@
     resolutionTask = null;
     resolutionHistory = [];
     resolutionPath = null;
+    clearFilePreview();
+    closeFileContextMenu();
+    closeFileLog();
 
     try {
       const path = targetPath.trim();
@@ -210,6 +246,131 @@
         scanning = false;
       }
     }
+  }
+
+  async function showFilePreview(path: string) {
+    if (!target || updateRunning) {
+      return;
+    }
+    const currentGeneration = generation;
+    const requestGeneration = ++diffGeneration;
+    activeFilePath = path;
+    selectedFileDiff = null;
+    selectedFileContentDiff = null;
+    diffLoading = true;
+    diffError = null;
+    const request = {
+      working_copy_root: target.working_copy_root,
+      file_path: path,
+      svn_executable: svnExecutable?.trim() || undefined,
+    };
+    const [diffResult, contentResult] = await Promise.allSettled([
+      getFileDiff(request),
+      getFileContentDiff({ ...request, max_bytes: 512 * 1024 }),
+    ]);
+    if (requestGeneration !== diffGeneration || currentGeneration !== generation) {
+      return;
+    }
+    selectedFileDiff = diffResult.status === "fulfilled" ? diffResult.value : null;
+    selectedFileContentDiff =
+      contentResult.status === "fulfilled" ? contentResult.value : null;
+    if (diffResult.status === "rejected" && contentResult.status === "rejected") {
+      diffError = contentResult.reason as CommandError;
+    }
+    diffLoading = false;
+  }
+
+  function clearFilePreview() {
+    diffGeneration += 1;
+    activeFilePath = null;
+    selectedFileDiff = null;
+    selectedFileContentDiff = null;
+    diffLoading = false;
+    diffError = null;
+  }
+
+  async function openFileContextMenu(event: MouseEvent, path: string) {
+    event.preventDefault();
+    if (updateRunning || resolutionRunning || scanning || initializing) {
+      return;
+    }
+    fileContextMenu = {
+      path,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 54)),
+    };
+    await tick();
+    fileContextMenuElement?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  }
+
+  function closeFileContextMenu() {
+    fileContextMenu = null;
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      closeFileContextMenu();
+      if (fileLog) {
+        closeFileLog();
+      }
+    }
+  }
+
+  async function showFileLog(path: string) {
+    closeFileContextMenu();
+    if (!target) {
+      return;
+    }
+    const requestGeneration = ++fileLogGeneration;
+    fileLogPath = path;
+    fileLog = null;
+    fileLogError = null;
+    fileLogLoading = true;
+    await tick();
+    fileLogDialogElement?.focus();
+    try {
+      const nextLog = await getSvnLog({
+        working_copy_root: target.working_copy_root,
+        file_path: path,
+        svn_executable: svnExecutable?.trim() || undefined,
+        limit: 50,
+      });
+      if (requestGeneration !== fileLogGeneration) {
+        return;
+      }
+      fileLog = nextLog;
+    } catch (caught) {
+      if (requestGeneration === fileLogGeneration) {
+        fileLogError = caught as CommandError;
+      }
+    } finally {
+      if (requestGeneration === fileLogGeneration) {
+        fileLogLoading = false;
+      }
+    }
+  }
+
+  function closeFileLog() {
+    fileLogGeneration += 1;
+    fileLog = null;
+    fileLogPath = null;
+    fileLogLoading = false;
+    fileLogError = null;
+  }
+
+  function formatLogDate(value: string) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value || "-";
+    }
+    return new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(date);
   }
 
   async function resolveConflict(file: ChangedFile, kind: SvnOperationKind) {
@@ -406,28 +567,74 @@
   </section>
 
   <div class="update-layout">
-    <section class="update-output" aria-label="更新内容" aria-busy={updateRunning}>
-      <header>
-        <h2>更新内容</h2>
-        <span>{updatedFiles.length} 个文件</span>
-      </header>
-      <div class="output-lines" role="log" aria-live="polite">
-        {#if updatedFiles.length > 0}
-          {#each updatedFiles as file (file.path)}
-            <div class="output-line" data-kind={file.action}>
-              <span>{file.action}</span>
-              <code title={file.path}>{file.path}</code>
+    <div class="update-left-pane">
+      <section class="update-output" aria-label="更新内容" aria-busy={updateRunning}>
+        <header>
+          <h2>更新内容</h2>
+          <span>{updatedFiles.length} 个文件</span>
+        </header>
+        <div class="output-lines" role="log" aria-live="polite">
+          {#if updatedFiles.length > 0}
+            {#each updatedFiles as file (file.path)}
+              <button
+                type="button"
+                class="output-line"
+                class:active={activeFilePath === file.path}
+                data-kind={file.action}
+                aria-label={`查看修改 ${file.path}`}
+                disabled={updateRunning || scanning}
+                on:click={() => showFilePreview(file.path)}
+                on:contextmenu={(event) => openFileContextMenu(event, file.path)}
+              >
+                <span>{file.action}</span>
+                <code title={file.path}>{file.path}</code>
+              </button>
+            {/each}
+          {:else if initializing}
+            <div class="empty-output" role="status">正在检查 Update 目标...</div>
+          {:else if updateRunning}
+            <div class="empty-output" role="status">正在等待更新文件...</div>
+          {:else}
+            <div class="empty-output">没有更新文件</div>
+          {/if}
+        </div>
+      </section>
+
+      <section class="update-diff" aria-label="修改内容">
+        <header>
+          <div>
+            <h2>修改内容</h2>
+            <p title={activeFilePath ?? undefined}>{activeFilePath ?? "点击更新文件查看内容"}</p>
+          </div>
+        </header>
+        <div class="diff-content">
+          {#if diffLoading}
+            <div class="empty-output" role="status">正在读取修改内容...</div>
+          {:else if diffError}
+            <ErrorNotice error={diffError} />
+          {:else if selectedFileContentDiff?.binary || selectedFileDiff?.binary}
+            <div class="empty-output">二进制文件无法预览文本修改</div>
+          {:else if selectedFileContentDiff?.too_large}
+            <div class="empty-output">
+              文件内容超过 {Math.round(selectedFileContentDiff.max_bytes / 1024)} KB，无法在窗口中预览
             </div>
-          {/each}
-        {:else if initializing}
-          <div class="empty-output" role="status">正在检查 Update 目标...</div>
-        {:else if updateRunning}
-          <div class="empty-output" role="status">正在等待更新文件...</div>
-        {:else}
-          <div class="empty-output">没有更新文件</div>
-        {/if}
-      </div>
-    </section>
+          {:else if selectedFileContentDiff && selectedFileContentDiff.original_text !== selectedFileContentDiff.modified_text}
+            <MonacoDiffViewer
+              contentDiff={selectedFileContentDiff}
+              inlineMode={diffMode === "inline"}
+              {showWhitespace}
+              theme={resolvedTheme}
+            />
+          {:else if selectedFileDiff?.text}
+            <pre class="raw-diff">{selectedFileDiff.text}</pre>
+          {:else if activeFilePath}
+            <div class="empty-output">没有可显示的文本修改</div>
+          {:else}
+            <div class="empty-output">点击更新文件查看修改内容</div>
+          {/if}
+        </div>
+      </section>
+    </div>
 
     <aside class="conflict-pane" aria-label="冲突处理">
       <header>
@@ -501,6 +708,69 @@
     </aside>
   </div>
 </main>
+
+{#if fileContextMenu}
+  <div
+    bind:this={fileContextMenuElement}
+    class="file-context-menu"
+    role="menu"
+    tabindex="-1"
+    aria-label={`文件菜单 ${fileContextMenu.path}`}
+    style={`left: ${fileContextMenu.x}px; top: ${fileContextMenu.y}px`}
+  >
+    <button type="button" role="menuitem" on:click={() => showFileLog(fileContextMenu?.path ?? "")}>
+      <History size={15} aria-hidden="true" /> 显示 Log
+    </button>
+  </div>
+{/if}
+
+{#if fileLogPath}
+  <div
+    class="file-log-backdrop"
+    role="presentation"
+    tabindex="-1"
+    on:click|self={closeFileLog}
+    on:keydown={(event) => event.key === "Escape" && closeFileLog()}
+  >
+    <div
+      bind:this={fileLogDialogElement}
+      class="file-log-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`文件 Log ${fileLogPath}`}
+      tabindex="-1"
+    >
+      <header>
+        <div>
+          <h2>文件 Log</h2>
+          <code title={fileLogPath}>{fileLogPath}</code>
+        </div>
+        <button type="button" class="icon-button" aria-label="关闭文件 Log" title="关闭" on:click={closeFileLog}>
+          <X size={16} aria-hidden="true" />
+        </button>
+      </header>
+      <ErrorNotice error={fileLogError} />
+      <div class="file-log-list" aria-busy={fileLogLoading}>
+        {#if fileLogLoading}
+          <div class="empty-output" role="status">正在读取文件 Log...</div>
+        {:else if fileLog?.entries.length}
+          {#each fileLog.entries as entry (entry.revision)}
+            <article class="file-log-entry">
+              <header>
+                <strong>r{entry.revision}</strong>
+                <span>{entry.author || "-"}</span>
+                <time datetime={entry.date}>{formatLogDate(entry.date)}</time>
+              </header>
+              <p>{entry.message || "无提交信息"}</p>
+            </article>
+          {/each}
+        {:else if !fileLogError}
+          <div class="empty-output">没有可显示的 Log</div>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .standalone-update {
@@ -670,6 +940,14 @@
     min-height: 0;
   }
 
+  .update-left-pane {
+    display: grid;
+    grid-template-rows: minmax(180px, 0.9fr) minmax(180px, 1.1fr);
+    min-width: 0;
+    min-height: 0;
+    border-right: 1px solid var(--border);
+  }
+
   .update-output,
   .conflict-pane {
     display: grid;
@@ -679,11 +957,8 @@
     background: var(--panel);
   }
 
-  .update-output {
-    border-right: 1px solid var(--border);
-  }
-
   .update-output > header,
+  .update-diff > header,
   .conflict-pane > header {
     display: flex;
     align-items: center;
@@ -718,6 +993,26 @@
     padding: 4px 12px;
   }
 
+  button.output-line {
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+  }
+
+  button.output-line.active,
+  button.output-line:hover:not(:disabled) {
+    background: var(--panel);
+  }
+
+  button.output-line:disabled {
+    cursor: default;
+  }
+
   .output-line:hover {
     background: var(--panel);
   }
@@ -749,6 +1044,56 @@
     font-family: Consolas, "SFMono-Regular", monospace;
     font-size: 12px;
     white-space: pre-wrap;
+  }
+
+  .update-diff {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    background: var(--panel);
+  }
+
+  .update-diff > header > div {
+    min-width: 0;
+  }
+
+  .update-diff > header p {
+    overflow: hidden;
+    max-width: 52vw;
+    margin-top: 4px;
+    color: var(--secondary);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .diff-content {
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .diff-content :global(.monaco-diff-viewer) {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .raw-diff {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    overflow: auto;
+    padding: 10px 12px;
+    background: var(--panel-subtle);
+    color: var(--text);
+    font-size: 11px;
+    line-height: 1.45;
+    user-select: text;
+    -webkit-user-select: text;
   }
 
   .empty-output,
@@ -842,6 +1187,120 @@
     color: #bc3f39;
   }
 
+  .file-context-menu {
+    position: fixed;
+    z-index: 20;
+    min-width: 170px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+    background: var(--panel);
+    padding: 4px;
+  }
+
+  .file-context-menu button {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 7px;
+    border: 0;
+    background: transparent;
+    text-align: left;
+  }
+
+  .file-context-menu button:hover {
+    background: var(--panel-subtle);
+  }
+
+  .file-log-backdrop {
+    position: fixed;
+    z-index: 30;
+    inset: 0;
+    display: grid;
+    background: rgb(0 0 0 / 38%);
+    padding: 5vh 7vw;
+    place-items: center;
+  }
+
+  .file-log-dialog {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: min(760px, 100%);
+    max-height: 90vh;
+    min-height: 260px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    box-shadow: 0 16px 48px rgb(0 0 0 / 28%);
+  }
+
+  .file-log-dialog > header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+    padding: 12px 14px;
+  }
+
+  .file-log-dialog > header > div {
+    min-width: 0;
+  }
+
+  .file-log-dialog h2 {
+    margin-bottom: 4px;
+  }
+
+  .file-log-dialog code {
+    display: block;
+    overflow: hidden;
+    color: var(--secondary);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .file-log-dialog .icon-button {
+    flex: 0 0 auto;
+    margin: 0;
+  }
+
+  .file-log-list {
+    min-height: 0;
+    overflow: auto;
+    padding: 8px 12px 14px;
+  }
+
+  .file-log-entry {
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+    padding: 10px 2px;
+  }
+
+  .file-log-entry > header {
+    display: grid;
+    grid-template-columns: 70px minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    color: var(--secondary);
+    font-size: 11px;
+  }
+
+  .file-log-entry > header strong {
+    color: var(--accent);
+  }
+
+  .file-log-entry > header span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .file-log-entry p {
+    margin-top: 6px;
+    white-space: pre-wrap;
+  }
+
   .resolution-history p {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -851,6 +1310,27 @@
   @media (max-width: 1040px) {
     .update-layout {
       grid-template-columns: minmax(0, 1fr) 360px;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .update-layout {
+      grid-template-columns: 1fr;
+      overflow: auto;
+    }
+
+    .update-left-pane {
+      min-height: 680px;
+      border-right: 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .conflict-pane {
+      min-height: 320px;
+    }
+
+    .file-log-backdrop {
+      padding: 14px;
     }
   }
 </style>

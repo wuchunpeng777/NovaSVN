@@ -161,7 +161,11 @@
   }
 
   function currentSvnExecutable() {
-    return $svnStore.detection?.resolved_path ?? $svnStore.detection?.executable;
+    const executable =
+      $svnStore.detection?.resolved_path ??
+      $svnStore.detection?.executable ??
+      $svnStore.executableInput.trim();
+    return executable || undefined;
   }
 
   async function applySvnAuthentication() {
@@ -2089,7 +2093,9 @@
       if ($appSettingsStore.svnAuthenticationMode !== "password") {
         await applySvnAuthentication();
       }
-      await svnStore.detectWithInputFallback();
+      if ($svnStore.executableInput.trim()) {
+        void svnStore.detectWithInputFallback();
+      }
       standaloneBlameReady = true;
       return;
     }
@@ -2100,7 +2106,9 @@
       if ($appSettingsStore.svnAuthenticationMode !== "password") {
         await applySvnAuthentication();
       }
-      await svnStore.detectWithInputFallback();
+      if ($svnStore.executableInput.trim()) {
+        void svnStore.detectWithInputFallback();
+      }
       standaloneLogReady = true;
       return;
     }
@@ -2111,7 +2119,9 @@
       if ($appSettingsStore.svnAuthenticationMode !== "password") {
         await applySvnAuthentication();
       }
-      await svnStore.detectWithInputFallback();
+      if ($svnStore.executableInput.trim()) {
+        void svnStore.detectWithInputFallback();
+      }
       standaloneCommitReady = true;
       return;
     }
@@ -2122,7 +2132,9 @@
       if ($appSettingsStore.svnAuthenticationMode !== "password") {
         await applySvnAuthentication();
       }
-      await svnStore.detectWithInputFallback();
+      if ($svnStore.executableInput.trim()) {
+        void svnStore.detectWithInputFallback();
+      }
       standaloneUpdateReady = true;
       return;
     }
@@ -2164,8 +2176,12 @@
     void branchPoolStore.load();
     void taskWorkspaceStore.load();
     void pingBackend();
-    await workspaceStore.loadRecent();
-    await handleStartupIntent(intent);
+    if (intent.path?.trim()) {
+      await handleStartupIntent(intent);
+    } else {
+      await workspaceStore.loadRecent();
+      await handleStartupIntent(intent);
+    }
   }
 
   onMount(() => {
@@ -2229,6 +2245,8 @@
     targetPath={standaloneUpdatePath}
     svnExecutable={currentSvnExecutable()}
     themeMode={$appSettingsStore.themeMode}
+    diffMode={$appSettingsStore.diffMode}
+    showWhitespace={$appSettingsStore.showWhitespace}
   />
 {:else}
 <MainWorkspace

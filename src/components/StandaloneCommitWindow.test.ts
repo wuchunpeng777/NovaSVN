@@ -110,9 +110,32 @@ describe("StandaloneCommitWindow", () => {
     expect(within(pane).getByText("src/main.ts")).toBeInTheDocument();
     expect(within(pane).getByText("src/nested.ts")).toBeInTheDocument();
     expect(within(pane).queryByText("other.ts")).not.toBeInTheDocument();
-    expect(within(pane).queryByText("src/ignored.ts")).not.toBeInTheDocument();
+    expect(within(pane).getByText("src/ignored.ts")).toBeInTheDocument();
+    expect(within(pane).getByRole("button", { name: "Add src/ignored.ts" })).toBeInTheDocument();
     expect(within(pane).getAllByRole("checkbox")).toHaveLength(2);
     expect(within(pane).getAllByRole("checkbox").every((input) => (input as HTMLInputElement).checked)).toBe(true);
+  });
+
+  it("显示未版本控制文件并可 Add 后刷新列表", async () => {
+    createSvnOperationTaskMock.mockResolvedValue(
+      makeTask("pending", [], { task_id: "add-1", title: "Add 文件 src/ignored.ts" }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const filePane = screen.getByLabelText("选择提交文件");
+    await fireEvent.click(
+      await within(filePane).findByRole("button", { name: "Add src/ignored.ts" }),
+    );
+
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "add_file",
+        file_path: "src/ignored.ts",
+        svn_executable: undefined,
+      });
+    });
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status")).toHaveTextContent("已 Add src/ignored.ts");
   });
 
   it("点击文件条目加载并展示修改内容且不改变提交选择", async () => {

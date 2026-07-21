@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { CheckSquare, History, RefreshCw, RotateCcw, Square, X } from "@lucide/svelte";
+  import { CheckSquare, History, Plus, RefreshCw, RotateCcw, Square, X } from "@lucide/svelte";
   import {
     cancelTask,
     createCommitTask,
@@ -41,9 +41,12 @@
   let target: UpdateTargetSummary | null = null;
   let status: WorkingCopyStatus | null = null;
   let commitTask: Task | null = null;
+  let addTask: Task | null = null;
   let revertTask: Task | null = null;
+  let addingPath: string | null = null;
   let revertingPath: string | null = null;
   let revertNotice: string | null = null;
+  let addNotice: string | null = null;
   let revertCandidate: ChangedFile | null = null;
   let fileContextMenu: { file: ChangedFile; x: number; y: number } | null = null;
   let fileContextMenuElement: HTMLDivElement | null = null;
@@ -73,14 +76,27 @@
 
   $: resolvedTheme =
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
+  $: visibleFiles = (status?.files ?? []).filter(
+    (file) => isVisibleFile(file) && isPathInCommitTarget(file.path),
+  );
   $: committableFiles = (status?.files ?? []).filter(
     (file) => isCommittable(file) && isPathInCommitTarget(file.path),
   );
+  $: unversionedFiles = visibleFiles.filter((file) => file.status === "unversioned");
   $: selectedCount = committableFiles.filter((file) => selectedPaths.has(file.path)).length;
   $: commitRunning = isTaskRunning(commitTask);
+  $: addRunning = isTaskRunning(addTask);
   $: revertRunning = isTaskRunning(revertTask);
-  $: operationRunning = commitRunning || revertRunning;
-  $: taskStatus = revertRunning ? "正在 Revert" : taskStatusLabel(commitTask, initializing);
+  $: operationRunning = commitRunning || addRunning || addingPath !== null || revertRunning;
+  $: taskStatus = commitTask
+    ? taskStatusLabel(commitTask, initializing)
+    : revertTask
+      ? taskStatusLabel(revertTask, initializing, "revert")
+      : addTask
+        ? taskStatusLabel(addTask, initializing, "add")
+        : addingPath
+          ? "正在准备 Add"
+          : taskStatusLabel(null, initializing);
   $: allSelected = committableFiles.length > 0 && selectedCount === committableFiles.length;
   $: commitDisabled =
     initializing ||
@@ -164,9 +180,12 @@
     status = null;
     target = null;
     commitTask = null;
+    addTask = null;
     revertTask = null;
+    addingPath = null;
     revertingPath = null;
     revertNotice = null;
+    addNotice = null;
     revertCandidate = null;
     closeFileContextMenu();
     selectedPaths = new Set();
@@ -229,7 +248,7 @@
       if (activeFilePath) {
         const activeFile = nextStatus.files.find(
           (file) =>
-            file.path === activeFilePath && isCommittable(file) && isPathInCommitTarget(file.path),
+            file.path === activeFilePath && isVisibleFile(file) && isPathInCommitTarget(file.path),
         );
         if (activeFile) {
           void showFilePreview(activeFile, currentGeneration);
@@ -379,6 +398,14 @@
     revertDialogElement?.focus();
   }
 
+  async function requestContextFileAdd() {
+    const file = fileContextMenu?.file ?? null;
+    closeFileContextMenu();
+    if (file) {
+      await addFile(file);
+    }
+  }
+
   function cancelRevert() {
     if (!revertRunning) {
       revertCandidate = null;
@@ -407,6 +434,29 @@
       schedulePoll(task.task_id, "revert", generation, 0);
     } catch (caught) {
       revertingPath = null;
+      error = caught as CommandError;
+    }
+  }
+
+  async function addFile(file: ChangedFile) {
+    if (!target || file.status !== "unversioned" || operationRunning || scanning || initializing) {
+      return;
+    }
+    addingPath = file.path;
+    addNotice = null;
+    error = null;
+    statusError = null;
+    try {
+      const task = await createSvnOperationTask({
+        working_copy_root: target.working_copy_root,
+        kind: "add_file",
+        file_path: file.path,
+        svn_executable: svnExecutable?.trim() || undefined,
+      });
+      addTask = task;
+      schedulePoll(task.task_id, "add", generation, 0);
+    } catch (caught) {
+      addingPath = null;
       error = caught as CommandError;
     }
   }
@@ -463,6 +513,23 @@
     }
   }
 
+  async function stopAdd() {
+    if (!addTask || !addRunning) {
+      return;
+    }
+    try {
+      addTask = await cancelTask(addTask.task_id);
+      if (isTaskRunning(addTask)) {
+        schedulePoll(addTask.task_id, "add", generation, 200);
+      } else {
+        clearPollTimer();
+        addingPath = null;
+      }
+    } catch (caught) {
+      error = caught as CommandError;
+    }
+  }
+
   async function stopRevert() {
     if (!revertTask || !revertRunning) {
       return;
@@ -487,7 +554,7 @@
 
   function schedulePoll(
     taskId: string,
-    role: "commit" | "revert",
+    role: "commit" | "revert" | "add",
     currentGeneration: number,
     delay: number,
   ) {
@@ -497,7 +564,7 @@
 
   async function pollTask(
     taskId: string,
-    role: "commit" | "revert",
+    role: "commit" | "revert" | "add",
     currentGeneration: number,
   ) {
     try {
@@ -507,8 +574,10 @@
       }
       if (role === "commit") {
         commitTask = task;
-      } else {
+      } else if (role === "revert") {
         revertTask = task;
+      } else {
+        addTask = task;
       }
       if (!terminalStatuses.includes(task.status)) {
         schedulePoll(taskId, role, currentGeneration, 350);
@@ -521,6 +590,15 @@
         if (task.status === "success") {
           revertNotice = revertedPath ? `已 Revert ${revertedPath}` : "Revert 完成";
           await refreshStatus(currentGeneration, true);
+        }
+        return;
+      }
+      if (role === "add") {
+        const addedPath = addingPath;
+        addingPath = null;
+        if (task.status === "success") {
+          addNotice = addedPath ? `已 Add ${addedPath}` : "Add 完成";
+          await refreshStatus(currentGeneration);
         }
         return;
       }
@@ -547,16 +625,16 @@
     return task?.status === "pending" || task?.status === "running";
   }
 
-  function taskStatusLabel(task: Task | null, isInitializing: boolean) {
+  function taskStatusLabel(task: Task | null, isInitializing: boolean, role: "commit" | "revert" | "add" = "commit") {
     switch (task?.status) {
       case "pending":
         return "等待执行";
       case "running":
-        return "正在提交";
+        return role === "add" ? "正在 Add" : role === "revert" ? "正在 Revert" : "正在提交";
       case "success":
-        return "提交完成";
+        return role === "add" ? "Add 完成" : role === "revert" ? "Revert 完成" : "提交完成";
       case "failed":
-        return "提交失败";
+        return role === "add" ? "Add 失败" : role === "revert" ? "Revert 失败" : "提交失败";
       case "cancelled":
         return "已取消";
       case "interrupted":
@@ -570,6 +648,10 @@
     return !["normal", "missing", "conflicted", "obstructed", "unversioned", "external"].includes(
       file.status,
     );
+  }
+
+  function isVisibleFile(file: ChangedFile) {
+    return isCommittable(file) || file.status === "unversioned";
   }
 
   function isPathInCommitTarget(path: string) {
@@ -591,6 +673,7 @@
       deleted: "删除",
       replaced: "替换",
       property_modified: "属性修改",
+      unversioned: "未版本控制",
     };
     return labels[file.status] ?? file.status;
   }
@@ -610,6 +693,10 @@
       <span class:running={operationRunning}>{taskStatus}</span>
       {#if commitRunning}
         <button type="button" on:click={stopCommit}>
+          <Square size={14} fill="currentColor" aria-hidden="true" /> 停止
+        </button>
+      {:else if addRunning}
+        <button type="button" on:click={stopAdd}>
           <Square size={14} fill="currentColor" aria-hidden="true" /> 停止
         </button>
       {:else if revertRunning}
@@ -632,7 +719,7 @@
 
   <section
     class="commit-notices"
-    class:has-notices={Boolean(error || statusError || commitTask?.error || revertTask?.error || revertNotice)}
+    class:has-notices={Boolean(error || statusError || commitTask?.error || addTask?.error || revertTask?.error || addNotice || revertNotice)}
     aria-label="Commit 错误"
   >
     <ErrorNotice {error} />
@@ -640,11 +727,17 @@
     {#if commitTask?.error}
       <div class="inline-error" role="alert">{commitTask.error}</div>
     {/if}
+    {#if addTask?.error}
+      <div class="inline-error" role="alert">{addTask.error}</div>
+    {/if}
     {#if revertTask?.error}
       <div class="inline-error" role="alert">{revertTask.error}</div>
     {/if}
     {#if revertNotice}
       <div class="revert-notice" role="status">{revertNotice}</div>
+    {/if}
+    {#if addNotice}
+      <div class="revert-notice" role="status">{addNotice}</div>
     {/if}
   </section>
 
@@ -654,7 +747,7 @@
         <header>
           <div>
             <h2>提交文件</h2>
-            <p>{committableFiles.length} 个可提交文件</p>
+            <p>{committableFiles.length} 个可提交文件{unversionedFiles.length > 0 ? ` · ${unversionedFiles.length} 个未版本控制` : ""}</p>
           </div>
           <div class="selection-actions">
             <button type="button" on:click={selectAll} disabled={operationRunning || committableFiles.length === 0 || allSelected}>
@@ -666,22 +759,28 @@
           </div>
         </header>
         <div class="file-list">
-          {#each committableFiles as file (file.path)}
+          {#each visibleFiles as file (file.path)}
             <div
               class="file-item"
               class:active={activeFilePath === file.path}
+              class:unversioned={file.status === "unversioned"}
               class:reverting={revertingPath === file.path}
+              class:adding={addingPath === file.path}
               role="group"
               aria-label={`提交文件 ${file.path}`}
               on:contextmenu={(event) => openFileContextMenu(event, file)}
             >
-              <input
-                type="checkbox"
-                aria-label={file.path}
-                checked={selectedPaths.has(file.path)}
-                on:change={() => toggleFile(file.path)}
-                disabled={operationRunning}
-              />
+              {#if isCommittable(file)}
+                <input
+                  type="checkbox"
+                  aria-label={file.path}
+                  checked={selectedPaths.has(file.path)}
+                  on:change={() => toggleFile(file.path)}
+                  disabled={operationRunning || scanning || initializing}
+                />
+              {:else}
+                <span class="file-selection-placeholder" aria-hidden="true"></span>
+              {/if}
               <button
                 type="button"
                 class="file-preview-trigger"
@@ -693,12 +792,23 @@
                 <span class="file-status">{statusLabel(file)}</span>
                 <span class="file-path" title={file.path}>{file.path}</span>
               </button>
+              {#if file.status === "unversioned"}
+                <button
+                  type="button"
+                  class="file-add-action"
+                  aria-label={`Add ${file.path}`}
+                  disabled={operationRunning || scanning || initializing}
+                  on:click={() => addFile(file)}
+                >
+                  <Plus size={14} aria-hidden="true" /> Add
+                </button>
+              {/if}
             </div>
           {:else}
             {#if scanning || initializing}
               <div class="empty-files" role="status">正在扫描工作副本...</div>
             {:else}
-              <div class="empty-files">目标范围内没有可提交的文件</div>
+              <div class="empty-files">目标范围内没有可提交或待 Add 的文件</div>
             {/if}
           {/each}
         </div>
@@ -789,9 +899,15 @@
     on:click|stopPropagation
     on:keydown={handleFileContextMenuKeydown}
   >
-    <button type="button" role="menuitem" class="danger-action" on:click={requestContextFileRevert}>
-      <RotateCcw size={15} aria-hidden="true" /> Revert
-    </button>
+    {#if fileContextMenu.file.status === "unversioned"}
+      <button type="button" role="menuitem" on:click={requestContextFileAdd}>
+        <Plus size={15} aria-hidden="true" /> Add
+      </button>
+    {:else}
+      <button type="button" role="menuitem" class="danger-action" on:click={requestContextFileRevert}>
+        <RotateCcw size={15} aria-hidden="true" /> Revert
+      </button>
+    {/if}
   </div>
 {/if}
 
@@ -948,16 +1064,19 @@
   .file-pane header p, .diff-pane header p, .message-pane header p { margin-top: 4px; color: var(--secondary); font-size: 12px; }
   .diff-pane header p { overflow: hidden; max-width: 52vw; text-overflow: ellipsis; white-space: nowrap; }
   .file-list { overflow: auto; padding: 6px; }
-  .file-item { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); font-size: 12px; }
+  .file-item { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); font-size: 12px; }
   .file-item:hover { background: var(--panel-subtle); }
   .file-item.active { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
   .file-item.reverting { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+  .file-item.adding { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
   .file-item input { width: 15px; height: 15px; accent-color: var(--accent); }
+  .file-selection-placeholder { width: 15px; height: 15px; }
   button.file-preview-trigger { display: grid; grid-template-columns: 72px minmax(0, 1fr); justify-content: stretch; gap: 8px; width: 100%; min-height: 35px; border: 0; border-radius: 0; padding: 5px 0; background: transparent; color: var(--text); text-align: left; }
   button.file-preview-trigger:hover:not(:disabled) { border-color: transparent; color: var(--text); }
   button.file-preview-trigger:focus-visible { outline-offset: 0; }
   .file-status { color: var(--accent); font-weight: 600; }
   .file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-add-action { min-height: 27px; padding: 3px 8px; }
   .diff-content { min-width: 0; min-height: 0; overflow: hidden; }
   .diff-content :global(.monaco-diff-viewer) { width: 100%; height: 100%; border: 0; border-radius: 0; }
   .raw-diff { width: 100%; height: 100%; overflow: auto; box-sizing: border-box; margin: 0; padding: 10px 12px; background: var(--panel-subtle); color: var(--text); font-size: 11px; line-height: 1.45; user-select: text; -webkit-user-select: text; }
