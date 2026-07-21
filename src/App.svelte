@@ -2245,8 +2245,6 @@
     targetPath={standaloneUpdatePath}
     svnExecutable={currentSvnExecutable()}
     themeMode={$appSettingsStore.themeMode}
-    diffMode={$appSettingsStore.diffMode}
-    showWhitespace={$appSettingsStore.showWhitespace}
   />
 {:else}
 <MainWorkspace

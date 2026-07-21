@@ -4,8 +4,6 @@
   import {
     cancelTask,
     createSvnOperationTask,
-    getFileContentDiff,
-    getFileDiff,
     getSvnLog,
     getTask,
     inspectUpdateTarget,
@@ -15,8 +13,6 @@
   import type {
     ChangedFile,
     CommandError,
-    FileContentDiff,
-    FileDiff,
     SvnOperationKind,
     SvnLog,
     Task,
@@ -25,13 +21,10 @@
     WorkingCopyStatus,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
-  import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
 
   export let targetPath: string;
   export let svnExecutable: string | undefined = undefined;
   export let themeMode: "system" | "light" | "dark" = "system";
-  export let diffMode: "side_by_side" | "inline" = "side_by_side";
-  export let showWhitespace = false;
 
   let target: UpdateTargetSummary | null = null;
   let updateTask: Task | null = null;
@@ -40,12 +33,6 @@
   let resolutionPath: string | null = null;
   let status: WorkingCopyStatus | null = null;
   let conflicts: ChangedFile[] = [];
-  let activeFilePath: string | null = null;
-  let selectedFileDiff: FileDiff | null = null;
-  let selectedFileContentDiff: FileContentDiff | null = null;
-  let diffLoading = false;
-  let diffError: CommandError | null = null;
-  let diffGeneration = 0;
   let fileContextMenu: { path: string; x: number; y: number } | null = null;
   let fileContextMenuElement: HTMLDivElement | null = null;
   let fileLog: SvnLog | null = null;
@@ -93,7 +80,6 @@
 
   onDestroy(() => {
     generation += 1;
-    diffGeneration += 1;
     fileLogGeneration += 1;
     clearPollTimer();
     themeMediaQuery?.removeEventListener("change", handleThemeChange);
@@ -120,7 +106,6 @@
     resolutionTask = null;
     resolutionHistory = [];
     resolutionPath = null;
-    clearFilePreview();
     closeFileContextMenu();
     closeFileLog();
 
@@ -246,47 +231,6 @@
         scanning = false;
       }
     }
-  }
-
-  async function showFilePreview(path: string) {
-    if (!target || updateRunning) {
-      return;
-    }
-    const currentGeneration = generation;
-    const requestGeneration = ++diffGeneration;
-    activeFilePath = path;
-    selectedFileDiff = null;
-    selectedFileContentDiff = null;
-    diffLoading = true;
-    diffError = null;
-    const request = {
-      working_copy_root: target.working_copy_root,
-      file_path: path,
-      svn_executable: svnExecutable?.trim() || undefined,
-    };
-    const [diffResult, contentResult] = await Promise.allSettled([
-      getFileDiff(request),
-      getFileContentDiff({ ...request, max_bytes: 512 * 1024 }),
-    ]);
-    if (requestGeneration !== diffGeneration || currentGeneration !== generation) {
-      return;
-    }
-    selectedFileDiff = diffResult.status === "fulfilled" ? diffResult.value : null;
-    selectedFileContentDiff =
-      contentResult.status === "fulfilled" ? contentResult.value : null;
-    if (diffResult.status === "rejected" && contentResult.status === "rejected") {
-      diffError = contentResult.reason as CommandError;
-    }
-    diffLoading = false;
-  }
-
-  function clearFilePreview() {
-    diffGeneration += 1;
-    activeFilePath = null;
-    selectedFileDiff = null;
-    selectedFileContentDiff = null;
-    diffLoading = false;
-    diffError = null;
   }
 
   async function openFileContextMenu(event: MouseEvent, path: string) {
@@ -576,19 +520,16 @@
         <div class="output-lines" role="log" aria-live="polite">
           {#if updatedFiles.length > 0}
             {#each updatedFiles as file (file.path)}
-              <button
-                type="button"
+              <div
                 class="output-line"
-                class:active={activeFilePath === file.path}
                 data-kind={file.action}
-                aria-label={`查看修改 ${file.path}`}
-                disabled={updateRunning || scanning}
-                on:click={() => showFilePreview(file.path)}
+                role="listitem"
+                aria-label={`更新文件 ${file.path}`}
                 on:contextmenu={(event) => openFileContextMenu(event, file.path)}
               >
                 <span>{file.action}</span>
                 <code title={file.path}>{file.path}</code>
-              </button>
+              </div>
             {/each}
           {:else if initializing}
             <div class="empty-output" role="status">正在检查 Update 目标...</div>
@@ -600,40 +541,6 @@
         </div>
       </section>
 
-      <section class="update-diff" aria-label="修改内容">
-        <header>
-          <div>
-            <h2>修改内容</h2>
-            <p title={activeFilePath ?? undefined}>{activeFilePath ?? "点击更新文件查看内容"}</p>
-          </div>
-        </header>
-        <div class="diff-content">
-          {#if diffLoading}
-            <div class="empty-output" role="status">正在读取修改内容...</div>
-          {:else if diffError}
-            <ErrorNotice error={diffError} />
-          {:else if selectedFileContentDiff?.binary || selectedFileDiff?.binary}
-            <div class="empty-output">二进制文件无法预览文本修改</div>
-          {:else if selectedFileContentDiff?.too_large}
-            <div class="empty-output">
-              文件内容超过 {Math.round(selectedFileContentDiff.max_bytes / 1024)} KB，无法在窗口中预览
-            </div>
-          {:else if selectedFileContentDiff && selectedFileContentDiff.original_text !== selectedFileContentDiff.modified_text}
-            <MonacoDiffViewer
-              contentDiff={selectedFileContentDiff}
-              inlineMode={diffMode === "inline"}
-              {showWhitespace}
-              theme={resolvedTheme}
-            />
-          {:else if selectedFileDiff?.text}
-            <pre class="raw-diff">{selectedFileDiff.text}</pre>
-          {:else if activeFilePath}
-            <div class="empty-output">没有可显示的文本修改</div>
-          {:else}
-            <div class="empty-output">点击更新文件查看修改内容</div>
-          {/if}
-        </div>
-      </section>
     </div>
 
     <aside class="conflict-pane" aria-label="冲突处理">
@@ -943,7 +850,7 @@
 
   .update-left-pane {
     display: grid;
-    grid-template-rows: minmax(180px, 0.9fr) minmax(180px, 1.1fr);
+    grid-template-rows: minmax(0, 1fr);
     min-width: 0;
     min-height: 0;
     border-right: 1px solid var(--border);
@@ -959,7 +866,6 @@
   }
 
   .update-output > header,
-  .update-diff > header,
   .conflict-pane > header {
     display: flex;
     align-items: center;
@@ -994,26 +900,6 @@
     padding: 4px 12px;
   }
 
-  button.output-line {
-    width: 100%;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    color: var(--text);
-    cursor: pointer;
-    font: inherit;
-    text-align: left;
-  }
-
-  button.output-line.active,
-  button.output-line:hover:not(:disabled) {
-    background: var(--panel);
-  }
-
-  button.output-line:disabled {
-    cursor: default;
-  }
-
   .output-line:hover {
     background: var(--panel);
   }
@@ -1045,56 +931,6 @@
     font-family: Consolas, "SFMono-Regular", monospace;
     font-size: 12px;
     white-space: pre-wrap;
-  }
-
-  .update-diff {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    min-width: 0;
-    min-height: 0;
-    background: var(--panel);
-  }
-
-  .update-diff > header > div {
-    min-width: 0;
-  }
-
-  .update-diff > header p {
-    overflow: hidden;
-    max-width: 52vw;
-    margin-top: 4px;
-    color: var(--secondary);
-    font-size: 11px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .diff-content {
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .diff-content :global(.monaco-diff-viewer) {
-    width: 100%;
-    height: 100%;
-    border: 0;
-    border-radius: 0;
-  }
-
-  .raw-diff {
-    width: 100%;
-    height: 100%;
-    box-sizing: border-box;
-    margin: 0;
-    overflow: auto;
-    padding: 10px 12px;
-    background: var(--panel-subtle);
-    color: var(--text);
-    font-size: 11px;
-    line-height: 1.45;
-    user-select: text;
-    -webkit-user-select: text;
   }
 
   .empty-output,

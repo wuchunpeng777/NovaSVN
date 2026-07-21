@@ -67,25 +67,6 @@ test.beforeEach(async ({ page }) => {
             files: [],
           };
           break;
-        case "get_file_diff":
-          data = {
-            path: request.file_path,
-            text: "@@ -1 +1 @@\n-const value = 1;\n+const value = 2;",
-            binary: false,
-            empty: false,
-          };
-          break;
-        case "get_file_content_diff":
-          data = {
-            path: request.file_path,
-            original_text: "const value = 1;",
-            modified_text: "const value = 2;",
-            language: "typescript",
-            binary: false,
-            too_large: false,
-            max_bytes: 512 * 1024,
-          };
-          break;
         case "get_svn_log":
           data = {
             target: request.file_path,
@@ -112,13 +93,11 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("keeps the file menu and Log dialog above the Monaco diff", async ({ page }) => {
+test("keeps the file menu and Log dialog above the Update window", async ({ page }) => {
   await page.goto("/");
 
-  const updatedFile = page.getByRole("button", { name: "查看修改 src/main.ts" });
+  const updatedFile = page.getByRole("listitem", { name: "更新文件 src/main.ts" });
   await expect(updatedFile).toBeVisible();
-  await updatedFile.click();
-  await expect(page.locator(".monaco-diff-viewer")).toBeVisible();
 
   await updatedFile.evaluate((element) => {
     element.dispatchEvent(new MouseEvent("contextmenu", {
