@@ -31,6 +31,7 @@
     svnCertificateFailureLabel,
   } from "../../lib/svn-certificate";
   import {
+    LOG_FILE_DIFF_MAX_BYTES,
     repositoryPathUrlAtRevision,
     revisionBefore,
     summarizeSvnChangeActions,
@@ -1992,7 +1993,7 @@
         right_revision: revision,
         action,
         svn_executable: appSettings.svnExecutable.trim() || undefined,
-        max_bytes: 512 * 1024,
+        max_bytes: LOG_FILE_DIFF_MAX_BYTES,
       });
       if (generation === revisionFileDiffGeneration) {
         revisionFileContentDiff = contentDiff;

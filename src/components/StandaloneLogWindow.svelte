@@ -3,6 +3,7 @@
   import { ChevronDown, ChevronUp, RefreshCw, X } from "@lucide/svelte";
   import { getPathSvnLog, getRevisionFileContentDiff } from "../lib/api";
   import {
+    LOG_FILE_DIFF_MAX_BYTES,
     repositoryPathUrlAtRevision,
     revisionBefore,
     summarizeSvnChangeActions,
@@ -274,7 +275,7 @@
         right_revision: entry.revision,
         action: path.action,
         svn_executable: svnExecutable?.trim() || undefined,
-        max_bytes: 512 * 1024,
+        max_bytes: LOG_FILE_DIFF_MAX_BYTES,
       });
       if (generation !== diffRequestGeneration) {
         return;

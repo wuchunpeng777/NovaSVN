@@ -533,7 +533,7 @@ Certificate information:
       language: "plaintext",
       binary: false,
       too_large: false,
-      max_bytes: 512 * 1024,
+      max_bytes: 20 * 1024 * 1024,
     });
     render(MainWorkspace, {
       props: {
@@ -590,7 +590,7 @@ Certificate information:
       right_revision: "12",
       action: "M",
       svn_executable: undefined,
-      max_bytes: 512 * 1024,
+      max_bytes: 20 * 1024 * 1024,
     });
     expect(await screen.findByLabelText("文件 Diff")).toBeInTheDocument();
 

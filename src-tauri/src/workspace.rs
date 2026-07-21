@@ -538,9 +538,8 @@ fn run_svn_log(
     command
         .args(["log", "--xml", "--verbose", "--limit"])
         .arg((limit + 1).to_string());
-    if let Some(revision) = start_revision {
-        command.arg("-r").arg(format!("{revision}:0"));
-    }
+    let revision = start_revision.unwrap_or("HEAD");
+    command.arg("-r").arg(format!("{revision}:0"));
     command.arg("--").arg(target).current_dir(current_dir);
 
     let output = command.output().map_err(|error| {
@@ -3920,6 +3919,81 @@ mod tests {
         let deleted = request("deleted.txt", "1", "D");
         assert_eq!(deleted.original_text, "deleted");
         assert_eq!(deleted.modified_text, "");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reads_remote_head_log_when_working_copy_is_not_updated() {
+        if !svn_test_tools_available() {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-remote-log-integration-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let local_working_copy = root.join("local-working-copy");
+        let remote_working_copy = root.join("remote-working-copy");
+        fs::create_dir_all(&import_dir).expect("create log import tree");
+        fs::write(import_dir.join("tracked.txt"), "initial\n").expect("write log fixture");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&local_working_copy),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&remote_working_copy),
+        );
+        fs::write(remote_working_copy.join("tracked.txt"), "remote change\n")
+            .expect("write remote log change");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&remote_working_copy)
+                .args(["-m", "remote change"]),
+        );
+
+        let workspace_log = get_svn_log(GetSvnLogRequest {
+            working_copy_root: local_working_copy.display().to_string(),
+            file_path: None,
+            svn_executable: None,
+            limit: Some(10),
+            start_revision: None,
+        })
+        .expect("workspace log reads repository HEAD");
+        assert_eq!(workspace_log.entries[0].revision, "2");
+        assert_eq!(workspace_log.entries[0].message, "remote change");
+
+        let standalone_log = get_path_svn_log(GetPathSvnLogRequest {
+            path: local_working_copy.display().to_string(),
+            svn_executable: None,
+            limit: Some(10),
+            start_revision: None,
+        })
+        .expect("standalone log reads repository HEAD");
+        assert_eq!(standalone_log.entries[0].revision, "2");
+        assert_eq!(standalone_log.entries[0].message, "remote change");
 
         let _ = fs::remove_dir_all(root);
     }

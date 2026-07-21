@@ -1,5 +1,7 @@
 import type { SvnChangedPath } from "../types/api";
 
+export const LOG_FILE_DIFF_MAX_BYTES = 20 * 1024 * 1024;
+
 export interface SvnChangeActionSummary {
   action: "A" | "M" | "D";
   count: number;

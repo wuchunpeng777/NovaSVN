@@ -157,7 +157,7 @@ describe("StandaloneLogWindow", () => {
       language: "typescript",
       binary: false,
       too_large: false,
-      max_bytes: 512 * 1024,
+      max_bytes: 20 * 1024 * 1024,
     });
     render(StandaloneLogWindow, {
       props: {
@@ -180,7 +180,7 @@ describe("StandaloneLogWindow", () => {
       right_revision: "20",
       action: "M",
       svn_executable: "C:\\Tools\\svn.exe",
-      max_bytes: 512 * 1024,
+      max_bytes: 20 * 1024 * 1024,
     });
     const diffPanel = await screen.findByLabelText("文件 Diff");
     expect(within(diffPanel).getByText("r20 文件 Diff")).toBeInTheDocument();
