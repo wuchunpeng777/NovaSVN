@@ -2270,6 +2270,25 @@ textarea {
   width: min(560px, calc(100vw - 48px));
 }
 
+.authentication-dialog {
+  width: min(480px, calc(100vw - 48px));
+}
+
+.authentication-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.authentication-fields > label:not(.checkbox-row) {
+  display: grid;
+  gap: 5px;
+}
+
+.authentication-fields > label:not(.checkbox-row) > span {
+  color: #687482;
+  font-size: 12px;
+}
+
 .certificate-identity {
   display: grid;
   gap: 0;
@@ -2922,6 +2941,10 @@ textarea {
   border-color: #754144;
   background: #442426;
   color: #ffaaa7;
+}
+
+.versions-workbench[data-theme="dark"] .authentication-fields > label:not(.checkbox-row) > span {
+  color: var(--mac-secondary);
 }
 
 .versions-workbench[data-theme="dark"] .patch-dialog-backdrop {

@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { ChevronDown, ChevronUp, RefreshCw, X } from "@lucide/svelte";
   import { getPathSvnLog, getRevisionFileContentDiff } from "../lib/api";
+  import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import {
     LOG_FILE_DIFF_MAX_BYTES,
     repositoryPathUrlAtRevision,
@@ -16,6 +17,7 @@
     SvnLogEntry,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
   import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
 
   export let targetPath: string;
@@ -23,6 +25,15 @@
   export let themeMode: "system" | "light" | "dark" = "system";
   export let diffMode: "side_by_side" | "inline" = "side_by_side";
   export let showWhitespace = false;
+  export let svnAuthenticationUsername = "";
+  export let svnRememberPassword = true;
+  export let svnAuthenticationLoading = false;
+  export let svnAuthenticationError: CommandError | null = null;
+  export let onSvnAuthenticationSubmit: (
+    username: string,
+    password: string,
+    rememberPassword: boolean,
+  ) => Promise<boolean> = async () => false;
 
   let log: SvnLog | null = null;
   let loading = false;
@@ -58,6 +69,12 @@
   $: hasFilters = Boolean(
     keywordFilter || authorFilter || dateFromFilter || dateToFilter,
   );
+  $: logAuthenticationFailure = detectSvnAuthenticationFailure(commandErrorText(error));
+  $: revisionAuthenticationFailure = detectSvnAuthenticationFailure(
+    commandErrorText(revisionDiffError),
+  );
+  $: authenticationFailure = logAuthenticationFailure ?? revisionAuthenticationFailure;
+  $: authenticationRetry = logAuthenticationFailure ? () => loadLog(false) : null;
 
   onMount(() => {
     if (typeof window.matchMedia === "function") {
@@ -309,6 +326,12 @@
     };
   }
 
+  function commandErrorText(value: CommandError | null) {
+    return value
+      ? [value.code, value.message, value.detail].filter(Boolean).join("\n")
+      : null;
+  }
+
 </script>
 
 <main class="standalone-log" data-theme={resolvedTheme} aria-label="NovaSVN Log">
@@ -505,6 +528,15 @@
     </aside>
   {/if}
   </div>
+  <SvnAuthenticationDialog
+    failure={authenticationFailure}
+    savedUsername={svnAuthenticationUsername}
+    rememberPassword={svnRememberPassword}
+    loading={svnAuthenticationLoading}
+    error={svnAuthenticationError}
+    retry={authenticationRetry}
+    onSubmit={onSvnAuthenticationSubmit}
+  />
 </main>
 
 <style>

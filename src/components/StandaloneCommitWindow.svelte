@@ -11,6 +11,7 @@
     inspectUpdateTarget,
     scanWorkspaceStatus,
   } from "../lib/api";
+  import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import {
     COMMIT_MESSAGE_SELECTED_EVENT,
     consumePendingCommitMessage,
@@ -28,6 +29,7 @@
     WorkingCopyStatus,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
   import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
 
   export let targetPath: string;
@@ -35,6 +37,15 @@
   export let themeMode: "system" | "light" | "dark" = "system";
   export let diffMode: "side_by_side" | "inline" = "side_by_side";
   export let showWhitespace = false;
+  export let svnAuthenticationUsername = "";
+  export let svnRememberPassword = true;
+  export let svnAuthenticationLoading = false;
+  export let svnAuthenticationError: CommandError | null = null;
+  export let onSvnAuthenticationSubmit: (
+    username: string,
+    password: string,
+    rememberPassword: boolean,
+  ) => Promise<boolean> = async () => false;
 
   const terminalStatuses: TaskStatus[] = ["success", "failed", "cancelled", "interrupted"];
 
@@ -122,6 +133,20 @@
     !commitMessage.trim() ||
     selectedCount === 0 ||
     !target;
+  $: statusAuthenticationFailure = detectSvnAuthenticationFailure(
+    commandErrorText(statusError),
+  );
+  $: authenticationFailure =
+    statusAuthenticationFailure ??
+    detectSvnAuthenticationFailure(commandErrorText(error)) ??
+    detectSvnAuthenticationFailure(commandErrorText(diffError)) ??
+    detectSvnAuthenticationFailure(commitTask?.error) ??
+    detectSvnAuthenticationFailure(addTask?.error) ??
+    detectSvnAuthenticationFailure(deleteTask?.error) ??
+    detectSvnAuthenticationFailure(revertTask?.error);
+  $: authenticationRetry = statusAuthenticationFailure
+    ? () => refreshStatus(generation, true)
+    : null;
 
   onMount(() => {
     loadCommitSettings();
@@ -784,6 +809,12 @@
   function logKind(message: string) {
     return /^\s*([ACDMRUG!~])\s+/.exec(message)?.[1] ?? "info";
   }
+
+  function commandErrorText(value: CommandError | null) {
+    return value
+      ? [value.code, value.message, value.detail].filter(Boolean).join("\n")
+      : null;
+  }
 </script>
 
 <main class="standalone-commit" data-theme={resolvedTheme} aria-label="NovaSVN Commit">
@@ -1145,6 +1176,15 @@
     </div>
   </div>
 {/if}
+<SvnAuthenticationDialog
+  failure={authenticationFailure}
+  savedUsername={svnAuthenticationUsername}
+  rememberPassword={svnRememberPassword}
+  loading={svnAuthenticationLoading}
+  error={svnAuthenticationError}
+  retry={authenticationRetry}
+  onSubmit={onSvnAuthenticationSubmit}
+/>
 </main>
 
 <style>

@@ -200,6 +200,46 @@ describe("StandaloneLogWindow", () => {
     expect(within(alert).getByText("SVN 日志读取失败")).toBeInTheDocument();
     expect(within(alert).getByText("目标不是工作副本中的版本化路径")).toBeInTheDocument();
   });
+
+  it("认证失败时弹出登录框并在登录后自动重试", async () => {
+    const onSvnAuthenticationSubmit = vi.fn().mockResolvedValue(true);
+    getPathSvnLogMock
+      .mockRejectedValueOnce({
+        code: "SVN_LOG_COMMAND_FAILED",
+        message: "SVN 日志读取失败",
+        detail:
+          "svn: E215004: No more credentials for 'https://alice%40example.com@svn.example.test/repo'. Authentication failed",
+        recoverable: true,
+      })
+      .mockResolvedValueOnce(makeLog());
+    render(StandaloneLogWindow, {
+      props: {
+        targetPath: "C:\\repo\\src\\main.ts",
+        svnAuthenticationUsername: "saved-user",
+        svnRememberPassword: false,
+        onSvnAuthenticationSubmit,
+      },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "登录 SVN" });
+    expect(within(dialog).getByLabelText("用户名")).toHaveValue("alice@example.com");
+    expect(within(dialog).getByRole("checkbox", { name: "保存到系统凭据存储" })).not.toBeChecked();
+    await fireEvent.input(within(dialog).getByLabelText("密码"), {
+      target: { value: "current-secret" },
+    });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "登录并重试" }));
+
+    await waitFor(() =>
+      expect(onSvnAuthenticationSubmit).toHaveBeenCalledWith(
+        "alice@example.com",
+        "current-secret",
+        false,
+      ),
+    );
+    await waitFor(() => expect(getPathSvnLogMock).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Add log window")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "登录 SVN" })).not.toBeInTheDocument();
+  });
 });
 
 function makeLog(overrides: Partial<SvnLog> = {}): SvnLog {

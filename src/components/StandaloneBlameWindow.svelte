@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { RefreshCw, X } from "@lucide/svelte";
   import { getSvnBlame, inspectUpdateTarget } from "../lib/api";
+  import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import type {
     CommandError,
     SvnBlame,
@@ -9,10 +10,20 @@
     UpdateTargetSummary,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
 
   export let targetPath: string;
   export let svnExecutable: string | undefined = undefined;
   export let themeMode: "system" | "light" | "dark" = "system";
+  export let svnAuthenticationUsername = "";
+  export let svnRememberPassword = true;
+  export let svnAuthenticationLoading = false;
+  export let svnAuthenticationError: CommandError | null = null;
+  export let onSvnAuthenticationSubmit: (
+    username: string,
+    password: string,
+    rememberPassword: boolean,
+  ) => Promise<boolean> = async () => false;
 
   const rowHeight = 29;
   const tableHeaderHeight = 30;
@@ -76,6 +87,8 @@
     columnWidths.date +
     columnWidths.line +
     contentColumnMinWidth;
+  $: authenticationFailure = detectSvnAuthenticationFailure(commandErrorText(error));
+  $: authenticationRetry = authenticationFailure ? loadBlame : null;
 
   onMount(() => {
     if (typeof window.matchMedia === "function") {
@@ -252,6 +265,12 @@
       hour12: false,
     }).format(date);
   }
+
+  function commandErrorText(value: CommandError | null) {
+    return value
+      ? [value.code, value.message, value.detail].filter(Boolean).join("\n")
+      : null;
+  }
 </script>
 
 <main
@@ -394,6 +413,15 @@
       {/if}
     </div>
   </section>
+  <SvnAuthenticationDialog
+    failure={authenticationFailure}
+    savedUsername={svnAuthenticationUsername}
+    rememberPassword={svnRememberPassword}
+    loading={svnAuthenticationLoading}
+    error={svnAuthenticationError}
+    retry={authenticationRetry}
+    onSubmit={onSvnAuthenticationSubmit}
+  />
 </main>
 
 <style>

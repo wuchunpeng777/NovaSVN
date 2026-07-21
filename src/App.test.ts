@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./components/workbench/MonacoDiffViewer.svelte", () => ({
@@ -221,6 +221,50 @@ describe("App SVN operation completion", () => {
     );
     await waitFor(() => expect(passwordInput).toHaveValue(""));
     expect(screen.getByText("密码仅用于当前会话")).toBeInTheDocument();
+  });
+
+  it("opens authentication on E215004 and retries status after login", async () => {
+    configureSvnAuthenticationMock.mockResolvedValue({
+      mode: "password",
+      username: "alice@example.com",
+      password_configured: true,
+      uses_system_credentials: false,
+      remember_password: false,
+    });
+    scanWorkspaceStatusMock
+      .mockRejectedValueOnce({
+        code: "SVN_STATUS_COMMAND_FAILED",
+        message: "SVN 状态读取失败",
+        detail:
+          "svn: E170013: Unable to connect to a repository at URL 'https://alice%40example.com@svn.example.test/repo' svn: E215004: No more credentials or we tried too many times. Authentication failed",
+        recoverable: true,
+      })
+      .mockResolvedValue(makeStatus());
+    appSettingsStore.setField("svnAuthenticationMode", "system");
+    appSettingsStore.setField("svnUsername", "");
+    appSettingsStore.setField("svnRememberPassword", false);
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "刷新工作副本状态" }));
+    const dialog = await screen.findByRole("dialog", { name: "登录 SVN" });
+    expect(within(dialog).getByLabelText("用户名")).toHaveValue("alice@example.com");
+    await fireEvent.input(within(dialog).getByLabelText("密码"), {
+      target: { value: "current-secret" },
+    });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "登录并重试" }));
+
+    await waitFor(() =>
+      expect(configureSvnAuthenticationMock).toHaveBeenCalledWith({
+        mode: "password",
+        username: "alice@example.com",
+        password: "current-secret",
+        remember_password: false,
+      }),
+    );
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(3));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "登录 SVN" })).not.toBeInTheDocument(),
+    );
   });
 
   it("confirms exact certificate failures and can clear the session trust", async () => {

@@ -429,6 +429,97 @@ describe("MainWorkspace", () => {
     expect(screen.getByText("密码仅用于当前会话")).toBeInTheDocument();
   });
 
+  it("prompts for credentials and retries safe reads after authentication", async () => {
+    const onAppSettingInput = vi.fn();
+    const onSvnAuthenticationPasswordInput = vi.fn();
+    const onApplySvnAuthentication = vi.fn().mockResolvedValue(true);
+    const onRefreshSvnLog = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.history,
+        svnLogError: authenticationError(),
+        appSettings: makeAppSettings({
+          svnAuthenticationMode: "system",
+          svnUsername: "",
+          svnRememberPassword: true,
+        }),
+        onAppSettingInput,
+        onSvnAuthenticationPasswordInput,
+        onApplySvnAuthentication,
+        onRefreshSvnLog,
+      },
+    });
+
+    const dialog = screen.getByRole("dialog", { name: "登录 SVN" });
+    expect(within(dialog).getByText("svn.example.test")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("用户名")).toHaveValue("alice@example.com");
+
+    await fireEvent.input(within(dialog).getByLabelText("密码"), {
+      target: { value: "current-secret" },
+    });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "登录并重试" }));
+
+    expect(onAppSettingInput).toHaveBeenCalledWith("svnAuthenticationMode", "password");
+    expect(onAppSettingInput).toHaveBeenCalledWith(
+      "svnUsername",
+      "alice@example.com",
+    );
+    expect(onAppSettingInput).toHaveBeenCalledWith("svnRememberPassword", true);
+    expect(onSvnAuthenticationPasswordInput).toHaveBeenCalledWith("current-secret");
+    await waitFor(() => expect(onApplySvnAuthentication).toHaveBeenCalledOnce());
+    await waitFor(() => expect(onRefreshSvnLog).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("dialog", { name: "登录 SVN" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the authentication dialog open when credentials are rejected", async () => {
+    const onApplySvnAuthentication = vi.fn().mockResolvedValue(false);
+    const onRefreshSvnLog = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.history,
+        svnLogError: authenticationError(),
+        onApplySvnAuthentication,
+        onRefreshSvnLog,
+      },
+    });
+
+    const dialog = screen.getByRole("dialog", { name: "登录 SVN" });
+    await fireEvent.input(within(dialog).getByLabelText("密码"), {
+      target: { value: "wrong-secret" },
+    });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "登录并重试" }));
+
+    await waitFor(() => expect(onApplySvnAuthentication).toHaveBeenCalledOnce());
+    expect(screen.getByRole("dialog", { name: "登录 SVN" })).toBeInTheDocument();
+    expect(onRefreshSvnLog).not.toHaveBeenCalled();
+  });
+
+  it("does not replay write operations after applying credentials", async () => {
+    const onApplySvnAuthentication = vi.fn().mockResolvedValue(true);
+    const onRunMerge = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.branches,
+        mergeError:
+          "svn: E215004: No more credentials or we tried too many times. Authentication failed",
+        onApplySvnAuthentication,
+        onRunMerge,
+      },
+    });
+
+    const dialog = screen.getByRole("dialog", { name: "登录 SVN" });
+    await fireEvent.input(within(dialog).getByLabelText("用户名"), {
+      target: { value: "alice" },
+    });
+    await fireEvent.input(within(dialog).getByLabelText("密码"), {
+      target: { value: "current-secret" },
+    });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "应用认证" }));
+
+    await waitFor(() => expect(onApplySvnAuthentication).toHaveBeenCalledOnce());
+    expect(onRunMerge).not.toHaveBeenCalled();
+  });
+
   it("requires independent confirmation before allowing exact certificate failures", async () => {
     const onConfirmSvnCertificateTrust = vi.fn().mockResolvedValue(true);
     render(MainWorkspace, {
@@ -2336,6 +2427,16 @@ function makeAppSettings(settings: Partial<AppSettingsState> = {}): AppSettingsS
     },
     loading: false,
     ...settings,
+  };
+}
+
+function authenticationError() {
+  return {
+    code: "SVN_LOG_COMMAND_FAILED",
+    message: "SVN 日志读取失败",
+    detail:
+      "svn: E170013: Unable to connect to a repository at URL 'https://alice%40example.com@svn.example.test/repo' svn: E215004: No more credentials or we tried too many times. Authentication failed",
+    recoverable: true,
   };
 }
 

@@ -26,6 +26,7 @@
   import ErrorNotice from "../ErrorNotice.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
   import { getRevisionFileContentDiff } from "../../lib/api";
+  import { detectSvnAuthenticationFailure } from "../../lib/svn-authentication";
   import {
     findSvnCertificateFailure,
     svnCertificateFailureLabel,
@@ -571,7 +572,7 @@
   export let onDetectSvnWithInput: () => void = () => {};
   export let onSvnExecutableInput: (value: string) => void = () => {};
   export let onSvnAuthenticationPasswordInput: (value: string) => void = () => {};
-  export let onApplySvnAuthentication: () => void = () => {};
+  export let onApplySvnAuthentication: () => Promise<boolean> = async () => false;
   export let onConfirmSvnCertificateTrust: (
     failures: SvnCertificateFailure[],
   ) => Promise<boolean> = async () => false;
@@ -686,6 +687,11 @@
   let dismissedCertificateSignature: string | null = null;
   let selectedCertificateFailures: SvnCertificateFailure[] = [];
   let certificateRiskConfirmed = false;
+  let preparedAuthenticationSignature: string | null = null;
+  let dismissedAuthenticationSignature: string | null = null;
+  let authenticationUsername = "";
+  let authenticationPassword = "";
+  let authenticationRememberPassword = true;
 
   $: if (appSettings.diffMode) {
     diffInline = appSettings.diffMode === "inline";
@@ -730,6 +736,55 @@
     commandErrorText(svnAuthenticationError),
     svnSwitchError,
   ]);
+  $: detectedAuthenticationCandidate = findAuthenticationCandidate([
+    { error: commandErrorText(svnLogError), retry: onRefreshSvnLog },
+    { error: repositoryError, retry: () => onLoadRepositoryUrl() },
+    { error: commandErrorText(statusError), retry: onRefreshStatus },
+    { error: commandErrorText(workspaceError), retry: onOpenWorkspace },
+    { error: commandErrorText(svnBlameError), retry: onRefreshSvnBlame },
+    { error: commandErrorText(svnPropertiesError), retry: onRefreshSvnProperties },
+    { error: revisionDiffError, retry: onRunRevisionDiff },
+    { error: repositoryFileError, retry: null },
+    { error: commandErrorText(repositoryFileLogError), retry: null },
+    { error: commandErrorText(repositoryFileBlameError), retry: null },
+    { error: commandErrorText(repositoryFilePropertiesError), retry: null },
+    ...Object.values(repositoryLayoutErrors).map((error) => ({ error, retry: null })),
+    { error: repositoryCopyError, retry: null },
+    { error: repositoryMkdirError, retry: null },
+    { error: repositoryImportError, retry: null },
+    { error: repositoryDragExportError, retry: null },
+    { error: repositoryMoveError, retry: null },
+    { error: repositoryRenameError, retry: null },
+    { error: repositoryDeleteError, retry: null },
+    { error: repositoryCheckoutError, retry: null },
+    { error: repositoryExportError, retry: null },
+    { error: commandErrorText(revisionFileDiffError), retry: null },
+    { error: branchCheckoutError, retry: null },
+    { error: mergeError, retry: null },
+    { error: selectedTask?.error, retry: null },
+    { error: commandErrorText(taskError), retry: null },
+    { error: commandErrorText(commandError), retry: null },
+    { error: svnSwitchError, retry: null },
+  ]);
+  $: detectedAuthenticationFailure = detectedAuthenticationCandidate?.failure ?? null;
+  $: authenticationDialogOpen =
+    detectedAuthenticationFailure !== null &&
+    detectedAuthenticationFailure.signature !== dismissedAuthenticationSignature;
+  $: if (
+    authenticationDialogOpen &&
+    detectedAuthenticationFailure &&
+    detectedAuthenticationFailure.signature !== preparedAuthenticationSignature
+  ) {
+    preparedAuthenticationSignature = detectedAuthenticationFailure.signature;
+    authenticationUsername =
+      detectedAuthenticationFailure.username ?? appSettings.svnUsername.trim();
+    authenticationPassword = "";
+    authenticationRememberPassword = appSettings.svnRememberPassword;
+  }
+  $: if (!detectedAuthenticationFailure) {
+    preparedAuthenticationSignature = null;
+    dismissedAuthenticationSignature = null;
+  }
   $: certificateDialogOpen =
     detectedCertificateFailure !== null &&
     detectedCertificateFailure.signature !== dismissedCertificateSignature;
@@ -779,6 +834,70 @@
       return null;
     }
     return [error.code, error.message, error.detail].filter(Boolean).join("\n");
+  }
+
+  function findAuthenticationCandidate(
+    candidates: Array<{ error: string | null | undefined; retry: (() => void) | null }>,
+  ) {
+    for (const candidate of candidates) {
+      const failure = detectSvnAuthenticationFailure(candidate.error);
+      if (failure) {
+        return { failure, retry: candidate.retry };
+      }
+    }
+    return null;
+  }
+
+  function dismissAuthenticationDialog() {
+    if (svnAuthenticationLoading || !detectedAuthenticationFailure) {
+      return;
+    }
+    dismissedAuthenticationSignature = detectedAuthenticationFailure.signature;
+    authenticationPassword = "";
+  }
+
+  async function confirmAuthentication() {
+    if (
+      !detectedAuthenticationFailure ||
+      !authenticationUsername.trim() ||
+      !authenticationPassword ||
+      svnAuthenticationLoading
+    ) {
+      return;
+    }
+
+    onAppSettingInput("svnAuthenticationMode", "password");
+    onAppSettingInput("svnUsername", authenticationUsername.trim());
+    onAppSettingInput("svnRememberPassword", authenticationRememberPassword);
+    onSvnAuthenticationPasswordInput(authenticationPassword);
+    const retry = detectedAuthenticationCandidate?.retry ?? null;
+    const applied = await onApplySvnAuthentication();
+    if (applied) {
+      dismissedAuthenticationSignature = detectedAuthenticationFailure.signature;
+      authenticationPassword = "";
+      queueMicrotask(() => retry?.());
+    }
+  }
+
+  function focusAuthenticationDialog(node: HTMLElement) {
+    queueMicrotask(() => {
+      const selector = authenticationUsername ? 'input[type="password"]' : 'input[type="text"]';
+      node.querySelector<HTMLInputElement>(selector)?.focus();
+    });
+  }
+
+  function handleAuthenticationDialogKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      dismissAuthenticationDialog();
+    } else if (
+      event.key === "Enter" &&
+      event.target instanceof HTMLInputElement &&
+      event.target.type !== "checkbox"
+    ) {
+      event.preventDefault();
+      void confirmAuthentication();
+    }
   }
 
   function toggleCertificateFailure(failure: SvnCertificateFailure) {
@@ -5488,7 +5607,90 @@
     </div>
   {/if}
 
-  {#if certificateDialogOpen && detectedCertificateFailure}
+  {#if authenticationDialogOpen && detectedAuthenticationFailure}
+    <div class="patch-dialog-backdrop authentication-dialog-backdrop">
+      <div
+        class="patch-dialog authentication-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="authentication-dialog-title"
+        tabindex="-1"
+        use:focusAuthenticationDialog
+        on:keydown={handleAuthenticationDialogKeydown}
+      >
+        <header>
+          <div>
+            <h2 id="authentication-dialog-title">登录 SVN</h2>
+            <p>{detectedAuthenticationFailure.hostname ?? "SVN 仓库"}</p>
+          </div>
+          <button
+            type="button"
+            class="dialog-close"
+            aria-label="关闭 SVN 登录对话框"
+            title="关闭"
+            disabled={svnAuthenticationLoading}
+            on:click={dismissAuthenticationDialog}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </header>
+
+        <div class="authentication-fields">
+          <label>
+            <span>用户名</span>
+            <input
+              type="text"
+              autocomplete="username"
+              bind:value={authenticationUsername}
+              disabled={svnAuthenticationLoading}
+            />
+          </label>
+          <label>
+            <span>密码</span>
+            <input
+              type="password"
+              autocomplete="current-password"
+              bind:value={authenticationPassword}
+              disabled={svnAuthenticationLoading}
+            />
+          </label>
+          <label class="checkbox-row">
+            <input
+              type="checkbox"
+              bind:checked={authenticationRememberPassword}
+              disabled={svnAuthenticationLoading}
+            />
+            <span>保存到系统凭据存储</span>
+          </label>
+        </div>
+
+        <ErrorNotice error={svnAuthenticationError} />
+        <footer>
+          <button
+            type="button"
+            on:click={dismissAuthenticationDialog}
+            disabled={svnAuthenticationLoading}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            class="primary"
+            on:click={confirmAuthentication}
+            disabled={svnAuthenticationLoading ||
+              !authenticationUsername.trim() ||
+              !authenticationPassword}
+          >
+            {svnAuthenticationLoading
+              ? "正在登录"
+              : detectedAuthenticationCandidate?.retry
+                ? "登录并重试"
+                : "应用认证"}
+          </button>
+        </footer>
+      </div>
+    </div>
+  {:else if certificateDialogOpen && detectedCertificateFailure}
     <div class="patch-dialog-backdrop certificate-dialog-backdrop">
       <div
         class="patch-dialog certificate-dialog"

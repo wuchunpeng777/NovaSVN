@@ -198,6 +198,23 @@ export async function installWorkbenchBackendMock(page: Page) {
         case "scan_workspace_status":
           data = status;
           break;
+        case "configure_svn_authentication": {
+          const request = args.request as {
+            mode: "system" | "password" | "ssh";
+            username?: string;
+            password?: string;
+            remember_password?: boolean;
+          };
+          data = {
+            mode: request.mode,
+            username: request.username ?? null,
+            password_configured: request.mode === "password" && !!request.password,
+            uses_system_credentials:
+              request.mode !== "password" || !!request.remember_password,
+            remember_password: request.mode === "password" && !!request.remember_password,
+          };
+          break;
+        }
         case "list_workspace_files":
           data = tree;
           break;

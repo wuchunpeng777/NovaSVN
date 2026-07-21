@@ -181,11 +181,25 @@
           mode === "password" && $appSettingsStore.svnRememberPassword,
       });
       svnAuthenticationPassword = "";
+      return true;
     } catch (error) {
       svnAuthenticationError = error as CommandError;
+      return false;
     } finally {
       svnAuthenticationLoading = false;
     }
+  }
+
+  async function applyPromptedSvnAuthentication(
+    username: string,
+    password: string,
+    rememberPassword: boolean,
+  ) {
+    appSettingsStore.setField("svnAuthenticationMode", "password");
+    appSettingsStore.setField("svnUsername", username);
+    appSettingsStore.setField("svnRememberPassword", rememberPassword);
+    svnAuthenticationPassword = password;
+    return applySvnAuthentication();
   }
 
   async function confirmSvnCertificateTrust(failures: SvnCertificateFailure[]) {
@@ -2225,6 +2239,11 @@
     targetPath={standaloneBlamePath}
     svnExecutable={currentSvnExecutable()}
     themeMode={$appSettingsStore.themeMode}
+    svnAuthenticationUsername={$appSettingsStore.svnUsername}
+    svnRememberPassword={$appSettingsStore.svnRememberPassword}
+    {svnAuthenticationLoading}
+    {svnAuthenticationError}
+    onSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
   />
 {:else if startupSurface === "commit"}
   <StandaloneCommitWindow
@@ -2233,6 +2252,11 @@
     themeMode={$appSettingsStore.themeMode}
     diffMode={$appSettingsStore.diffMode}
     showWhitespace={$appSettingsStore.showWhitespace}
+    svnAuthenticationUsername={$appSettingsStore.svnUsername}
+    svnRememberPassword={$appSettingsStore.svnRememberPassword}
+    {svnAuthenticationLoading}
+    {svnAuthenticationError}
+    onSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
   />
 {:else if startupSurface === "log"}
   <StandaloneLogWindow
@@ -2241,12 +2265,22 @@
     themeMode={$appSettingsStore.themeMode}
     diffMode={$appSettingsStore.diffMode}
     showWhitespace={$appSettingsStore.showWhitespace}
+    svnAuthenticationUsername={$appSettingsStore.svnUsername}
+    svnRememberPassword={$appSettingsStore.svnRememberPassword}
+    {svnAuthenticationLoading}
+    {svnAuthenticationError}
+    onSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
   />
 {:else if startupSurface === "update"}
   <StandaloneUpdateWindow
     targetPath={standaloneUpdatePath}
     svnExecutable={currentSvnExecutable()}
     themeMode={$appSettingsStore.themeMode}
+    svnAuthenticationUsername={$appSettingsStore.svnUsername}
+    svnRememberPassword={$appSettingsStore.svnRememberPassword}
+    {svnAuthenticationLoading}
+    {svnAuthenticationError}
+    onSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
   />
 {:else}
 <MainWorkspace

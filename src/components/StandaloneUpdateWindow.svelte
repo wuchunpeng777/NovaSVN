@@ -10,6 +10,7 @@
     openWorkspaceFile,
     scanWorkspaceStatus,
   } from "../lib/api";
+  import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import type {
     ChangedFile,
     CommandError,
@@ -21,10 +22,20 @@
     WorkingCopyStatus,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
 
   export let targetPath: string;
   export let svnExecutable: string | undefined = undefined;
   export let themeMode: "system" | "light" | "dark" = "system";
+  export let svnAuthenticationUsername = "";
+  export let svnRememberPassword = true;
+  export let svnAuthenticationLoading = false;
+  export let svnAuthenticationError: CommandError | null = null;
+  export let onSvnAuthenticationSubmit: (
+    username: string,
+    password: string,
+    rememberPassword: boolean,
+  ) => Promise<boolean> = async () => false;
 
   let target: UpdateTargetSummary | null = null;
   let updateTask: Task | null = null;
@@ -63,6 +74,24 @@
 
   $: resolvedTheme =
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
+  $: statusAuthenticationFailure = detectSvnAuthenticationFailure(
+    commandErrorText(statusError),
+  );
+  $: fileLogAuthenticationFailure = detectSvnAuthenticationFailure(
+    commandErrorText(fileLogError),
+  );
+  $: authenticationFailure =
+    statusAuthenticationFailure ??
+    fileLogAuthenticationFailure ??
+    detectSvnAuthenticationFailure(commandErrorText(error)) ??
+    detectSvnAuthenticationFailure(actionError) ??
+    detectSvnAuthenticationFailure(updateTask?.error) ??
+    detectSvnAuthenticationFailure(resolutionTask?.error);
+  $: authenticationRetry = statusAuthenticationFailure
+    ? () => refreshConflicts()
+    : fileLogAuthenticationFailure && fileLogPath
+      ? () => showFileLog(fileLogPath!)
+      : null;
   $: updateRunning = isTaskRunning(updateTask);
   $: resolutionRunning = isTaskRunning(resolutionTask);
   $: updateComplete = updateTask !== null && terminalStatuses.includes(updateTask.status);
@@ -487,6 +516,12 @@
       ? normalizedPath === relativeTarget || normalizedPath.startsWith(`${relativeTarget}/`)
       : normalizedPath === relativeTarget;
   }
+
+  function commandErrorText(value: CommandError | null) {
+    return value
+      ? [value.code, value.message, value.detail].filter(Boolean).join("\n")
+      : null;
+  }
 </script>
 
 <main class="standalone-update" data-theme={resolvedTheme} aria-label="NovaSVN Update">
@@ -724,6 +759,15 @@
       </div>
     </div>
   {/if}
+  <SvnAuthenticationDialog
+    failure={authenticationFailure}
+    savedUsername={svnAuthenticationUsername}
+    rememberPassword={svnRememberPassword}
+    loading={svnAuthenticationLoading}
+    error={svnAuthenticationError}
+    retry={authenticationRetry}
+    onSubmit={onSvnAuthenticationSubmit}
+  />
 </main>
 
 <style>

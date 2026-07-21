@@ -12,6 +12,22 @@ test("loads the current NovaSVN workbench shell", async ({ page }) => {
   await expect(page.getByRole("button", { name: "清理工作副本" })).toBeVisible();
 });
 
+test("provides hover tooltips for every button", async ({ page }) => {
+  await page.goto("/");
+
+  const tooltipTargets = page.locator('button, [role="button"]');
+  expect(await tooltipTargets.count()).toBeGreaterThan(0);
+  await expect(page.locator('button:not([title]), [role="button"]:not([title])')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "工作副本", exact: true })).toHaveAttribute(
+    "title",
+    "工作副本",
+  );
+  await expect(page.getByRole("button", { name: "更新工作副本" })).toHaveAttribute(
+    "title",
+    "更新工作副本",
+  );
+});
+
 test("uses SVN commit targets without a staging view", async ({ page }) => {
   await page.goto("/");
 
