@@ -458,6 +458,64 @@ describe("MainWorkspace", () => {
     expect(onOpenBranchPoolEntry).toHaveBeenCalledTimes(1);
   });
 
+  it("reorders projects by dragging the handle and edits the display name inline", async () => {
+    const onReorderBranchPoolEntries = vi.fn();
+    const onRenameBranchPoolEntry = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        appSettings: makeAppSettings(),
+        branchPool: {
+          entries: [
+            {
+              id: "first",
+              display_name: "主项目",
+              branch_url: "https://example.com/svn/trunk",
+              local_path: "C:\\repo\\wc",
+              revision: "12",
+              local_changes: 0,
+              created_at: 1,
+              updated_at: 1,
+            },
+            {
+              id: "second",
+              branch_url: "https://example.com/svn/branches/feature",
+              local_path: "D:\\work\\feature",
+              revision: "18",
+              local_changes: 3,
+              created_at: 1,
+              updated_at: 1,
+            },
+          ],
+        },
+        onReorderBranchPoolEntries,
+        onRenameBranchPoolEntry,
+      },
+    });
+
+    const projects = screen.getByLabelText("项目列表");
+    expect(within(projects).getByText("主项目")).toBeInTheDocument();
+    const firstHandle = within(projects).getByRole("button", { name: "拖动排序 主项目" });
+    const secondRow = within(projects).getByRole("group", { name: "项目 feature" });
+    Object.defineProperty(secondRow, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 100, height: 40, bottom: 140, left: 0, right: 200, width: 200 }),
+    });
+    await fireEvent.dragStart(firstHandle);
+    await fireEvent.dragOver(secondRow, { clientY: 135 });
+    await fireEvent.drop(secondRow, { clientY: 135 });
+    expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
+
+    await fireEvent.click(
+      within(projects).getByRole("button", { name: "修改备注名 主项目" }),
+    );
+    const input = within(projects).getByRole("textbox", { name: "项目备注名 主项目" });
+    await fireEvent.input(input, { target: { value: "客户生产库" } });
+    await fireEvent.keyDown(input, { key: "Enter" });
+    expect(onRenameBranchPoolEntry).toHaveBeenCalledWith("first", "客户生产库");
+  });
+
   it("starts a complete commit flow when no files were preselected", async () => {
     const file = makeFile("src/main.ts", "modified", "main-digest");
     const onSelectAllCommitFiles = vi.fn();

@@ -19,6 +19,7 @@
     PanelLeftOpen,
     PanelRightClose,
     PanelRightOpen,
+    Pencil,
     Plus,
     RefreshCw,
     RotateCcw,
@@ -530,6 +531,8 @@
   export let onOpenBranchPoolEntry: (localPath: string) => void = () => {};
   export let onRemoveBranchPoolEntry: (entryId: string, deleteLocalCopy?: boolean) => void =
     () => {};
+  export let onReorderBranchPoolEntries: (entryIds: string[]) => void = () => {};
+  export let onRenameBranchPoolEntry: (entryId: string, displayName: string) => void = () => {};
   export let onMergeFormInput: (field: keyof typeof mergeForm, value: string | boolean) => void =
     () => {};
   export let onUseRepositoryUrlForMerge: (url: string) => void = () => {};
@@ -2048,7 +2051,76 @@
   }
 
   function workspaceEntryName(entry: BranchPoolEntry) {
-    return basename(entry.local_path) || branchName(entry);
+    return entry.display_name?.trim() || basename(entry.local_path) || branchName(entry);
+  }
+
+  let draggedBranchPoolEntryId: string | null = null;
+  let branchPoolDropTarget: { id: string; position: "before" | "after" } | null = null;
+  let editingBranchPoolEntryId: string | null = null;
+  let branchPoolDisplayNameDraft = "";
+
+  function startBranchPoolDrag(event: DragEvent, entryId: string) {
+    draggedBranchPoolEntryId = entryId;
+    branchPoolDropTarget = null;
+    event.dataTransfer?.setData("text/plain", entryId);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+  }
+
+  function updateBranchPoolDropTarget(event: DragEvent, entryId: string) {
+    if (!draggedBranchPoolEntryId || draggedBranchPoolEntryId === entryId) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    const bounds = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
+    const position = bounds.height <= 0 || event.clientY < bounds.top + bounds.height / 2
+      ? "before"
+      : "after";
+    branchPoolDropTarget = { id: entryId, position };
+  }
+
+  function dropBranchPoolEntry(event: DragEvent, targetId: string) {
+    event.preventDefault();
+    const sourceId = draggedBranchPoolEntryId;
+    const position = branchPoolDropTarget?.id === targetId
+      ? branchPoolDropTarget.position
+      : "before";
+    if (!sourceId || sourceId === targetId) {
+      finishBranchPoolDrag();
+      return;
+    }
+    const ids = branchPool.entries.map((entry) => entry.id).filter((id) => id !== sourceId);
+    const targetIndex = ids.indexOf(targetId);
+    ids.splice(targetIndex + (position === "after" ? 1 : 0), 0, sourceId);
+    finishBranchPoolDrag();
+    onReorderBranchPoolEntries(ids);
+  }
+
+  function finishBranchPoolDrag() {
+    draggedBranchPoolEntryId = null;
+    branchPoolDropTarget = null;
+  }
+
+  function editBranchPoolEntry(entry: BranchPoolEntry) {
+    editingBranchPoolEntryId = entry.id;
+    branchPoolDisplayNameDraft = entry.display_name?.trim() || "";
+  }
+
+  function cancelBranchPoolEntryEdit() {
+    editingBranchPoolEntryId = null;
+    branchPoolDisplayNameDraft = "";
+  }
+
+  function saveBranchPoolEntryName(entry: BranchPoolEntry) {
+    if (editingBranchPoolEntryId !== entry.id) return;
+    const displayName = branchPoolDisplayNameDraft.trim();
+    cancelBranchPoolEntryEdit();
+    if (displayName !== (entry.display_name?.trim() || "")) {
+      onRenameBranchPoolEntry(entry.id, displayName);
+    }
+  }
+
+  function focusBranchPoolNameInput(node: HTMLInputElement) {
+    node.focus();
+    node.select();
   }
 
   function openWorkspaceEntry(entry: BranchPoolEntry) {
@@ -2747,23 +2819,88 @@
           </button>
         {/if}
         {#each branchPool.entries as entry (entry.id)}
-          <button
-            type="button"
-            class="source-item workspace-source-item"
-            class:active={sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")}
-            on:click={() => openWorkspaceEntry(entry)}
+          <div
+            class="project-source-row"
+            role="group"
+            aria-label={`项目 ${workspaceEntryName(entry)}`}
+            class:dragging={draggedBranchPoolEntryId === entry.id}
+            class:drop-before={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "before"}
+            class:drop-after={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "after"}
+            on:dragover={(event) => updateBranchPoolDropTarget(event, entry.id)}
+            on:drop={(event) => dropBranchPoolEntry(event, entry.id)}
           >
-            <span class="source-icon" aria-hidden="true">
-              <FolderOpen size={16} strokeWidth={1.8} />
-            </span>
-            <span>
-              <strong>{workspaceEntryName(entry)}</strong>
-              <small>{entry.local_path}</small>
-            </span>
-            <em>{sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")
-                ? workingCopyStatus?.total ?? entry.local_changes
-                : entry.local_changes}</em>
-          </button>
+            <button
+              type="button"
+              class="project-drag-handle"
+              aria-label={`拖动排序 ${workspaceEntryName(entry)}`}
+              title="拖动调整顺序"
+              draggable={!branchPoolLoading}
+              disabled={branchPoolLoading}
+              on:dragstart={(event) => startBranchPoolDrag(event, entry.id)}
+              on:dragend={finishBranchPoolDrag}
+            >
+              <GripVertical size={15} strokeWidth={2} aria-hidden="true" />
+            </button>
+            {#if editingBranchPoolEntryId === entry.id}
+              <div
+                class="source-item workspace-source-item project-name-editor"
+                class:active={sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")}
+              >
+                <span class="source-icon" aria-hidden="true">
+                  <FolderOpen size={16} strokeWidth={1.8} />
+                </span>
+                <span>
+                  <input
+                    use:focusBranchPoolNameInput
+                    bind:value={branchPoolDisplayNameDraft}
+                    aria-label={`项目备注名 ${workspaceEntryName(entry)}`}
+                    maxlength="80"
+                    placeholder={basename(entry.local_path) || branchName(entry)}
+                    on:blur={() => saveBranchPoolEntryName(entry)}
+                    on:keydown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        saveBranchPoolEntryName(entry);
+                      } else if (event.key === "Escape") {
+                        event.preventDefault();
+                        cancelBranchPoolEntryEdit();
+                      }
+                    }}
+                  />
+                  <small>{entry.local_path}</small>
+                </span>
+                <em>{entry.local_changes}</em>
+              </div>
+            {:else}
+              <button
+                type="button"
+                class="source-item workspace-source-item project-source-button"
+                class:active={sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")}
+                on:click={() => openWorkspaceEntry(entry)}
+              >
+                <span class="source-icon" aria-hidden="true">
+                  <FolderOpen size={16} strokeWidth={1.8} />
+                </span>
+                <span>
+                  <strong>{workspaceEntryName(entry)}</strong>
+                  <small>{entry.local_path}</small>
+                </span>
+                <em>{sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")
+                    ? workingCopyStatus?.total ?? entry.local_changes
+                    : entry.local_changes}</em>
+              </button>
+            {/if}
+            <button
+              type="button"
+              class="project-rename-button"
+              aria-label={`修改备注名 ${workspaceEntryName(entry)}`}
+              title="修改备注名"
+              disabled={branchPoolLoading || editingBranchPoolEntryId === entry.id}
+              on:click={() => editBranchPoolEntry(entry)}
+            >
+              <Pencil size={14} strokeWidth={1.9} aria-hidden="true" />
+            </button>
+          </div>
         {/each}
       </section>
 

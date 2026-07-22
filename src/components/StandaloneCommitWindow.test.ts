@@ -76,7 +76,7 @@ beforeEach(() => {
     language: "typescript",
     binary: false,
     too_large: false,
-    max_bytes: 512 * 1024,
+    max_bytes: 20 * 1024 * 1024,
   });
   getFileDiffMock.mockResolvedValue({
     path: "src/main.ts",
@@ -146,7 +146,7 @@ describe("StandaloneCommitWindow", () => {
       language: "typescript",
       binary: false,
       too_large: false,
-      max_bytes: 512 * 1024,
+      max_bytes: 20 * 1024 * 1024,
     });
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
 
@@ -167,11 +167,81 @@ describe("StandaloneCommitWindow", () => {
         working_copy_root: "C:\\repo",
         file_path: "src/main.ts",
         svn_executable: undefined,
-        max_bytes: 512 * 1024,
+        max_bytes: 20 * 1024 * 1024,
       });
     });
     expect(checkbox).toBeChecked();
     expect(screen.getByLabelText("修改内容")).toHaveTextContent("+const value = 2;");
+  });
+
+  it("未选择文件时隐藏 Diff，打开后可以关闭", async () => {
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const filePane = screen.getByLabelText("选择提交文件");
+    await within(filePane).findByText("src/main.ts");
+
+    expect(screen.queryByLabelText("修改内容")).not.toBeInTheDocument();
+    await fireEvent.click(
+      within(filePane).getByRole("button", { name: "查看修改 src/main.ts" }),
+    );
+    expect(await screen.findByLabelText("修改内容")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "关闭 Diff" }));
+    expect(screen.queryByLabelText("修改内容")).not.toBeInTheDocument();
+  });
+
+  it("支持调整 Diff 高度和提交信息侧栏宽度", async () => {
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const filePane = screen.getByLabelText("选择提交文件");
+    await fireEvent.click(
+      await within(filePane).findByRole("button", { name: "查看修改 src/main.ts" }),
+    );
+
+    const diffResizer = screen.getByRole("slider", { name: "调整 Diff 区域高度" });
+    expect(diffResizer).toHaveAttribute("aria-valuenow", "320");
+    await fireEvent.keyDown(diffResizer, { key: "ArrowUp" });
+    expect(diffResizer).toHaveAttribute("aria-valuenow", "336");
+    await fireEvent.mouseDown(diffResizer, { clientY: 400 });
+    await fireEvent.mouseMove(window, { clientY: 360 });
+    await fireEvent.mouseUp(window);
+    expect(diffResizer).toHaveAttribute("aria-valuenow", "376");
+
+    const sideResizer = screen.getByRole("slider", { name: "调整提交信息侧栏宽度" });
+    expect(sideResizer).toHaveAttribute("aria-valuenow", "360");
+    await fireEvent.keyDown(sideResizer, { key: "ArrowLeft" });
+    expect(sideResizer).toHaveAttribute("aria-valuenow", "376");
+    await fireEvent.mouseDown(sideResizer, { clientX: 500 });
+    await fireEvent.mouseMove(window, { clientX: 460 });
+    await fireEvent.mouseUp(window);
+    expect(sideResizer).toHaveAttribute("aria-valuenow", "416");
+  });
+
+  it("目录使用 SVN 原始 Diff 展示递归修改", async () => {
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({ files: [makeFile("src", "modified")], total: 1, returned: 1 }),
+    );
+    getFileDiffMock.mockResolvedValue({
+      path: "src",
+      node_kind: "dir",
+      text: "Index: src/main.ts\n+directory change",
+      binary: false,
+      empty: false,
+    });
+    getFileContentDiffMock.mockResolvedValue({
+      path: "src",
+      node_kind: "dir",
+      original_text: "",
+      modified_text: "",
+      language: "plaintext",
+      binary: false,
+      too_large: false,
+      max_bytes: 20 * 1024 * 1024,
+    });
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "查看修改 src" }),
+    );
+    expect(await screen.findByLabelText("修改内容")).toHaveTextContent("directory change");
   });
 
   it("通过按钮从本地缓存获取历史日志并提交用户选择的路径", async () => {

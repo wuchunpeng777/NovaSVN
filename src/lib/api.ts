@@ -64,6 +64,8 @@ import type {
   ParsedDiff,
   RecentWorkspace,
   RemoveBranchPoolEntryRequest,
+  RenameBranchPoolEntryRequest,
+  ReorderBranchPoolEntriesRequest,
   RemoveTaskWorkspaceRequest,
   ResolveTextConflictRequest,
   ResolveTextConflictResult,
@@ -310,6 +312,18 @@ export function removeBranchPoolEntry(
   request: RemoveBranchPoolEntryRequest,
 ): Promise<BranchPool> {
   return callBackend<BranchPool>("remove_branch_pool_entry", { request });
+}
+
+export function reorderBranchPoolEntries(
+  request: ReorderBranchPoolEntriesRequest,
+): Promise<BranchPool> {
+  return callBackend<BranchPool>("reorder_branch_pool_entries", { request });
+}
+
+export function renameBranchPoolEntry(
+  request: RenameBranchPoolEntryRequest,
+): Promise<BranchPool> {
+  return callBackend<BranchPool>("rename_branch_pool_entry", { request });
 }
 
 export function getTaskWorkspaces(): Promise<TaskWorkspaceList> {

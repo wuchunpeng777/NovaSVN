@@ -45,6 +45,8 @@ vi.mock("./lib/api", async (importOriginal) => {
     getRepositoryFileLog: vi.fn(),
     getRepositoryFileProperties: vi.fn(),
     getBranchPool: vi.fn(),
+    renameBranchPoolEntry: vi.fn(),
+    reorderBranchPoolEntries: vi.fn(),
     listTasks: vi.fn(),
     listWorkspaceFiles: vi.fn(),
     openLocalPathLocation: vi.fn(),
@@ -85,6 +87,8 @@ import {
   getRepositoryFileLog,
   getRepositoryFileProperties,
   getBranchPool,
+  renameBranchPoolEntry,
+  reorderBranchPoolEntries,
   listTasks,
   listWorkspaceFiles,
   openLocalPathLocation,
@@ -138,6 +142,8 @@ const getRepositoryFileBlameMock = vi.mocked(getRepositoryFileBlame);
 const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const getRepositoryFilePropertiesMock = vi.mocked(getRepositoryFileProperties);
 const getBranchPoolMock = vi.mocked(getBranchPool);
+const renameBranchPoolEntryMock = vi.mocked(renameBranchPoolEntry);
+const reorderBranchPoolEntriesMock = vi.mocked(reorderBranchPoolEntries);
 const listTasksMock = vi.mocked(listTasks);
 const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
 const openLocalPathLocationMock = vi.mocked(openLocalPathLocation);
@@ -175,6 +181,8 @@ beforeEach(async () => {
   getRepositoryFileLogMock.mockReset();
   getRepositoryFilePropertiesMock.mockReset();
   getBranchPoolMock.mockReset();
+  renameBranchPoolEntryMock.mockReset();
+  reorderBranchPoolEntriesMock.mockReset();
   listTasksMock.mockReset();
   listWorkspaceFilesMock.mockReset();
   openLocalPathLocationMock.mockReset();

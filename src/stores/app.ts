@@ -50,6 +50,8 @@ import {
   openWorkspace,
   parseUnifiedDiff,
   removeBranchPoolEntry,
+  renameBranchPoolEntry,
+  reorderBranchPoolEntries,
   removeTaskWorkspace,
   scanWorkspaceStatus,
   saveBranchPoolEntry,
@@ -1304,6 +1306,73 @@ function createBranchPoolStore() {
     }
   }
 
+  async function reorder(entryIds: string[]) {
+    const previousPool = get({ subscribe }).pool;
+    if (
+      entryIds.length !== previousPool.entries.length ||
+      new Set(entryIds).size !== entryIds.length
+    ) {
+      return false;
+    }
+    if (entryIds.every((id, index) => id === previousPool.entries[index]?.id)) {
+      return true;
+    }
+    const entriesById = new Map(previousPool.entries.map((entry) => [entry.id, entry]));
+    const reorderedEntries = entryIds.flatMap((id) => {
+      const entry = entriesById.get(id);
+      return entry ? [entry] : [];
+    });
+    if (reorderedEntries.length !== previousPool.entries.length) return false;
+
+    update((state) => ({
+      ...state,
+      pool: { entries: reorderedEntries },
+      loading: true,
+      error: null,
+    }));
+    try {
+      const pool = await reorderBranchPoolEntries({ entry_ids: entryIds });
+      update((state) => ({ ...state, pool, loading: false, error: null }));
+      return true;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        pool: previousPool,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return false;
+    }
+  }
+
+  async function rename(entryId: string, displayName: string) {
+    const previousPool = get({ subscribe }).pool;
+    const normalizedName = displayName.trim();
+    update((state) => ({
+      ...state,
+      pool: {
+        entries: state.pool.entries.map((entry) =>
+          entry.id === entryId ? { ...entry, display_name: normalizedName } : entry,
+        ),
+      },
+      loading: true,
+      error: null,
+    }));
+    try {
+      const pool = await renameBranchPoolEntry({ id: entryId, display_name: normalizedName });
+      update((state) => ({ ...state, pool, loading: false, error: null }));
+      return true;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        pool: previousPool,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return false;
+    }
+  }
+
   function markCheckoutTask(taskId: string | null) {
     if (taskId && !validateForm()) {
       return;
@@ -1392,6 +1461,8 @@ function createBranchPoolStore() {
     applyBasePath,
     saveExisting,
     remove,
+    reorder,
+    rename,
     validateForm,
     markCheckoutTask,
     completeCheckoutTask,

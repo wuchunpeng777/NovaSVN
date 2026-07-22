@@ -1,4 +1,5 @@
 use std::{
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -11,6 +12,8 @@ use crate::{error::NovaError, path_utils};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BranchPoolEntry {
     pub id: String,
+    #[serde(default)]
+    pub display_name: String,
     pub branch_url: String,
     pub local_path: String,
     pub revision: String,
@@ -36,6 +39,17 @@ pub struct SaveBranchPoolEntryRequest {
 pub struct RemoveBranchPoolEntryRequest {
     pub id: String,
     pub delete_local_copy: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReorderBranchPoolEntriesRequest {
+    pub entry_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RenameBranchPoolEntryRequest {
+    pub id: String,
+    pub display_name: String,
 }
 
 pub fn read_branch_pool(app: &AppHandle) -> Result<BranchPool, NovaError> {
@@ -85,6 +99,7 @@ pub fn save_branch_pool_entry(
     } else {
         pool.entries.push(BranchPoolEntry {
             id,
+            display_name: String::new(),
             branch_url,
             local_path,
             revision,
@@ -96,6 +111,68 @@ pub fn save_branch_pool_entry(
 
     write_branch_pool(app, &pool)?;
     Ok(pool)
+}
+
+pub fn reorder_branch_pool_entries(
+    app: &AppHandle,
+    request: ReorderBranchPoolEntriesRequest,
+) -> Result<BranchPool, NovaError> {
+    let mut pool = read_branch_pool(app)?;
+    apply_branch_pool_order(&mut pool, &request.entry_ids)?;
+    write_branch_pool(app, &pool)?;
+    Ok(pool)
+}
+
+pub fn rename_branch_pool_entry(
+    app: &AppHandle,
+    request: RenameBranchPoolEntryRequest,
+) -> Result<BranchPool, NovaError> {
+    let display_name = normalize_display_name(&request.display_name)?;
+    let mut pool = read_branch_pool(app)?;
+    let Some(entry) = pool.entries.iter_mut().find(|entry| entry.id == request.id) else {
+        return Err(NovaError::command(
+            "BRANCH_POOL_ENTRY_NOT_FOUND",
+            "未找到要修改的项目",
+            Some(format!("项目 ID：{}", request.id)),
+            true,
+        ));
+    };
+
+    entry.display_name = display_name;
+    entry.updated_at = timestamp_millis();
+    write_branch_pool(app, &pool)?;
+    Ok(pool)
+}
+
+fn apply_branch_pool_order(pool: &mut BranchPool, entry_ids: &[String]) -> Result<(), NovaError> {
+    let existing_ids = pool
+        .entries
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect::<HashSet<_>>();
+    let requested_ids = entry_ids.iter().map(String::as_str).collect::<HashSet<_>>();
+    if entry_ids.len() != pool.entries.len()
+        || requested_ids.len() != entry_ids.len()
+        || requested_ids != existing_ids
+    {
+        return Err(NovaError::command(
+            "BRANCH_POOL_ORDER_INVALID",
+            "项目顺序无效",
+            Some("项目顺序必须完整包含当前分支池中的所有项目，且不能重复。".to_string()),
+            true,
+        ));
+    }
+
+    let mut entries_by_id = pool
+        .entries
+        .drain(..)
+        .map(|entry| (entry.id.clone(), entry))
+        .collect::<HashMap<_, _>>();
+    pool.entries = entry_ids
+        .iter()
+        .filter_map(|id| entries_by_id.remove(id))
+        .collect();
+    Ok(())
 }
 
 pub fn remove_branch_pool_entry(
@@ -269,6 +346,19 @@ fn normalize_revision(revision: Option<&str>) -> Result<String, NovaError> {
     Ok(value.to_string())
 }
 
+fn normalize_display_name(display_name: &str) -> Result<String, NovaError> {
+    let value = display_name.trim();
+    if value.chars().any(char::is_control) || value.chars().count() > 80 {
+        return Err(NovaError::command(
+            "BRANCH_POOL_DISPLAY_NAME_INVALID",
+            "项目备注名无效",
+            Some("项目备注名不能包含控制字符，且不能超过 80 个字符。".to_string()),
+            true,
+        ));
+    }
+    Ok(value.to_string())
+}
+
 fn branch_pool_path(app: &AppHandle) -> Result<PathBuf, NovaError> {
     let dir = app.path().app_data_dir().map_err(|error| {
         NovaError::command(
@@ -314,6 +404,7 @@ mod tests {
     fn branch_entry(path: &std::path::Path) -> BranchPoolEntry {
         BranchPoolEntry {
             id: "pool-test".to_string(),
+            display_name: String::new(),
             branch_url: "https://example.com/svn/branches/feature".to_string(),
             local_path: path.to_string_lossy().to_string(),
             revision: "123".to_string(),
@@ -348,6 +439,44 @@ mod tests {
         assert!(normalize_local_path("relative\\feature").is_err());
         assert!(normalize_local_path("C:\\wc\nfeature").is_err());
         assert!(normalize_revision(Some("123\n124")).is_err());
+        assert!(normalize_display_name("feature\nname").is_err());
+        assert!(normalize_display_name(&"x".repeat(81)).is_err());
+    }
+
+    #[test]
+    fn accepts_trimmed_and_empty_display_names() {
+        assert_eq!(normalize_display_name("  客户项目  ").unwrap(), "客户项目");
+        assert_eq!(normalize_display_name("   ").unwrap(), "");
+    }
+
+    #[test]
+    fn reorders_entries_only_with_a_complete_unique_id_list() {
+        let mut pool = BranchPool {
+            entries: vec![
+                BranchPoolEntry {
+                    id: "first".to_string(),
+                    ..branch_entry(Path::new("C:\\wc\\first"))
+                },
+                BranchPoolEntry {
+                    id: "second".to_string(),
+                    ..branch_entry(Path::new("C:\\wc\\second"))
+                },
+            ],
+        };
+
+        apply_branch_pool_order(&mut pool, &["second".to_string(), "first".to_string()])
+            .expect("reorder entries");
+        assert_eq!(
+            pool.entries
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["second", "first"]
+        );
+        assert!(
+            apply_branch_pool_order(&mut pool, &["second".to_string(), "second".to_string()])
+                .is_err()
+        );
     }
 
     #[test]

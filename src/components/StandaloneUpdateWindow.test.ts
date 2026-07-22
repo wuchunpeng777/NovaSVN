@@ -137,6 +137,47 @@ describe("StandaloneUpdateWindow", () => {
     expect(within(outputLines).getByRole("status", { name: "更新完成" })).toBeInTheDocument();
   });
 
+  it("任务运行期间逐次展示新增文件并支持组合状态列", async () => {
+    getTaskMock
+      .mockResolvedValueOnce(makeTask("running", ["U    src/first.ts"]))
+      .mockResolvedValueOnce(
+        makeTask("running", ["U    src/first.ts", "UG   src/properties.ts"]),
+      )
+      .mockResolvedValueOnce(
+        makeTask("success", [
+          "U    src/first.ts",
+          "UG   src/properties.ts",
+          "A    src/final.ts",
+        ]),
+      );
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo" } });
+
+    expect(await screen.findByRole("listitem", { name: "更新文件 src/first.ts" })).toBeInTheDocument();
+    const combined = await screen.findByRole("listitem", {
+      name: "更新文件 src/properties.ts",
+    });
+    expect(combined).toHaveTextContent("UG");
+    expect(await screen.findByRole("listitem", { name: "更新文件 src/final.ts" })).toBeInTheDocument();
+  });
+
+  it("Update 运行中即时在冲突区展示检测到的冲突路径", async () => {
+    let finishUpdate: (task: Task) => void = () => {};
+    const finishingTask = new Promise<Task>((resolve) => {
+      finishUpdate = resolve;
+    });
+    getTaskMock
+      .mockResolvedValueOnce(makeTask("running", ["C    src/conflict.ts"]))
+      .mockImplementationOnce(() => finishingTask);
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo" } });
+
+    const pane = await screen.findByLabelText("冲突处理");
+    expect(await within(pane).findByText("src/conflict.ts")).toBeInTheDocument();
+    expect(within(pane).getByText("更新中检测到冲突")).toBeInTheDocument();
+    expect(within(pane).getByText("等待 Update 完成后读取冲突详情...")).toBeInTheDocument();
+    finishUpdate(makeTask("success", ["C    src/conflict.ts"]));
+    await screen.findByRole("status", { name: "更新完成" });
+  });
+
   it("用户手动滚动后停止自动置底", async () => {
     getTaskMock
       .mockResolvedValueOnce(makeTask("running", ["U    src/first.ts"]))

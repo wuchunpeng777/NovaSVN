@@ -289,6 +289,7 @@ pub struct IgnoreWorkspacePathRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct FileDiff {
     pub path: String,
+    pub node_kind: String,
     pub text: String,
     pub binary: bool,
     pub empty: bool,
@@ -297,6 +298,7 @@ pub struct FileDiff {
 #[derive(Debug, Clone, Serialize)]
 pub struct FileContentDiff {
     pub path: String,
+    pub node_kind: String,
     pub original_text: String,
     pub modified_text: String,
     pub language: String,
@@ -1142,6 +1144,7 @@ pub fn get_file_diff(request: GetFileDiffRequest) -> Result<FileDiff, NovaError>
     let file_path = normalize_relative_file_path(&request.file_path)?;
     let target = root.join(&file_path);
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let node_kind = read_diff_target_kind(&executable, &root, &target);
 
     let output = svn::command(&executable)
         .arg("diff")
@@ -1180,6 +1183,7 @@ pub fn get_file_diff(request: GetFileDiffRequest) -> Result<FileDiff, NovaError>
 
     Ok(FileDiff {
         path: file_path,
+        node_kind,
         empty: text.trim().is_empty(),
         text,
         binary,
@@ -1192,8 +1196,22 @@ pub fn get_file_content_diff(
     let root = normalize_workspace_path(&request.working_copy_root)?;
     let file_path = normalize_relative_file_path(&request.file_path)?;
     let target = root.join(&file_path);
-    let max_bytes = request.max_bytes.unwrap_or(512 * 1024);
+    let max_bytes = request.max_bytes.unwrap_or(20 * 1024 * 1024);
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let node_kind = read_diff_target_kind(&executable, &root, &target);
+
+    if node_kind == "dir" {
+        return Ok(FileContentDiff {
+            path: file_path,
+            node_kind,
+            original_text: String::new(),
+            modified_text: String::new(),
+            language: "plaintext".to_string(),
+            binary: false,
+            too_large: false,
+            max_bytes,
+        });
+    }
 
     let working = read_limited_text_file(&target, max_bytes)?;
     let original = read_svn_base_text(&executable, &root, &target, max_bytes)?;
@@ -1203,6 +1221,7 @@ pub fn get_file_content_diff(
 
     Ok(FileContentDiff {
         path: file_path,
+        node_kind,
         original_text: if binary || too_large {
             String::new()
         } else {
@@ -1218,6 +1237,36 @@ pub fn get_file_content_diff(
         too_large,
         max_bytes,
     })
+}
+
+fn read_diff_target_kind(executable: &str, root: &Path, target: &Path) -> String {
+    if let Ok(metadata) = fs::metadata(target) {
+        return if metadata.is_dir() { "dir" } else { "file" }.to_string();
+    }
+
+    let Ok(output) = svn::command(executable)
+        .args(["info", "--xml"])
+        .arg(target)
+        .current_dir(root)
+        .output()
+    else {
+        return "file".to_string();
+    };
+    if !output.status.success() {
+        return "file".to_string();
+    }
+
+    Document::parse(&String::from_utf8_lossy(&output.stdout))
+        .ok()
+        .and_then(|document| {
+            document
+                .descendants()
+                .find(|node| node.has_tag_name("entry"))
+                .and_then(|entry| entry.attribute("kind"))
+                .filter(|kind| matches!(*kind, "file" | "dir"))
+                .map(ToString::to_string)
+        })
+        .unwrap_or_else(|| "file".to_string())
 }
 
 pub fn resolve_text_conflict(
@@ -1397,7 +1446,7 @@ pub fn get_revision_file_content_diff(
     let left_revision = normalize_revision_diff_revision(&request.left_revision)?;
     let right_revision = normalize_revision_diff_revision(&request.right_revision)?;
     let action = request.action.trim().to_ascii_uppercase();
-    let max_bytes = request.max_bytes.unwrap_or(512 * 1024);
+    let max_bytes = request.max_bytes.unwrap_or(20 * 1024 * 1024);
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
     let original = if action == "A" {
@@ -1415,6 +1464,7 @@ pub fn get_revision_file_content_diff(
 
     Ok(FileContentDiff {
         path: file_path.clone(),
+        node_kind: "file".to_string(),
         original_text: if binary || too_large {
             String::new()
         } else {
@@ -4029,6 +4079,35 @@ mod tests {
                 .arg("--quiet")
                 .output()
                 .is_ok()
+    }
+
+    #[test]
+    fn returns_directory_content_diff_without_reading_the_directory_as_a_file() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-directory-content-diff-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src")).expect("create directory target");
+
+        let diff = get_file_content_diff(GetFileContentDiffRequest {
+            working_copy_root: root.display().to_string(),
+            file_path: "src".to_string(),
+            svn_executable: None,
+            max_bytes: None,
+        })
+        .expect("directory content diff");
+
+        assert_eq!(diff.node_kind, "dir");
+        assert!(diff.original_text.is_empty());
+        assert!(diff.modified_text.is_empty());
+        assert!(!diff.binary);
+        assert!(!diff.too_large);
+        assert_eq!(diff.max_bytes, 20 * 1024 * 1024);
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

@@ -23,6 +23,7 @@ vi.mock("../lib/api", () => ({
   detectSvn: vi.fn(),
   getFileContentDiff: vi.fn(),
   getFileDiff: vi.fn(),
+  getBranchPool: vi.fn(),
   getRepositoryFileBlame: vi.fn(),
   getRepositoryFileLog: vi.fn(),
   getRepositoryFileProperties: vi.fn(),
@@ -36,8 +37,12 @@ vi.mock("../lib/api", () => ({
   openGeneratedFileLocation: vi.fn(),
   openWorkspace: vi.fn(),
   parseUnifiedDiff: vi.fn(),
+  removeBranchPoolEntry: vi.fn(),
+  renameBranchPoolEntry: vi.fn(),
+  reorderBranchPoolEntries: vi.fn(),
   removeTaskWorkspace: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
+  saveBranchPoolEntry: vi.fn(),
   saveTaskWorkspace: vi.fn(),
   setSvnProperty: vi.fn(),
 }));
@@ -67,6 +72,7 @@ import {
   detectSvn,
   getFileContentDiff,
   getFileDiff,
+  getBranchPool,
   getRepositoryFileBlame,
   getRepositoryFileLog,
   getRepositoryFileProperties,
@@ -80,6 +86,8 @@ import {
   openGeneratedFileLocation,
   openWorkspace,
   parseUnifiedDiff,
+  renameBranchPoolEntry,
+  reorderBranchPoolEntries,
   removeTaskWorkspace,
   scanWorkspaceStatus,
   saveTaskWorkspace,
@@ -102,6 +110,7 @@ import type {
 } from "../types/api";
 import {
   appSettingsStore,
+  branchPoolStore,
   isSameRepositoryUrl,
   repositoryPathUrl,
   revisionDiffPatchFileName,
@@ -133,6 +142,7 @@ const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
 const detectSvnMock = vi.mocked(detectSvn);
 const getFileContentDiffMock = vi.mocked(getFileContentDiff);
 const getFileDiffMock = vi.mocked(getFileDiff);
+const getBranchPoolMock = vi.mocked(getBranchPool);
 const getRepositoryFileBlameMock = vi.mocked(getRepositoryFileBlame);
 const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const getRepositoryFilePropertiesMock = vi.mocked(getRepositoryFileProperties);
@@ -146,6 +156,8 @@ const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
 const openGeneratedFileLocationMock = vi.mocked(openGeneratedFileLocation);
 const openWorkspaceMock = vi.mocked(openWorkspace);
 const parseUnifiedDiffMock = vi.mocked(parseUnifiedDiff);
+const renameBranchPoolEntryMock = vi.mocked(renameBranchPoolEntry);
+const reorderBranchPoolEntriesMock = vi.mocked(reorderBranchPoolEntries);
 const removeTaskWorkspaceMock = vi.mocked(removeTaskWorkspace);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 const saveTaskWorkspaceMock = vi.mocked(saveTaskWorkspace);
@@ -174,6 +186,7 @@ beforeEach(() => {
   detectSvnMock.mockReset();
   getFileContentDiffMock.mockReset();
   getFileDiffMock.mockReset();
+  getBranchPoolMock.mockReset();
   getRepositoryFileBlameMock.mockReset();
   getRepositoryFileLogMock.mockReset();
   getRepositoryFilePropertiesMock.mockReset();
@@ -187,10 +200,13 @@ beforeEach(() => {
   openGeneratedFileLocationMock.mockReset();
   openWorkspaceMock.mockReset();
   parseUnifiedDiffMock.mockReset();
+  renameBranchPoolEntryMock.mockReset();
+  reorderBranchPoolEntriesMock.mockReset();
   removeTaskWorkspaceMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
   saveTaskWorkspaceMock.mockReset();
   setSvnPropertyMock.mockReset();
+  getBranchPoolMock.mockResolvedValue({ entries: [] });
   window.localStorage.clear();
   appSettingsStore.load();
   svnStore.setExecutableInput("");
@@ -308,6 +324,65 @@ describe("revisionDiffPatchFileName", () => {
     createElement.mockRestore();
     createObjectURL.mockRestore();
     revokeObjectURL.mockRestore();
+  });
+});
+
+describe("branchPoolStore ordering and display names", () => {
+  const first: BranchPoolEntry = {
+    id: "first",
+    branch_url: "https://example.com/svn/trunk",
+    local_path: "C:\\repo\\first",
+    revision: "10",
+    local_changes: 1,
+    created_at: 1,
+    updated_at: 1,
+  };
+  const second: BranchPoolEntry = {
+    ...first,
+    id: "second",
+    branch_url: "https://example.com/svn/branches/second",
+    local_path: "C:\\repo\\second",
+  };
+
+  it("persists exact project order and edited display names", async () => {
+    getBranchPoolMock.mockResolvedValue({ entries: [first, second] });
+    await branchPoolStore.load();
+    reorderBranchPoolEntriesMock.mockResolvedValue({ entries: [second, first] });
+
+    expect(await branchPoolStore.reorder(["second", "first"])).toBe(true);
+    expect(reorderBranchPoolEntriesMock).toHaveBeenCalledWith({
+      entry_ids: ["second", "first"],
+    });
+    expect(get(branchPoolStore).pool.entries.map((entry) => entry.id)).toEqual([
+      "second",
+      "first",
+    ]);
+
+    const renamed = { ...second, display_name: "客户生产库" };
+    renameBranchPoolEntryMock.mockResolvedValue({ entries: [renamed, first] });
+    expect(await branchPoolStore.rename("second", "  客户生产库  ")).toBe(true);
+    expect(renameBranchPoolEntryMock).toHaveBeenCalledWith({
+      id: "second",
+      display_name: "客户生产库",
+    });
+    expect(get(branchPoolStore).pool.entries[0].display_name).toBe("客户生产库");
+  });
+
+  it("rolls back an optimistic reorder when persistence fails", async () => {
+    getBranchPoolMock.mockResolvedValue({ entries: [first, second] });
+    await branchPoolStore.load();
+    reorderBranchPoolEntriesMock.mockRejectedValue({
+      code: "BRANCH_POOL_ORDER_INVALID",
+      message: "项目顺序无效",
+      recoverable: true,
+    });
+
+    expect(await branchPoolStore.reorder(["second", "first"])).toBe(false);
+    expect(get(branchPoolStore).pool.entries.map((entry) => entry.id)).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(get(branchPoolStore).error?.code).toBe("BRANCH_POOL_ORDER_INVALID");
   });
 });
 

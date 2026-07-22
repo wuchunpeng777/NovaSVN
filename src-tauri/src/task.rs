@@ -2616,6 +2616,10 @@ fn run_svn_operation_task(
 
     let root = PathBuf::from(&payload.working_copy_root);
     let mut command = svn::command(&payload.svn_executable);
+    let stream_update_output = matches!(
+        &payload.kind,
+        SvnOperationKind::Update | SvnOperationKind::UpdatePath
+    );
     match payload.kind {
         SvnOperationKind::Update => {
             command.arg("update").arg(&root);
@@ -3049,9 +3053,16 @@ fn run_svn_operation_task(
     }
     command.current_dir(&root);
 
-    match run_task_command(state, task_id, &mut command) {
+    let command_result = if stream_update_output {
+        run_task_command_streaming_output(state, task_id, &mut command)
+    } else {
+        run_task_command(state, task_id, &mut command)
+    };
+    match command_result {
         Ok(output) if output.status.success() => {
-            append_command_output(state, task_id, &output);
+            if !stream_update_output {
+                append_command_output(state, task_id, &output);
+            }
             update_task(
                 state,
                 task_id,
@@ -3061,7 +3072,9 @@ fn run_svn_operation_task(
             );
         }
         Ok(output) => {
-            append_command_output(state, task_id, &output);
+            if !stream_update_output {
+                append_command_output(state, task_id, &output);
+            }
             update_task(
                 state,
                 task_id,
@@ -5815,6 +5828,27 @@ fn run_task_command(
         },
         true,
         Some(MAX_TASK_COMMAND_OUTPUT_BYTES),
+        false,
+    )
+}
+
+fn run_task_command_streaming_output(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    command: &mut Command,
+) -> std::io::Result<Output> {
+    run_task_command_inner(
+        state,
+        task_id,
+        command,
+        true,
+        TaskCommandLimits {
+            timeout: TASK_COMMAND_TIMEOUT,
+            idle_timeout: Some(TASK_COMMAND_IDLE_TIMEOUT),
+        },
+        true,
+        Some(MAX_TASK_COMMAND_OUTPUT_BYTES),
+        true,
     )
 }
 
@@ -5834,6 +5868,7 @@ fn run_task_command_with_configured_stdout(
         },
         true,
         Some(MAX_TASK_COMMAND_OUTPUT_BYTES),
+        false,
     )
 }
 
@@ -5853,6 +5888,7 @@ fn run_task_command_with_configured_streams(
         },
         false,
         None,
+        false,
     )
 }
 
@@ -5877,6 +5913,7 @@ fn run_task_command_with_limits(
         limits,
         true,
         Some(MAX_TASK_COMMAND_OUTPUT_BYTES),
+        false,
     )
 }
 
@@ -5888,6 +5925,7 @@ fn run_task_command_inner(
     limits: TaskCommandLimits,
     capture_stderr: bool,
     output_limit: Option<usize>,
+    stream_output_lines: bool,
 ) -> std::io::Result<Output> {
     if state
         .lock()
@@ -5921,10 +5959,20 @@ fn run_task_command_inner(
     let last_output_at = Arc::new(Mutex::new(started_at));
     let stdout_activity = Arc::clone(&last_output_at);
     let stderr_activity = Arc::clone(&last_output_at);
-    let stdout_reader =
-        thread::spawn(move || read_child_pipe(stdout, stdout_activity, output_limit));
-    let stderr_reader =
-        thread::spawn(move || read_child_pipe(stderr, stderr_activity, output_limit));
+    let stdout_streamer = stream_output_lines.then(|| TaskOutputStreamer {
+        state: Arc::clone(state),
+        task_id: task_id.to_string(),
+    });
+    let stderr_streamer = stream_output_lines.then(|| TaskOutputStreamer {
+        state: Arc::clone(state),
+        task_id: task_id.to_string(),
+    });
+    let stdout_reader = thread::spawn(move || {
+        read_child_pipe_with_streamer(stdout, stdout_activity, output_limit, stdout_streamer)
+    });
+    let stderr_reader = thread::spawn(move || {
+        read_child_pipe_with_streamer(stderr, stderr_activity, output_limit, stderr_streamer)
+    });
     let child = Arc::new(Mutex::new(child));
 
     let cancellation_requested = {
@@ -6094,14 +6142,41 @@ struct ChildPipeReadResult {
     truncated: bool,
 }
 
+#[cfg(test)]
 fn read_child_pipe(
-    mut pipe: Option<impl Read>,
+    pipe: Option<impl Read>,
     last_output_at: Arc<Mutex<Instant>>,
     max_bytes: Option<usize>,
 ) -> std::io::Result<ChildPipeReadResult> {
+    read_child_pipe_with_streamer(pipe, last_output_at, max_bytes, None)
+}
+
+#[derive(Clone)]
+struct TaskOutputStreamer {
+    state: Arc<Mutex<TaskQueueState>>,
+    task_id: String,
+}
+
+impl TaskOutputStreamer {
+    fn append_line(&self, bytes: &[u8]) {
+        let message = String::from_utf8_lossy(bytes).trim().to_string();
+        if !message.is_empty() {
+            append_task_log(&self.state, &self.task_id, &message);
+        }
+    }
+}
+
+fn read_child_pipe_with_streamer(
+    mut pipe: Option<impl Read>,
+    last_output_at: Arc<Mutex<Instant>>,
+    max_bytes: Option<usize>,
+    streamer: Option<TaskOutputStreamer>,
+) -> std::io::Result<ChildPipeReadResult> {
+    const MAX_STREAMED_LINE_BYTES: usize = 64 * 1024;
     let mut output = Vec::new();
     let mut total_bytes = 0usize;
     let mut truncated = false;
+    let mut streamed_line = Vec::new();
     if let Some(pipe) = pipe.as_mut() {
         let mut buffer = [0_u8; 8 * 1024];
         loop {
@@ -6110,6 +6185,16 @@ fn read_child_pipe(
                 break;
             }
             total_bytes = total_bytes.saturating_add(read);
+            if let Some(streamer) = streamer.as_ref() {
+                for byte in &buffer[..read] {
+                    if *byte == b'\n' {
+                        streamer.append_line(&streamed_line);
+                        streamed_line.clear();
+                    } else if streamed_line.len() < MAX_STREAMED_LINE_BYTES {
+                        streamed_line.push(*byte);
+                    }
+                }
+            }
             if let Some(max_bytes) = max_bytes {
                 let remaining = max_bytes.saturating_sub(output.len());
                 if remaining > 0 {
@@ -6122,6 +6207,11 @@ fn read_child_pipe(
                 output.extend_from_slice(&buffer[..read]);
             }
             *last_output_at.lock().expect("命令输出活动锁已损坏") = Instant::now();
+        }
+    }
+    if let Some(streamer) = streamer.as_ref() {
+        if !streamed_line.is_empty() {
+            streamer.append_line(&streamed_line);
         }
     }
     if max_bytes.is_some() && truncated {
@@ -10502,6 +10592,47 @@ mod tests {
         assert_eq!(result.bytes, input);
         assert_eq!(result.total_bytes, result.bytes.len());
         assert!(!result.truncated);
+    }
+
+    #[test]
+    fn streams_complete_child_output_lines_into_the_running_task() {
+        let task_id = "task-stream-output";
+        let state = Arc::new(Mutex::new(TaskQueueState {
+            tasks: vec![persisted_test_task(
+                task_id,
+                TaskStatus::Running,
+                timestamp_millis(),
+            )],
+            ..TaskQueueState::default()
+        }));
+        let streamer = TaskOutputStreamer {
+            state: Arc::clone(&state),
+            task_id: task_id.to_string(),
+        };
+        let input = b"U    src/first.ts\nUG   src/properties.ts\nA    src/final.ts".to_vec();
+
+        let result = read_child_pipe_with_streamer(
+            Some(Cursor::new(input.clone())),
+            Arc::new(Mutex::new(Instant::now())),
+            Some(MAX_TASK_COMMAND_OUTPUT_BYTES),
+            Some(streamer),
+        )
+        .expect("stream child output");
+
+        assert_eq!(result.bytes, input);
+        let queue = state.lock().expect("task queue lock");
+        assert_eq!(
+            queue.tasks[0]
+                .logs
+                .iter()
+                .map(|log| log.message.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "U    src/first.ts",
+                "UG   src/properties.ts",
+                "A    src/final.ts"
+            ]
+        );
     }
 
     #[test]

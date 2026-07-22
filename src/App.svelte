@@ -1297,6 +1297,14 @@
     await branchPoolStore.remove(entry, deleteLocalCopy);
   }
 
+  function reorderBranchPoolEntries(entryIds: string[]) {
+    void branchPoolStore.reorder(entryIds);
+  }
+
+  function renameBranchPoolEntry(entryId: string, displayName: string) {
+    void branchPoolStore.rename(entryId, displayName);
+  }
+
   async function runSvnSwitch() {
     if (!$workspaceStore.current) {
       workspaceStore.failSvnSwitchTask("请先打开 SVN 工作副本");
@@ -2758,6 +2766,8 @@
   onReuseBranchPoolEntry={reuseBranchPoolEntry}
   onOpenBranchPoolEntry={openBranchPoolEntry}
   onRemoveBranchPoolEntry={removeBranchPoolEntry}
+  onReorderBranchPoolEntries={reorderBranchPoolEntries}
+  onRenameBranchPoolEntry={renameBranchPoolEntry}
   onMergeFormInput={workspaceStore.setMergeForm}
   onUseRepositoryUrlForMerge={workspaceStore.useRepositoryUrlForMerge}
   onRunMerge={runMerge}

@@ -15,7 +15,10 @@ mod task_workspace;
 mod window_state;
 mod workspace;
 
-use branch_pool::{BranchPool, RemoveBranchPoolEntryRequest, SaveBranchPoolEntryRequest};
+use branch_pool::{
+    BranchPool, RemoveBranchPoolEntryRequest, RenameBranchPoolEntryRequest,
+    ReorderBranchPoolEntriesRequest, SaveBranchPoolEntryRequest,
+};
 use diagnostics::DiagnosticExport;
 use diff::{GenerateSelectedPatchRequest, ParsedDiff, SelectedPatch};
 use error::{CommandResponse, CommandResult, HealthPayload, NovaError};
@@ -766,6 +769,26 @@ fn remove_branch_pool_entry(
 }
 
 #[tauri::command]
+fn reorder_branch_pool_entries(
+    app: tauri::AppHandle,
+    request: ReorderBranchPoolEntriesRequest,
+) -> CommandResult<BranchPool> {
+    Ok(CommandResponse::success(
+        branch_pool::reorder_branch_pool_entries(&app, request)?,
+    ))
+}
+
+#[tauri::command]
+fn rename_branch_pool_entry(
+    app: tauri::AppHandle,
+    request: RenameBranchPoolEntryRequest,
+) -> CommandResult<BranchPool> {
+    Ok(CommandResponse::success(
+        branch_pool::rename_branch_pool_entry(&app, request)?,
+    ))
+}
+
+#[tauri::command]
 fn get_task_workspaces(app: tauri::AppHandle) -> CommandResult<TaskWorkspaceList> {
     Ok(CommandResponse::success(
         task_workspace::read_task_workspaces(&app)?,
@@ -1141,6 +1164,8 @@ pub fn run() {
             get_branch_pool,
             save_branch_pool_entry,
             remove_branch_pool_entry,
+            reorder_branch_pool_entries,
+            rename_branch_pool_entry,
             get_task_workspaces,
             save_task_workspace,
             remove_task_workspace,

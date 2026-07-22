@@ -18,6 +18,7 @@
     readCommitMessageSettings,
     writeCommitMessageSettings,
   } from "../lib/commit-message-history";
+  import { LOG_FILE_DIFF_MAX_BYTES } from "../lib/svn-log";
   import type {
     ChangedFile,
     CommandError,
@@ -74,6 +75,13 @@
   let diffLoading = false;
   let diffError: CommandError | null = null;
   let diffGeneration = 0;
+  let diffPaneOpen = false;
+  let diffPaneHeight = 320;
+  let messagePaneWidth = 360;
+  let reviewPaneElement: HTMLDivElement | null = null;
+  let commitLayoutElement: HTMLDivElement | null = null;
+  let diffResizeStart: { y: number; height: number } | null = null;
+  let messageResizeStart: { x: number; width: number } | null = null;
   let history: string[] = [];
   let commitTemplate = "";
   let commitMessage = "";
@@ -177,6 +185,8 @@
     window.removeEventListener("blur", closeFileContextMenu);
     window.removeEventListener("resize", closeFileContextMenu);
     window.removeEventListener("keydown", handleWindowKeydown);
+    stopDiffPaneResize();
+    stopMessagePaneResize();
     themeMediaQuery?.removeEventListener("change", handleThemeChange);
   });
 
@@ -338,6 +348,7 @@
     selectedFileContentDiff = null;
     diffLoading = false;
     diffError = null;
+    diffPaneOpen = false;
   }
 
   async function showFilePreview(file: ChangedFile, currentGeneration = generation) {
@@ -347,6 +358,8 @@
     const requestGeneration = ++diffGeneration;
     const workingCopyRoot = target.working_copy_root;
     activeFilePath = file.path;
+    diffPaneHeight = constrainDiffPaneHeight(diffPaneHeight);
+    diffPaneOpen = true;
     selectedFileDiff = null;
     selectedFileContentDiff = null;
     diffLoading = true;
@@ -359,7 +372,7 @@
     };
     const [diffResult, contentResult] = await Promise.allSettled([
       getFileDiff(request),
-      getFileContentDiff({ ...request, max_bytes: 512 * 1024 }),
+      getFileContentDiff({ ...request, max_bytes: LOG_FILE_DIFF_MAX_BYTES }),
     ]);
     if (requestGeneration !== diffGeneration || currentGeneration !== generation) {
       return;
@@ -372,6 +385,72 @@
       diffError = contentResult.reason as CommandError;
     }
     diffLoading = false;
+  }
+
+  function diffPaneMaximumHeight() {
+    return Math.max(180, (reviewPaneElement?.clientHeight || window.innerHeight) - 150);
+  }
+
+  function constrainDiffPaneHeight(height: number) {
+    return Math.min(Math.max(height, 180), diffPaneMaximumHeight());
+  }
+
+  function startDiffPaneResize(event: MouseEvent) {
+    stopMessagePaneResize();
+    diffResizeStart = { y: event.clientY, height: diffPaneHeight };
+    window.addEventListener("mousemove", resizeDiffPane);
+    window.addEventListener("mouseup", stopDiffPaneResize);
+    event.preventDefault();
+  }
+
+  function resizeDiffPane(event: MouseEvent) {
+    if (!diffResizeStart) return;
+    diffPaneHeight = constrainDiffPaneHeight(
+      diffResizeStart.height + diffResizeStart.y - event.clientY,
+    );
+  }
+
+  function stopDiffPaneResize() {
+    diffResizeStart = null;
+    window.removeEventListener("mousemove", resizeDiffPane);
+    window.removeEventListener("mouseup", stopDiffPaneResize);
+  }
+
+  function adjustDiffPaneHeight(delta: number) {
+    diffPaneHeight = constrainDiffPaneHeight(diffPaneHeight + delta);
+  }
+
+  function messagePaneMaximumWidth() {
+    return Math.max(280, (commitLayoutElement?.clientWidth || window.innerWidth) - 360);
+  }
+
+  function constrainMessagePaneWidth(width: number) {
+    return Math.min(Math.max(width, 280), messagePaneMaximumWidth());
+  }
+
+  function startMessagePaneResize(event: MouseEvent) {
+    stopDiffPaneResize();
+    messageResizeStart = { x: event.clientX, width: messagePaneWidth };
+    window.addEventListener("mousemove", resizeMessagePane);
+    window.addEventListener("mouseup", stopMessagePaneResize);
+    event.preventDefault();
+  }
+
+  function resizeMessagePane(event: MouseEvent) {
+    if (!messageResizeStart) return;
+    messagePaneWidth = constrainMessagePaneWidth(
+      messageResizeStart.width + messageResizeStart.x - event.clientX,
+    );
+  }
+
+  function stopMessagePaneResize() {
+    messageResizeStart = null;
+    window.removeEventListener("mousemove", resizeMessagePane);
+    window.removeEventListener("mouseup", stopMessagePaneResize);
+  }
+
+  function adjustMessagePaneWidth(delta: number) {
+    messagePaneWidth = constrainMessagePaneWidth(messagePaneWidth + delta);
   }
 
   function openHistoryPicker() {
@@ -885,8 +964,17 @@
     {/if}
   </section>
 
-  <div class="commit-layout">
-    <div class="review-pane">
+  <div
+    bind:this={commitLayoutElement}
+    class="commit-layout"
+    style={`--message-pane-width: ${messagePaneWidth}px`}
+  >
+    <div
+      bind:this={reviewPaneElement}
+      class="review-pane"
+      class:diff-open={diffPaneOpen}
+      style={`--diff-pane-height: ${diffPaneHeight}px`}
+    >
       <section class="file-pane" aria-label="选择提交文件">
         <header>
           <div>
@@ -959,42 +1047,103 @@
         </div>
       </section>
 
-      <section class="diff-pane" aria-label="修改内容">
-        <header>
-          <div>
-            <h2>修改内容</h2>
-            <p title={activeFilePath ?? undefined}>{activeFilePath ?? "选择文件后查看"}</p>
-          </div>
-        </header>
-        <div class="diff-content">
-          {#if diffLoading}
-            <div class="empty-diff" role="status">正在读取修改内容...</div>
-          {:else if diffError}
-            <ErrorNotice error={diffError} />
-          {:else if selectedFileContentDiff?.binary || selectedFileDiff?.binary}
-            <div class="empty-diff">二进制文件无法预览文本修改</div>
-          {:else if selectedFileContentDiff?.too_large}
-            <div class="empty-diff">
-              文件内容超过 {Math.round(selectedFileContentDiff.max_bytes / 1024)} KB，无法在窗口中预览
+      {#if diffPaneOpen}
+        <div
+          role="slider"
+          tabindex="0"
+          class="diff-pane-resizer"
+          aria-label="调整 Diff 区域高度"
+          aria-orientation="vertical"
+          aria-valuemin="180"
+          aria-valuemax={diffPaneMaximumHeight()}
+          aria-valuenow={diffPaneHeight}
+          on:mousedown={startDiffPaneResize}
+          on:keydown={(event) => {
+            if (event.key === "ArrowUp") {
+              adjustDiffPaneHeight(16);
+              event.preventDefault();
+            } else if (event.key === "ArrowDown") {
+              adjustDiffPaneHeight(-16);
+              event.preventDefault();
+            } else if (event.key === "Home") {
+              diffPaneHeight = 180;
+              event.preventDefault();
+            } else if (event.key === "End") {
+              diffPaneHeight = diffPaneMaximumHeight();
+              event.preventDefault();
+            }
+          }}
+        ></div>
+        <section class="diff-pane" aria-label="修改内容">
+          <header>
+            <div>
+              <h2>修改内容</h2>
+              <p title={activeFilePath ?? undefined}>{activeFilePath}</p>
             </div>
-          {:else if selectedFileContentDiff && selectedFileContentDiff.original_text !== selectedFileContentDiff.modified_text}
-            <MonacoDiffViewer
-              contentDiff={selectedFileContentDiff}
-              inlineMode={diffMode === "inline"}
-              {showWhitespace}
-              theme={resolvedTheme}
-            />
-          {:else if selectedFileDiff?.text}
-            <pre class="raw-diff">{selectedFileDiff.text}</pre>
-          {:else if activeFilePath}
-            <div class="empty-diff">没有可显示的文本修改</div>
-          {:else}
-            <div class="empty-diff">点击文件条目查看修改内容</div>
-          {/if}
-        </div>
-      </section>
+            <button
+              type="button"
+              class="icon-button diff-close"
+              aria-label="关闭 Diff"
+              title="关闭 Diff"
+              on:click={clearFilePreview}
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          </header>
+          <div class="diff-content">
+            {#if diffLoading}
+              <div class="empty-diff" role="status">正在读取修改内容...</div>
+            {:else if diffError}
+              <ErrorNotice error={diffError} />
+            {:else if selectedFileContentDiff?.binary || selectedFileDiff?.binary}
+              <div class="empty-diff">二进制文件无法预览文本修改</div>
+            {:else if selectedFileContentDiff?.too_large}
+              <div class="empty-diff">
+                文件内容超过 {Math.round(selectedFileContentDiff.max_bytes / 1024 / 1024)} MB，无法在窗口中预览
+              </div>
+            {:else if selectedFileContentDiff && selectedFileContentDiff.original_text !== selectedFileContentDiff.modified_text}
+              <MonacoDiffViewer
+                contentDiff={selectedFileContentDiff}
+                inlineMode={diffMode === "inline"}
+                {showWhitespace}
+                theme={resolvedTheme}
+              />
+            {:else if selectedFileDiff?.text}
+              <pre class="raw-diff">{selectedFileDiff.text}</pre>
+            {:else}
+              <div class="empty-diff">没有可显示的文本修改</div>
+            {/if}
+          </div>
+        </section>
+      {/if}
     </div>
 
+    <div
+      role="slider"
+      tabindex="0"
+      class="message-pane-resizer"
+      aria-label="调整提交信息侧栏宽度"
+      aria-orientation="horizontal"
+      aria-valuemin="280"
+      aria-valuemax={messagePaneMaximumWidth()}
+      aria-valuenow={messagePaneWidth}
+      on:mousedown={startMessagePaneResize}
+      on:keydown={(event) => {
+        if (event.key === "ArrowLeft") {
+          adjustMessagePaneWidth(16);
+          event.preventDefault();
+        } else if (event.key === "ArrowRight") {
+          adjustMessagePaneWidth(-16);
+          event.preventDefault();
+        } else if (event.key === "Home") {
+          messagePaneWidth = 280;
+          event.preventDefault();
+        } else if (event.key === "End") {
+          messagePaneWidth = messagePaneMaximumWidth();
+          event.preventDefault();
+        }
+      }}
+    ></div>
     <aside class="message-pane" aria-label="提交信息">
       <header>
         <div>
@@ -1253,8 +1402,9 @@
   .revert-notice { border: 1px solid #91bf9a; background: #eff9f1; color: #276b35; padding: 8px 10px; font-size: 12px; }
   [data-theme="dark"] .inline-error { background: #3b2424; color: #ffb0b0; }
   [data-theme="dark"] .revert-notice { background: #213629; color: #9de3aa; }
-  .commit-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, .7fr); gap: 14px; min-height: 0; padding: 14px 22px 20px; }
-  .review-pane { display: grid; grid-template-rows: minmax(150px, .42fr) minmax(220px, .58fr); gap: 12px; min-width: 0; min-height: 0; }
+  .commit-layout { display: grid; grid-template-columns: minmax(320px, 1fr) 8px minmax(280px, var(--message-pane-width)); min-height: 0; padding: 14px 22px 20px; }
+  .review-pane { display: grid; grid-template-rows: minmax(0, 1fr); min-width: 0; min-height: 0; }
+  .review-pane.diff-open { grid-template-rows: minmax(140px, 1fr) 8px minmax(180px, var(--diff-pane-height)); }
   .file-pane, .diff-pane, .message-pane { min-width: 0; min-height: 0; border: 1px solid var(--border); background: var(--panel); }
   .file-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); }
   .diff-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); }
@@ -1263,6 +1413,14 @@
   .message-pane > header { padding: 0 0 12px; }
   .file-pane header p, .diff-pane header p, .message-pane header p { margin-top: 4px; color: var(--secondary); font-size: 12px; }
   .diff-pane header p { overflow: hidden; max-width: 52vw; text-overflow: ellipsis; white-space: nowrap; }
+  .diff-pane-resizer, .message-pane-resizer { position: relative; z-index: 2; outline: 0; }
+  .diff-pane-resizer { cursor: row-resize; }
+  .message-pane-resizer { cursor: col-resize; }
+  .diff-pane-resizer::after, .message-pane-resizer::after { content: ""; position: absolute; background: var(--border); transition: background .12s ease; }
+  .diff-pane-resizer::after { inset: 3px 0; }
+  .message-pane-resizer::after { inset: 0 3px; }
+  .diff-pane-resizer:hover::after, .diff-pane-resizer:focus-visible::after, .message-pane-resizer:hover::after, .message-pane-resizer:focus-visible::after { background: var(--accent); }
+  button.icon-button { width: 30px; min-width: 30px; min-height: 30px; padding: 0; }
   .file-list { overflow: auto; padding: 6px; }
   .file-item { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); font-size: 12px; }
   .file-item:hover { background: var(--panel-subtle); }
@@ -1469,7 +1627,10 @@
   @media (max-width: 800px) {
     .commit-titlebar { padding: 14px; }
     .commit-summary, .commit-notices { padding-left: 14px; padding-right: 14px; }
-    .commit-layout { grid-template-columns: 1fr; padding: 10px 14px 14px; overflow: auto; }
-    .review-pane { grid-template-rows: minmax(240px, 1fr) minmax(260px, 1fr); min-height: 520px; }
+    .commit-layout { display: block; padding: 10px 14px 14px; overflow: auto; }
+    .review-pane { min-height: 240px; }
+    .review-pane.diff-open { grid-template-rows: minmax(240px, 1fr) 8px minmax(260px, var(--diff-pane-height)); min-height: 508px; }
+    .message-pane-resizer { display: none; }
+    .message-pane { margin-top: 12px; }
   }
 </style>

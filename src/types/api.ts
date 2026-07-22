@@ -310,6 +310,7 @@ export interface CreateApplyPatchTaskRequest {
 
 export interface BranchPoolEntry {
   id: string;
+  display_name?: string;
   branch_url: string;
   local_path: string;
   revision: string;
@@ -332,6 +333,15 @@ export interface SaveBranchPoolEntryRequest {
 export interface RemoveBranchPoolEntryRequest {
   id: string;
   delete_local_copy?: boolean;
+}
+
+export interface ReorderBranchPoolEntriesRequest {
+  entry_ids: string[];
+}
+
+export interface RenameBranchPoolEntryRequest {
+  id: string;
+  display_name: string;
 }
 
 export interface TaskWorkspaceEntry {
@@ -768,6 +778,7 @@ export interface IgnoreWorkspacePathRequest {
 
 export interface FileDiff {
   path: string;
+  node_kind?: "file" | "dir" | string;
   text: string;
   binary: boolean;
   empty: boolean;
@@ -775,6 +786,7 @@ export interface FileDiff {
 
 export interface FileContentDiff {
   path: string;
+  node_kind?: "file" | "dir" | string;
   original_text: string;
   modified_text: string;
   language: string;

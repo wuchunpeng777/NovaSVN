@@ -98,6 +98,18 @@
   $: resolutionRunning = isTaskRunning(resolutionTask);
   $: updateComplete = updateTask !== null && terminalStatuses.includes(updateTask.status);
   $: updatedFiles = extractUpdatedFiles(updateTask?.logs ?? []);
+  $: provisionalConflictPaths = updatedFiles
+    .filter((file) => file.action.includes("C"))
+    .map((file) => file.path)
+    .filter(
+      (path) =>
+        !conflicts.some((file) => file.path === path) &&
+        (updateRunning || statusError !== null),
+    );
+  $: conflictCount = new Set([
+    ...conflicts.map((file) => file.path),
+    ...provisionalConflictPaths,
+  ]).size;
 
   onMount(() => {
     if (typeof window.matchMedia === "function") {
@@ -483,13 +495,14 @@
   function extractUpdatedFiles(logs: Task["logs"]) {
     const files = new Map<string, { action: string; path: string }>();
     for (const log of logs) {
-      const match = /^\s*([ACDMRUGER!~])\s+(.+?)\s*$/.exec(log.message);
+      const match = /^([ACDMRUGER!~ ]{1,4})\s+(.+?)\s*$/.exec(log.message);
       if (!match) {
         continue;
       }
+      const action = match[1].replaceAll(" ", "");
       const path = match[2].trim();
-      if (path) {
-        files.set(path, { action: match[1], path });
+      if (action && path) {
+        files.set(path, { action, path });
       }
     }
     return [...files.values()];
@@ -555,7 +568,7 @@
       {:else}
         <button
           type="button"
-          disabled={initializing || resolutionRunning || conflicts.length > 0}
+          disabled={initializing || resolutionRunning || conflictCount > 0}
           on:click={startUpdate}
         >
           <RotateCw size={15} aria-hidden="true" /> 重新更新
@@ -567,7 +580,7 @@
   <section class="update-summary" aria-label="更新摘要">
     <span>目标 <strong>{target?.relative_path ?? "工作副本根目录"}</strong></span>
     <span>Revision <strong>{status?.revision_range ?? target?.revision ?? "-"}</strong></span>
-    <span>冲突 <strong class:has-conflicts={conflicts.length > 0}>{conflicts.length}</strong></span>
+    <span>冲突 <strong class:has-conflicts={conflictCount > 0}>{conflictCount}</strong></span>
     <button
       type="button"
       class="icon-button"
@@ -645,11 +658,20 @@
       <header>
         <div>
           <h2>冲突处理</h2>
-          <p>{conflicts.length > 0 ? `${conflicts.length} 个路径待处理` : "没有待处理冲突"}</p>
+          <p>{conflictCount > 0 ? `${conflictCount} 个路径待处理` : "没有待处理冲突"}</p>
         </div>
       </header>
 
       <div class="conflict-list">
+        {#each provisionalConflictPaths as path (path)}
+          <article class="conflict-item provisional-conflict">
+            <header>
+              <strong title={path}>{path}</strong>
+              <span>更新中检测到冲突</span>
+            </header>
+            <p class="resolving" role="status">等待 Update 完成后读取冲突详情...</p>
+          </article>
+        {/each}
         {#each conflicts as file (file.path)}
           <article class="conflict-item">
             <header>
@@ -692,7 +714,7 @@
           </article>
         {/each}
 
-        {#if conflicts.length === 0 && updateComplete && !scanning}
+        {#if conflictCount === 0 && updateComplete && !scanning}
           <div class="conflict-empty">工作副本没有未解决冲突</div>
         {:else if scanning}
           <div class="conflict-empty" role="status">正在检查冲突...</div>
