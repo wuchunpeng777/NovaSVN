@@ -191,7 +191,7 @@ describe("StandaloneLogWindow", () => {
     expect(screen.getByLabelText("A 1")).toBeInTheDocument();
     expect(screen.getByLabelText("M 2")).toBeInTheDocument();
     expect(screen.getByLabelText("D 1")).toBeInTheDocument();
-    const revision = screen.getByText("r20").closest(".entry-revision");
+    const revision = screen.getByText("r20").closest(".svn-log-revision");
     expect(revision?.textContent?.replace(/\s/g, "")).toBe("r20A1M2D1");
     await fireEvent.click(screen.getByRole("button", { name: "查看路径" }));
     const changedPaths = screen.getByLabelText("r20 改变路径");

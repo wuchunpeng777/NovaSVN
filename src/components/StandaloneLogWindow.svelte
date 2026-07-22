@@ -1,12 +1,9 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import {
-    ChevronDown,
-    ChevronUp,
     GitMerge,
     History,
     RefreshCw,
-    RotateCcw,
     X,
   } from "@lucide/svelte";
   import {
@@ -23,7 +20,6 @@
     repositoryPathLogTarget,
     repositoryPathUrlAtRevision,
     revisionBefore,
-    summarizeSvnChangeActions,
   } from "../lib/svn-log";
   import type {
     CommandError,
@@ -36,6 +32,7 @@
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
   import LogMergeDialog from "./LogMergeDialog.svelte";
+  import SvnLogRevisionList from "./SvnLogRevisionList.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
   import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
 
@@ -742,106 +739,27 @@
     class:resizing-diff={diffResizeStart !== null}
     style={`--log-diff-width: ${diffPaneWidth}px`}
   >
-    <section class="log-list" aria-label="Revision 列表" aria-busy={loading}>
-      {#if filteredEntries.length > 0}
-        {#each filteredEntries as entry (entry.revision)}
-          <article class="log-entry">
-            <header>
-              <input
-                type="checkbox"
-                class="revision-checkbox"
-                aria-label={`选择 r${entry.revision} 用于 Merge`}
-                checked={mergeRevisions.has(entry.revision)}
-                on:click={(event) => toggleMergeRevision(event, entry.revision)}
-              />
-              <button
-                type="button"
-                class="entry-summary"
-                aria-label={`${expandedRevisions.has(entry.revision) ? "收起" : "展开"} r${entry.revision} 日志`}
-                aria-expanded={expandedRevisions.has(entry.revision)}
-                on:click={() => togglePaths(entry.revision)}
-              >
-                <span class="entry-revision">
-                  <strong>r{entry.revision}</strong>
-                  <span class="change-counts">
-                    {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
-                      <span
-                        class="change-count"
-                        data-action={summary.action}
-                        aria-label={`${summary.action} ${summary.count}`}
-                      >{summary.action}{summary.count}</span>
-                    {/each}
-                  </span>
-                </span>
-                <span title={entry.author || undefined}>{entry.author || "-"}</span>
-                <time datetime={entry.date} title={entry.date}>{formatDate(entry.date)}</time>
-              </button>
-              <div class="entry-meta">
-                <em>{entry.changed_paths.length} paths</em>
-                {#if entry.changed_paths.length > 0}
-                  <button
-                    type="button"
-                    class="path-toggle"
-                    aria-expanded={expandedRevisions.has(entry.revision)}
-                    on:click={() => togglePaths(entry.revision)}
-                  >
-                    {#if expandedRevisions.has(entry.revision)}
-                      <ChevronUp size={13} aria-hidden="true" /> 收起
-                    {:else}
-                      <ChevronDown size={13} aria-hidden="true" /> 查看路径
-                    {/if}
-                  </button>
-                {/if}
-                <button
-                  type="button"
-                  class="revert-revision"
-                  aria-label={`Revert 工作副本到 r${entry.revision}`}
-                  title={log?.working_copy_root
-                    ? `Revert 工作副本到 r${entry.revision}`
-                    : "仅本地工作副本日志支持 Revert"}
-                  disabled={!log?.working_copy_root || loading || revertRunning}
-                  on:click={() => revertToRevision(entry.revision)}
-                >
-                  <RotateCcw size={15} strokeWidth={2} aria-hidden="true" />
-                </button>
-              </div>
-            </header>
-            <p>{entry.message || "无提交信息"}</p>
-            {#if entry.changed_paths.length > 0 && expandedRevisions.has(entry.revision)}
-              <div class="changed-paths" aria-label={`r${entry.revision} 改变路径`}>
-                {#each entry.changed_paths as path (`${entry.revision}:${path.action}:${path.path}`)}
-                  <div class="changed-path">
-                    <span class="change-action" data-action={path.action}>{path.action || "-"}</span>
-                    {#if path.kind === "dir"}
-                      <code>{path.path}</code>
-                    {:else}
-                      <button
-                        type="button"
-                        class="changed-path-button"
-                        aria-label={`查看 r${entry.revision} 的 ${path.path} diff`}
-                        disabled={revisionDiffLoading}
-                        on:click={() => openChangedPathDiff(entry, path)}
-                        on:contextmenu={(event) =>
-                          openChangedPathContextMenu(event, entry, path)}
-                      >
-                        <code>{path.path}</code>
-                      </button>
-                    {/if}
-                    <small>{path.kind || "-"}</small>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </article>
-        {/each}
-      {:else if loading}
-        <div class="log-empty" role="status">正在读取日志...</div>
-      {:else if log?.entries.length}
-        <div class="log-empty">没有符合当前过滤条件的 revision</div>
-      {:else if !error}
-        <div class="log-empty">没有可显示的日志记录</div>
-      {/if}
-    </section>
+    <SvnLogRevisionList
+      entries={filteredEntries}
+      totalEntries={log?.entries.length ?? 0}
+      {loading}
+      hasLoadError={error !== null}
+      {expandedRevisions}
+      mergeRevisions={mergeRevisions}
+      diffLoading={revisionDiffLoading}
+      compact={selectedDiff !== null}
+      theme={resolvedTheme}
+      {formatDate}
+      revertDisabled={() => !log?.working_copy_root || loading || revertRunning}
+      revertTitle={(entry) => log?.working_copy_root
+        ? `Revert 工作副本到 r${entry.revision}`
+        : "仅本地工作副本日志支持 Revert"}
+      onTogglePaths={togglePaths}
+      onToggleMerge={toggleMergeRevision}
+      onOpenDiff={openChangedPathDiff}
+      onOpenContextMenu={openChangedPathContextMenu}
+      onRevert={(entry) => revertToRevision(entry.revision)}
+    />
   {#if selectedDiff}
     <div
       class="log-diff-resizer"
@@ -1163,159 +1081,8 @@
     cursor: col-resize;
   }
 
-  .log-layout.merge-selection-active .log-list {
+  .log-layout.merge-selection-active :global(.svn-log-list) {
     padding-bottom: 82px;
-  }
-
-  .log-list {
-    min-height: 0;
-    overflow: auto;
-    background: var(--panel);
-    padding: 0 14px 18px;
-  }
-
-  .log-entry {
-    border-bottom: 1px solid var(--border);
-    padding: 9px 2px;
-  }
-
-  .log-entry > header {
-    display: grid;
-    grid-template-columns: 24px minmax(0, 1fr) minmax(72px, auto);
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-  }
-
-  .revision-checkbox {
-    width: 15px;
-    min-width: 15px;
-    min-height: 15px;
-    margin: 0;
-    justify-self: center;
-  }
-
-  .entry-summary {
-    display: grid;
-    grid-template-columns: minmax(130px, auto) minmax(100px, 160px) 150px;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-    min-height: 30px;
-    border: 0;
-    background: transparent;
-    padding: 0;
-    text-align: left;
-  }
-
-  .entry-summary:hover,
-  .entry-summary:focus-visible {
-    color: var(--accent);
-  }
-
-  .log-entry > header span,
-  .log-entry > header em {
-    overflow: hidden;
-    color: var(--secondary);
-    font-style: normal;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .log-entry > header em {
-    text-align: right;
-  }
-
-  .entry-meta {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    min-width: 0;
-  }
-
-  .entry-revision {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    min-width: 0;
-  }
-
-  .entry-revision strong {
-    flex: 0 0 auto;
-  }
-
-  .change-counts {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .change-count {
-    border-radius: 4px;
-    padding: 2px 5px;
-    font-size: 10px;
-    font-weight: 700;
-    line-height: 1.2;
-  }
-
-  .log-entry > p {
-    margin-top: 4px;
-    white-space: pre-wrap;
-  }
-
-  .changed-paths {
-    display: grid;
-    gap: 1px;
-    margin-top: 5px;
-    overflow: hidden;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--border);
-  }
-
-  .changed-path {
-    display: grid;
-    grid-template-columns: 28px minmax(0, 1fr) 54px;
-    gap: 8px;
-    background: var(--panel-subtle);
-    padding: 5px 8px;
-    font-size: 11px;
-  }
-
-  .change-action {
-    display: grid;
-    width: 22px;
-    height: 22px;
-    border-radius: 5px;
-    font-weight: 700;
-    place-items: center;
-  }
-
-  .changed-path code,
-  .changed-path-button {
-    min-width: 0;
-  }
-
-  .changed-path code {
-    overflow-wrap: anywhere;
-    font-family: "SFMono-Regular", Consolas, monospace;
-  }
-
-  .changed-path-button {
-    min-height: 0;
-    border: 0;
-    border-radius: 2px;
-    background: transparent;
-    color: var(--accent);
-    padding: 1px 2px;
-    text-align: left;
-  }
-
-  .changed-path-button:hover,
-  .changed-path-button:focus-visible {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
   }
 
   .file-context-menu {
@@ -1372,16 +1139,6 @@
     min-width: 0;
   }
 
-  .revert-revision {
-    display: grid;
-    flex: 0 0 28px;
-    width: 28px;
-    min-width: 28px;
-    min-height: 28px;
-    padding: 0;
-    place-items: center;
-  }
-
   .merge-selection-bar span {
     overflow: hidden;
     color: var(--secondary);
@@ -1411,72 +1168,10 @@
     color: #ffffff;
   }
 
-  .change-action[data-action="A"],
-  .change-count[data-action="A"] {
-    background: #dff2e4;
-    color: #24733a;
-  }
-
-  .change-action[data-action="M"],
-  .change-count[data-action="M"] {
-    background: #fff0c7;
-    color: #805900;
-  }
-
-  .change-action[data-action="D"],
-  .change-count[data-action="D"] {
-    background: #fbe0df;
-    color: #a12f2b;
-  }
-
-  .standalone-log[data-theme="dark"] .change-action[data-action="A"],
-  .standalone-log[data-theme="dark"] .change-count[data-action="A"] {
-    background: #1f4b2d;
-    color: #8fdaa2;
-  }
-
-  .standalone-log[data-theme="dark"] .change-action[data-action="M"],
-  .standalone-log[data-theme="dark"] .change-count[data-action="M"] {
-    background: #4b3b16;
-    color: #f6cf73;
-  }
-
-  .standalone-log[data-theme="dark"] .change-action[data-action="D"],
-  .standalone-log[data-theme="dark"] .change-count[data-action="D"] {
-    background: #522725;
-    color: #ffaaa7;
-  }
-
   .standalone-log[data-theme="dark"] .revert-status.success {
     border-color: #376d47;
     background: #203729;
     color: #8fdaa2;
-  }
-
-  .changed-path small {
-    color: var(--secondary);
-    text-align: right;
-  }
-
-  .path-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    min-height: 22px;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    color: var(--accent);
-    padding: 1px 0;
-    font-size: 11px;
-  }
-
-  .log-empty {
-    display: grid;
-    min-height: 180px;
-    color: var(--secondary);
-    place-items: center;
   }
 
   .log-diff {
@@ -1557,21 +1252,6 @@
     min-height: 0;
     color: var(--secondary);
     place-items: center;
-  }
-
-  @media (max-width: 1040px) {
-    .entry-summary {
-      grid-template-columns: 72px minmax(90px, 1fr) 145px;
-    }
-
-    .log-layout.with-diff .log-entry > header {
-      grid-template-columns: 24px minmax(0, 1fr);
-    }
-
-    .log-layout.with-diff .entry-meta {
-      grid-column: 2;
-      justify-content: flex-start;
-    }
   }
 
   @media (max-width: 820px) {

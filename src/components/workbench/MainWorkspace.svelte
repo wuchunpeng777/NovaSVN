@@ -1,8 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import {
-    ChevronDown,
-    ChevronUp,
     CircleCheck,
     CircleX,
     Download,
@@ -22,11 +20,11 @@
     Pencil,
     Plus,
     RefreshCw,
-    RotateCcw,
     Wrench,
     X,
   } from "@lucide/svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
+  import SvnLogRevisionList from "../SvnLogRevisionList.svelte";
   import ConflictResolver from "./ConflictResolver.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
   import { getRevisionFileContentDiff } from "../../lib/api";
@@ -39,7 +37,6 @@
     LOG_FILE_DIFF_MAX_BYTES,
     repositoryPathUrlAtRevision,
     revisionBefore,
-    summarizeSvnChangeActions,
   } from "../../lib/svn-log";
   import type {
     ApplyPatchResult,
@@ -59,7 +56,9 @@
     SvnAuthenticationStatus,
     SvnCertificateFailure,
     SvnCertificateTrustStatus,
+    SvnChangedPath,
     SvnLog,
+    SvnLogEntry,
     SvnProperties,
     PendingSvnOperationKind,
     Task,
@@ -1122,6 +1121,18 @@
       next.add(revision);
     }
     expandedTimelineRevisions = next;
+  }
+
+  function openTimelineEntryDiff(entry: SvnLogEntry, path: SvnChangedPath) {
+    return openChangedPathRevisionDiff(entry.revision, path.path, path.action);
+  }
+
+  function timelineRevertDisabled() {
+    return !workspace || toolbarLocked;
+  }
+
+  function revertTimelineEntry(entry: SvnLogEntry) {
+    onRevertToRevision(entry.revision);
   }
 
   function selectInspectorTab(tab: InspectorTab, focus = false) {
@@ -3119,98 +3130,23 @@
         <ErrorNotice error={svnLogError} />
 
         <div class="timeline-layout" class:file-diff-open={selectedRevisionFileDiff !== null}>
-          <section class="timeline-list" aria-label="Revision 列表">
-            {#if filteredLogEntries.length > 0}
-              {#each filteredLogEntries as entry (entry.revision)}
-                <article class="timeline-entry">
-                  <header class="timeline-entry-header">
-                    <button
-                      type="button"
-                      class="timeline-entry-summary"
-                      aria-label={`${expandedTimelineRevisions.has(entry.revision) ? "收起" : "展开"} r${entry.revision} 日志`}
-                      aria-expanded={expandedTimelineRevisions.has(entry.revision)}
-                      on:click={() => toggleTimelineEntryPaths(entry.revision)}
-                    >
-                      <span class="timeline-revision">
-                        <strong>r{entry.revision}</strong>
-                        <span class="timeline-change-counts">
-                          {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
-                            <span
-                              class="timeline-change-count"
-                              data-action={summary.action}
-                              aria-label={`${summary.action} ${summary.count}`}
-                            >{summary.action}{summary.count}</span>
-                          {/each}
-                        </span>
-                      </span>
-                      <span class="timeline-author" title={entry.author || undefined}>{entry.author || "-"}</span>
-                      <time datetime={entry.date} title={entry.date}>{formatTimelineDate(entry.date)}</time>
-                    </button>
-                    <div class="timeline-entry-meta">
-                      <em>{entry.changed_paths.length} paths</em>
-                      {#if entry.changed_paths.length > 0}
-                        <button
-                          type="button"
-                          class="timeline-path-toggle"
-                          aria-expanded={expandedTimelineRevisions.has(entry.revision)}
-                          on:click={() => toggleTimelineEntryPaths(entry.revision)}
-                        >
-                          {#if expandedTimelineRevisions.has(entry.revision)}
-                            <ChevronUp size={13} aria-hidden="true" /> 收起
-                          {:else}
-                            <ChevronDown size={13} aria-hidden="true" /> 查看路径
-                          {/if}
-                        </button>
-                      {/if}
-                      <button
-                        type="button"
-                        class="timeline-revert-revision"
-                        aria-label={`Revert 工作副本到 r${entry.revision}`}
-                        title={`Revert 工作副本到 r${entry.revision}`}
-                        disabled={!workspace || toolbarLocked}
-                        on:click={() => onRevertToRevision(entry.revision)}
-                      >
-                        <RotateCcw size={15} strokeWidth={2} aria-hidden="true" />
-                      </button>
-                    </div>
-                  </header>
-                  <p class="timeline-message">{entry.message || "无提交信息"}</p>
-                  {#if entry.changed_paths.length > 0 && expandedTimelineRevisions.has(entry.revision)}
-                    <div
-                      class="timeline-changed-paths"
-                      aria-label={`r${entry.revision} 改变路径`}
-                    >
-                      {#each entry.changed_paths as path (`${entry.revision}:${path.path}:${path.action}`)}
-                        <div class="timeline-changed-path">
-                          <span class="change-action" data-action={path.action}>{path.action || "-"}</span>
-                          {#if path.kind === "dir"}
-                            <code>{path.path}</code>
-                          {:else}
-                            <button
-                              type="button"
-                              class="timeline-changed-path-button"
-                              aria-label={`查看 r${entry.revision} 的 ${path.path} diff`}
-                              disabled={revisionFileDiffLoading}
-                              on:click={() => openChangedPathRevisionDiff(entry.revision, path.path, path.action)}
-                            >
-                              <code>{path.path}</code>
-                            </button>
-                          {/if}
-                          <small>{path.kind || "-"}</small>
-                        </div>
-                      {/each}
-                    </div>
-                  {/if}
-                </article>
-              {/each}
-            {:else if svnLogLoading}
-              <article class="empty-state">正在读取日志</article>
-            {:else if svnLog && svnLog.entries.length > 0}
-              <article class="empty-state">没有符合当前过滤条件的 revision</article>
-            {:else}
-              <article class="empty-state">点击“读取日志”查看修订历史</article>
-            {/if}
-          </section>
+          <SvnLogRevisionList
+            entries={filteredLogEntries}
+            totalEntries={svnLog?.entries.length ?? 0}
+            loading={svnLogLoading}
+            hasLoadError={svnLogError !== null}
+            expandedRevisions={expandedTimelineRevisions}
+            diffLoading={revisionFileDiffLoading}
+            compact={selectedRevisionFileDiff !== null}
+            theme={resolvedTheme}
+            emptyText="点击“读取日志”查看修订历史"
+            loadingText="正在读取日志"
+            formatDate={formatTimelineDate}
+            revertDisabled={timelineRevertDisabled}
+            onTogglePaths={toggleTimelineEntryPaths}
+            onOpenDiff={openTimelineEntryDiff}
+            onRevert={revertTimelineEntry}
+          />
 
           {#if selectedRevisionFileDiff}
             <div

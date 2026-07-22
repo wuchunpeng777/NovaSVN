@@ -866,7 +866,7 @@ Certificate information:
     expect(within(timeline).queryByRole("group", { name: "2026年7月11日" }))
       .not.toBeInTheDocument();
     expect(within(timeline).getByText("r11")).toBeInTheDocument();
-    const newestEntry = within(timeline).getByText("r12").closest(".timeline-entry") as HTMLElement;
+    const newestEntry = within(timeline).getByText("r12").closest(".svn-log-entry") as HTMLElement;
     expect(newestEntry).toHaveTextContent("alice");
     expect(newestEntry.querySelector("time")).toHaveAttribute(
       "datetime",
@@ -878,7 +878,7 @@ Certificate information:
     expect(
       within(newestEntry)
         .getByText("r12")
-        .closest(".timeline-revision")
+        .closest(".svn-log-revision")
         ?.textContent?.replace(/\s/g, ""),
     ).toBe("r12M5");
     expect(newestEntry).not.toHaveTextContent("/trunk/file-12-1.txt");
