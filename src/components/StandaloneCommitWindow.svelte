@@ -1243,6 +1243,7 @@
           size="8"
           aria-label="历史提交日志"
           bind:value={selectedHistoryMessage}
+          on:dblclick={useSelectedHistoryMessage}
         >
           {#each history as message}
             <option value={message}>{message}</option>

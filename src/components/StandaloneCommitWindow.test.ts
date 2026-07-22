@@ -267,8 +267,9 @@ describe("StandaloneCommitWindow", () => {
     expect(within(dialog).queryByText("旧版全局日志")).not.toBeInTheDocument();
     const history = within(dialog).getByRole("listbox", { name: "历史提交日志" });
     await fireEvent.change(history, { target: { value: "修复历史问题" } });
-    await fireEvent.click(within(dialog).getByRole("button", { name: "填充提交日志" }));
+    await fireEvent.doubleClick(history);
     expect(screen.getByRole("textbox", { name: "提交日志" })).toHaveValue("修复历史问题");
+    expect(screen.queryByRole("dialog", { name: "选择历史提交日志" })).not.toBeInTheDocument();
 
     const filePane = screen.getByLabelText("选择提交文件");
     await fireEvent.click(within(filePane).getByLabelText("src/main.ts"));

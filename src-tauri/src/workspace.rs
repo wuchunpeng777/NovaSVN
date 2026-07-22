@@ -56,6 +56,8 @@ pub struct RecentWorkspace {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ScanWorkspaceStatusRequest {
     pub working_copy_root: String,
+    pub scope_path: Option<String>,
+    pub include_content_digests: Option<bool>,
     pub svn_executable: Option<String>,
     pub offset: Option<usize>,
     pub limit: Option<usize>,
@@ -1485,32 +1487,48 @@ pub fn get_revision_file_content_diff(
 pub fn scan_workspace_status(
     request: ScanWorkspaceStatusRequest,
 ) -> Result<WorkingCopyStatus, NovaError> {
-    let path = normalize_workspace_path(&request.working_copy_root)?;
+    let root = normalize_workspace_path(&request.working_copy_root)?;
+    let scope_path = request
+        .scope_path
+        .as_deref()
+        .map(normalize_status_scope_path)
+        .transpose()?;
+    let mut status_path = scope_path
+        .as_ref()
+        .map(|path| root.join(path))
+        .unwrap_or_else(|| root.clone());
+    while status_path != root && !status_path.exists() {
+        if !status_path.pop() {
+            status_path = root.clone();
+            break;
+        }
+    }
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
     let output = if request.check_remote_updates.unwrap_or(true) {
-        run_status_with_updates(&executable, &path)?
+        run_status_with_updates(&executable, &status_path)?
     } else {
-        run_status_without_updates(&executable, &path)?
+        run_status_without_updates(&executable, &status_path)?
     };
 
     if !output.status.success() {
         return Err(NovaError::command(
             "SVN_STATUS_COMMAND_FAILED",
             "工作副本状态扫描失败",
-            Some(svn_status_error_detail(&executable, &path, &output)),
+            Some(svn_status_error_detail(&executable, &status_path, &output)),
             true,
         ));
     }
 
-    let revision_summary = read_workspace_revision_summary(&executable, &path);
+    let revision_summary = read_workspace_revision_summary(&executable, &status_path);
     let xml = String::from_utf8_lossy(&output.stdout);
     parse_svn_status_xml(
         &xml,
-        &path,
+        &root,
         request.offset.unwrap_or(0),
         request.limit.unwrap_or(500),
         revision_summary,
+        request.include_content_digests.unwrap_or(true),
     )
 }
 
@@ -1521,6 +1539,8 @@ pub fn list_workspace_files(
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
     let status = scan_workspace_status(ScanWorkspaceStatusRequest {
         working_copy_root: path.display().to_string(),
+        scope_path: None,
+        include_content_digests: None,
         svn_executable: Some(executable.clone()),
         offset: Some(0),
         limit: Some(5000),
@@ -2278,6 +2298,35 @@ fn normalize_relative_file_path(path: &str) -> Result<String, NovaError> {
     Ok(normalize_runtime_separators(path))
 }
 
+fn normalize_status_scope_path(path: &str) -> Result<String, NovaError> {
+    if path.is_empty() || path.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "SVN_STATUS_SCOPE_INVALID",
+            "状态扫描范围无效",
+            Some("扫描范围必须是工作副本内的相对路径。".to_string()),
+            true,
+        ));
+    }
+
+    let target = PathBuf::from(path);
+    if target.is_absolute()
+        || (cfg!(windows)
+            && (is_explicit_windows_absolute_path(path)
+                || path.starts_with('\\')
+                || path.starts_with('/')))
+        || has_runtime_parent_segment(path)
+    {
+        return Err(NovaError::command(
+            "SVN_STATUS_SCOPE_INVALID",
+            "状态扫描范围无效",
+            Some("扫描范围不能超出当前工作副本。".to_string()),
+            true,
+        ));
+    }
+
+    Ok(normalize_runtime_separators(path))
+}
+
 fn normalize_log_revision_value(revision: &str) -> Result<String, NovaError> {
     let value = revision.trim();
     if value.is_empty() || value.chars().any(|character| !character.is_ascii_digit()) {
@@ -2670,6 +2719,7 @@ fn parse_svn_status_xml(
     offset: usize,
     limit: usize,
     revision_summary: RevisionSummary,
+    include_content_digests: bool,
 ) -> Result<WorkingCopyStatus, NovaError> {
     let document = Document::parse(xml).map_err(|error| {
         NovaError::command(
@@ -2759,7 +2809,11 @@ fn parse_svn_status_xml(
             lock_comment,
             conflict_kind,
             file_size: changed_file_size(&target_path),
-            content_digest: changed_file_digest(&target_path, &item),
+            content_digest: if include_content_digests {
+                changed_file_digest(&target_path, &item)
+            } else {
+                String::new()
+            },
         });
     }
 
@@ -4858,6 +4912,7 @@ line two</property>
             0,
             10,
             parse_svnversion_output("41:42M"),
+            true,
         )
         .expect("status parses");
 
@@ -4941,6 +4996,7 @@ line two</property>
             0,
             100,
             parse_svnversion_output("42"),
+            true,
         )
         .expect("status parses");
 
@@ -5015,7 +5071,7 @@ line two</property>
 "#,
             root = root.display()
         );
-        let status = parse_svn_status_xml(&xml, &root, 0, 100, parse_svnversion_output("42"))
+        let status = parse_svn_status_xml(&xml, &root, 0, 100, parse_svnversion_output("42"), true)
             .expect("status parses");
         let status_by_path = status
             .files
@@ -5165,6 +5221,8 @@ line two</property>
 
         let status = scan_workspace_status(ScanWorkspaceStatusRequest {
             working_copy_root: local_working_copy.display().to_string(),
+            scope_path: None,
+            include_content_digests: None,
             svn_executable: None,
             offset: Some(0),
             limit: Some(100),
@@ -5595,6 +5653,8 @@ line two</property>
 
         let status = scan_workspace_status(ScanWorkspaceStatusRequest {
             working_copy_root: working_copy.display().to_string(),
+            scope_path: None,
+            include_content_digests: None,
             svn_executable: None,
             offset: Some(0),
             limit: Some(100),

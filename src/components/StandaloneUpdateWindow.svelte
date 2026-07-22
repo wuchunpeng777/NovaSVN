@@ -44,8 +44,11 @@
   let resolutionTask: Task | null = null;
   let resolutionHistory: Task[] = [];
   let resolutionPath: string | null = null;
+  let resolutionKind: SvnOperationKind | null = null;
+  let resolvedUpdateActions = new Map<string, "L" | "U">();
   let status: WorkingCopyStatus | null = null;
   let conflicts: ChangedFile[] = [];
+  let conflictScanCompleted = false;
   let fileContextMenu: { path: string; x: number; y: number } | null = null;
   let fileContextMenuElement: HTMLDivElement | null = null;
   let fileLog: SvnLog | null = null;
@@ -96,15 +99,19 @@
       : null;
   $: updateRunning = isTaskRunning(updateTask);
   $: resolutionRunning = isTaskRunning(resolutionTask);
-  $: updateComplete = updateTask !== null && terminalStatuses.includes(updateTask.status);
-  $: updatedFiles = extractUpdatedFiles(updateTask?.logs ?? []);
+  $: updateComplete =
+    updateTask?.status === "success" && conflictScanCompleted && !scanning;
+  $: updatedFiles = applyResolvedUpdateActions(
+    extractUpdatedFiles(updateTask?.logs ?? []),
+    resolvedUpdateActions,
+  );
   $: provisionalConflictPaths = updatedFiles
     .filter((file) => file.action.includes("C"))
     .map((file) => file.path)
     .filter(
       (path) =>
         !conflicts.some((file) => file.path === path) &&
-        (updateRunning || statusError !== null),
+        (updateRunning || scanning || statusError !== null),
     );
   $: conflictCount = new Set([
     ...conflicts.map((file) => file.path),
@@ -148,10 +155,13 @@
     actionError = null;
     status = null;
     conflicts = [];
+    conflictScanCompleted = false;
     updateTask = null;
     resolutionTask = null;
     resolutionHistory = [];
     resolutionPath = null;
+    resolutionKind = null;
+    resolvedUpdateActions = new Map();
     autoFollowOutput = true;
     expectedAutoScrollTop = null;
     closeFileContextMenu();
@@ -233,11 +243,17 @@
 
       if (role === "resolution") {
         resolutionHistory = [...resolutionHistory, task];
-        if (task.status !== "success") {
+        if (task.status === "success" && resolutionPath && resolutionKind) {
+          const action = resolutionKind === "resolve_theirs_full" ? "U" : "L";
+          resolvedUpdateActions = new Map(resolvedUpdateActions).set(resolutionPath, action);
+        } else if (task.status !== "success") {
           actionError = task.error ?? "冲突处理失败";
         }
       }
       await refreshConflicts(currentGeneration);
+      if (role === "resolution") {
+        resolutionKind = null;
+      }
     } catch (caught) {
       if (currentGeneration === generation) {
         error = caught as CommandError;
@@ -250,10 +266,13 @@
       return;
     }
     scanning = true;
+    conflictScanCompleted = false;
     statusError = null;
     try {
       const nextStatus = await scanWorkspaceStatus({
         working_copy_root: target.working_copy_root,
+        scope_path: target.relative_path ?? undefined,
+        include_content_digests: false,
         svn_executable: svnExecutable?.trim() || undefined,
         offset: 0,
         limit: 5000,
@@ -268,6 +287,7 @@
           (file.status === "conflicted" || file.conflict_kind !== null) &&
           isPathInUpdateTarget(file.path),
       );
+      conflictScanCompleted = true;
       if (!isTaskRunning(resolutionTask)) {
         resolutionPath = null;
       }
@@ -381,6 +401,7 @@
 
     actionError = null;
     resolutionPath = file.path;
+    resolutionKind = kind;
     try {
       const task = await createSvnOperationTask({
         working_copy_root: target.working_copy_root,
@@ -396,6 +417,7 @@
         ? `${commandError.message}：${commandError.detail}`
         : commandError.message;
       resolutionPath = null;
+      resolutionKind = null;
     }
   }
 
@@ -480,7 +502,10 @@
       case "running":
         return "正在更新";
       case "success":
-        return "更新完成";
+        if (statusError) {
+          return "冲突检查失败";
+        }
+        return updateComplete ? "更新完成" : "正在检查冲突";
       case "failed":
         return "更新失败";
       case "cancelled":
@@ -506,6 +531,17 @@
       }
     }
     return [...files.values()];
+  }
+
+  function applyResolvedUpdateActions(
+    files: Array<{ action: string; path: string }>,
+    resolutions: Map<string, "L" | "U">,
+  ) {
+    const next = new Map(files.map((file) => [file.path, file]));
+    for (const [path, action] of resolutions) {
+      next.set(path, { action, path });
+    }
+    return [...next.values()];
   }
 
   function conflictKindLabel(file: ChangedFile) {
@@ -642,11 +678,19 @@
           {:else}
             <div class="empty-output">没有更新文件</div>
           {/if}
-          {#if updateTask?.status === "success"}
-            <div class="update-complete-line" role="status" aria-label="更新完成">
+          {#if updateComplete}
+            <div
+              class="update-complete-line"
+              class:has-conflicts={conflictCount > 0}
+              role="status"
+              aria-label="更新完成"
+            >
               <CircleCheck size={18} strokeWidth={2.2} aria-hidden="true" />
               <strong>更新完成</strong>
-              <span>工作副本已更新到 Revision {status?.revision_range ?? target?.revision ?? "-"}</span>
+              <span>
+                工作副本已更新到 Revision {status?.revision_range ?? target?.revision ?? "-"}
+                · 冲突 {conflictCount}
+              </span>
             </div>
           {/if}
         </div>
@@ -1056,6 +1100,10 @@
     color: #24783d;
   }
 
+  .output-line[data-kind="L"] > span {
+    color: #276fa8;
+  }
+
   .output-line[data-kind="A"] > span {
     color: var(--accent);
   }
@@ -1107,6 +1155,18 @@
     border-color: #376d47;
     background: #203729;
     color: #8fdaa2;
+  }
+
+  .update-complete-line.has-conflicts {
+    border-color: #c5922e;
+    background: color-mix(in srgb, #c5922e 12%, var(--panel));
+    color: #8a5b00;
+  }
+
+  .standalone-update[data-theme="dark"] .update-complete-line.has-conflicts {
+    border-color: #7d642d;
+    background: #3a311f;
+    color: #f0c96c;
   }
 
   .conflict-pane {

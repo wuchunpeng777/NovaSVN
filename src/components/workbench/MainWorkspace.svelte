@@ -624,7 +624,6 @@
   let diffInline = false;
   let showWhitespace = false;
   let workingCopyTreeFilter: WorkingCopyTreeFilter = "all";
-  let selectedLogRevision: string | null = null;
   let selectedRevisionFileDiff: { revision: string; path: string } | null = null;
   let revisionFileContentDiff: FileContentDiff | null = null;
   let revisionFileDiffLoading = false;
@@ -690,6 +689,12 @@
   let inspectorWidth = 360;
   let inspectorMaximumWidth = inspectorMaxWidth;
   let resizingInspector = false;
+  const timelineDiffMinWidth = 360;
+  const timelineDiffMaxWidth = 900;
+  const timelineListMinWidth = 360;
+  const timelineDiffDividerWidth = 6;
+  let timelineDiffWidth = 520;
+  let resizingTimelineDiff = false;
   let fileColumnWidths: Record<FileColumnKey, number> = {
     name: 180,
     base: 40,
@@ -1086,31 +1091,6 @@
     return changedFileForPath(path) !== null;
   }
 
-  function groupTimelineEntries(entries: SvnLog["entries"]) {
-    const groups = new Map<
-      string,
-      { key: string; label: string; entries: SvnLog["entries"] }
-    >();
-    for (const entry of entries) {
-      const date = new Date(entry.date);
-      const valid = !Number.isNaN(date.getTime());
-      const year = valid ? date.getFullYear() : 0;
-      const month = valid ? date.getMonth() + 1 : 0;
-      const day = valid ? date.getDate() : 0;
-      const key = valid
-        ? `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
-        : "unknown";
-      const label = valid ? `${year}年${month}月${day}日` : "日期未知";
-      const group = groups.get(key);
-      if (group) {
-        group.entries.push(entry);
-      } else {
-        groups.set(key, { key, label, entries: [entry] });
-      }
-    }
-    return [...groups.values()];
-  }
-
   function formatTimelineTime(value: string) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
@@ -1175,6 +1155,21 @@
   function openBlameInspector() {
     selectInspectorTab("blame");
     onRefreshSvnBlame();
+  }
+
+  function formatTimelineDate(value: string) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value || "-";
+    }
+    return new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(date);
   }
 
   async function openConflictResolver(path: string) {
@@ -2042,14 +2037,6 @@
     selectedCommitHistoryMessage = "";
   }
 
-  function selectLogEntry(revision: string) {
-    if (selectedRevisionFileDiff?.revision !== revision) {
-      clearRevisionFileDiff();
-    }
-    selectedLogRevision = revision;
-    toggleTimelineEntryPaths(revision);
-  }
-
   function workspaceEntryName(entry: BranchPoolEntry) {
     return entry.display_name?.trim() || basename(entry.local_path) || branchName(entry);
   }
@@ -2144,6 +2131,7 @@
   }
 
   function clearRevisionFileDiff() {
+    stopTimelineDiffResize();
     revisionFileDiffGeneration += 1;
     selectedRevisionFileDiff = null;
     revisionFileContentDiff = null;
@@ -2156,7 +2144,6 @@
     repositoryPath: string,
     action: string,
   ) {
-    selectedLogRevision = revision;
     selectedRevisionFileDiff = { revision, path: repositoryPath };
     revisionFileContentDiff = null;
     revisionFileDiffError = null;
@@ -2229,6 +2216,7 @@
   function startSourceListResize(event: MouseEvent) {
     stopInspectorResize();
     stopFileColumnResize();
+    stopTimelineDiffResize();
     if (!resizingSourceList) {
       window.addEventListener("mousemove", resizeSourceList);
       window.addEventListener("mouseup", stopSourceListResize);
@@ -2262,6 +2250,7 @@
   function startFileColumnResize(event: MouseEvent, column: FileColumnKey) {
     stopSourceListResize();
     stopInspectorResize();
+    stopTimelineDiffResize();
     resizingFileColumn = {
       column,
       startX: event.clientX,
@@ -2326,6 +2315,7 @@
   function startInspectorResize(event: MouseEvent) {
     stopSourceListResize();
     stopFileColumnResize();
+    stopTimelineDiffResize();
     if (!resizingInspector) {
       window.addEventListener("mousemove", resizeInspector);
       window.addEventListener("mouseup", stopInspectorResize);
@@ -2352,6 +2342,38 @@
 
   function adjustInspectorWidth(delta: number) {
     inspectorWidth = constrainInspectorWidth(inspectorWidth + delta);
+  }
+
+  function startTimelineDiffResize(event: MouseEvent) {
+    stopSourceListResize();
+    stopInspectorResize();
+    stopFileColumnResize();
+    if (!resizingTimelineDiff) {
+      window.addEventListener("mousemove", resizeTimelineDiff);
+      window.addEventListener("mouseup", stopTimelineDiffResize);
+    }
+    resizingTimelineDiff = true;
+    event.preventDefault();
+  }
+
+  function stopTimelineDiffResize() {
+    if (!resizingTimelineDiff) {
+      return;
+    }
+    resizingTimelineDiff = false;
+    window.removeEventListener("mousemove", resizeTimelineDiff);
+    window.removeEventListener("mouseup", stopTimelineDiffResize);
+  }
+
+  function resizeTimelineDiff(event: MouseEvent) {
+    if (!resizingTimelineDiff) {
+      return;
+    }
+    timelineDiffWidth = constrainTimelineDiffWidth(window.innerWidth - event.clientX);
+  }
+
+  function adjustTimelineDiffWidth(delta: number) {
+    timelineDiffWidth = constrainTimelineDiffWidth(timelineDiffWidth + delta);
   }
 
   function calculateSourceListMaxWidth(showInspector: boolean, activeView: AppView) {
@@ -2392,6 +2414,19 @@
     return Math.min(Math.max(width, inspectorMinWidth), inspectorMaximumWidth);
   }
 
+  function constrainTimelineDiffWidth(width: number) {
+    const sourceWidth = appSettings.showSourceList
+      ? sourceListWidth + sourceListDividerWidth
+      : 0;
+    const availableMaximum =
+      window.innerWidth - sourceWidth - timelineListMinWidth - timelineDiffDividerWidth;
+    const maximum = Math.max(
+      timelineDiffMinWidth,
+      Math.min(timelineDiffMaxWidth, availableMaximum),
+    );
+    return Math.min(Math.max(width, timelineDiffMinWidth), maximum);
+  }
+
   function syncInspectorWidthToWindow(showSourceList = appSettings.showSourceList) {
     inspectorMaximumWidth = calculateInspectorMaxWidth(showSourceList);
     inspectorWidth = constrainInspectorWidth(inspectorWidth);
@@ -2405,6 +2440,7 @@
     sourceListMaximumWidth = calculateSourceListMaxWidth(showInspector, activeView);
     sourceListWidth = constrainSourceListWidth(sourceListWidth);
     syncInspectorWidthToWindow(showSourceList);
+    timelineDiffWidth = constrainTimelineDiffWidth(timelineDiffWidth);
   }
 
   function handleWindowResize() {
@@ -2445,6 +2481,7 @@
     revisionFileDiffGeneration += 1;
     stopSourceListResize();
     stopInspectorResize();
+    stopTimelineDiffResize();
     stopFileColumnResize();
     window.removeEventListener("resize", handleWindowResize);
     window.removeEventListener("resize", closeContextMenuOnWindowChange);
@@ -2556,11 +2593,6 @@
     !!svnLogDateFromFilter ||
     !!svnLogDateToFilter ||
     svnLogFileOnly;
-  $: timelineGroups = groupTimelineEntries(filteredLogEntries);
-  $: selectedLogEntry =
-    filteredLogEntries.find((entry) => entry.revision === selectedLogRevision) ??
-    filteredLogEntries[0] ??
-    null;
   $: selectedTreeNode = treeNodeForPath(selectedFilePath);
   $: contextMenuNode = treeNodeForPath(contextMenuPath);
   $: unconfirmedWarningCount = safetyCheck.warnings.filter(
@@ -2586,10 +2618,10 @@
 
 <section
   class="versions-workbench"
-  class:resizing-layout={resizingSourceList || resizingFileColumn !== null}
+  class:resizing-layout={resizingSourceList || resizingInspector || resizingTimelineDiff || resizingFileColumn !== null}
   data-theme={resolvedTheme}
   data-theme-mode={appSettings.themeMode}
-  style={`--source-list-width: ${sourceListWidth}px`}
+  style={`--source-list-width: ${sourceListWidth}px; --timeline-diff-width: ${timelineDiffWidth}px`}
   aria-label="NovaSVN 工作台"
 >
   <header class="versions-titlebar" inert={applyPatchDialogOpen || conflictResolverOpen}>
@@ -2823,24 +2855,16 @@
             class="project-source-row"
             role="group"
             aria-label={`项目 ${workspaceEntryName(entry)}`}
+            draggable={!branchPoolLoading && editingBranchPoolEntryId !== entry.id}
+            class:editing={editingBranchPoolEntryId === entry.id}
             class:dragging={draggedBranchPoolEntryId === entry.id}
             class:drop-before={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "before"}
             class:drop-after={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "after"}
+            on:dragstart={(event) => startBranchPoolDrag(event, entry.id)}
+            on:dragend={finishBranchPoolDrag}
             on:dragover={(event) => updateBranchPoolDropTarget(event, entry.id)}
             on:drop={(event) => dropBranchPoolEntry(event, entry.id)}
           >
-            <button
-              type="button"
-              class="project-drag-handle"
-              aria-label={`拖动排序 ${workspaceEntryName(entry)}`}
-              title="拖动调整顺序"
-              draggable={!branchPoolLoading}
-              disabled={branchPoolLoading}
-              on:dragstart={(event) => startBranchPoolDrag(event, entry.id)}
-              on:dragend={finishBranchPoolDrag}
-            >
-              <GripVertical size={15} strokeWidth={2} aria-hidden="true" />
-            </button>
             {#if editingBranchPoolEntryId === entry.id}
               <div
                 class="source-item workspace-source-item project-name-editor"
@@ -3096,52 +3120,34 @@
 
         <div class="timeline-layout" class:file-diff-open={selectedRevisionFileDiff !== null}>
           <section class="timeline-list" aria-label="Revision 列表">
-            {#if timelineGroups.length > 0}
-              {#each timelineGroups as group (group.key)}
-                <section class="timeline-day-group" role="group" aria-label={group.label}>
-                  <header class="timeline-day-header">
-                    <h2>{group.label}</h2>
-                    <span>{group.entries.length} revision{group.entries.length === 1 ? "" : "s"}</span>
-                  </header>
-                  {#each group.entries as entry (entry.revision)}
-                    <article class="timeline-entry">
-                      <header class="timeline-entry-header">
-                        <button
-                          type="button"
-                          class="timeline-entry-summary"
-                          class:active={selectedLogEntry?.revision === entry.revision}
-                          aria-label={`${expandedTimelineRevisions.has(entry.revision) ? "收起" : "展开"} r${entry.revision} 日志`}
-                          aria-expanded={expandedTimelineRevisions.has(entry.revision)}
-                          on:click={() => selectLogEntry(entry.revision)}
-                        >
-                          <span class="timeline-revision">
-                            <strong>r{entry.revision}</strong>
-                            {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
-                              <span
-                                class="timeline-change-count"
-                                data-action={summary.action}
-                                aria-label={`${summary.action} ${summary.count}`}
-                              >{summary.action}{summary.count}</span>
-                            {/each}
-                          </span>
-                          <span class="timeline-author" title={entry.author || undefined}>{entry.author || "-"}</span>
-                          <time title={entry.date}>{formatTimelineTime(entry.date)}</time>
-                          <span class="timeline-path-count">
-                            <span>{entry.changed_paths.length} paths</span>
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          class="timeline-revert-revision"
-                          aria-label={`Revert 工作副本到 r${entry.revision}`}
-                          title={`Revert 工作副本到 r${entry.revision}`}
-                          disabled={!workspace || toolbarLocked}
-                          on:click={() => onRevertToRevision(entry.revision)}
-                        >
-                          <RotateCcw size={15} strokeWidth={2} aria-hidden="true" />
-                        </button>
-                      </header>
-                      <p class="timeline-message">{entry.message || "无提交信息"}</p>
+            {#if filteredLogEntries.length > 0}
+              {#each filteredLogEntries as entry (entry.revision)}
+                <article class="timeline-entry">
+                  <header class="timeline-entry-header">
+                    <button
+                      type="button"
+                      class="timeline-entry-summary"
+                      aria-label={`${expandedTimelineRevisions.has(entry.revision) ? "收起" : "展开"} r${entry.revision} 日志`}
+                      aria-expanded={expandedTimelineRevisions.has(entry.revision)}
+                      on:click={() => toggleTimelineEntryPaths(entry.revision)}
+                    >
+                      <span class="timeline-revision">
+                        <strong>r{entry.revision}</strong>
+                        <span class="timeline-change-counts">
+                          {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
+                            <span
+                              class="timeline-change-count"
+                              data-action={summary.action}
+                              aria-label={`${summary.action} ${summary.count}`}
+                            >{summary.action}{summary.count}</span>
+                          {/each}
+                        </span>
+                      </span>
+                      <span class="timeline-author" title={entry.author || undefined}>{entry.author || "-"}</span>
+                      <time datetime={entry.date} title={entry.date}>{formatTimelineDate(entry.date)}</time>
+                    </button>
+                    <div class="timeline-entry-meta">
+                      <em>{entry.changed_paths.length} paths</em>
                       {#if entry.changed_paths.length > 0}
                         <button
                           type="button"
@@ -3155,38 +3161,47 @@
                             <ChevronDown size={13} aria-hidden="true" /> 查看路径
                           {/if}
                         </button>
-                        {#if expandedTimelineRevisions.has(entry.revision)}
-                          <div
-                            class="timeline-changed-paths"
-                            aria-label={`r${entry.revision} 改变路径`}
-                          >
-                            {#each entry.changed_paths as path (`${entry.revision}:${path.path}:${path.action}`)}
-                              <div class="timeline-changed-path">
-                                <span class="change-action" data-action={path.action}>{path.action || "-"}</span>
-                                {#if path.kind === "dir"}
-                                  <code>{path.path}</code>
-                                {:else}
-                                  <button
-                                    type="button"
-                                    class="timeline-changed-path-button"
-                                    aria-label={`比较 r${entry.revision} 的 ${path.path}`}
-                                    disabled={revisionFileDiffLoading}
-                                    on:click={() => openChangedPathRevisionDiff(entry.revision, path.path, path.action)}
-                                  >
-                                    <code>{path.path}</code>
-                                  </button>
-                                {/if}
-                                <small>{path.kind || "-"}</small>
-                              </div>
-                            {/each}
-                          </div>
-                        {/if}
-                      {:else}
-                        <p class="muted timeline-no-paths">没有改变路径</p>
                       {/if}
-                    </article>
-                  {/each}
-                </section>
+                      <button
+                        type="button"
+                        class="timeline-revert-revision"
+                        aria-label={`Revert 工作副本到 r${entry.revision}`}
+                        title={`Revert 工作副本到 r${entry.revision}`}
+                        disabled={!workspace || toolbarLocked}
+                        on:click={() => onRevertToRevision(entry.revision)}
+                      >
+                        <RotateCcw size={15} strokeWidth={2} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </header>
+                  <p class="timeline-message">{entry.message || "无提交信息"}</p>
+                  {#if entry.changed_paths.length > 0 && expandedTimelineRevisions.has(entry.revision)}
+                    <div
+                      class="timeline-changed-paths"
+                      aria-label={`r${entry.revision} 改变路径`}
+                    >
+                      {#each entry.changed_paths as path (`${entry.revision}:${path.path}:${path.action}`)}
+                        <div class="timeline-changed-path">
+                          <span class="change-action" data-action={path.action}>{path.action || "-"}</span>
+                          {#if path.kind === "dir"}
+                            <code>{path.path}</code>
+                          {:else}
+                            <button
+                              type="button"
+                              class="timeline-changed-path-button"
+                              aria-label={`查看 r${entry.revision} 的 ${path.path} diff`}
+                              disabled={revisionFileDiffLoading}
+                              on:click={() => openChangedPathRevisionDiff(entry.revision, path.path, path.action)}
+                            >
+                              <code>{path.path}</code>
+                            </button>
+                          {/if}
+                          <small>{path.kind || "-"}</small>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </article>
               {/each}
             {:else if svnLogLoading}
               <article class="empty-state">正在读取日志</article>
@@ -3198,6 +3213,35 @@
           </section>
 
           {#if selectedRevisionFileDiff}
+            <div
+              class="timeline-diff-resizer"
+              role="slider"
+              aria-label="调整文件 Diff 宽度"
+              aria-orientation="horizontal"
+              aria-valuemin={timelineDiffMinWidth}
+              aria-valuemax={timelineDiffMaxWidth}
+              aria-valuenow={timelineDiffWidth}
+              tabindex="0"
+              on:mousedown={startTimelineDiffResize}
+              on:keydown={(event) => {
+                if (event.key === "ArrowLeft") {
+                  adjustTimelineDiffWidth(16);
+                  event.preventDefault();
+                }
+                if (event.key === "ArrowRight") {
+                  adjustTimelineDiffWidth(-16);
+                  event.preventDefault();
+                }
+                if (event.key === "Home") {
+                  timelineDiffWidth = timelineDiffMinWidth;
+                  event.preventDefault();
+                }
+                if (event.key === "End") {
+                  timelineDiffWidth = constrainTimelineDiffWidth(timelineDiffMaxWidth);
+                  event.preventDefault();
+                }
+              }}
+            ></div>
             <aside class="revision-compare" aria-label="文件 Diff 预览">
               <section class="revision-file-diff" aria-label="文件 Diff">
                 <header>
@@ -3209,7 +3253,7 @@
                     type="button"
                     class="icon-button revision-diff-close"
                     aria-label="关闭文件 Diff"
-                    title="关闭文件 Diff"
+                    title="关闭"
                     on:click={clearRevisionFileDiff}
                   >
                     <X size={18} strokeWidth={2} aria-hidden="true" />

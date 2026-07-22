@@ -5,6 +5,7 @@ vi.mock("../lib/api", () => ({
   cancelTask: vi.fn(),
   chooseWorkspaceDirectory: vi.fn(),
   createMergeTask: vi.fn(),
+  createRevertRevisionTask: vi.fn(),
   getPathSvnLog: vi.fn(),
   getRepositoryFileLog: vi.fn(),
   getRevisionFileContentDiff: vi.fn(),
@@ -25,15 +26,17 @@ vi.mock("./workbench/MonacoDiffViewer.svelte", () => ({
 }));
 
 import {
+  createRevertRevisionTask,
   getPathSvnLog,
   getRepositoryFileLog,
   getRevisionFileContentDiff,
   launchLogWindow,
 } from "../lib/api";
-import type { SvnLog } from "../types/api";
+import type { SvnLog, Task } from "../types/api";
 import StandaloneLogWindow from "./StandaloneLogWindow.svelte";
 
 const getPathSvnLogMock = vi.mocked(getPathSvnLog);
+const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const getRevisionFileContentDiffMock = vi.mocked(getRevisionFileContentDiff);
 const launchLogWindowMock = vi.mocked(launchLogWindow);
@@ -41,6 +44,7 @@ const launchLogWindowMock = vi.mocked(launchLogWindow);
 beforeEach(() => {
   localStorage.clear();
   getPathSvnLogMock.mockReset();
+  createRevertRevisionTaskMock.mockReset();
   getRepositoryFileLogMock.mockReset();
   getRevisionFileContentDiffMock.mockReset();
   launchLogWindowMock.mockReset();
@@ -233,6 +237,40 @@ describe("StandaloneLogWindow", () => {
     const diffPanel = await screen.findByLabelText("文件 Diff");
     expect(within(diffPanel).getByText("r20 文件 Diff")).toBeInTheDocument();
     expect(within(diffPanel).queryByText("-before +after")).not.toBeInTheDocument();
+    const diffResizer = screen.getByRole("slider", { name: "调整文件 Diff 宽度" });
+    await fireEvent.keyDown(diffResizer, { key: "Home" });
+    expect(diffResizer).toHaveAttribute("aria-valuenow", "320");
+  });
+
+  it("从独立 Log 将工作副本 Revert 到指定 Revision", async () => {
+    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
+    getPathSvnLogMock.mockResolvedValue(makeLog());
+    createRevertRevisionTaskMock.mockResolvedValue(
+      makeTask({ status: "success", title: "Revert 到 r20" }),
+    );
+    render(StandaloneLogWindow, {
+      props: {
+        targetPath: "C:\\repo",
+        svnExecutable: "C:\\Tools\\svn.exe",
+      },
+    });
+    await screen.findByText("Add log window");
+
+    const revertButton = screen.getByRole("button", {
+      name: "Revert 工作副本到 r20",
+    });
+    await fireEvent.click(revertButton);
+
+    expect(confirmMock).toHaveBeenCalledOnce();
+    expect(createRevertRevisionTaskMock).toHaveBeenCalledWith({
+      working_copy_root: "C:\\repo",
+      target_revision: "20",
+      svn_executable: "C:\\Tools\\svn.exe",
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "已 Revert 到 r20，本地修改已生成",
+    );
+    confirmMock.mockRestore();
   });
 
   it("多选离散 Revision 后按数字顺序打开 Merge 对话框", async () => {
@@ -380,5 +418,19 @@ function makeChangedPath(path: string, action: string) {
     kind: "file",
     copy_from_path: null,
     copy_from_revision: null,
+  };
+}
+
+function makeTask(overrides: Partial<Task> = {}): Task {
+  return {
+    task_id: "revert-revision-1",
+    title: "Revert Revision",
+    status: "pending",
+    logs: [],
+    error: null,
+    result: null,
+    created_at: 1,
+    updated_at: 1,
+    ...overrides,
   };
 }

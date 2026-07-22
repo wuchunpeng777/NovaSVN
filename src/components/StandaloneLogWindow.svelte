@@ -1,10 +1,20 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { ChevronDown, ChevronUp, GitMerge, History, RefreshCw, X } from "@lucide/svelte";
   import {
+    ChevronDown,
+    ChevronUp,
+    GitMerge,
+    History,
+    RefreshCw,
+    RotateCcw,
+    X,
+  } from "@lucide/svelte";
+  import {
+    createRevertRevisionTask,
     getPathSvnLog,
     getRepositoryFileLog,
     getRevisionFileContentDiff,
+    getTask,
     launchLogWindow,
   } from "../lib/api";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
@@ -21,6 +31,8 @@
     SvnChangedPath,
     SvnLog,
     SvnLogEntry,
+    Task,
+    TaskStatus,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
   import LogMergeDialog from "./LogMergeDialog.svelte";
@@ -69,6 +81,24 @@
   let mergeSelectionAnchor: string | null = null;
   let mergeDialogOpen = false;
   let mergeCompleted = false;
+  let revertTask: Task | null = null;
+  let revertTargetRevision: string | null = null;
+  let revertNotice: string | null = null;
+  let revertError: CommandError | null = null;
+  let revertPollTimer: number | null = null;
+  const terminalTaskStatuses: TaskStatus[] = [
+    "success",
+    "failed",
+    "cancelled",
+    "interrupted",
+  ];
+  const diffPaneMinWidth = 320;
+  const logListMinWidth = 320;
+  const diffPaneMaxWidth = 900;
+  const diffPaneDividerWidth = 6;
+  let logLayoutElement: HTMLDivElement | null = null;
+  let diffPaneWidth = 520;
+  let diffResizeStart: { x: number; width: number } | null = null;
   let requestGeneration = 0;
   let diffRequestGeneration = 0;
   let systemPrefersDark = false;
@@ -99,6 +129,7 @@
   $: selectedMergeRevisions = [...mergeRevisions].sort(
     (left, right) => Number(left) - Number(right),
   );
+  $: revertRunning = !!revertTask && !terminalTaskStatuses.includes(revertTask.status);
 
   onMount(() => {
     if (typeof window.matchMedia === "function") {
@@ -116,6 +147,8 @@
   onDestroy(() => {
     requestGeneration += 1;
     diffRequestGeneration += 1;
+    clearRevertPollTimer();
+    stopDiffPaneResize();
     themeMediaQuery?.removeEventListener("change", handleThemeChange);
     window.removeEventListener("click", closeFileContextMenu);
     window.removeEventListener("blur", closeFileContextMenu);
@@ -357,12 +390,127 @@
     mergeCompleted = false;
   }
 
+  async function revertToRevision(revision: string) {
+    const workingCopyRoot = log?.working_copy_root?.trim();
+    if (!workingCopyRoot || revertRunning) {
+      return;
+    }
+    if (
+      !window.confirm(
+        `确定要把工作副本内容恢复到 r${revision} 吗？\n${workingCopyRoot}\n\n这会执行反向 Merge 并生成本地改动，不会自动提交。\n工作副本必须无本地改动且已 Update 到 HEAD。`,
+      )
+    ) {
+      return;
+    }
+
+    clearRevertPollTimer();
+    revertTargetRevision = revision;
+    revertNotice = null;
+    revertError = null;
+    try {
+      handleRevertTask(
+        await createRevertRevisionTask({
+          working_copy_root: workingCopyRoot,
+          target_revision: revision,
+          svn_executable: svnExecutable?.trim() || undefined,
+        }),
+      );
+    } catch (caught) {
+      revertTask = null;
+      revertError = normalizeCommandError(caught, `无法 Revert 到 r${revision}`);
+    }
+  }
+
+  function handleRevertTask(task: Task) {
+    revertTask = task;
+    if (!terminalTaskStatuses.includes(task.status)) {
+      scheduleRevertPoll();
+      return;
+    }
+
+    clearRevertPollTimer();
+    if (task.status === "success") {
+      revertNotice = `已 Revert 到 r${revertTargetRevision ?? "-"}，本地修改已生成`;
+      revertError = null;
+      return;
+    }
+    revertNotice = null;
+    revertError = {
+      code: "REVERT_REVISION_FAILED",
+      message: `Revert 到 r${revertTargetRevision ?? "-"} 失败`,
+      detail: task.error ?? `任务状态：${task.status}`,
+      recoverable: true,
+    };
+  }
+
+  function scheduleRevertPoll() {
+    clearRevertPollTimer();
+    revertPollTimer = window.setTimeout(() => void pollRevertTask(), 400);
+  }
+
+  async function pollRevertTask() {
+    const taskId = revertTask?.task_id;
+    if (!taskId) {
+      return;
+    }
+    try {
+      handleRevertTask(await getTask(taskId));
+    } catch (caught) {
+      clearRevertPollTimer();
+      revertTask = null;
+      revertError = normalizeCommandError(caught, "无法读取 Revert 任务状态");
+    }
+  }
+
+  function clearRevertPollTimer() {
+    if (revertPollTimer !== null) {
+      window.clearTimeout(revertPollTimer);
+      revertPollTimer = null;
+    }
+  }
+
   function clearRevisionDiff() {
+    stopDiffPaneResize();
     diffRequestGeneration += 1;
     selectedDiff = null;
     revisionDiff = null;
     revisionDiffLoading = false;
     revisionDiffError = null;
+  }
+
+  function startDiffPaneResize(event: MouseEvent) {
+    diffResizeStart = { x: event.clientX, width: diffPaneWidth };
+    window.addEventListener("mousemove", resizeDiffPane);
+    window.addEventListener("mouseup", stopDiffPaneResize);
+    event.preventDefault();
+  }
+
+  function resizeDiffPane(event: MouseEvent) {
+    if (!diffResizeStart) {
+      return;
+    }
+    diffPaneWidth = constrainDiffPaneWidth(
+      diffResizeStart.width + diffResizeStart.x - event.clientX,
+    );
+  }
+
+  function stopDiffPaneResize() {
+    diffResizeStart = null;
+    window.removeEventListener("mousemove", resizeDiffPane);
+    window.removeEventListener("mouseup", stopDiffPaneResize);
+  }
+
+  function adjustDiffPaneWidth(delta: number) {
+    diffPaneWidth = constrainDiffPaneWidth(diffPaneWidth + delta);
+  }
+
+  function constrainDiffPaneWidth(width: number) {
+    const layoutWidth = logLayoutElement?.getBoundingClientRect().width ?? window.innerWidth;
+    const maximum = Math.max(
+      diffPaneMinWidth,
+      Math.min(diffPaneMaxWidth, layoutWidth - logListMinWidth - diffPaneDividerWidth),
+    );
+    return Math.min(Math.max(width, diffPaneMinWidth), maximum);
   }
 
   async function openChangedPathContextMenu(
@@ -576,13 +724,23 @@
   </section>
 
   <div class="log-error">
-    <ErrorNotice error={error ?? launchWindowError} />
+    <ErrorNotice error={error ?? launchWindowError ?? revertError} />
+    {#if revertRunning}
+      <p class="revert-status" role="status">
+        正在 Revert 到 r{revertTargetRevision ?? "-"}...
+      </p>
+    {:else if revertNotice}
+      <p class="revert-status success" role="status">{revertNotice}</p>
+    {/if}
   </div>
 
   <div
+    bind:this={logLayoutElement}
     class="log-layout"
     class:with-diff={selectedDiff !== null}
     class:merge-selection-active={selectedMergeRevisions.length > 0}
+    class:resizing-diff={diffResizeStart !== null}
+    style={`--log-diff-width: ${diffPaneWidth}px`}
   >
     <section class="log-list" aria-label="Revision 列表" aria-busy={loading}>
       {#if filteredEntries.length > 0}
@@ -634,6 +792,18 @@
                     {/if}
                   </button>
                 {/if}
+                <button
+                  type="button"
+                  class="revert-revision"
+                  aria-label={`Revert 工作副本到 r${entry.revision}`}
+                  title={log?.working_copy_root
+                    ? `Revert 工作副本到 r${entry.revision}`
+                    : "仅本地工作副本日志支持 Revert"}
+                  disabled={!log?.working_copy_root || loading || revertRunning}
+                  on:click={() => revertToRevision(entry.revision)}
+                >
+                  <RotateCcw size={15} strokeWidth={2} aria-hidden="true" />
+                </button>
               </div>
             </header>
             <p>{entry.message || "无提交信息"}</p>
@@ -673,6 +843,35 @@
       {/if}
     </section>
   {#if selectedDiff}
+    <div
+      class="log-diff-resizer"
+      role="slider"
+      aria-label="调整文件 Diff 宽度"
+      aria-orientation="horizontal"
+      aria-valuemin={diffPaneMinWidth}
+      aria-valuemax={diffPaneMaxWidth}
+      aria-valuenow={diffPaneWidth}
+      tabindex="0"
+      on:mousedown={startDiffPaneResize}
+      on:keydown={(event) => {
+        if (event.key === "ArrowLeft") {
+          adjustDiffPaneWidth(16);
+          event.preventDefault();
+        }
+        if (event.key === "ArrowRight") {
+          adjustDiffPaneWidth(-16);
+          event.preventDefault();
+        }
+        if (event.key === "Home") {
+          diffPaneWidth = diffPaneMinWidth;
+          event.preventDefault();
+        }
+        if (event.key === "End") {
+          diffPaneWidth = constrainDiffPaneWidth(diffPaneMaxWidth);
+          event.preventDefault();
+        }
+      }}
+    ></div>
     <aside class="log-diff" aria-label="文件 Diff">
       <header>
         <div>
@@ -934,6 +1133,22 @@
     margin: 8px 14px 0;
   }
 
+  .revert-status {
+    margin: 8px 14px 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    padding: 7px 9px;
+    color: var(--secondary);
+    font-size: 12px;
+  }
+
+  .revert-status.success {
+    border-color: #91c79d;
+    background: #eef8f0;
+    color: #286b38;
+  }
+
   .log-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -941,7 +1156,11 @@
   }
 
   .log-layout.with-diff {
-    grid-template-columns: minmax(0, 1fr) minmax(360px, 42vw);
+    grid-template-columns: minmax(0, 1fr) 6px var(--log-diff-width);
+  }
+
+  .log-layout.resizing-diff {
+    cursor: col-resize;
   }
 
   .log-layout.merge-selection-active .log-list {
@@ -1153,6 +1372,16 @@
     min-width: 0;
   }
 
+  .revert-revision {
+    display: grid;
+    flex: 0 0 28px;
+    width: 28px;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 0;
+    place-items: center;
+  }
+
   .merge-selection-bar span {
     overflow: hidden;
     color: var(--secondary);
@@ -1172,6 +1401,13 @@
   .merge-selection-bar .primary {
     border-color: var(--accent);
     background: var(--accent);
+    color: #ffffff;
+  }
+
+  .merge-selection-bar .primary:hover:not(:disabled),
+  .merge-selection-bar .primary:focus-visible {
+    border-color: color-mix(in srgb, var(--accent) 82%, #000000);
+    background: color-mix(in srgb, var(--accent) 82%, #000000);
     color: #ffffff;
   }
 
@@ -1211,6 +1447,12 @@
     color: #ffaaa7;
   }
 
+  .standalone-log[data-theme="dark"] .revert-status.success {
+    border-color: #376d47;
+    background: #203729;
+    color: #8fdaa2;
+  }
+
   .changed-path small {
     color: var(--secondary);
     text-align: right;
@@ -1243,8 +1485,22 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+    background: var(--panel-subtle);
+  }
+
+  .log-diff-resizer {
+    width: 6px;
+    min-width: 6px;
+    border-right: 1px solid var(--border);
     border-left: 1px solid var(--border);
     background: var(--panel-subtle);
+    cursor: col-resize;
+  }
+
+  .log-diff-resizer:hover,
+  .log-diff-resizer:focus-visible {
+    background: color-mix(in srgb, var(--accent) 20%, var(--panel-subtle));
+    outline: none;
   }
 
   .log-diff > header {
@@ -1307,12 +1563,25 @@
     .entry-summary {
       grid-template-columns: 72px minmax(90px, 1fr) 145px;
     }
+
+    .log-layout.with-diff .log-entry > header {
+      grid-template-columns: 24px minmax(0, 1fr);
+    }
+
+    .log-layout.with-diff .entry-meta {
+      grid-column: 2;
+      justify-content: flex-start;
+    }
   }
 
   @media (max-width: 820px) {
     .log-layout.with-diff {
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: minmax(220px, 1fr) minmax(240px, 1fr);
+    }
+
+    .log-diff-resizer {
+      display: none;
     }
 
     .log-diff {

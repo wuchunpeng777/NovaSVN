@@ -37,6 +37,7 @@ button {
   --source-list-width: 220px;
   --source-list-divider-width: 6px;
   --inspector-divider-width: 6px;
+  --timeline-diff-divider-width: 6px;
   --inspector-min-width: 300px;
   --layout-divider-color: #bdc5ce;
   position: relative;
@@ -1504,84 +1505,63 @@ textarea {
 }
 
 .timeline-layout.file-diff-open {
-  grid-template-columns: minmax(0, 1fr) minmax(480px, 48vw);
+  grid-template-columns: minmax(0, 1fr) var(--timeline-diff-divider-width) var(--timeline-diff-width);
 }
 
 .timeline-list {
   min-height: 0;
   overflow: auto;
   background: #ffffff;
-  padding: 10px 12px;
-}
-
-.timeline-layout.file-diff-open .timeline-list {
-  border-right: 1px solid #d0d6dd;
-}
-
-.timeline-day-group + .timeline-day-group {
-  margin-top: 12px;
-}
-
-.timeline-day-header {
-  position: sticky;
-  z-index: 2;
-  top: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 30px;
-  border-bottom: 1px solid #cfd6dd;
-  background: #f4f6f8;
-  padding: 5px 8px;
-}
-
-.timeline-day-header h2 {
-  font-size: 12px;
-}
-
-.timeline-day-header span {
-  color: #6b7784;
-  font-size: 11px;
+  padding: 0 14px 18px;
 }
 
 .timeline-entry {
-  border-bottom: 1px solid #edf0f2;
-  padding: 10px 0;
+  border-bottom: 1px solid #cfd6dd;
+  padding: 9px 2px;
 }
 
 .timeline-entry-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, auto);
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  min-width: 0;
 }
 
 .timeline-entry-summary {
   display: grid;
-  grid-template-columns: minmax(130px, 170px) minmax(80px, 110px) 76px minmax(90px, 1fr);
+  grid-template-columns: minmax(130px, auto) minmax(100px, 160px) 150px;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  min-width: 0;
+  min-height: 30px;
   width: 100%;
   border: 0;
-  background: #ffffff;
+  background: transparent;
   padding: 0;
   text-align: left;
 }
 
-.timeline-author,
-.timeline-path-count {
+.timeline-entry-summary > span,
+.timeline-entry-summary > time,
+.timeline-entry-meta em {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.timeline-path-count {
+.timeline-entry-meta {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.timeline-entry-meta em {
   color: #6b7784;
+  font-style: normal;
   text-align: right;
 }
 
@@ -1594,7 +1574,12 @@ textarea {
 
 .timeline-revision strong {
   flex: 0 0 auto;
-  margin-right: 2px;
+}
+
+.timeline-change-counts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .timeline-change-count {
@@ -1608,11 +1593,6 @@ textarea {
 
 .timeline-entry-summary:hover {
   color: #2f6fab;
-}
-
-.timeline-entry-summary.active {
-  color: #1d5f9c;
-  font-weight: 700;
 }
 
 .timeline-revert-revision {
@@ -1683,21 +1663,45 @@ textarea {
 }
 
 .timeline-path-toggle {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  width: 100%;
-  min-height: 27px;
-  margin-top: 7px;
+  min-height: 22px;
   border: 0;
   border-radius: 0;
-  background: #f1f4f6;
+  background: transparent;
   color: #315f86;
+  padding: 1px 0;
+  font-size: 11px;
 }
 
-.timeline-no-paths {
-  margin: 7px 0 0;
+.timeline-diff-resizer {
+  width: var(--timeline-diff-divider-width);
+  min-width: var(--timeline-diff-divider-width);
+  border-right: 1px solid #cfd6dd;
+  border-left: 1px solid #cfd6dd;
+  background: #edf0f3;
+  cursor: col-resize;
+}
+
+.timeline-diff-resizer:hover,
+.timeline-diff-resizer:focus-visible {
+  background: #cfe0f1;
+  outline: none;
+}
+
+.timeline-layout.file-diff-open .timeline-entry-header {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.timeline-layout.file-diff-open .timeline-entry-meta {
+  justify-content: flex-start;
+}
+
+.timeline-layout.file-diff-open .timeline-entry-summary {
+  grid-template-columns: minmax(90px, 1fr) minmax(70px, 110px) 140px;
 }
 
 .revision-compare {
@@ -3759,8 +3763,18 @@ select:focus {
 
 .versions-workbench[data-theme="dark"] .versions-titlebar,
 .versions-workbench[data-theme="dark"] .workspace-location,
-.versions-workbench[data-theme="dark"] .inspector-resizer {
+.versions-workbench[data-theme="dark"] .inspector-resizer,
+.versions-workbench[data-theme="dark"] .timeline-diff-resizer {
   background: var(--mac-toolbar);
+}
+
+.versions-workbench[data-theme="dark"] .timeline-diff-resizer {
+  border-color: var(--mac-separator);
+}
+
+.versions-workbench[data-theme="dark"] .timeline-diff-resizer:hover,
+.versions-workbench[data-theme="dark"] .timeline-diff-resizer:focus-visible {
+  background: #315e88;
 }
 
 .versions-workbench[data-theme="dark"] .source-list,
@@ -4256,14 +4270,20 @@ select:focus {
 .project-source-row {
   position: relative;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 26px;
+  grid-template-columns: minmax(0, 1fr) 26px;
   align-items: center;
   gap: 2px;
   min-width: 0;
+  cursor: grab;
 }
 
 .project-source-row.dragging {
+  cursor: grabbing;
   opacity: 0.45;
+}
+
+.project-source-row.editing {
+  cursor: default;
 }
 
 .project-source-row.drop-before::before,
@@ -4286,7 +4306,6 @@ select:focus {
   bottom: -2px;
 }
 
-.source-list .project-drag-handle,
 .source-list .project-rename-button {
   display: grid;
   width: 22px;
@@ -4305,15 +4324,6 @@ select:focus {
   width: 26px;
 }
 
-.source-list .project-drag-handle {
-  cursor: grab;
-}
-
-.source-list .project-drag-handle:active {
-  cursor: grabbing;
-}
-
-.source-list .project-drag-handle:hover:not(:disabled),
 .source-list .project-rename-button:hover:not(:disabled) {
   background: #d9d9dc;
   color: #287ac4;
@@ -4323,6 +4333,14 @@ select:focus {
 .project-source-row .project-name-editor {
   width: 100%;
   min-width: 0;
+}
+
+.project-source-row .project-source-button {
+  cursor: grab;
+}
+
+.project-source-row.dragging .project-source-button {
+  cursor: grabbing;
 }
 
 .project-name-editor input {
@@ -4627,12 +4645,10 @@ select:focus {
   background: #343438;
 }
 
-.versions-workbench[data-theme="dark"] .source-list .project-drag-handle,
 .versions-workbench[data-theme="dark"] .source-list .project-rename-button {
   color: #aaaab0;
 }
 
-.versions-workbench[data-theme="dark"] .source-list .project-drag-handle:hover:not(:disabled),
 .versions-workbench[data-theme="dark"] .source-list .project-rename-button:hover:not(:disabled) {
   background: #343438;
   color: #55a7ef;

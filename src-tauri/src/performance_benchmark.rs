@@ -194,6 +194,8 @@ fn run(config: BenchmarkConfig) -> Result<(), String> {
         || {
             scan_workspace_status(ScanWorkspaceStatusRequest {
                 working_copy_root: working_copy_text.clone(),
+                scope_path: None,
+                include_content_digests: None,
                 svn_executable: Some(config.svn_executable.clone()),
                 offset: Some(0),
                 limit: Some(STATUS_PAGE_SIZE),
@@ -224,6 +226,8 @@ fn run(config: BenchmarkConfig) -> Result<(), String> {
         || {
             scan_workspace_status(ScanWorkspaceStatusRequest {
                 working_copy_root: working_copy_text.clone(),
+                scope_path: None,
+                include_content_digests: None,
                 svn_executable: Some(config.svn_executable.clone()),
                 offset: Some(last_offset),
                 limit: Some(STATUS_PAGE_SIZE),

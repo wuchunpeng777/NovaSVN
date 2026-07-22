@@ -541,6 +541,8 @@ export interface RecentWorkspace {
 
 export interface ScanWorkspaceStatusRequest {
   working_copy_root: string;
+  scope_path?: string;
+  include_content_digests?: boolean;
   svn_executable?: string;
   offset?: number;
   limit?: number;

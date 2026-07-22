@@ -88,11 +88,13 @@ describe("StandaloneUpdateWindow", () => {
     expect(screen.queryByText("SVN 操作开始执行")).not.toBeInTheDocument();
     expect(screen.queryByText("Updated to revision 21.")).not.toBeInTheDocument();
     expect(within(output).getByRole("status", { name: "更新完成" })).toHaveTextContent(
-      "工作副本已更新到 Revision 21",
+      "工作副本已更新到 Revision 21 · 冲突 0",
     );
     expect(screen.queryByRole("button", { name: "返回主界面" })).not.toBeInTheDocument();
     expect(scanWorkspaceStatusMock).toHaveBeenCalledWith({
       working_copy_root: "C:\\repo",
+      scope_path: "src/main.ts",
+      include_content_digests: false,
       svn_executable: "C:\\Tools\\svn.exe",
       offset: 0,
       limit: 5000,
@@ -176,6 +178,29 @@ describe("StandaloneUpdateWindow", () => {
     expect(within(pane).getByText("等待 Update 完成后读取冲突详情...")).toBeInTheDocument();
     finishUpdate(makeTask("success", ["C    src/conflict.ts"]));
     await screen.findByRole("status", { name: "更新完成" });
+  });
+
+  it("等待目标范围冲突扫描完成后再显示更新完成和冲突数量", async () => {
+    let finishScan: (status: WorkingCopyStatus) => void = () => {};
+    scanWorkspaceStatusMock.mockImplementationOnce(
+      () => new Promise<WorkingCopyStatus>((resolve) => (finishScan = resolve)),
+    );
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo" } });
+
+    expect(await screen.findByText("正在检查冲突")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "更新完成" })).not.toBeInTheDocument();
+    finishScan(
+      makeStatus({
+        conflicted: 1,
+        total: 1,
+        returned: 1,
+        files: [makeConflict({ path: "src/main.ts" })],
+      }),
+    );
+
+    expect(await screen.findByRole("status", { name: "更新完成" })).toHaveTextContent(
+      "冲突 1",
+    );
   });
 
   it("用户手动滚动后停止自动置底", async () => {
@@ -275,6 +300,7 @@ describe("StandaloneUpdateWindow", () => {
     render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo\\src" } });
 
     const pane = await screen.findByLabelText("冲突处理");
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalled());
     expect(await within(pane).findByText("src/conflict.ts")).toBeInTheDocument();
     expect(within(pane).getByText("文本冲突")).toBeInTheDocument();
     expect(within(pane).queryByText("other/conflict.ts")).not.toBeInTheDocument();
@@ -299,6 +325,39 @@ describe("StandaloneUpdateWindow", () => {
     );
     expect(await screen.findByText("工作副本没有未解决冲突")).toBeInTheDocument();
     expect(screen.getByLabelText("冲突处理记录")).toHaveTextContent("完成");
+    expect(screen.getByRole("listitem", { name: "更新文件 src/conflict.ts" }))
+      .toHaveTextContent("U");
+  });
+
+  it("采用我的版本后将更新列表中的冲突状态改为 L", async () => {
+    const conflict = makeConflict();
+    inspectUpdateTargetMock.mockResolvedValue(
+      makeTarget({ target_path: "C:\\repo\\src", relative_path: "src", kind: "dir" }),
+    );
+    createSvnOperationTaskMock
+      .mockResolvedValueOnce(makeTask("pending"))
+      .mockResolvedValueOnce(
+        makeTask("pending", [], { task_id: "resolve-local", title: "使用 mine 解决冲突" }),
+      );
+    getTaskMock
+      .mockResolvedValueOnce(makeTask("success", ["C    src/conflict.ts"]))
+      .mockResolvedValueOnce(
+        makeTask("success", [], { task_id: "resolve-local", title: "使用 mine 解决冲突" }),
+      );
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce(makeStatus({ conflicted: 1, files: [conflict] }))
+      .mockResolvedValueOnce(makeStatus());
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo" } });
+
+    const pane = await screen.findByLabelText("冲突处理");
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalled());
+    await fireEvent.click(within(pane).getByRole("button", { name: "采用我的版本" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("listitem", { name: "更新文件 src/conflict.ts" }))
+        .toHaveTextContent("L"),
+    );
   });
 
   it("目标检查失败时显示后端错误", async () => {

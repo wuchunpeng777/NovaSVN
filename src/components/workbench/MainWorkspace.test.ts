@@ -458,7 +458,7 @@ describe("MainWorkspace", () => {
     expect(onOpenBranchPoolEntry).toHaveBeenCalledTimes(1);
   });
 
-  it("reorders projects by dragging the handle and edits the display name inline", async () => {
+  it("reorders projects by dragging the project row and edits the display name inline", async () => {
     const onReorderBranchPoolEntries = vi.fn();
     const onRenameBranchPoolEntry = vi.fn();
     render(MainWorkspace, {
@@ -496,13 +496,16 @@ describe("MainWorkspace", () => {
 
     const projects = screen.getByLabelText("项目列表");
     expect(within(projects).getByText("主项目")).toBeInTheDocument();
-    const firstHandle = within(projects).getByRole("button", { name: "拖动排序 主项目" });
+    const firstRow = within(projects).getByRole("group", { name: "项目 主项目" });
     const secondRow = within(projects).getByRole("group", { name: "项目 feature" });
+    expect(firstRow).toHaveAttribute("draggable", "true");
+    expect(within(projects).queryByRole("button", { name: "拖动排序 主项目" }))
+      .not.toBeInTheDocument();
     Object.defineProperty(secondRow, "getBoundingClientRect", {
       configurable: true,
       value: () => ({ top: 100, height: 40, bottom: 140, left: 0, right: 200, width: 200 }),
     });
-    await fireEvent.dragStart(firstHandle);
+    await fireEvent.dragStart(firstRow);
     await fireEvent.dragOver(secondRow, { clientY: 135 });
     await fireEvent.drop(secondRow, { clientY: 135 });
     expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
@@ -831,7 +834,7 @@ Certificate information:
     expect(onClearSvnCertificateTrust).toHaveBeenCalledOnce();
   });
 
-  it("groups filtered Timeline revisions by local calendar date", async () => {
+  it("renders Timeline entries like the standalone Log and opens a resizable Diff", async () => {
     getRevisionFileContentDiffMock.mockResolvedValue({
       path: "/trunk/file-12-4.txt",
       original_text: "before",
@@ -860,13 +863,15 @@ Certificate information:
     });
 
     const timeline = screen.getByLabelText("Revision 列表");
-    const newestDay = within(timeline).getByRole("group", { name: "2026年7月11日" });
-    expect(newestDay).toHaveTextContent("2 revisions");
-    expect(within(newestDay).getByText("r12")).toBeInTheDocument();
-    expect(within(newestDay).getByText("r11")).toBeInTheDocument();
-    const newestEntry = within(newestDay).getByText("r12").closest(".timeline-entry") as HTMLElement;
+    expect(within(timeline).queryByRole("group", { name: "2026年7月11日" }))
+      .not.toBeInTheDocument();
+    expect(within(timeline).getByText("r11")).toBeInTheDocument();
+    const newestEntry = within(timeline).getByText("r12").closest(".timeline-entry") as HTMLElement;
     expect(newestEntry).toHaveTextContent("alice");
-    expect(newestEntry).toHaveTextContent("15:20:00");
+    expect(newestEntry.querySelector("time")).toHaveAttribute(
+      "datetime",
+      "2026-07-11T15:20:00",
+    );
     expect(newestEntry).toHaveTextContent("完成菜单");
     expect(newestEntry).toHaveTextContent("5 paths");
     expect(within(newestEntry).getByLabelText("M 5")).toHaveAttribute("data-action", "M");
@@ -891,7 +896,7 @@ Certificate information:
     expect(screen.queryByLabelText("文件 Diff 预览")).not.toBeInTheDocument();
     await fireEvent.click(
       within(newestEntry).getByRole("button", {
-        name: "比较 r12 的 /trunk/file-12-4.txt",
+        name: "查看 r12 的 /trunk/file-12-4.txt diff",
       }),
     );
     expect(getRevisionFileContentDiffMock).toHaveBeenLastCalledWith({
@@ -907,23 +912,22 @@ Certificate information:
     const fileDiffPreview = screen.getByLabelText("文件 Diff 预览");
     expect(fileDiff.parentElement).toBe(fileDiffPreview);
     expect(timelineLayout).toHaveClass("file-diff-open");
-    expect(timelineLayout.children).toHaveLength(2);
+    expect(timelineLayout.children).toHaveLength(3);
+    const diffResizer = within(timelineLayout).getByRole("slider", {
+      name: "调整文件 Diff 宽度",
+    });
+    await fireEvent.keyDown(diffResizer, { key: "Home" });
+    expect(diffResizer).toHaveAttribute("aria-valuenow", "360");
     const closeFileDiff = within(fileDiff).getByRole("button", { name: "关闭文件 Diff" });
-    expect(closeFileDiff).toHaveAttribute("title", "关闭文件 Diff");
+    expect(closeFileDiff).toHaveAttribute("title", "关闭");
     await fireEvent.click(closeFileDiff);
     expect(screen.queryByLabelText("文件 Diff")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("文件 Diff 预览")).not.toBeInTheDocument();
     expect(timelineLayout).not.toHaveClass("file-diff-open");
     expect(timelineLayout.children).toHaveLength(1);
 
-    const priorDay = within(timeline).getByRole("group", { name: "2026年7月10日" });
-    expect(priorDay).toHaveTextContent("1 revision");
-    expect(within(priorDay).getByText("r10")).toBeInTheDocument();
-    expect(within(timeline).getByRole("group", { name: "日期未知" })).toHaveTextContent("r9");
-
-    const priorEntryButton = within(priorDay).getByRole("button", { name: "展开 r10 日志" });
-    await fireEvent.click(priorEntryButton);
-    expect(priorEntryButton).toHaveClass("active");
+    expect(within(timeline).getByText("r10")).toBeInTheDocument();
+    expect(within(timeline).getByText("r9")).toBeInTheDocument();
   });
 
   it("reverts the working copy from a Timeline revision without comparison controls", async () => {
