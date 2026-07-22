@@ -60,7 +60,7 @@
     TaskSnapshot,
     WorkingCopyStatus,
   } from "./types/api";
-  import type { SvnOperationFeedback } from "./types/app";
+  import type { AppView, SvnOperationFeedback } from "./types/app";
 
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
@@ -188,6 +188,19 @@
       $svnStore.detection?.executable ??
       $svnStore.executableInput.trim();
     return executable || undefined;
+  }
+
+  async function selectView(view: AppView) {
+    const shouldRefreshLog =
+      view === "history" &&
+      $currentView !== "history" &&
+      $workspaceStore.current !== null &&
+      !$workspaceStore.svnLogLoading;
+
+    setCurrentView(view);
+    if (shouldRefreshLog) {
+      await workspaceStore.refreshSvnLog(currentSvnExecutable());
+    }
   }
 
   function trackedOperationTitle(kind: PendingSvnOperationKind) {
@@ -1239,6 +1252,31 @@
     setCurrentView("changes");
   }
 
+  async function addWorkspaceCopy() {
+    const previousWorkspace = $workspaceStore.current;
+    const previousStatus = $workspaceStore.status;
+    const workspace = await workspaceStore.chooseAndOpen(currentSvnExecutable());
+    if (!workspace) {
+      return;
+    }
+
+    if (previousWorkspace) {
+      await branchPoolStore.saveExisting({
+        branchUrl: previousWorkspace.repository_url,
+        localPath: previousWorkspace.working_copy_root,
+        revision: previousStatus?.revision_range ?? previousWorkspace.revision,
+        localChanges: previousStatus?.total ?? 0,
+      });
+    }
+    await branchPoolStore.saveExisting({
+      branchUrl: workspace.repository_url,
+      localPath: workspace.working_copy_root,
+      revision: $workspaceStore.status?.revision_range ?? workspace.revision,
+      localChanges: $workspaceStore.status?.total ?? 0,
+    });
+    setCurrentView("changes");
+  }
+
   async function removeBranchPoolEntry(entryId: string, deleteLocalCopy = false) {
     const entry = $branchPoolStore.pool.entries.find((item) => item.id === entryId);
     if (!entry) {
@@ -1528,7 +1566,7 @@
         setCurrentView("changes");
         break;
       case "view_history":
-        setCurrentView("history");
+        await selectView("history");
         break;
       case "view_repository":
         setCurrentView("repository");
@@ -2599,7 +2637,8 @@
   svnSwitchTargetUrl={$workspaceStore.svnSwitchTargetUrl}
   svnSwitchError={$workspaceStore.svnSwitchError}
   svnSwitchRunning={$workspaceStore.pendingSvnSwitchTaskId !== null}
-  onSelectView={setCurrentView}
+  onSelectView={selectView}
+  onAddWorkspace={addWorkspaceCopy}
   onChooseWorkspace={() =>
     workspaceStore
       .chooseAndOpen(currentSvnExecutable())

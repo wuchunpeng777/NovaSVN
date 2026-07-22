@@ -340,6 +340,51 @@ describe("MainWorkspace", () => {
     expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
   });
 
+  it("adds working copies from the project heading and hides the active duplicate", async () => {
+    const onAddWorkspace = vi.fn();
+    const onOpenBranchPoolEntry = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        appSettings: makeAppSettings(),
+        branchPool: {
+          entries: [
+            {
+              id: "current",
+              branch_url: "https://example.com/svn/trunk",
+              local_path: "c:\\repo\\wc\\",
+              revision: "12",
+              local_changes: 0,
+              created_at: 1,
+              updated_at: 1,
+            },
+            {
+              id: "second",
+              branch_url: "https://example.com/svn/branches/feature",
+              local_path: "D:\\work\\feature",
+              revision: "18",
+              local_changes: 3,
+              created_at: 1,
+              updated_at: 1,
+            },
+          ],
+        },
+        onAddWorkspace,
+        onOpenBranchPoolEntry,
+      },
+    });
+
+    const projects = screen.getByLabelText("项目列表");
+    await fireEvent.click(within(projects).getByRole("button", { name: "添加工作副本" }));
+    expect(onAddWorkspace).toHaveBeenCalledOnce();
+    expect(within(projects).getByText("feature")).toBeInTheDocument();
+    expect(within(projects).queryByText("trunk")).not.toBeInTheDocument();
+
+    await fireEvent.click(within(projects).getByText("feature").closest("button")!);
+    expect(onOpenBranchPoolEntry).toHaveBeenCalledWith("D:\\work\\feature");
+  });
+
   it("starts a complete commit flow when no files were preselected", async () => {
     const file = makeFile("src/main.ts", "modified", "main-digest");
     const onSelectAllCommitFiles = vi.fn();

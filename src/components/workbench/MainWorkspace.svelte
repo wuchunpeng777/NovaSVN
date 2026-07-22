@@ -19,6 +19,7 @@
     PanelLeftOpen,
     PanelRightClose,
     PanelRightOpen,
+    Plus,
     RefreshCw,
     RotateCcw,
     Wrench,
@@ -359,6 +360,7 @@
   };
 
   export let onSelectView: (value: AppView) => void = () => {};
+  export let onAddWorkspace: () => void = () => {};
   export let onChooseWorkspace: () => void = () => {};
   export let onOpenWorkspace: () => void = () => {};
   export let onRefreshStatus: () => void = () => {};
@@ -734,6 +736,9 @@
     { error: commandErrorText(commandError), retry: null },
     { error: svnSwitchError, retry: null },
   ]);
+  $: additionalWorkspaces = branchPool.entries.filter(
+    (entry) => !sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? ""),
+  );
   $: detectedAuthenticationFailure = detectedAuthenticationCandidate?.failure ?? null;
   $: authenticationDialogOpen =
     detectedAuthenticationFailure !== null &&
@@ -914,7 +919,11 @@
   }
 
   function basename(path: string) {
-    return path.split("/").pop() || path;
+    const windowsPath = /^[a-z]:[\\/]/i.test(path) || path.startsWith("\\\\");
+    const normalized = windowsPath
+      ? path.replace(/[\\/]+$/, "")
+      : path.replace(/\/+$/, "");
+    return (windowsPath ? normalized.split(/[\\/]/) : normalized.split("/")).pop() || path;
   }
 
   function dirname(path: string) {
@@ -1983,6 +1992,22 @@
     toggleTimelineEntryPaths(revision);
   }
 
+  function workspaceEntryName(entry: BranchPoolEntry) {
+    return basename(entry.local_path) || branchName(entry);
+  }
+
+  function sameWorkspacePath(left: string, right: string) {
+    if (!left.trim() || !right.trim()) {
+      return false;
+    }
+    return comparableWorkspacePath(left) === comparableWorkspacePath(right);
+  }
+
+  function comparableWorkspacePath(value: string) {
+    const normalized = value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+    return /^[a-z]:\//i.test(normalized) ? normalized.toLowerCase() : normalized;
+  }
+
   function clearRevisionFileDiff() {
     revisionFileDiffGeneration += 1;
     selectedRevisionFileDiff = null;
@@ -2488,10 +2513,23 @@
     {#if appSettings.showSourceList}
       <aside class="source-list" aria-label="项目列表">
       <section>
-        <h2>项目</h2>
+        <div class="source-section-heading">
+          <h2>项目</h2>
+          <button
+            type="button"
+            class="source-add-button"
+            aria-label="添加工作副本"
+            title="添加工作副本"
+            disabled={workspaceLoading || branchPoolLoading}
+            on:click={onAddWorkspace}
+          >
+            <Plus size={15} strokeWidth={2} aria-hidden="true" />
+          </button>
+        </div>
         <button
           type="button"
           class="source-item workspace-source-item"
+          class:active={workspace !== null}
           on:click={() => onSelectView("changes")}
         >
           <span class="source-icon" aria-hidden="true">
@@ -2503,18 +2541,18 @@
           </span>
           <em>{workingCopyStatus?.total ?? 0}</em>
         </button>
-        {#if branchPool.entries.length > 0}
-          {#each branchPool.entries as entry (entry.id)}
+        {#if additionalWorkspaces.length > 0}
+          {#each additionalWorkspaces as entry (entry.id)}
             <button
               type="button"
               class="source-item"
               on:click={() => onOpenBranchPoolEntry(entry.local_path)}
             >
               <span class="source-icon" aria-hidden="true">
-                <GitBranch size={16} strokeWidth={1.8} />
+                <FolderOpen size={16} strokeWidth={1.8} />
               </span>
               <span>
-                <strong>{branchName(entry)}</strong>
+                <strong>{workspaceEntryName(entry)}</strong>
                 <small>{entry.local_path}</small>
               </span>
               <em>{entry.local_changes}</em>

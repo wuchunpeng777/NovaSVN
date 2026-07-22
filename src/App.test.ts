@@ -19,6 +19,7 @@ vi.mock("./lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/api")>();
   return {
     ...actual,
+    chooseWorkspaceDirectory: vi.fn(),
     clearSvnCertificateTrust: vi.fn(),
     configureSvnAuthentication: vi.fn(),
     configureSvnCertificateTrust: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     getRepositoryFileBlame: vi.fn(),
     getRepositoryFileLog: vi.fn(),
     getRepositoryFileProperties: vi.fn(),
+    getBranchPool: vi.fn(),
     listTasks: vi.fn(),
     listWorkspaceFiles: vi.fn(),
     openLocalPathLocation: vi.fn(),
@@ -50,12 +52,14 @@ vi.mock("./lib/api", async (importOriginal) => {
     openWorkspaceFile: vi.fn(),
     openWorkspace: vi.fn(),
     scanWorkspaceStatus: vi.fn(),
+    saveBranchPoolEntry: vi.fn(),
   };
 });
 
 import { get } from "svelte/store";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import {
+  chooseWorkspaceDirectory,
   clearSvnCertificateTrust,
   configureSvnAuthentication,
   configureSvnCertificateTrust,
@@ -80,6 +84,7 @@ import {
   getRepositoryFileBlame,
   getRepositoryFileLog,
   getRepositoryFileProperties,
+  getBranchPool,
   listTasks,
   listWorkspaceFiles,
   openLocalPathLocation,
@@ -87,9 +92,11 @@ import {
   openWorkspaceFile,
   openWorkspace,
   scanWorkspaceStatus,
+  saveBranchPoolEntry,
 } from "./lib/api";
 import {
   appSettingsStore,
+  branchPoolStore,
   currentView,
   setCurrentView,
   taskStore,
@@ -106,6 +113,7 @@ import type {
 import App from "./App.svelte";
 
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
+const chooseWorkspaceDirectoryMock = vi.mocked(chooseWorkspaceDirectory);
 const clearSvnCertificateTrustMock = vi.mocked(clearSvnCertificateTrust);
 const configureSvnAuthenticationMock = vi.mocked(configureSvnAuthentication);
 const configureSvnCertificateTrustMock = vi.mocked(configureSvnCertificateTrust);
@@ -129,6 +137,7 @@ const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 const getRepositoryFileBlameMock = vi.mocked(getRepositoryFileBlame);
 const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const getRepositoryFilePropertiesMock = vi.mocked(getRepositoryFileProperties);
+const getBranchPoolMock = vi.mocked(getBranchPool);
 const listTasksMock = vi.mocked(listTasks);
 const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
 const openLocalPathLocationMock = vi.mocked(openLocalPathLocation);
@@ -136,9 +145,11 @@ const openRepositoryTempFileMock = vi.mocked(openRepositoryTempFile);
 const openWorkspaceFileMock = vi.mocked(openWorkspaceFile);
 const openWorkspaceMock = vi.mocked(openWorkspace);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
+const saveBranchPoolEntryMock = vi.mocked(saveBranchPoolEntry);
 const startDragMock = vi.mocked(startDrag);
 
 beforeEach(async () => {
+  chooseWorkspaceDirectoryMock.mockReset();
   clearSvnCertificateTrustMock.mockReset();
   configureSvnAuthenticationMock.mockReset();
   configureSvnCertificateTrustMock.mockReset();
@@ -163,6 +174,7 @@ beforeEach(async () => {
   getRepositoryFileBlameMock.mockReset();
   getRepositoryFileLogMock.mockReset();
   getRepositoryFilePropertiesMock.mockReset();
+  getBranchPoolMock.mockReset();
   listTasksMock.mockReset();
   listWorkspaceFilesMock.mockReset();
   openLocalPathLocationMock.mockReset();
@@ -170,10 +182,14 @@ beforeEach(async () => {
   openWorkspaceFileMock.mockReset();
   openWorkspaceMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
+  saveBranchPoolEntryMock.mockReset();
   startDragMock.mockReset();
   startDragMock.mockResolvedValue(undefined);
 
   listTasksMock.mockResolvedValue(makeTaskSnapshot([]));
+  chooseWorkspaceDirectoryMock.mockResolvedValue(null);
+  getBranchPoolMock.mockResolvedValue({ entries: [] });
+  await branchPoolStore.load();
   await taskStore.refresh();
   workspaceStore.markSvnOperationTask(null, null, null);
   workspaceStore.markMergeTask(null);
@@ -345,6 +361,104 @@ Certificate information:
       svn_executable: undefined,
     });
     expect(get(workspaceStore).pendingMergeTaskId).toBe("merge-create");
+  });
+
+  it("从左侧添加本地工作副本并保留原副本", async () => {
+    const secondWorkspace: WorkspaceSummary = {
+      local_path: "D:\\work\\feature",
+      working_copy_root: "D:\\work\\feature",
+      repository_url: "https://example.com/svn/branches/feature",
+      repository_root: "https://example.com/svn",
+      revision: "18",
+    };
+    const previousEntry = {
+      id: "previous",
+      branch_url: "https://example.com/svn/trunk",
+      local_path: "C:/repo/wc",
+      revision: "12",
+      local_changes: 0,
+      created_at: 1,
+      updated_at: 1,
+    };
+    const secondEntry = {
+      id: "second",
+      branch_url: secondWorkspace.repository_url,
+      local_path: secondWorkspace.working_copy_root,
+      revision: "18",
+      local_changes: 2,
+      created_at: 2,
+      updated_at: 2,
+    };
+    chooseWorkspaceDirectoryMock.mockResolvedValue("D:\\work\\feature");
+    openWorkspaceMock.mockResolvedValueOnce(secondWorkspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce({
+      ...makeStatus(),
+      working_copy_root: secondWorkspace.working_copy_root,
+      total: 2,
+      returned: 2,
+      local_changes: 2,
+      revision_range: "18",
+    });
+    saveBranchPoolEntryMock
+      .mockResolvedValueOnce({ entries: [previousEntry] })
+      .mockResolvedValueOnce({ entries: [previousEntry, secondEntry] });
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "添加工作副本" }));
+
+    await waitFor(() => expect(openWorkspaceMock).toHaveBeenLastCalledWith({
+      path: "D:\\work\\feature",
+      svn_executable: undefined,
+    }));
+    await waitFor(() => expect(saveBranchPoolEntryMock).toHaveBeenCalledTimes(2));
+    expect(saveBranchPoolEntryMock).toHaveBeenNthCalledWith(1, {
+      branch_url: "https://example.com/svn/trunk",
+      local_path: "C:/repo/wc",
+      revision: "12",
+      local_changes: 0,
+    });
+    expect(saveBranchPoolEntryMock).toHaveBeenNthCalledWith(2, {
+      branch_url: "https://example.com/svn/branches/feature",
+      local_path: "D:\\work\\feature",
+      revision: "18",
+      local_changes: 2,
+    });
+    const projects = screen.getByLabelText("项目列表");
+    expect(within(projects).getByText("feature")).toBeInTheDocument();
+    expect(within(projects).getByText("wc")).toBeInTheDocument();
+  });
+
+  it("进入时间线时自动获取日志且当前界面不重复请求", async () => {
+    getSvnLogMock.mockResolvedValue({
+      target: "https://example.com/svn/trunk",
+      working_copy_root: "C:/repo/wc",
+      repository_root: "https://example.com/svn",
+      repository_url: "https://example.com/svn/trunk",
+      entries: [],
+      has_more: false,
+      next_start_revision: null,
+    });
+    render(App);
+
+    const navigation = screen.getByRole("navigation", { name: "主视图" });
+    const timelineButton = within(navigation).getByRole("button", { name: "时间线" });
+    await fireEvent.click(timelineButton);
+
+    await waitFor(() => expect(getSvnLogMock).toHaveBeenCalledTimes(1));
+    expect(getSvnLogMock).toHaveBeenLastCalledWith({
+      working_copy_root: "C:/repo/wc",
+      file_path: undefined,
+      svn_executable: undefined,
+      limit: 50,
+      start_revision: undefined,
+    });
+
+    await fireEvent.click(timelineButton);
+    expect(getSvnLogMock).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(within(navigation).getByRole("button", { name: "工作副本" }));
+    await fireEvent.click(timelineButton);
+    await waitFor(() => expect(getSvnLogMock).toHaveBeenCalledTimes(2));
   });
 
   it("点击主界面更新后切换到完整 Update 页面并可返回", async () => {

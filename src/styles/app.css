@@ -4156,6 +4156,37 @@ select:focus {
   font-weight: 650;
 }
 
+.source-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 26px;
+  padding-right: 4px;
+}
+
+.source-section-heading h2 {
+  flex: 1;
+  padding-bottom: 0;
+}
+
+.source-list .source-add-button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  border: 0;
+  border-radius: 5px;
+  background: inherit;
+  padding: 0;
+  color: #287ac4;
+  cursor: pointer;
+  place-items: center;
+}
+
+.source-list .source-add-button:hover:not(:disabled) {
+  background: #d9d9dc;
+}
+
 .source-item {
   min-height: 40px;
   border-color: transparent;
@@ -4437,6 +4468,14 @@ select:focus {
 
 .versions-workbench[data-theme="dark"] .source-item:hover:not(:disabled),
 .versions-workbench[data-theme="dark"] .source-list .mode-switcher button:hover:not(:disabled) {
+  background: #343438;
+}
+
+.versions-workbench[data-theme="dark"] .source-list .source-add-button {
+  color: #55a7ef;
+}
+
+.versions-workbench[data-theme="dark"] .source-list .source-add-button:hover:not(:disabled) {
   background: #343438;
 }
 

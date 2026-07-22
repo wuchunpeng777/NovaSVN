@@ -2257,20 +2257,21 @@ function createWorkspaceStore() {
     try {
       const selected = await chooseWorkspaceDirectory();
       if (!selected) {
-        return;
+        return null;
       }
 
       update((state) => ({
         ...state,
         pathInput: selected,
       }));
-      await openPath(svnExecutable);
+      return await openPath(svnExecutable);
     } catch (error) {
       update((state) => ({
         ...state,
         loading: false,
         error: error as CommandError,
       }));
+      return null;
     }
   }
 
