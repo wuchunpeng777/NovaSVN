@@ -74,6 +74,7 @@
   let standaloneLogReady = false;
   let standaloneUpdatePath = "";
   let standaloneUpdateReady = false;
+  let standaloneUpdateReturnsToMain = false;
   let unlistenAppMenu: UnlistenFn | null = null;
   let unlistenDragDrop: UnlistenFn | null = null;
   let repositoryImportDropActive = false;
@@ -1300,6 +1301,23 @@
     await workspaceStore.refreshSvnLog(currentSvnExecutable());
   }
 
+  function openWorkspaceUpdatePage() {
+    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+    if (!workingCopyRoot) {
+      return;
+    }
+    standaloneUpdatePath = workingCopyRoot;
+    standaloneUpdateReturnsToMain = true;
+    standaloneUpdateReady = true;
+    startupSurface = "update";
+  }
+
+  async function returnFromWorkspaceUpdatePage() {
+    startupSurface = "main";
+    standaloneUpdateReturnsToMain = false;
+    await refreshStatusAndSyncBranchPool();
+  }
+
   async function runMerge() {
     if (!$workspaceStore.current) {
       workspaceStore.failMergeTask("请先打开 SVN 工作副本");
@@ -1520,7 +1538,7 @@
         setCurrentView("settings");
         break;
       case "update_workspace":
-        await runSvnOperation("update");
+        openWorkspaceUpdatePage();
         break;
       case "cleanup_workspace":
         await runSvnOperation("cleanup");
@@ -2257,6 +2275,7 @@
 
     if (intent.action === "update") {
       standaloneUpdatePath = intent.path?.trim() ?? "";
+      standaloneUpdateReturnsToMain = false;
       startupSurface = "update";
       if ($appSettingsStore.svnAuthenticationMode !== "password") {
         await applySvnAuthentication();
@@ -2398,6 +2417,8 @@
     svnRememberPassword={$appSettingsStore.svnRememberPassword}
     {svnAuthenticationLoading}
     {svnAuthenticationError}
+    showReturnToMain={standaloneUpdateReturnsToMain}
+    onReturnToMain={returnFromWorkspaceUpdatePage}
     onSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
   />
 {:else}
@@ -2575,7 +2596,7 @@
   onOpenWorkspace={() =>
     workspaceStore.openPath(currentSvnExecutable()).then(() => syncCurrentBranchPoolEntry())}
   onRefreshStatus={() => refreshStatusAndSyncBranchPool()}
-  onUpdateWorkspace={() => runSvnOperation("update")}
+  onUpdateWorkspace={openWorkspaceUpdatePage}
   onUpdatePath={(path) => runSvnOperation("update_path", path)}
   onCleanupWorkspace={() => runSvnOperation("cleanup")}
   onDismissSvnOperationFeedback={dismissSvnOperationFeedback}

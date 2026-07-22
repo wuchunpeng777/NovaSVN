@@ -39,6 +39,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     ignoreWorkspacePath: vi.fn(),
     getTask: vi.fn(),
     getSvnLog: vi.fn(),
+    inspectUpdateTarget: vi.fn(),
     getRepositoryFileBlame: vi.fn(),
     getRepositoryFileLog: vi.fn(),
     getRepositoryFileProperties: vi.fn(),
@@ -75,6 +76,7 @@ import {
   ignoreWorkspacePath,
   getTask,
   getSvnLog,
+  inspectUpdateTarget,
   getRepositoryFileBlame,
   getRepositoryFileLog,
   getRepositoryFileProperties,
@@ -123,6 +125,7 @@ const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
 const ignoreWorkspacePathMock = vi.mocked(ignoreWorkspacePath);
 const getTaskMock = vi.mocked(getTask);
 const getSvnLogMock = vi.mocked(getSvnLog);
+const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 const getRepositoryFileBlameMock = vi.mocked(getRepositoryFileBlame);
 const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const getRepositoryFilePropertiesMock = vi.mocked(getRepositoryFileProperties);
@@ -156,6 +159,7 @@ beforeEach(async () => {
   ignoreWorkspacePathMock.mockReset();
   getTaskMock.mockReset();
   getSvnLogMock.mockReset();
+  inspectUpdateTargetMock.mockReset();
   getRepositoryFileBlameMock.mockReset();
   getRepositoryFileLogMock.mockReset();
   getRepositoryFilePropertiesMock.mockReset();
@@ -343,34 +347,61 @@ Certificate information:
     expect(get(workspaceStore).pendingMergeTaskId).toBe("merge-create");
   });
 
-  it("连续点击更新只创建并绑定一个任务", async () => {
-    const creation = deferred<Task>();
-    const createdTask = makeTask({ task_id: "svn-update", status: "pending" });
-    createSvnOperationTaskMock.mockReturnValueOnce(creation.promise);
-    listTasksMock.mockResolvedValue(
-      makeTaskSnapshot([makeTaskSummary({ task_id: "svn-update", status: "pending" })]),
+  it("点击主界面更新后切换到完整 Update 页面并可返回", async () => {
+    inspectUpdateTargetMock.mockResolvedValue({
+      target_path: "C:/repo/wc",
+      working_copy_root: "C:/repo/wc",
+      relative_path: null,
+      repository_url: "https://example.com/svn/trunk",
+      revision: "20",
+      kind: "dir",
+    });
+    createSvnOperationTaskMock.mockResolvedValue(
+      makeTask({ task_id: "svn-update", status: "pending" }),
     );
-    getTaskMock.mockResolvedValue(createdTask);
+    getTaskMock.mockResolvedValue(
+      makeTask({
+        task_id: "svn-update",
+        status: "success",
+        logs: [
+          { message: "U    src/main.ts", created_at: 1 },
+          { message: "Updated to revision 21.", created_at: 2 },
+        ],
+      }),
+    );
+    scanWorkspaceStatusMock.mockResolvedValue({
+      ...makeStatus(),
+      revision_range: "21",
+      repository_revision: "21",
+    });
+    scanWorkspaceStatusMock.mockClear();
     render(App);
 
-    const updateButton = screen.getByRole("button", { name: "更新工作副本" });
-    await fireEvent.click(updateButton);
-    await fireEvent.click(updateButton);
+    await fireEvent.click(screen.getByRole("button", { name: "更新工作副本" }));
 
-    expect(createSvnOperationTaskMock).toHaveBeenCalledOnce();
-    creation.resolve(createdTask);
-
+    const updatePage = await screen.findByLabelText("NovaSVN Update");
+    expect(updatePage).toBeInTheDocument();
+    expect(screen.queryByLabelText("NovaSVN 工作台")).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(get(workspaceStore).pendingSvnOperationTaskId).toBe("svn-update");
+      expect(inspectUpdateTargetMock).toHaveBeenCalledWith({
+        path: "C:/repo/wc",
+        svn_executable: undefined,
+      });
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:/repo/wc",
+        kind: "update",
+        file_path: undefined,
+        svn_executable: undefined,
+      });
     });
-    expect(
-      screen.getByRole("button", { name: "正在更新工作副本" }),
-    ).toBeDisabled();
-    expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
-      working_copy_root: "C:/repo/wc",
-      kind: "update",
-      svn_executable: undefined,
-    });
+    expect(await screen.findByRole("status", { name: "更新完成" })).toHaveTextContent(
+      "Revision 21",
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: "返回主界面" }));
+    expect(await screen.findByLabelText("NovaSVN 工作台")).toBeInTheDocument();
+    expect(screen.queryByLabelText("NovaSVN Update")).not.toBeInTheDocument();
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(2));
   });
 
   it("远端变化文件使用真实文件级 Update 任务", async () => {

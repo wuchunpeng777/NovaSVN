@@ -90,6 +90,7 @@ describe("StandaloneUpdateWindow", () => {
     expect(within(output).getByRole("status", { name: "更新完成" })).toHaveTextContent(
       "工作副本已更新到 Revision 21",
     );
+    expect(screen.queryByRole("button", { name: "返回主界面" })).not.toBeInTheDocument();
     expect(scanWorkspaceStatusMock).toHaveBeenCalledWith({
       working_copy_root: "C:\\repo",
       svn_executable: "C:\\Tools\\svn.exe",
@@ -97,6 +98,24 @@ describe("StandaloneUpdateWindow", () => {
       limit: 5000,
       check_remote_updates: false,
     });
+  });
+
+  it("主界面模式完成更新后可以返回工作台", async () => {
+    const onReturnToMain = vi.fn();
+    render(StandaloneUpdateWindow, {
+      props: {
+        targetPath: "C:\\repo",
+        showReturnToMain: true,
+        onReturnToMain,
+      },
+    });
+
+    await screen.findByRole("status", { name: "更新完成" });
+    const returnButton = screen.getByRole("button", { name: "返回主界面" });
+    expect(returnButton).toBeEnabled();
+    expect(returnButton).toHaveAttribute("title", "返回主界面");
+    await fireEvent.click(returnButton);
+    expect(onReturnToMain).toHaveBeenCalledOnce();
   });
 
   it("更新内容增加时自动滚动到底部", async () => {

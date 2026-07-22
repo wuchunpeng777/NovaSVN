@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { CircleCheck, FilePenLine, History, RefreshCw, RotateCw, Square, X } from "@lucide/svelte";
+  import { ArrowLeft, CircleCheck, FilePenLine, History, RefreshCw, RotateCw, Square, X } from "@lucide/svelte";
   import {
     cancelTask,
     createSvnOperationTask,
@@ -31,6 +31,8 @@
   export let svnRememberPassword = true;
   export let svnAuthenticationLoading = false;
   export let svnAuthenticationError: CommandError | null = null;
+  export let showReturnToMain = false;
+  export let onReturnToMain: () => void = () => {};
   export let onSvnAuthenticationSubmit: (
     username: string,
     password: string,
@@ -526,9 +528,23 @@
 
 <main class="standalone-update" data-theme={resolvedTheme} aria-label="NovaSVN Update">
   <header class="update-titlebar">
-    <div>
-      <h1>NovaSVN Update</h1>
-      <p title={targetPath}>{target?.target_path ?? targetPath}</p>
+    <div class="update-heading">
+      {#if showReturnToMain}
+        <button
+          type="button"
+          class="icon-button update-return"
+          aria-label="返回主界面"
+          title="返回主界面"
+          disabled={initializing || updateRunning || resolutionRunning}
+          on:click={onReturnToMain}
+        >
+          <ArrowLeft size={17} aria-hidden="true" />
+        </button>
+      {/if}
+      <div>
+        <h1>NovaSVN Update</h1>
+        <p title={targetPath}>{target?.target_path ?? targetPath}</p>
+      </div>
     </div>
     <div class="update-actions">
       <span class:running={updateRunning}>{taskStatusLabel(updateTask)}</span>
@@ -822,8 +838,19 @@
     padding: 10px 14px;
   }
 
-  .update-titlebar > div:first-child {
+  .update-heading {
+    display: flex;
+    align-items: center;
+    gap: 9px;
     min-width: 0;
+  }
+
+  .update-heading > div {
+    min-width: 0;
+  }
+
+  .update-return {
+    flex: 0 0 auto;
   }
 
   h1,
