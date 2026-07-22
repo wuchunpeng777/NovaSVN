@@ -1665,10 +1665,18 @@ textarea {
   display: grid;
   align-content: start;
   gap: 8px;
+  min-height: 0;
   overflow: auto;
   border: 0;
   border-radius: 0;
   background: #f3f5f7;
+}
+
+.timeline-layout.file-diff-open .revision-compare {
+  align-content: stretch;
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
 }
 
 .revision-result {
@@ -1706,68 +1714,6 @@ textarea {
   font-family: "SFMono-Regular", Consolas, monospace;
 }
 
-.revision-files {
-  display: grid;
-  gap: 8px;
-  border-bottom: 1px solid #d8dde3;
-  padding-bottom: 10px;
-}
-
-.revision-files > strong {
-  color: #536070;
-}
-
-.revision-file-list {
-  display: grid;
-  gap: 6px;
-  max-height: 220px;
-  overflow: auto;
-}
-
-.revision-file-list > div {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 8px;
-  align-items: start;
-  border: 1px solid #d8dde3;
-  border-radius: 6px;
-  background: #ffffff;
-  padding: 6px 8px;
-}
-
-.revision-file-list strong,
-.revision-file-list small {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.revision-file-list small {
-  color: #687482;
-}
-
-.revision-path-button {
-  display: block;
-  width: 100%;
-  min-height: 0;
-  overflow: hidden;
-  border: 0;
-  border-radius: 2px;
-  background: inherit;
-  padding: 1px 2px;
-  color: #245f91;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.revision-path-button:hover,
-.revision-path-button:focus-visible {
-  background: #e5eef6;
-  outline: 1px solid #5b91bd;
-}
-
 .change-action {
   display: grid;
   width: 22px;
@@ -1782,12 +1728,12 @@ textarea {
 
 .revision-file-diff {
   display: grid;
-  grid-template-rows: auto minmax(360px, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
-  min-height: 420px;
+  min-height: 0;
   overflow: hidden;
-  border: 1px solid #d8dde3;
-  border-radius: 6px;
+  border: 0;
+  border-radius: 0;
   background: #ffffff;
 }
 
@@ -2556,7 +2502,6 @@ textarea {
 .versions-workbench[data-theme="dark"] .advanced-card,
 .versions-workbench[data-theme="dark"] .settings-view article,
 .versions-workbench[data-theme="dark"] .advanced-section,
-.versions-workbench[data-theme="dark"] .revision-file-list > div,
 .versions-workbench[data-theme="dark"] .blame-table,
 .versions-workbench[data-theme="dark"] .patch-dialog {
   background: #20242a;
@@ -2661,10 +2606,8 @@ textarea {
 .versions-workbench[data-theme="dark"] .advanced-section,
 .versions-workbench[data-theme="dark"] .monaco-diff-viewer,
 .versions-workbench[data-theme="dark"] .blame-table,
-.versions-workbench[data-theme="dark"] .revision-files,
 .versions-workbench[data-theme="dark"] .revision-file-diff,
 .versions-workbench[data-theme="dark"] .revision-file-diff > header,
-.versions-workbench[data-theme="dark"] .revision-file-list > div,
 .versions-workbench[data-theme="dark"] .breadcrumbs,
 .versions-workbench[data-theme="dark"] .patch-dialog,
 .versions-workbench[data-theme="dark"] .patch-summary {
@@ -2881,17 +2824,14 @@ textarea {
   color: #9bc9ee;
 }
 
-.versions-workbench[data-theme="dark"] .timeline-changed-path-button,
-.versions-workbench[data-theme="dark"] .revision-path-button {
+.versions-workbench[data-theme="dark"] .timeline-changed-path-button {
   border-color: #20242a;
   background: inherit;
   color: #9bc9ee;
 }
 
 .versions-workbench[data-theme="dark"] .timeline-changed-path-button:hover,
-.versions-workbench[data-theme="dark"] .timeline-changed-path-button:focus-visible,
-.versions-workbench[data-theme="dark"] .revision-path-button:hover,
-.versions-workbench[data-theme="dark"] .revision-path-button:focus-visible {
+.versions-workbench[data-theme="dark"] .timeline-changed-path-button:focus-visible {
   background: #33414d;
 }
 
@@ -2911,7 +2851,6 @@ textarea {
 .versions-workbench[data-theme="dark"] .task-list em,
 .versions-workbench[data-theme="dark"] .task-list small,
 .versions-workbench[data-theme="dark"] .revision-result,
-.versions-workbench[data-theme="dark"] .revision-file-list small,
 .versions-workbench[data-theme="dark"] .metadata-cell,
 .versions-workbench[data-theme="dark"] .patch-dialog > header p,
 .versions-workbench[data-theme="dark"] .patch-summary span,
@@ -2933,7 +2872,6 @@ textarea {
 }
 
 .versions-workbench[data-theme="dark"] .summary-strip,
-.versions-workbench[data-theme="dark"] .revision-files > strong,
 .versions-workbench[data-theme="dark"] .change-action,
 .versions-workbench[data-theme="dark"] .task-log p {
   color: #c0c8d0;

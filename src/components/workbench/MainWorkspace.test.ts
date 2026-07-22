@@ -708,6 +708,9 @@ Certificate information:
     expect(newestEntry).toHaveTextContent("/trunk/file-12-3.txt");
     expect(newestEntry).toHaveTextContent("/trunk/file-12-4.txt");
     expect(newestEntry).toHaveTextContent("/trunk/file-12-5.txt");
+    const revisionCompare = screen.getByLabelText("Revision 比较");
+    expect(within(revisionCompare).queryByText("修改文件")).not.toBeInTheDocument();
+    expect(revisionCompare).not.toHaveTextContent("/trunk/file-12-1.txt");
     await fireEvent.click(
       within(newestEntry).getByRole("button", {
         name: "比较 r12 的 /trunk/file-12-4.txt",
@@ -723,18 +726,23 @@ Certificate information:
       max_bytes: 20 * 1024 * 1024,
     });
     const fileDiff = await screen.findByLabelText("文件 Diff");
+    expect(fileDiff.parentElement).toBe(revisionCompare);
+    expect(fileDiff.closest(".timeline-layout")).toHaveClass("file-diff-open");
     const closeFileDiff = within(fileDiff).getByRole("button", { name: "关闭文件 Diff" });
     expect(closeFileDiff).toHaveAttribute("title", "关闭文件 Diff");
     await fireEvent.click(closeFileDiff);
     expect(screen.queryByLabelText("文件 Diff")).not.toBeInTheDocument();
+    expect(revisionCompare.closest(".timeline-layout")).not.toHaveClass("file-diff-open");
 
     const priorDay = within(timeline).getByRole("group", { name: "2026年7月10日" });
     expect(priorDay).toHaveTextContent("1 revision");
     expect(within(priorDay).getByText("r10")).toBeInTheDocument();
     expect(within(timeline).getByRole("group", { name: "日期未知" })).toHaveTextContent("r9");
 
-    await fireEvent.click(within(priorDay).getByText("r10").closest("button") as HTMLElement);
-    expect(within(screen.getByLabelText("Revision 比较")).getByText("r10")).toBeInTheDocument();
+    const priorEntryButton = within(priorDay).getByRole("button", { name: "展开 r10 日志" });
+    await fireEvent.click(priorEntryButton);
+    expect(priorEntryButton).toHaveClass("active");
+    expect(within(revisionCompare).queryByText("修改文件")).not.toBeInTheDocument();
   });
 
   it("selects, orders, preserves, and compares two Timeline revisions", async () => {

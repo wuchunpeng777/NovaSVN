@@ -2961,43 +2961,6 @@
           </section>
 
           <aside class="revision-compare" aria-label="Revision 比较">
-            <section class="revision-files">
-              <div class="section-title">
-                <h2>修改文件</h2>
-                <span>{selectedLogEntry?.changed_paths.length ?? 0}</span>
-              </div>
-              {#if selectedLogEntry}
-                <strong>r{selectedLogEntry.revision}</strong>
-                <div class="revision-file-list">
-                  {#each selectedLogEntry.changed_paths as path (`${selectedLogEntry.revision}:${path.path}:${path.action}`)}
-                    <div>
-                      <span class="change-action" data-action={path.action}>{path.action || "-"}</span>
-                      <span>
-                        {#if path.kind === "dir"}
-                          {path.path}
-                        {:else}
-                          <button
-                            type="button"
-                            class="revision-path-button"
-                            aria-label={`比较 r${selectedLogEntry.revision} 的 ${path.path}`}
-                            disabled={revisionFileDiffLoading}
-                            on:click={() => openChangedPathRevisionDiff(selectedLogEntry.revision, path.path, path.action)}
-                          >
-                            {path.path}
-                          </button>
-                        {/if}
-                        <small>{path.kind || "-"}</small>
-                      </span>
-                    </div>
-                  {/each}
-                  {#if selectedLogEntry.changed_paths.length === 0}
-                    <p class="muted">该日志没有返回修改路径。</p>
-                  {/if}
-                </div>
-              {:else}
-                <p class="muted">选择一条日志后显示修改文件。</p>
-              {/if}
-            </section>
             {#if selectedRevisionFileDiff}
               <section class="revision-file-diff" aria-label="文件 Diff">
                 <header>
