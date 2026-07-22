@@ -202,7 +202,10 @@
   }
 
   function saveCommitSettings(nextHistory: string[]) {
-    writeCommitMessageSettings({ template: commitTemplate, history: nextHistory });
+    writeCommitMessageSettings(
+      { template: commitTemplate, history: nextHistory },
+      target?.working_copy_root,
+    );
   }
 
   function applyPendingCommitMessage() {
@@ -265,6 +268,7 @@
       if (currentGeneration !== generation) {
         return;
       }
+      history = readCommitMessageSettings(target.working_copy_root).history;
       await refreshStatus(currentGeneration);
     } catch (caught) {
       if (currentGeneration === generation) {
@@ -454,7 +458,7 @@
   }
 
   function openHistoryPicker() {
-    history = readCommitMessageSettings().history;
+    history = readCommitMessageSettings(target?.working_copy_root).history;
     selectedHistoryMessage = history[0] ?? "";
     historyPickerOpen = true;
   }

@@ -247,14 +247,24 @@ describe("StandaloneCommitWindow", () => {
   it("通过按钮从本地缓存获取历史日志并提交用户选择的路径", async () => {
     localStorage.setItem(
       "novasvn:commit-message-settings",
-      JSON.stringify({ template: "默认模板", history: ["修复历史问题", "旧日志"] }),
+      JSON.stringify({
+        template: "默认模板",
+        history: ["旧版全局日志"],
+        project_histories: {
+          "c:/repo": ["修复历史问题", "旧日志"],
+          "c:/another-repo": ["其他项目日志"],
+        },
+      }),
     );
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
     await screen.findByText("other.ts");
+    expect(screen.getByRole("textbox", { name: "提交日志" })).toHaveValue("默认模板");
 
     await fireEvent.click(screen.getByRole("button", { name: "获取历史日志" }));
     const dialog = screen.getByRole("dialog", { name: "选择历史提交日志" });
     expect(within(dialog).getByText("历史日志来自本地缓存")).toBeInTheDocument();
+    expect(within(dialog).queryByText("其他项目日志")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("旧版全局日志")).not.toBeInTheDocument();
     const history = within(dialog).getByRole("listbox", { name: "历史提交日志" });
     await fireEvent.change(history, { target: { value: "修复历史问题" } });
     await fireEvent.click(within(dialog).getByRole("button", { name: "填充提交日志" }));
@@ -274,12 +284,26 @@ describe("StandaloneCommitWindow", () => {
       });
     });
     expect(await screen.findByText("提交完成")).toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem("novasvn:commit-message-settings") ?? "{}")).toMatchObject({
-      history: ["修复历史问题", "旧日志"],
-    });
+    expect(JSON.parse(localStorage.getItem("novasvn:commit-message-settings") ?? "{}"))
+      .toMatchObject({
+        template: "默认模板",
+        history: ["旧版全局日志"],
+        project_histories: {
+          "c:/repo": ["修复历史问题", "旧日志"],
+          "c:/another-repo": ["其他项目日志"],
+        },
+      });
   });
 
   it("本地没有缓存时显示历史日志空状态", async () => {
+    localStorage.setItem(
+      "novasvn:commit-message-settings",
+      JSON.stringify({
+        template: "默认模板",
+        history: ["旧版全局日志"],
+        project_histories: { "c:/another-repo": ["其他项目日志"] },
+      }),
+    );
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
     await screen.findByText("other.ts");
 

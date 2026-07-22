@@ -1,5 +1,9 @@
 import { get, writable } from "svelte/store";
 import {
+  readCommitMessageSettings,
+  writeCommitMessageSettings,
+} from "../lib/commit-message-history";
+import {
   cancelTask,
   chooseCheckoutDirectory,
   chooseExportDirectory,
@@ -2051,7 +2055,7 @@ function createWorkspaceStore() {
       const recent = await getRecentWorkspace();
       const root = recent.workspace?.working_copy_root;
       const draft = recent.workspace ? loadWorkspaceDraft(recent.workspace) : emptyWorkspaceDraft();
-      const commitSettings = loadCommitMessageSettings();
+      const commitSettings = readCommitMessageSettings(root);
       update((state) => ({
         ...state,
         current: recent.workspace,
@@ -2204,7 +2208,7 @@ function createWorkspaceStore() {
         return null;
       }
       const draft = loadWorkspaceDraft(current);
-      const commitSettings = loadCommitMessageSettings();
+      const commitSettings = readCommitMessageSettings(current.working_copy_root);
       update((state) => ({
         ...state,
         current,
@@ -2380,10 +2384,13 @@ function createWorkspaceStore() {
       const commitTemplate = value;
       const commitMessage = state.commitMessage.trim() ? state.commitMessage : commitTemplate;
       if (persist) {
-        saveCommitMessageSettings({
-          template: commitTemplate,
-          history: state.commitHistory,
-        });
+        writeCommitMessageSettings(
+          {
+            template: commitTemplate,
+            history: state.commitHistory,
+          },
+          state.current?.working_copy_root,
+        );
         saveWorkspaceDraftFromState({
           ...state,
           commitMessage,
@@ -2958,6 +2965,7 @@ function createWorkspaceStore() {
         state.commitMessage,
         state.commitHistory,
         state.commitTemplate,
+        state.current?.working_copy_root,
       );
       const nextState = {
         ...state,
@@ -3887,6 +3895,7 @@ function createWorkspaceStore() {
         state.commitMessage,
         state.commitHistory,
         state.commitTemplate,
+        state.current?.working_copy_root,
       );
       const nextState = {
         ...state,
@@ -5558,7 +5567,7 @@ function loadAppSettings(): AppSettingsState {
   try {
     const raw = window.localStorage.getItem(appSettingsKey());
     if (!raw) {
-      const commitSettings = loadCommitMessageSettings();
+      const commitSettings = readCommitMessageSettings();
       return {
         ...initialAppSettings,
         commitTemplate: commitSettings.template,
@@ -6578,54 +6587,11 @@ function isSelectedHunkDraft(value: unknown): value is {
   );
 }
 
-interface CommitMessageSettings {
-  template: string;
-  history: string[];
-}
-
-function commitMessageSettingsKey() {
-  return "novasvn:commit-message-settings";
-}
-
-function loadCommitMessageSettings(): CommitMessageSettings {
-  if (typeof window === "undefined") {
-    return { template: "", history: [] };
-  }
-
-  try {
-    const raw = window.localStorage.getItem(commitMessageSettingsKey());
-    if (!raw) {
-      return { template: "", history: [] };
-    }
-
-    const parsed = JSON.parse(raw) as Partial<CommitMessageSettings>;
-    return {
-      template: typeof parsed.template === "string" ? parsed.template : "",
-      history: Array.isArray(parsed.history)
-        ? parsed.history.filter((item): item is string => typeof item === "string").slice(0, 8)
-        : [],
-    };
-  } catch {
-    return { template: "", history: [] };
-  }
-}
-
-function saveCommitMessageSettings(settings: CommitMessageSettings) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(commitMessageSettingsKey(), JSON.stringify(settings));
-  } catch {
-    // 本地设置保存失败不应阻断提交流程。
-  }
-}
-
 function recordCommitHistory(
   message: string,
   history: string[],
   template: string,
+  workingCopyRoot: string | undefined,
 ) {
   const normalized = message.trim();
   if (!normalized) {
@@ -6633,10 +6599,13 @@ function recordCommitHistory(
   }
 
   const nextHistory = [normalized, ...history.filter((item) => item !== normalized)].slice(0, 8);
-  saveCommitMessageSettings({
-    template,
-    history: nextHistory,
-  });
+  writeCommitMessageSettings(
+    {
+      template,
+      history: nextHistory,
+    },
+    workingCopyRoot,
+  );
 
   return nextHistory;
 }

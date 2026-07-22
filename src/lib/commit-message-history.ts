@@ -7,37 +7,42 @@ export interface CommitMessageSettings {
   history: string[];
 }
 
-export function readCommitMessageSettings(): CommitMessageSettings {
-  if (typeof window === "undefined") {
-    return { template: "", history: [] };
-  }
-
-  try {
-    const raw = window.localStorage.getItem(COMMIT_MESSAGE_SETTINGS_KEY);
-    if (!raw) {
-      return { template: "", history: [] };
-    }
-    const parsed = JSON.parse(raw) as Partial<CommitMessageSettings>;
-    return {
-      template: typeof parsed.template === "string" ? parsed.template : "",
-      history: normalizeHistory(parsed.history),
-    };
-  } catch {
-    return { template: "", history: [] };
-  }
+interface StoredCommitMessageSettings extends CommitMessageSettings {
+  project_histories: Record<string, string[]>;
 }
 
-export function writeCommitMessageSettings(settings: CommitMessageSettings) {
+export function readCommitMessageSettings(workingCopyRoot?: string): CommitMessageSettings {
+  const settings = readStoredCommitMessageSettings();
+  const projectKey = normalizeWorkingCopyRoot(workingCopyRoot);
+  return {
+    template: settings.template,
+    history: projectKey ? settings.project_histories[projectKey] ?? [] : settings.history,
+  };
+}
+
+export function writeCommitMessageSettings(
+  settings: CommitMessageSettings,
+  workingCopyRoot?: string,
+) {
   if (typeof window === "undefined") {
     return;
   }
 
   try {
+    const current = readStoredCommitMessageSettings();
+    const projectKey = normalizeWorkingCopyRoot(workingCopyRoot);
+    const projectHistories = projectKey
+      ? {
+          ...current.project_histories,
+          [projectKey]: normalizeHistory(settings.history),
+        }
+      : current.project_histories;
     window.localStorage.setItem(
       COMMIT_MESSAGE_SETTINGS_KEY,
       JSON.stringify({
         template: settings.template,
-        history: normalizeHistory(settings.history),
+        history: projectKey ? current.history : normalizeHistory(settings.history),
+        project_histories: projectHistories,
       }),
     );
   } catch {
@@ -45,11 +50,44 @@ export function writeCommitMessageSettings(settings: CommitMessageSettings) {
   }
 }
 
-export function cacheCommitMessages(messages: string[]) {
-  const current = readCommitMessageSettings();
+export function cacheCommitMessages(messages: string[], workingCopyRoot?: string) {
+  const current = readCommitMessageSettings(workingCopyRoot);
   const history = normalizeHistory([...messages, ...current.history]);
-  writeCommitMessageSettings({ ...current, history });
+  writeCommitMessageSettings({ ...current, history }, workingCopyRoot);
   return history;
+}
+
+function readStoredCommitMessageSettings(): StoredCommitMessageSettings {
+  if (typeof window === "undefined") {
+    return { template: "", history: [], project_histories: {} };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(COMMIT_MESSAGE_SETTINGS_KEY);
+    if (!raw) {
+      return { template: "", history: [], project_histories: {} };
+    }
+    const parsed = JSON.parse(raw) as Partial<StoredCommitMessageSettings>;
+    return {
+      template: typeof parsed.template === "string" ? parsed.template : "",
+      history: normalizeHistory(parsed.history),
+      project_histories: normalizeProjectHistories(parsed.project_histories),
+    };
+  } catch {
+    return { template: "", history: [], project_histories: {} };
+  }
+}
+
+function normalizeProjectHistories(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([root, history]) => [normalizeWorkingCopyRoot(root), normalizeHistory(history)] as const)
+      .filter(([root]) => Boolean(root)),
+  );
 }
 
 export function setPendingCommitMessage(message: string) {
@@ -93,4 +131,15 @@ function normalizeHistory(value: unknown) {
       .map((item) => item.trim())
       .filter(Boolean),
   )].slice(0, 50);
+}
+
+function normalizeWorkingCopyRoot(value: string | undefined) {
+  let normalized = value?.trim().replace(/\\/g, "/") ?? "";
+  if (normalized !== "/") {
+    normalized = normalized.replace(/\/+$/, "");
+  }
+  if (/^[a-z]:(?:\/|$)/i.test(normalized) || normalized.startsWith("//")) {
+    return normalized.toLocaleLowerCase("en-US");
+  }
+  return normalized;
 }
