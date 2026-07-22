@@ -128,21 +128,21 @@ describe("MainWorkspace", () => {
 
       const resizer = screen.getByRole("slider", { name: "调整右侧面板宽度" });
       expect(resizer).toHaveAttribute("aria-valuemin", "300");
-      expect(resizer).toHaveAttribute("aria-valuemax", "374");
-      expect(resizer).toHaveAttribute("aria-valuenow", "360");
+      expect(resizer).toHaveAttribute("aria-valuemax", "344");
+      expect(resizer).toHaveAttribute("aria-valuenow", "344");
       expect(resizer).toHaveAttribute("aria-orientation", "horizontal");
 
       await fireEvent.keyDown(resizer, { key: "ArrowLeft" });
-      expect(resizer).toHaveAttribute("aria-valuenow", "336");
+      expect(resizer).toHaveAttribute("aria-valuenow", "320");
 
       await fireEvent.keyDown(resizer, { key: "ArrowRight" });
-      expect(resizer).toHaveAttribute("aria-valuenow", "360");
+      expect(resizer).toHaveAttribute("aria-valuenow", "344");
 
       await fireEvent.keyDown(resizer, { key: "Home" });
       expect(resizer).toHaveAttribute("aria-valuenow", "300");
 
       await fireEvent.keyDown(resizer, { key: "End" });
-      expect(resizer).toHaveAttribute("aria-valuenow", "374");
+      expect(resizer).toHaveAttribute("aria-valuenow", "344");
     } finally {
       Object.defineProperty(window, "innerWidth", {
         configurable: true,
@@ -340,10 +340,57 @@ describe("MainWorkspace", () => {
     expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
   });
 
-  it("adds working copies from the project heading and hides the active duplicate", async () => {
+  it("resizes the project sidebar with the mouse and keyboard", async () => {
+    const { container } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+      },
+    });
+    const resizer = screen.getByRole("slider", { name: "调整项目侧栏宽度" });
+
+    expect(resizer).toHaveAttribute("aria-valuenow", "244");
+    await fireEvent.mouseDown(resizer, { clientX: 244 });
+    await fireEvent.mouseMove(window, { clientX: 284 });
+    await fireEvent.mouseUp(window);
+
+    expect(resizer).toHaveAttribute("aria-valuenow", "284");
+    expect(container.querySelector(".versions-workbench")).toHaveStyle(
+      "--source-list-width: 284px",
+    );
+
+    await fireEvent.keyDown(resizer, { key: "Home" });
+    expect(resizer).toHaveAttribute("aria-valuenow", "180");
+  });
+
+  it("resizes working copy table columns from their headers", async () => {
+    const { container } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+      },
+    });
+    const resizer = screen.getByRole("slider", { name: "调整 Name 列宽" });
+
+    expect(resizer).toHaveAttribute("aria-valuenow", "180");
+    await fireEvent.mouseDown(resizer, { clientX: 300 });
+    await fireEvent.mouseMove(window, { clientX: 350 });
+    await fireEvent.mouseUp(window);
+
+    expect(resizer).toHaveAttribute("aria-valuenow", "230");
+    expect(container.querySelector(".work-copy-grid")).toHaveStyle(
+      "--file-name-width: 230px",
+    );
+
+    await fireEvent.keyDown(resizer, { key: "ArrowLeft" });
+    expect(resizer).toHaveAttribute("aria-valuenow", "218");
+  });
+
+  it("keeps working copies in saved order when the active project changes", async () => {
     const onAddWorkspace = vi.fn();
     const onOpenBranchPoolEntry = vi.fn();
-    render(MainWorkspace, {
+    const onSelectView = vi.fn();
+    const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
         workspace: makeWorkspace(),
@@ -372,17 +419,43 @@ describe("MainWorkspace", () => {
         },
         onAddWorkspace,
         onOpenBranchPoolEntry,
+        onSelectView,
       },
     });
 
     const projects = screen.getByLabelText("项目列表");
     await fireEvent.click(within(projects).getByRole("button", { name: "添加工作副本" }));
     expect(onAddWorkspace).toHaveBeenCalledOnce();
-    expect(within(projects).getByText("feature")).toBeInTheDocument();
-    expect(within(projects).queryByText("trunk")).not.toBeInTheDocument();
+    expect(
+      [...projects.querySelectorAll(".workspace-source-item strong")].map(
+        (element) => element.textContent,
+      ),
+    ).toEqual(["wc", "feature"]);
 
     await fireEvent.click(within(projects).getByText("feature").closest("button")!);
     expect(onOpenBranchPoolEntry).toHaveBeenCalledWith("D:\\work\\feature");
+
+    await rerender({
+      workspace: {
+        ...makeWorkspace(),
+        local_path: "D:\\work\\feature",
+        working_copy_root: "D:\\work\\feature",
+        repository_url: "https://example.com/svn/branches/feature",
+        revision: "18",
+      },
+    });
+    expect(
+      [...projects.querySelectorAll(".workspace-source-item strong")].map(
+        (element) => element.textContent,
+      ),
+    ).toEqual(["wc", "feature"]);
+    expect(projects.querySelector(".workspace-source-item.active strong")).toHaveTextContent(
+      "feature",
+    );
+
+    await fireEvent.click(within(projects).getByText("feature").closest("button")!);
+    expect(onSelectView).toHaveBeenCalledWith("changes");
+    expect(onOpenBranchPoolEntry).toHaveBeenCalledTimes(1);
   });
 
   it("starts a complete commit flow when no files were preselected", async () => {

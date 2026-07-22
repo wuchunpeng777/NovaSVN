@@ -604,6 +604,18 @@
     { id: "tasks", label: "Tasks" },
   ];
 
+  const fileColumns = [
+    { key: "name", label: "Name", ariaLabel: "Name" },
+    { key: "base", label: "Base", ariaLabel: "Base" },
+    { key: "last", label: "Last", ariaLabel: "Last" },
+    { key: "date", label: "Date", ariaLabel: "Date" },
+    { key: "author", label: "Author", ariaLabel: "Author" },
+    { key: "status", label: "Status", ariaLabel: "Status" },
+    { key: "size", label: "Size", ariaLabel: "Size" },
+    { key: "actions", label: "", ariaLabel: "操作" },
+  ] as const;
+  type FileColumnKey = (typeof fileColumns)[number]["key"];
+
   let selectedCommitHistoryMessage = "";
   let activeInspectorTab: InspectorTab = "information";
   let diffInline = false;
@@ -642,14 +654,54 @@
   let reportedActiveWorkspacePath: string | null | undefined;
   let selectionWorkspaceRoot: string | null = null;
   let selectionFileTree: WorkspaceFileTree | null = null;
+  const sourceListMinWidth = 180;
+  const sourceListMaxWidth = 420;
+  const sourceListDividerWidth = 6;
   const inspectorMinWidth = 300;
   const inspectorMaxWidth = 720;
-  const sourceListWidth = 220;
   const inspectorDividerWidth = 6;
   const fileBrowserMinWidth = 360;
+  const fileColumnMinimumWidths: Record<FileColumnKey, number> = {
+    name: 120,
+    base: 36,
+    last: 36,
+    date: 72,
+    author: 52,
+    status: 88,
+    size: 40,
+    actions: 88,
+  };
+  const fileColumnMaximumWidths: Record<FileColumnKey, number> = {
+    name: 640,
+    base: 160,
+    last: 160,
+    date: 240,
+    author: 240,
+    status: 320,
+    size: 160,
+    actions: 280,
+  };
+  let sourceListWidth = 244;
+  let sourceListMaximumWidth = sourceListMaxWidth;
+  let resizingSourceList = false;
   let inspectorWidth = 360;
   let inspectorMaximumWidth = inspectorMaxWidth;
   let resizingInspector = false;
+  let fileColumnWidths: Record<FileColumnKey, number> = {
+    name: 180,
+    base: 40,
+    last: 40,
+    date: 84,
+    author: 60,
+    status: 106,
+    size: 44,
+    actions: 112,
+  };
+  let resizingFileColumn: {
+    column: FileColumnKey;
+    startX: number;
+    startWidth: number;
+  } | null = null;
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
   let resolvedTheme: "light" | "dark" = "light";
@@ -669,8 +721,8 @@
     diffInline = appSettings.diffMode === "inline";
   }
   $: showWhitespace = appSettings.showWhitespace;
-  $: if (typeof window !== "undefined" && appSettings.showSourceList !== undefined) {
-    syncInspectorWidthToWindow();
+  $: if (typeof window !== "undefined") {
+    syncLayoutWidthsToWindow(appSettings.showSourceList, appSettings.showInspector, view.id);
   }
   $: resolvedTheme =
     appSettings.themeMode === "system"
@@ -736,9 +788,12 @@
     { error: commandErrorText(commandError), retry: null },
     { error: svnSwitchError, retry: null },
   ]);
-  $: additionalWorkspaces = branchPool.entries.filter(
-    (entry) => !sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? ""),
+  $: currentWorkspaceListed = branchPool.entries.some((entry) =>
+    sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? ""),
   );
+  $: fileTableColumnStyle = fileColumns
+    .map((column) => `--file-${column.key}-width: ${fileColumnWidths[column.key]}px`)
+    .join("; ");
   $: detectedAuthenticationFailure = detectedAuthenticationCandidate?.failure ?? null;
   $: authenticationDialogOpen =
     detectedAuthenticationFailure !== null &&
@@ -1996,6 +2051,14 @@
     return basename(entry.local_path) || branchName(entry);
   }
 
+  function openWorkspaceEntry(entry: BranchPoolEntry) {
+    if (sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")) {
+      onSelectView("changes");
+      return;
+    }
+    onOpenBranchPoolEntry(entry.local_path);
+  }
+
   function sameWorkspacePath(left: string, right: string) {
     if (!left.trim() || !right.trim()) {
       return false;
@@ -2091,7 +2154,106 @@
     openRowMenuPath = null;
   }
 
+  function startSourceListResize(event: MouseEvent) {
+    stopInspectorResize();
+    stopFileColumnResize();
+    if (!resizingSourceList) {
+      window.addEventListener("mousemove", resizeSourceList);
+      window.addEventListener("mouseup", stopSourceListResize);
+    }
+    resizingSourceList = true;
+    event.preventDefault();
+  }
+
+  function stopSourceListResize() {
+    if (!resizingSourceList) {
+      return;
+    }
+    resizingSourceList = false;
+    window.removeEventListener("mousemove", resizeSourceList);
+    window.removeEventListener("mouseup", stopSourceListResize);
+  }
+
+  function resizeSourceList(event: MouseEvent) {
+    if (!resizingSourceList) {
+      return;
+    }
+    sourceListWidth = constrainSourceListWidth(event.clientX);
+    syncInspectorWidthToWindow(appSettings.showSourceList);
+  }
+
+  function adjustSourceListWidth(delta: number) {
+    sourceListWidth = constrainSourceListWidth(sourceListWidth + delta);
+    syncInspectorWidthToWindow(appSettings.showSourceList);
+  }
+
+  function startFileColumnResize(event: MouseEvent, column: FileColumnKey) {
+    stopSourceListResize();
+    stopInspectorResize();
+    resizingFileColumn = {
+      column,
+      startX: event.clientX,
+      startWidth: fileColumnWidths[column],
+    };
+    window.addEventListener("mousemove", resizeFileColumn);
+    window.addEventListener("mouseup", stopFileColumnResize);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function stopFileColumnResize() {
+    if (!resizingFileColumn) {
+      return;
+    }
+    resizingFileColumn = null;
+    window.removeEventListener("mousemove", resizeFileColumn);
+    window.removeEventListener("mouseup", stopFileColumnResize);
+  }
+
+  function resizeFileColumn(event: MouseEvent) {
+    if (!resizingFileColumn) {
+      return;
+    }
+    const { column, startX, startWidth } = resizingFileColumn;
+    setFileColumnWidth(column, startWidth + event.clientX - startX);
+  }
+
+  function adjustFileColumnWidth(column: FileColumnKey, delta: number) {
+    setFileColumnWidth(column, fileColumnWidths[column] + delta);
+  }
+
+  function setFileColumnWidth(column: FileColumnKey, width: number) {
+    fileColumnWidths = {
+      ...fileColumnWidths,
+      [column]: Math.min(
+        Math.max(width, fileColumnMinimumWidths[column]),
+        fileColumnMaximumWidths[column],
+      ),
+    };
+  }
+
+  function handleFileColumnResizeKeydown(event: KeyboardEvent, column: FileColumnKey) {
+    if (event.key === "ArrowLeft") {
+      adjustFileColumnWidth(column, -12);
+      event.preventDefault();
+    }
+    if (event.key === "ArrowRight") {
+      adjustFileColumnWidth(column, 12);
+      event.preventDefault();
+    }
+    if (event.key === "Home") {
+      setFileColumnWidth(column, fileColumnMinimumWidths[column]);
+      event.preventDefault();
+    }
+    if (event.key === "End") {
+      setFileColumnWidth(column, fileColumnMaximumWidths[column]);
+      event.preventDefault();
+    }
+  }
+
   function startInspectorResize(event: MouseEvent) {
+    stopSourceListResize();
+    stopFileColumnResize();
     if (!resizingInspector) {
       window.addEventListener("mousemove", resizeInspector);
       window.addEventListener("mouseup", stopInspectorResize);
@@ -2120,8 +2282,31 @@
     inspectorWidth = constrainInspectorWidth(inspectorWidth + delta);
   }
 
-  function calculateInspectorMaxWidth() {
-    const occupiedSourceWidth = appSettings.showSourceList ? sourceListWidth : 0;
+  function calculateSourceListMaxWidth(showInspector: boolean, activeView: AppView) {
+    const occupiedInspectorWidth =
+      showInspector && activeView === "changes"
+        ? inspectorMinWidth + inspectorDividerWidth
+        : 0;
+    return Math.max(
+      sourceListMinWidth,
+      Math.min(
+        sourceListMaxWidth,
+        window.innerWidth -
+          sourceListDividerWidth -
+          occupiedInspectorWidth -
+          fileBrowserMinWidth,
+      ),
+    );
+  }
+
+  function constrainSourceListWidth(width: number) {
+    return Math.min(Math.max(width, sourceListMinWidth), sourceListMaximumWidth);
+  }
+
+  function calculateInspectorMaxWidth(showSourceList: boolean) {
+    const occupiedSourceWidth = showSourceList
+      ? sourceListWidth + sourceListDividerWidth
+      : 0;
     return Math.max(
       inspectorMinWidth,
       Math.min(
@@ -2135,9 +2320,23 @@
     return Math.min(Math.max(width, inspectorMinWidth), inspectorMaximumWidth);
   }
 
-  function syncInspectorWidthToWindow() {
-    inspectorMaximumWidth = calculateInspectorMaxWidth();
+  function syncInspectorWidthToWindow(showSourceList = appSettings.showSourceList) {
+    inspectorMaximumWidth = calculateInspectorMaxWidth(showSourceList);
     inspectorWidth = constrainInspectorWidth(inspectorWidth);
+  }
+
+  function syncLayoutWidthsToWindow(
+    showSourceList = appSettings.showSourceList,
+    showInspector = appSettings.showInspector,
+    activeView: AppView = view.id,
+  ) {
+    sourceListMaximumWidth = calculateSourceListMaxWidth(showInspector, activeView);
+    sourceListWidth = constrainSourceListWidth(sourceListWidth);
+    syncInspectorWidthToWindow(showSourceList);
+  }
+
+  function handleWindowResize() {
+    syncLayoutWidthsToWindow();
   }
 
   function toggleSourceList() {
@@ -2172,8 +2371,10 @@
 
   onDestroy(() => {
     revisionFileDiffGeneration += 1;
+    stopSourceListResize();
     stopInspectorResize();
-    window.removeEventListener("resize", syncInspectorWidthToWindow);
+    stopFileColumnResize();
+    window.removeEventListener("resize", handleWindowResize);
     window.removeEventListener("resize", closeContextMenuOnWindowChange);
     window.removeEventListener("blur", closeContextMenuOnWindowChange);
     window.removeEventListener("pointerdown", closeContextMenuOnOutsidePointer);
@@ -2181,8 +2382,8 @@
   });
 
   onMount(() => {
-    syncInspectorWidthToWindow();
-    window.addEventListener("resize", syncInspectorWidthToWindow);
+    syncLayoutWidthsToWindow();
+    window.addEventListener("resize", handleWindowResize);
     window.addEventListener("resize", closeContextMenuOnWindowChange);
     window.addEventListener("blur", closeContextMenuOnWindowChange);
     window.addEventListener("pointerdown", closeContextMenuOnOutsidePointer);
@@ -2313,8 +2514,10 @@
 
 <section
   class="versions-workbench"
+  class:resizing-layout={resizingSourceList || resizingFileColumn !== null}
   data-theme={resolvedTheme}
   data-theme-mode={appSettings.themeMode}
+  style={`--source-list-width: ${sourceListWidth}px`}
   aria-label="NovaSVN 工作台"
 >
   <header class="versions-titlebar" inert={applyPatchDialogOpen || conflictResolverOpen}>
@@ -2526,39 +2729,42 @@
             <Plus size={15} strokeWidth={2} aria-hidden="true" />
           </button>
         </div>
-        <button
-          type="button"
-          class="source-item workspace-source-item"
-          class:active={workspace !== null}
-          on:click={() => onSelectView("changes")}
-        >
-          <span class="source-icon" aria-hidden="true">
-            <FolderOpen size={16} strokeWidth={1.8} />
-          </span>
-          <span>
-            <strong>{workspace ? basename(workspace.working_copy_root) : "打开工作副本"}</strong>
-            <small>{workspace?.working_copy_root ?? "选择或输入本地项目目录"}</small>
-          </span>
-          <em>{workingCopyStatus?.total ?? 0}</em>
-        </button>
-        {#if additionalWorkspaces.length > 0}
-          {#each additionalWorkspaces as entry (entry.id)}
-            <button
-              type="button"
-              class="source-item"
-              on:click={() => onOpenBranchPoolEntry(entry.local_path)}
-            >
-              <span class="source-icon" aria-hidden="true">
-                <FolderOpen size={16} strokeWidth={1.8} />
-              </span>
-              <span>
-                <strong>{workspaceEntryName(entry)}</strong>
-                <small>{entry.local_path}</small>
-              </span>
-              <em>{entry.local_changes}</em>
-            </button>
-          {/each}
+        {#if !workspace || !currentWorkspaceListed}
+          <button
+            type="button"
+            class="source-item workspace-source-item"
+            class:active={workspace !== null}
+            on:click={() => onSelectView("changes")}
+          >
+            <span class="source-icon" aria-hidden="true">
+              <FolderOpen size={16} strokeWidth={1.8} />
+            </span>
+            <span>
+              <strong>{workspace ? basename(workspace.working_copy_root) : "打开工作副本"}</strong>
+              <small>{workspace?.working_copy_root ?? "选择或输入本地项目目录"}</small>
+            </span>
+            <em>{workingCopyStatus?.total ?? 0}</em>
+          </button>
         {/if}
+        {#each branchPool.entries as entry (entry.id)}
+          <button
+            type="button"
+            class="source-item workspace-source-item"
+            class:active={sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")}
+            on:click={() => openWorkspaceEntry(entry)}
+          >
+            <span class="source-icon" aria-hidden="true">
+              <FolderOpen size={16} strokeWidth={1.8} />
+            </span>
+            <span>
+              <strong>{workspaceEntryName(entry)}</strong>
+              <small>{entry.local_path}</small>
+            </span>
+            <em>{sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")
+                ? workingCopyStatus?.total ?? entry.local_changes
+                : entry.local_changes}</em>
+          </button>
+        {/each}
       </section>
 
       <section class="source-navigation-section">
@@ -2604,6 +2810,37 @@
         <p>{backendMessage}</p>
       </section>
       </aside>
+      <div
+        role="slider"
+        tabindex="0"
+        class="source-list-resizer"
+        aria-label="调整项目侧栏宽度"
+        aria-orientation="horizontal"
+        aria-valuemin={sourceListMinWidth}
+        aria-valuemax={sourceListMaximumWidth}
+        aria-valuenow={sourceListWidth}
+        on:mousedown={startSourceListResize}
+        on:keydown={(event) => {
+          if (event.key === "ArrowLeft") {
+            adjustSourceListWidth(-16);
+            event.preventDefault();
+          }
+          if (event.key === "ArrowRight") {
+            adjustSourceListWidth(16);
+            event.preventDefault();
+          }
+          if (event.key === "Home") {
+            sourceListWidth = sourceListMinWidth;
+            syncInspectorWidthToWindow();
+            event.preventDefault();
+          }
+          if (event.key === "End") {
+            sourceListWidth = sourceListMaximumWidth;
+            syncInspectorWidthToWindow();
+            event.preventDefault();
+          }
+        }}
+      ></div>
     {/if}
 
     <main class="content-pane" aria-label={view.title}>
@@ -4517,8 +4754,9 @@
         <section
           class="work-copy-grid"
           class:resizing={resizingInspector}
+          class:file-columns-resizing={resizingFileColumn !== null}
           class:inspector-hidden={!appSettings.showInspector}
-          style={`--inspector-width: ${inspectorWidth}px`}
+          style={`${fileTableColumnStyle}; --inspector-width: ${inspectorWidth}px`}
         >
           <div
             bind:this={fileBrowserElement}
@@ -4546,14 +4784,28 @@
                   on:click={(event) => toggleVisibleRowSelection(event.currentTarget.checked)}
                 />
               </span>
-              <span role="columnheader">Name</span>
-              <span role="columnheader">Base</span>
-              <span role="columnheader">Last</span>
-              <span role="columnheader">Date</span>
-              <span role="columnheader">Author</span>
-              <span role="columnheader">Status</span>
-              <span role="columnheader">Size</span>
-              <span role="columnheader" aria-label="操作"></span>
+              {#each fileColumns as column (column.key)}
+                <span
+                  class="file-column-header"
+                  role="columnheader"
+                  aria-label={column.label || column.ariaLabel}
+                >
+                  {column.label}
+                  <div
+                    role="slider"
+                    tabindex="0"
+                    class="file-column-resizer"
+                    class:active={resizingFileColumn?.column === column.key}
+                    aria-label={`调整 ${column.ariaLabel} 列宽`}
+                    aria-orientation="horizontal"
+                    aria-valuemin={fileColumnMinimumWidths[column.key]}
+                    aria-valuemax={fileColumnMaximumWidths[column.key]}
+                    aria-valuenow={fileColumnWidths[column.key]}
+                    on:mousedown={(event) => startFileColumnResize(event, column.key)}
+                    on:keydown={(event) => handleFileColumnResizeKeydown(event, column.key)}
+                  ></div>
+                </span>
+              {/each}
             </div>
             {#if treeRows.length > 0}
               {#if treeRowWindow.beforeHeight > 0}
