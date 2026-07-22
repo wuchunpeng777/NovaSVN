@@ -282,6 +282,7 @@ function makeTarget(overrides = {}) {
     working_copy_root: "C:\\repo",
     relative_path: "src/main.ts",
     repository_url: "https://example.com/svn/trunk/src/main.ts",
+    repository_root: "https://example.com/svn",
     revision: "20",
     kind: "file",
     ...overrides,

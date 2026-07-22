@@ -292,6 +292,7 @@ export interface CreateMergeTaskRequest {
   source_url: string;
   start_revision?: string;
   end_revision?: string;
+  revisions?: string[];
   dry_run: boolean;
   record_only: boolean;
   ignore_ancestry: boolean;
@@ -519,6 +520,7 @@ export interface UpdateTargetSummary {
   working_copy_root: string;
   relative_path: string | null;
   repository_url: string;
+  repository_root: string;
   revision: string;
   kind: "file" | "dir" | string;
 }
@@ -785,6 +787,7 @@ export interface SvnLog {
   target: string;
   working_copy_root?: string | null;
   repository_root?: string | null;
+  repository_url?: string | null;
   entries: SvnLogEntry[];
   has_more: boolean;
   next_start_revision: string | null;

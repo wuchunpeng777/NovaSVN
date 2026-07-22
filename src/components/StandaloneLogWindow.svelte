@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { ChevronDown, ChevronUp, History, RefreshCw, X } from "@lucide/svelte";
+  import { ChevronDown, ChevronUp, GitMerge, History, RefreshCw, X } from "@lucide/svelte";
   import {
     getPathSvnLog,
     getRepositoryFileLog,
@@ -23,6 +23,7 @@
     SvnLogEntry,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import LogMergeDialog from "./LogMergeDialog.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
   import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
 
@@ -64,6 +65,10 @@
   } | null = null;
   let fileContextMenuElement: HTMLDivElement | null = null;
   let launchWindowError: CommandError | null = null;
+  let mergeRevisions = new Set<string>();
+  let mergeSelectionAnchor: string | null = null;
+  let mergeDialogOpen = false;
+  let mergeCompleted = false;
   let requestGeneration = 0;
   let diffRequestGeneration = 0;
   let systemPrefersDark = false;
@@ -91,6 +96,9 @@
   );
   $: authenticationFailure = logAuthenticationFailure ?? revisionAuthenticationFailure;
   $: authenticationRetry = logAuthenticationFailure ? () => loadLog(false) : null;
+  $: selectedMergeRevisions = [...mergeRevisions].sort(
+    (left, right) => Number(left) - Number(right),
+  );
 
   onMount(() => {
     if (typeof window.matchMedia === "function") {
@@ -163,6 +171,7 @@
       }
       if (repositoryTarget) {
         page.repository_root = repositoryTarget.root;
+        page.repository_url = repositoryTarget.url;
       }
       log = append && log ? mergeLogPage(log, page) : page;
     } catch (caught) {
@@ -291,6 +300,61 @@
       next.add(revision);
     }
     expandedRevisions = next;
+  }
+
+  function toggleMergeRevision(event: MouseEvent, revision: string) {
+    const checkbox = event.currentTarget as HTMLInputElement;
+    const next = new Set(mergeRevisions);
+    if (event.shiftKey && mergeSelectionAnchor) {
+      const anchorIndex = filteredEntries.findIndex(
+        (entry) => entry.revision === mergeSelectionAnchor,
+      );
+      const targetIndex = filteredEntries.findIndex((entry) => entry.revision === revision);
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const [start, end] = [anchorIndex, targetIndex].sort((left, right) => left - right);
+        for (const entry of filteredEntries.slice(start, end + 1)) {
+          if (checkbox.checked) {
+            next.add(entry.revision);
+          } else {
+            next.delete(entry.revision);
+          }
+        }
+      }
+    } else if (checkbox.checked) {
+      next.add(revision);
+    } else {
+      next.delete(revision);
+    }
+    mergeRevisions = next;
+    mergeSelectionAnchor = revision;
+  }
+
+  function clearMergeSelection() {
+    mergeRevisions = new Set();
+    mergeSelectionAnchor = null;
+  }
+
+  function openMergeDialog() {
+    if (!log?.repository_url || !(log.repository_root ?? repositoryRoot)) {
+      launchWindowError = {
+        code: "LOG_MERGE_SOURCE_MISSING",
+        message: "无法准备 Merge",
+        detail: "当前日志缺少源仓库 URL，请刷新日志后重试。",
+        recoverable: true,
+      };
+      return;
+    }
+    launchWindowError = null;
+    mergeCompleted = false;
+    mergeDialogOpen = true;
+  }
+
+  function closeMergeDialog() {
+    mergeDialogOpen = false;
+    if (mergeCompleted) {
+      clearMergeSelection();
+    }
+    mergeCompleted = false;
   }
 
   function clearRevisionDiff() {
@@ -515,12 +579,23 @@
     <ErrorNotice error={error ?? launchWindowError} />
   </div>
 
-  <div class="log-layout" class:with-diff={selectedDiff !== null}>
+  <div
+    class="log-layout"
+    class:with-diff={selectedDiff !== null}
+    class:merge-selection-active={selectedMergeRevisions.length > 0}
+  >
     <section class="log-list" aria-label="Revision 列表" aria-busy={loading}>
       {#if filteredEntries.length > 0}
         {#each filteredEntries as entry (entry.revision)}
           <article class="log-entry">
             <header>
+              <input
+                type="checkbox"
+                class="revision-checkbox"
+                aria-label={`选择 r${entry.revision} 用于 Merge`}
+                checked={mergeRevisions.has(entry.revision)}
+                on:click={(event) => toggleMergeRevision(event, entry.revision)}
+              />
               <button
                 type="button"
                 class="entry-summary"
@@ -640,6 +715,22 @@
     </aside>
   {/if}
   </div>
+  {#if selectedMergeRevisions.length > 0}
+    <div class="merge-selection-bar" role="toolbar" aria-label="Revision Merge 操作">
+      <div>
+        <strong>已选 {selectedMergeRevisions.length} 个 Revision</strong>
+        <span>
+          {selectedMergeRevisions.length <= 8
+            ? selectedMergeRevisions.map((revision) => `r${revision}`).join("、")
+            : `r${selectedMergeRevisions[0]} 至 r${selectedMergeRevisions[selectedMergeRevisions.length - 1]}`}
+        </span>
+      </div>
+      <button type="button" on:click={clearMergeSelection}>清除</button>
+      <button type="button" class="primary" on:click={openMergeDialog}>
+        <GitMerge size={16} aria-hidden="true" /> Merge 到...
+      </button>
+    </div>
+  {/if}
   {#if fileContextMenu}
     <div
       bind:this={fileContextMenuElement}
@@ -653,6 +744,17 @@
         <History size={15} aria-hidden="true" /> 显示 Log
       </button>
     </div>
+  {/if}
+  {#if mergeDialogOpen && log?.repository_url && (log.repository_root ?? repositoryRoot)}
+    <LogMergeDialog
+      sourceUrl={log.repository_url}
+      sourceRepositoryRoot={(log.repository_root ?? repositoryRoot)!}
+      sourceWorkingCopyRoot={log.working_copy_root ?? null}
+      revisions={selectedMergeRevisions}
+      {svnExecutable}
+      onClose={closeMergeDialog}
+      onMerged={() => (mergeCompleted = true)}
+    />
   {/if}
   <SvnAuthenticationDialog
     failure={authenticationFailure}
@@ -842,6 +944,10 @@
     grid-template-columns: minmax(0, 1fr) minmax(360px, 42vw);
   }
 
+  .log-layout.merge-selection-active .log-list {
+    padding-bottom: 82px;
+  }
+
   .log-list {
     min-height: 0;
     overflow: auto;
@@ -856,10 +962,18 @@
 
   .log-entry > header {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(72px, auto);
+    grid-template-columns: 24px minmax(0, 1fr) minmax(72px, auto);
     align-items: center;
     gap: 10px;
     min-width: 0;
+  }
+
+  .revision-checkbox {
+    width: 15px;
+    min-width: 15px;
+    min-height: 15px;
+    margin: 0;
+    justify-self: center;
   }
 
   .entry-summary {
@@ -1013,6 +1127,52 @@
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     color: var(--accent);
     outline: none;
+  }
+
+  .merge-selection-bar {
+    position: fixed;
+    z-index: 35;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    right: 14px;
+    bottom: 12px;
+    left: 14px;
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--panel);
+    padding: 8px 10px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  }
+
+  .merge-selection-bar > div {
+    display: grid;
+    flex: 1;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .merge-selection-bar span {
+    overflow: hidden;
+    color: var(--secondary);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .merge-selection-bar button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    flex: 0 0 auto;
+  }
+
+  .merge-selection-bar .primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #ffffff;
   }
 
   .change-action[data-action="A"],

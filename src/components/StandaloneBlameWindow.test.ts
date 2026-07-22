@@ -20,6 +20,7 @@ beforeEach(() => {
     working_copy_root: "C:\\repo",
     relative_path: "src/main.ts",
     repository_url: "https://example.com/svn/trunk",
+    repository_root: "https://example.com/svn",
     revision: "42",
     kind: "file",
   });
@@ -95,6 +96,7 @@ describe("StandaloneBlameWindow", () => {
       working_copy_root: "C:\\repo",
       relative_path: "src",
       repository_url: "https://example.com/svn/trunk",
+      repository_root: "https://example.com/svn",
       revision: "42",
       kind: "dir",
     });

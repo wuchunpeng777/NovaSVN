@@ -2,10 +2,16 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/sve
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
+  cancelTask: vi.fn(),
+  chooseWorkspaceDirectory: vi.fn(),
+  createMergeTask: vi.fn(),
   getPathSvnLog: vi.fn(),
   getRepositoryFileLog: vi.fn(),
   getRevisionFileContentDiff: vi.fn(),
+  getTask: vi.fn(),
+  inspectUpdateTarget: vi.fn(),
   launchLogWindow: vi.fn(),
+  scanWorkspaceStatus: vi.fn(),
 }));
 
 vi.mock("./workbench/MonacoDiffViewer.svelte", () => ({
@@ -229,6 +235,31 @@ describe("StandaloneLogWindow", () => {
     expect(within(diffPanel).queryByText("-before +after")).not.toBeInTheDocument();
   });
 
+  it("多选离散 Revision 后按数字顺序打开 Merge 对话框", async () => {
+    getPathSvnLogMock.mockResolvedValue(
+      makeLog({
+        entries: [
+          makeEntry("20", "alice", "2026-07-10T10:00:00Z", "Newer change"),
+          makeEntry("18", "bob", "2026-07-08T10:00:00Z", "Older change"),
+        ],
+      }),
+    );
+    render(StandaloneLogWindow, { props: { targetPath: "C:\\repo" } });
+    await screen.findByText("Newer change");
+
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r20 用于 Merge" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r18 用于 Merge" }));
+    const toolbar = screen.getByRole("toolbar", { name: "Revision Merge 操作" });
+    expect(within(toolbar).getByText("已选 2 个 Revision")).toBeInTheDocument();
+    expect(within(toolbar).getByText("r18、r20")).toBeInTheDocument();
+
+    await fireEvent.click(within(toolbar).getByRole("button", { name: "Merge 到..." }));
+    const dialog = screen.getByRole("dialog", { name: "Merge 选中 Revision" });
+    expect(within(dialog).getByText("r18、r20")).toBeInTheDocument();
+    expect(within(dialog).getByText("https://svn.example.test/repo/trunk/src/main.ts"))
+      .toBeInTheDocument();
+  });
+
   it("右键修改文件后可在新的独立窗口中显示该文件 Log", async () => {
     getPathSvnLogMock.mockResolvedValue(makeLog());
     launchLogWindowMock.mockResolvedValue({
@@ -324,6 +355,7 @@ function makeLog(overrides: Partial<SvnLog> = {}): SvnLog {
     target: "C:\\repo\\src\\main.ts",
     working_copy_root: "C:\\repo",
     repository_root: "https://svn.example.test/repo",
+    repository_url: "https://svn.example.test/repo/trunk/src/main.ts",
     entries: [makeEntry("20", "alice", "2026-07-10T10:00:00Z", "Add log window")],
     has_more: false,
     next_start_revision: null,

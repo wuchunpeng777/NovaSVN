@@ -68,6 +68,7 @@ pub struct UpdateTargetSummary {
     pub working_copy_root: String,
     pub relative_path: Option<String>,
     pub repository_url: String,
+    pub repository_root: String,
     pub revision: String,
     pub kind: String,
 }
@@ -315,6 +316,7 @@ pub struct SvnLog {
     pub target: String,
     pub working_copy_root: Option<String>,
     pub repository_root: Option<String>,
+    pub repository_url: Option<String>,
     pub entries: Vec<SvnLogEntry>,
     pub has_more: bool,
     pub next_start_revision: Option<String>,
@@ -436,6 +438,7 @@ pub fn inspect_update_target(
         relative_path: (!relative_path.is_empty())
             .then(|| normalize_runtime_separators(&relative_path)),
         repository_url: summary.repository_url,
+        repository_root: summary.repository_root,
         revision: summary.revision,
         kind: if target.is_dir() {
             "dir".to_string()
@@ -537,6 +540,7 @@ pub fn get_path_svn_log(request: GetPathSvnLogRequest) -> Result<SvnLog, NovaErr
     )?;
     log.working_copy_root = Some(workspace.working_copy_root);
     log.repository_root = Some(workspace.repository_root);
+    log.repository_url = Some(workspace.repository_url);
     Ok(log)
 }
 
@@ -639,6 +643,7 @@ pub fn get_repository_file_log(request: GetRepositoryFileLogRequest) -> Result<S
 
     let xml = String::from_utf8_lossy(&output.stdout);
     let mut log = parse_svn_log_xml(&xml, &url)?;
+    log.repository_url = Some(url);
     trim_svn_log_page(&mut log, limit);
     Ok(log)
 }
@@ -3553,6 +3558,7 @@ fn parse_svn_log_xml(xml: &str, target: &str) -> Result<SvnLog, NovaError> {
         target: target.to_string(),
         working_copy_root: None,
         repository_root: None,
+        repository_url: None,
         entries,
         has_more: false,
         next_start_revision: None,

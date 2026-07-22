@@ -353,6 +353,7 @@ Certificate information:
       working_copy_root: "C:/repo/wc",
       relative_path: null,
       repository_url: "https://example.com/svn/trunk",
+      repository_root: "https://example.com/svn",
       revision: "20",
       kind: "dir",
     });

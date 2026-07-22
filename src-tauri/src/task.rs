@@ -354,6 +354,7 @@ pub struct CreateMergeTaskRequest {
     pub source_url: String,
     pub start_revision: Option<String>,
     pub end_revision: Option<String>,
+    pub revisions: Option<Vec<String>>,
     pub dry_run: bool,
     pub record_only: bool,
     pub ignore_ancestry: bool,
@@ -688,11 +689,19 @@ struct MergeTaskPayload {
     source_url: String,
     start_revision: Option<String>,
     end_revision: Option<String>,
+    revisions: Vec<String>,
     dry_run: bool,
     record_only: bool,
     ignore_ancestry: bool,
     force: bool,
     svn_executable: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct MergeRevisionSelection {
+    start_revision: Option<String>,
+    end_revision: Option<String>,
+    revisions: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1985,8 +1994,15 @@ impl TaskQueue {
     pub fn create_merge_task(&self, request: CreateMergeTaskRequest) -> Result<Task, NovaError> {
         let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
         let source_url = normalize_repository_url(&request.source_url)?;
-        let (start_revision, end_revision) =
-            normalize_merge_revision_range(request.start_revision, request.end_revision)?;
+        let MergeRevisionSelection {
+            start_revision,
+            end_revision,
+            revisions,
+        } = normalize_merge_selection(
+            request.start_revision,
+            request.end_revision,
+            request.revisions,
+        )?;
         validate_merge_tracking_options(request.record_only, request.ignore_ancestry)?;
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         if !request.dry_run
@@ -2022,6 +2038,7 @@ impl TaskQueue {
                 source_url,
                 start_revision,
                 end_revision,
+                revisions,
                 dry_run: request.dry_run,
                 record_only: request.record_only,
                 ignore_ancestry: request.ignore_ancestry,
@@ -5049,8 +5066,12 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
 
     let mut command = svn::command(&payload.svn_executable);
     command.arg("merge");
-    if let Some(range) = merge_revision_arg(&payload.start_revision, &payload.end_revision) {
-        command.arg("-r").arg(range);
+    for argument in merge_revision_arguments(
+        &payload.start_revision,
+        &payload.end_revision,
+        &payload.revisions,
+    ) {
+        command.arg(argument);
     }
     if payload.dry_run {
         command.arg("--dry-run");
@@ -5064,7 +5085,10 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
     if payload.force {
         command.arg("--force");
     }
-    command.arg(&payload.source_url).current_dir(&root);
+    command
+        .arg(&payload.source_url)
+        .arg(&root)
+        .current_dir(&root);
     append_task_log(
         state,
         task_id,
@@ -5105,6 +5129,7 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
                 revision_range: merge_revision_label(
                     &payload.start_revision,
                     &payload.end_revision,
+                    &payload.revisions,
                 ),
                 record_only: payload.record_only,
                 ignore_ancestry: payload.ignore_ancestry,
@@ -8875,10 +8900,11 @@ fn normalize_optional_revision_value(
     Ok(Some(value.to_string()))
 }
 
-fn normalize_merge_revision_range(
+fn normalize_merge_selection(
     start_revision: Option<String>,
     end_revision: Option<String>,
-) -> Result<(Option<String>, Option<String>), NovaError> {
+    revisions: Option<Vec<String>>,
+) -> Result<MergeRevisionSelection, NovaError> {
     let start_revision = start_revision
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
@@ -8895,6 +8921,44 @@ fn normalize_merge_revision_range(
         ));
     }
 
+    let mut revisions = revisions.unwrap_or_default();
+    if !revisions.is_empty() && (start_revision.is_some() || end_revision.is_some()) {
+        return Err(NovaError::command(
+            "MERGE_SELECTION_CONFLICT",
+            "不能同时指定 Revision 范围和离散 Revision",
+            None,
+            true,
+        ));
+    }
+    if revisions.len() > 500 {
+        return Err(NovaError::command(
+            "MERGE_REVISIONS_TOO_MANY",
+            "一次最多 Merge 500 个 Revision",
+            None,
+            true,
+        ));
+    }
+    for revision in &mut revisions {
+        *revision = revision.trim().to_string();
+        if revision.is_empty()
+            || !revision.bytes().all(|byte| byte.is_ascii_digit())
+            || revision
+                .parse::<u64>()
+                .ok()
+                .filter(|value| *value > 0)
+                .is_none()
+        {
+            return Err(NovaError::command(
+                "MERGE_REVISION_INVALID",
+                "Merge revision 无效",
+                Some("离散 Revision 必须是大于 0 的数字。".to_string()),
+                true,
+            ));
+        }
+    }
+    revisions.sort_by_key(|revision| revision.parse::<u64>().unwrap_or(u64::MAX));
+    revisions.dedup();
+
     for value in start_revision.iter().chain(end_revision.iter()) {
         if value.chars().any(char::is_control) {
             return Err(NovaError::command(
@@ -8906,7 +8970,11 @@ fn normalize_merge_revision_range(
         }
     }
 
-    Ok((start_revision, end_revision))
+    Ok(MergeRevisionSelection {
+        start_revision,
+        end_revision,
+        revisions,
+    })
 }
 
 fn merge_revision_arg(
@@ -8919,7 +8987,30 @@ fn merge_revision_arg(
     }
 }
 
-fn merge_revision_label(start_revision: &Option<String>, end_revision: &Option<String>) -> String {
+fn merge_revision_arguments(
+    start_revision: &Option<String>,
+    end_revision: &Option<String>,
+    revisions: &[String],
+) -> Vec<String> {
+    if !revisions.is_empty() {
+        return revisions
+            .iter()
+            .flat_map(|revision| ["-c".to_string(), revision.clone()])
+            .collect();
+    }
+    merge_revision_arg(start_revision, end_revision)
+        .map(|range| vec!["-r".to_string(), range])
+        .unwrap_or_default()
+}
+
+fn merge_revision_label(
+    start_revision: &Option<String>,
+    end_revision: &Option<String>,
+    revisions: &[String],
+) -> String {
+    if !revisions.is_empty() {
+        return revisions.join(",");
+    }
     merge_revision_arg(start_revision, end_revision).unwrap_or_else(|| "默认".to_string())
 }
 
@@ -13888,11 +13979,51 @@ mod tests {
 
     #[test]
     fn validates_merge_revision_range() {
-        let range = normalize_merge_revision_range(Some("10".to_string()), Some("12".to_string()))
+        let range = normalize_merge_selection(Some("10".to_string()), Some("12".to_string()), None)
             .expect("range valid");
 
-        assert_eq!(range, (Some("10".to_string()), Some("12".to_string())));
-        assert!(normalize_merge_revision_range(Some("10".to_string()), None).is_err());
+        assert_eq!(
+            range,
+            MergeRevisionSelection {
+                start_revision: Some("10".to_string()),
+                end_revision: Some("12".to_string()),
+                revisions: vec![],
+            }
+        );
+        assert!(normalize_merge_selection(Some("10".to_string()), None, None).is_err());
+    }
+
+    #[test]
+    fn normalizes_discrete_merge_revisions() {
+        let selection = normalize_merge_selection(
+            None,
+            None,
+            Some(vec![
+                "105".to_string(),
+                "101".to_string(),
+                "105".to_string(),
+            ]),
+        )
+        .expect("revision selection valid");
+
+        assert_eq!(
+            selection,
+            MergeRevisionSelection {
+                start_revision: None,
+                end_revision: None,
+                revisions: vec!["101".to_string(), "105".to_string()],
+            }
+        );
+        assert_eq!(
+            merge_revision_arguments(&None, &None, &selection.revisions),
+            vec!["-c", "101", "-c", "105"]
+        );
+        assert!(normalize_merge_selection(
+            Some("100".to_string()),
+            Some("105".to_string()),
+            Some(vec!["103".to_string()]),
+        )
+        .is_err());
     }
 
     #[test]
@@ -13963,6 +14094,7 @@ mod tests {
                 source_url: "https://example.com/svn/branches/feature".to_string(),
                 start_revision: Some("10".to_string()),
                 end_revision: Some("12".to_string()),
+                revisions: None,
                 dry_run: false,
                 record_only: false,
                 ignore_ancestry: false,
@@ -13995,6 +14127,7 @@ mod tests {
                 source_url: "https://example.com/svn/branches/feature".to_string(),
                 start_revision: Some("10".to_string()),
                 end_revision: Some("12".to_string()),
+                revisions: None,
                 dry_run: true,
                 record_only: true,
                 ignore_ancestry: false,
@@ -14024,6 +14157,7 @@ mod tests {
             source_url: "https://example.com/svn/branches/feature".to_string(),
             start_revision: Some("10".to_string()),
             end_revision: Some("12".to_string()),
+            revisions: Vec::new(),
             dry_run: false,
             record_only: false,
             ignore_ancestry: false,
@@ -14137,6 +14271,7 @@ mod tests {
                 source_url: branch_url.clone(),
                 start_revision: Some("3".to_string()),
                 end_revision: Some("4".to_string()),
+                revisions: None,
                 dry_run: true,
                 record_only: false,
                 ignore_ancestry: false,
@@ -14167,6 +14302,7 @@ mod tests {
                 source_url: branch_url.clone(),
                 start_revision: Some("3".to_string()),
                 end_revision: Some("4".to_string()),
+                revisions: None,
                 dry_run: false,
                 record_only: false,
                 ignore_ancestry: false,
@@ -14201,6 +14337,7 @@ mod tests {
                 source_url: branch_url,
                 start_revision: Some("3".to_string()),
                 end_revision: Some("4".to_string()),
+                revisions: None,
                 dry_run: false,
                 record_only: true,
                 ignore_ancestry: false,
@@ -14230,6 +14367,95 @@ mod tests {
                 .arg(&record_only_target),
         );
         assert!(String::from_utf8_lossy(&record_mergeinfo.stdout).contains("/branches/feature:4"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn merges_only_selected_discrete_revisions_in_real_repository() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("merge-discrete-integration");
+        let repository = root.join("repository");
+        let trunk = root.join("trunk");
+        let branch = root.join("branch");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        let trunk_url = format!("{repository_url}/trunk");
+        let branch_url = format!("{repository_url}/branches/feature");
+        run_test_command(
+            Command::new("svn")
+                .arg("mkdir")
+                .arg(&trunk_url)
+                .arg(format!("{repository_url}/branches"))
+                .args(["-m", "create layout"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("copy")
+                .arg(&trunk_url)
+                .arg(&branch_url)
+                .args(["-m", "create feature branch"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&branch_url)
+                .arg(&branch),
+        );
+        for (name, content, message) in [
+            ("selected-first.txt", "first\n", "first selected change"),
+            ("skipped.txt", "skip\n", "unselected change"),
+            ("selected-last.txt", "last\n", "last selected change"),
+        ] {
+            let path = branch.join(name);
+            fs::write(&path, content).expect("write branch file");
+            run_test_command(Command::new("svn").arg("add").arg(&path));
+            run_test_command(
+                Command::new("svn")
+                    .arg("commit")
+                    .arg(&branch)
+                    .args(["-m", message]),
+            );
+        }
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&trunk_url)
+                .arg(&trunk),
+        );
+
+        let queue = TaskQueue::new();
+        let merge = queue
+            .create_merge_task(CreateMergeTaskRequest {
+                working_copy_root: trunk.display().to_string(),
+                source_url: branch_url,
+                start_revision: None,
+                end_revision: None,
+                revisions: Some(vec!["5".to_string(), "3".to_string()]),
+                dry_run: false,
+                record_only: false,
+                ignore_ancestry: false,
+                force: false,
+                svn_executable: None,
+            })
+            .expect("create discrete merge task");
+        let merge = wait_for_test_task(&queue, &merge.task_id);
+        assert!(
+            matches!(merge.status, TaskStatus::Success),
+            "离散 Revision Merge 失败：{:?}",
+            merge.error
+        );
+        let merge_result = merge
+            .result
+            .and_then(|result| result.merge_result)
+            .expect("discrete merge result");
+        assert_eq!(merge_result.revision_range, "3,5");
+        assert!(trunk.join("selected-first.txt").is_file());
+        assert!(trunk.join("selected-last.txt").is_file());
+        assert!(!trunk.join("skipped.txt").exists());
 
         fs::remove_dir_all(root).ok();
     }
