@@ -41,6 +41,7 @@ function makeHandlers() {
     clearPending: vi.fn(),
     refreshWorkspace: vi.fn(),
     refreshStatus: vi.fn(),
+    notifyCompletion: vi.fn(),
   };
 }
 
@@ -100,6 +101,14 @@ describe("consumePendingSvnOperationCompletion", () => {
     expect(handlers.clearPending).toHaveBeenCalledTimes(1);
     expect(handlers.refreshStatus).toHaveBeenCalledWith("/repo/wc");
     expect(handlers.refreshWorkspace).not.toHaveBeenCalled();
+    expect(handlers.notifyCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: "svn-delete",
+        operationKind: "update_path",
+        status: "success",
+        error: null,
+      }),
+    );
   });
 
   it("当前工作副本已切换时只清理 pending，不刷新其他工作副本", () => {

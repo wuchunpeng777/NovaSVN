@@ -50,9 +50,9 @@ use workspace::{
     GetRepositoryFileBlameRequest, GetRepositoryFileLogRequest, GetRepositoryFilePropertiesRequest,
     GetRevisionFileContentDiffRequest, GetSvnBlameRequest, GetSvnLogRequest,
     GetSvnPropertiesRequest, IgnoreWorkspacePathRequest, InspectUpdateTargetRequest,
-    ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace, ScanWorkspaceStatusRequest,
-    SetSvnPropertyRequest, SvnBlame, SvnLog, SvnProperties, UpdateTargetSummary, WorkingCopyStatus,
-    WorkspaceFileTree, WorkspaceSummary,
+    ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace, ResolveTextConflictRequest,
+    ResolveTextConflictResult, ScanWorkspaceStatusRequest, SetSvnPropertyRequest, SvnBlame, SvnLog,
+    SvnProperties, UpdateTargetSummary, WorkingCopyStatus, WorkspaceFileTree, WorkspaceSummary,
 };
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -237,7 +237,7 @@ fn create_app_menu<R: tauri::Runtime>(
         true,
         None::<&str>,
     )?;
-    let quit = MenuItem::with_id(app, "quit", "退出(&X)", true, Some("Alt+F4"))?;
+    let quit = PredefinedMenuItem::quit(app, Some("退出 NovaSVN"))?;
     let file_separator_a = PredefinedMenuItem::separator(app)?;
     let file_separator_b = PredefinedMenuItem::separator(app)?;
     let file_menu = Submenu::with_id_and_items(
@@ -917,6 +917,16 @@ fn get_file_content_diff(request: GetFileContentDiffRequest) -> CommandResult<Fi
 }
 
 #[tauri::command]
+fn resolve_text_conflict(
+    request: ResolveTextConflictRequest,
+) -> CommandResult<ResolveTextConflictResult> {
+    println!("[NovaSVN] resolve_text_conflict command received");
+    Ok(CommandResponse::success(workspace::resolve_text_conflict(
+        request,
+    )?))
+}
+
+#[tauri::command]
 async fn get_revision_file_content_diff(
     request: GetRevisionFileContentDiffRequest,
 ) -> CommandResult<FileContentDiff> {
@@ -1139,6 +1149,7 @@ pub fn run() {
             list_workspace_files,
             get_file_diff,
             get_file_content_diff,
+            resolve_text_conflict,
             get_revision_file_content_diff,
             get_svn_log,
             get_path_svn_log,

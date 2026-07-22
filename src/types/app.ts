@@ -1,3 +1,5 @@
+import type { PendingSvnOperationKind } from "./api";
+
 export type AppView =
   | "changes"
   | "history"
@@ -43,6 +45,13 @@ export interface ReviewedFileState {
   path: string;
   contentDigest: string;
   reviewedAt: number;
+}
+
+export interface SvnOperationFeedback {
+  kind: PendingSvnOperationKind;
+  phase: "running" | "success" | "error";
+  title: string;
+  detail: string;
 }
 
 export interface AppSettingsState {

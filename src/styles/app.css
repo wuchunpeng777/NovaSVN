@@ -38,6 +38,7 @@ button {
   --inspector-divider-width: 6px;
   --inspector-min-width: 300px;
   --layout-divider-color: #bdc5ce;
+  position: relative;
   display: grid;
   grid-template-rows:
     var(--titlebar-height) var(--locationbar-height)
@@ -202,6 +203,107 @@ button {
 @keyframes toolbar-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+.svn-operation-feedback {
+  position: absolute;
+  z-index: 40;
+  top: calc(var(--titlebar-height) + var(--locationbar-height) + 12px);
+  right: 16px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 9px;
+  width: min(390px, calc(100% - 32px));
+  min-height: 68px;
+  border: 1px solid #8eb6d8;
+  border-radius: 8px;
+  background: #f8fbfe;
+  padding: 11px 12px;
+  color: #19344c;
+}
+
+.svn-operation-feedback.success {
+  border-color: #7fbd92;
+  background: #f4fbf6;
+  color: #245c34;
+}
+
+.svn-operation-feedback.error {
+  border-color: #d29a9a;
+  background: #fff7f7;
+  color: #7d2d2d;
+}
+
+.svn-operation-feedback-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+}
+
+.svn-operation-feedback-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.svn-operation-feedback-copy strong {
+  font-size: 13px;
+}
+
+.svn-operation-feedback-copy > span:not(.svn-operation-progress) {
+  overflow-wrap: anywhere;
+  color: inherit;
+  font-size: 12px;
+}
+
+.svn-operation-feedback-close {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: #e8eef3;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  place-items: center;
+}
+
+.svn-operation-feedback-close:hover,
+.svn-operation-feedback-close:focus-visible {
+  background: #dbe5ed;
+  outline: 2px solid #2f7dca;
+  outline-offset: 1px;
+}
+
+.svn-operation-progress {
+  position: relative;
+  height: 3px;
+  overflow: hidden;
+  margin-top: 5px;
+  border-radius: 2px;
+  background: #dbe8f2;
+}
+
+.svn-operation-progress i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 38%;
+  border-radius: 2px;
+  background: #2f7dca;
+  animation: svn-operation-progress 1.25s ease-in-out infinite;
+}
+
+@keyframes svn-operation-progress {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(280%);
   }
 }
 
@@ -1690,6 +1792,8 @@ textarea {
 }
 
 .revision-file-diff > header {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1697,6 +1801,7 @@ textarea {
   min-width: 0;
   border-bottom: 1px solid #d8dde3;
   padding: 7px 9px;
+  background: #f7f9fa;
 }
 
 .revision-file-diff > header > div {
@@ -1720,6 +1825,20 @@ textarea {
   min-height: 28px;
   padding: 0;
   place-items: center;
+}
+
+.revision-file-diff .revision-diff-close {
+  border-color: #aeb9c4;
+  background: #ffffff;
+  color: #34495c;
+}
+
+.revision-file-diff .revision-diff-close:hover,
+.revision-file-diff .revision-diff-close:focus-visible {
+  border-color: #6e879d;
+  background: #e9f2fa;
+  outline: 2px solid #2f7dca;
+  outline-offset: 1px;
 }
 
 .revision-file-diff-body {
@@ -2559,6 +2678,35 @@ textarea {
 .versions-workbench[data-theme="dark"] .revision-file-diff header p,
 .versions-workbench[data-theme="dark"] .revision-file-diff-empty {
   color: #a9b3bd;
+}
+
+.versions-workbench[data-theme="dark"] .svn-operation-feedback {
+  border-color: #3f6687;
+  background: #202a33;
+  color: #d8e8f5;
+}
+
+.versions-workbench[data-theme="dark"] .svn-operation-feedback.success {
+  border-color: #477b57;
+  background: #203027;
+  color: #c7ead1;
+}
+
+.versions-workbench[data-theme="dark"] .svn-operation-feedback.error {
+  border-color: #895252;
+  background: #352424;
+  color: #f0caca;
+}
+
+.versions-workbench[data-theme="dark"] .svn-operation-feedback-close,
+.versions-workbench[data-theme="dark"] .revision-file-diff .revision-diff-close {
+  border-color: #505964;
+  background: #30363d;
+  color: #d8dee5;
+}
+
+.versions-workbench[data-theme="dark"] .svn-operation-progress {
+  background: #35495b;
 }
 
 .versions-workbench[data-theme="dark"] .merge-result-summary {

@@ -195,6 +195,14 @@ pub struct GetFileContentDiffRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct ResolveTextConflictRequest {
+    pub working_copy_root: String,
+    pub file_path: String,
+    pub resolved_text: String,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct GetRevisionFileContentDiffRequest {
     pub target_url: String,
     pub file_path: String,
@@ -294,6 +302,12 @@ pub struct FileContentDiff {
     pub binary: bool,
     pub too_large: bool,
     pub max_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResolveTextConflictResult {
+    pub path: String,
+    pub resolved: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1201,6 +1215,175 @@ pub fn get_file_content_diff(
     })
 }
 
+pub fn resolve_text_conflict(
+    request: ResolveTextConflictRequest,
+) -> Result<ResolveTextConflictResult, NovaError> {
+    const MAX_RESOLVED_TEXT_BYTES: usize = 2 * 1024 * 1024;
+
+    let root = normalize_workspace_path(&request.working_copy_root)?;
+    let file_path = normalize_relative_file_path(&request.file_path)?;
+    let target = root.join(&file_path);
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+
+    if request.resolved_text.len() > MAX_RESOLVED_TEXT_BYTES {
+        return Err(NovaError::command(
+            "CONFLICT_RESOLUTION_TOO_LARGE",
+            "冲突解决结果过大",
+            Some(format!(
+                "合并结果不能超过 {} MiB。",
+                MAX_RESOLVED_TEXT_BYTES / 1024 / 1024
+            )),
+            true,
+        ));
+    }
+
+    let canonical_root = fs::canonicalize(&root).map_err(|error| {
+        NovaError::command(
+            "CONFLICT_WORKSPACE_CANONICALIZE_FAILED",
+            "无法确认冲突文件所属工作副本",
+            Some(format!("工作副本：{}。错误：{error}", root.display())),
+            true,
+        )
+    })?;
+    let canonical_target = fs::canonicalize(&target).map_err(|error| {
+        NovaError::command(
+            "CONFLICT_FILE_NOT_FOUND",
+            "冲突文件不存在",
+            Some(format!("文件：{}。错误：{error}", target.display())),
+            true,
+        )
+    })?;
+    let metadata = fs::symlink_metadata(&target).map_err(|error| {
+        NovaError::command(
+            "CONFLICT_FILE_METADATA_FAILED",
+            "无法读取冲突文件信息",
+            Some(format!("文件：{}。错误：{error}", target.display())),
+            true,
+        )
+    })?;
+    if !canonical_target.starts_with(&canonical_root)
+        || !metadata.file_type().is_file()
+        || metadata.file_type().is_symlink()
+    {
+        return Err(NovaError::command(
+            "CONFLICT_FILE_UNSAFE",
+            "冲突文件不允许写入",
+            Some("只能解决当前工作副本内的普通文件。".to_string()),
+            true,
+        ));
+    }
+
+    let status_output = svn::command(&executable)
+        .args(["status", "--xml", "--"])
+        .arg(&canonical_target)
+        .current_dir(&canonical_root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "CONFLICT_STATUS_FAILED",
+                "无法确认文件冲突状态",
+                Some(format!("执行 `{executable} status --xml` 失败：{error}")),
+                true,
+            )
+        })?;
+    if !status_output.status.success() {
+        return Err(NovaError::command(
+            "CONFLICT_STATUS_COMMAND_FAILED",
+            "文件冲突状态读取失败",
+            Some(command_error_detail(
+                &executable,
+                "status --xml",
+                &status_output,
+            )),
+            true,
+        ));
+    }
+    let status_xml = String::from_utf8_lossy(&status_output.stdout);
+    if !parse_text_conflict_status(&status_xml)? {
+        return Err(NovaError::command(
+            "CONFLICT_STATUS_STALE",
+            "文件已不再处于文本冲突状态",
+            Some("请刷新工作副本后重新选择冲突文件。".to_string()),
+            true,
+        ));
+    }
+
+    let original = fs::read(&canonical_target).map_err(|error| {
+        NovaError::command(
+            "CONFLICT_FILE_READ_FAILED",
+            "无法备份冲突文件",
+            Some(format!(
+                "文件：{}。错误：{error}",
+                canonical_target.display()
+            )),
+            true,
+        )
+    })?;
+    fs::write(&canonical_target, request.resolved_text.as_bytes()).map_err(|error| {
+        NovaError::command(
+            "CONFLICT_FILE_WRITE_FAILED",
+            "无法保存冲突解决结果",
+            Some(format!(
+                "文件：{}。错误：{error}",
+                canonical_target.display()
+            )),
+            true,
+        )
+    })?;
+
+    let resolve_output = svn::command(&executable)
+        .args(["resolve", "--accept", "working", "--"])
+        .arg(&canonical_target)
+        .current_dir(&canonical_root)
+        .output();
+    match resolve_output {
+        Ok(output) if output.status.success() => Ok(ResolveTextConflictResult {
+            path: file_path,
+            resolved: true,
+        }),
+        Ok(output) => {
+            let restore_error = fs::write(&canonical_target, &original).err();
+            let mut detail = command_error_detail(&executable, "resolve --accept working", &output);
+            if let Some(error) = restore_error {
+                detail.push_str(&format!("；恢复原冲突内容失败：{error}"));
+            }
+            Err(NovaError::command(
+                "CONFLICT_RESOLVE_COMMAND_FAILED",
+                "SVN 未能标记冲突已解决",
+                Some(detail),
+                true,
+            ))
+        }
+        Err(error) => {
+            let restore_error = fs::write(&canonical_target, &original).err();
+            let mut detail = format!("执行 `{executable} resolve --accept working` 失败：{error}");
+            if let Some(error) = restore_error {
+                detail.push_str(&format!("；恢复原冲突内容失败：{error}"));
+            }
+            Err(NovaError::command(
+                "CONFLICT_RESOLVE_FAILED",
+                "无法执行 SVN 冲突解决命令",
+                Some(detail),
+                true,
+            ))
+        }
+    }
+}
+
+fn parse_text_conflict_status(xml: &str) -> Result<bool, NovaError> {
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "CONFLICT_STATUS_XML_PARSE_FAILED",
+            "解析文件冲突状态失败",
+            Some(format!("svn status --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+    Ok(document
+        .descendants()
+        .any(|node| node.has_tag_name("wc-status") && node.attribute("item") == Some("conflicted")))
+}
+
 pub fn get_revision_file_content_diff(
     request: GetRevisionFileContentDiffRequest,
 ) -> Result<FileContentDiff, NovaError> {
@@ -1638,9 +1821,8 @@ fn parse_streaming_revision_attribute(
         .map_err(|error| {
             svn_file_tree_info_xml_error(format!("svn info {field} 解码失败：{error}"))
         })?;
-    value.parse::<u64>().map_err(|error| {
-        svn_file_tree_info_xml_error(format!("svn info {field} 不是有效数字：{error}"))
-    })
+    // Revision metadata is optional for the tree; local-state sentinels must not discard paths.
+    Ok(value.trim().parse::<u64>().unwrap_or_default())
 }
 
 fn parse_versioned_workspace_paths_reader<R: BufRead>(
@@ -4417,6 +4599,36 @@ line two</property>
     }
 
     #[test]
+    fn keeps_versioned_paths_with_non_numeric_info_revisions() {
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-versioned-path-revision-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let canonical_root = fs::canonicalize(&root).unwrap();
+        let xml = format!(
+            r#"<info>
+<entry path="."><wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info></entry>
+<entry path="uncommitted.txt" revision="-1">
+  <wc-info><wcroot-abspath>{root}</wcroot-abspath></wc-info>
+  <commit revision="unknown" />
+</entry>
+</info>"#,
+            root = canonical_root.display()
+        );
+
+        let paths =
+            parse_versioned_workspace_paths(&xml, &canonical_root).expect("versioned paths parse");
+
+        assert!(paths.contains("uncommitted.txt"));
+        let metadata = paths.resolve("uncommitted.txt", Some("42"));
+        assert_eq!(metadata.base_revision.as_deref(), Some("42"));
+        assert_eq!(metadata.last_revision, None);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn limits_streamed_versioned_workspace_paths() {
         let root = std::env::temp_dir().join(format!(
             "novasvn-versioned-path-limit-test-{}",
@@ -5508,6 +5720,94 @@ line two</property>
                 assert_eq!(code, "SVN_BLAME_CONTENT_MISMATCH");
             }
         }
+    }
+
+    #[test]
+    fn identifies_only_text_conflicts_from_status_xml() {
+        let conflicted = r#"<status><target path="."><entry path="main.txt"><wc-status item="conflicted" props="none" /></entry></target></status>"#;
+        let property_conflict = r#"<status><target path="."><entry path="main.txt"><wc-status item="modified" props="conflicted" /></entry></target></status>"#;
+
+        assert!(parse_text_conflict_status(conflicted).unwrap());
+        assert!(!parse_text_conflict_status(property_conflict).unwrap());
+        assert!(parse_text_conflict_status("not xml").is_err());
+    }
+
+    #[test]
+    fn writes_visual_merge_result_and_marks_real_svn_conflict_resolved() {
+        if !svn_test_tools_available() {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-conflict-resolution-integration-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let mine = root.join("mine");
+        let theirs = root.join("theirs");
+        fs::create_dir_all(&import_dir).expect("create conflict fixture");
+        fs::write(import_dir.join("main.txt"), "base\n").expect("write conflict base");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&mine),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&theirs),
+        );
+        fs::write(theirs.join("main.txt"), "theirs\n").expect("write incoming change");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(theirs.join("main.txt"))
+                .args(["-m", "incoming"]),
+        );
+        fs::write(mine.join("main.txt"), "mine\n").expect("write local change");
+        run_test_command(Command::new("svn").arg("update").arg(&mine));
+
+        let result = resolve_text_conflict(ResolveTextConflictRequest {
+            working_copy_root: mine.display().to_string(),
+            file_path: "main.txt".to_string(),
+            resolved_text: "resolved\n".to_string(),
+            svn_executable: None,
+        })
+        .expect("visual conflict resolution succeeds");
+
+        assert!(result.resolved);
+        assert_eq!(result.path, "main.txt");
+        assert_eq!(
+            fs::read_to_string(mine.join("main.txt")).unwrap(),
+            "resolved\n"
+        );
+        let status = Command::new("svn")
+            .args(["status", "--xml", "--"])
+            .arg(mine.join("main.txt"))
+            .current_dir(&mine)
+            .output()
+            .expect("read resolved status");
+        assert!(status.status.success());
+        assert!(!parse_text_conflict_status(&String::from_utf8_lossy(&status.stdout)).unwrap());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

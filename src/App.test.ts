@@ -551,6 +551,7 @@ Certificate information:
     await waitFor(() => {
       expect(get(workspaceStore).pendingSvnOperationTaskId).toBeNull();
     });
+    expect(screen.getByText("操作已完成，工作副本状态正在刷新")).toBeInTheDocument();
     expect(get(taskStore).selectedTask?.task_id).toBe("other-task");
     await waitFor(() => {
       expect(openWorkspaceMock).toHaveBeenLastCalledWith({
@@ -1711,7 +1712,7 @@ Certificate information:
       expect(get(workspaceStore).selectedFilePath).toBe("src/conflict.ts");
       expect(get(workspaceStore).statusFilters).toEqual(["conflicted"]);
     });
-    expect(screen.getByRole("button", { name: "使用工作副本" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "可视化解决" })).toBeInTheDocument();
   });
 
   it("确认源和目标后创建工作副本 Move 任务", async () => {

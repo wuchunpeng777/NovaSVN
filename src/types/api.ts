@@ -659,6 +659,18 @@ export interface GetFileContentDiffRequest {
   max_bytes?: number;
 }
 
+export interface ResolveTextConflictRequest {
+  working_copy_root: string;
+  file_path: string;
+  resolved_text: string;
+  svn_executable?: string;
+}
+
+export interface ResolveTextConflictResult {
+  path: string;
+  resolved: boolean;
+}
+
 export interface GetRevisionFileContentDiffRequest {
   target_url: string;
   file_path: string;

@@ -63,6 +63,8 @@ import type {
   RecentWorkspace,
   RemoveBranchPoolEntryRequest,
   RemoveTaskWorkspaceRequest,
+  ResolveTextConflictRequest,
+  ResolveTextConflictResult,
   ScanWorkspaceStatusRequest,
   SaveBranchPoolEntryRequest,
   SaveTaskWorkspaceRequest,
@@ -386,6 +388,12 @@ export function getFileContentDiff(
   request: GetFileContentDiffRequest,
 ): Promise<FileContentDiff> {
   return callBackend<FileContentDiff>("get_file_content_diff", { request });
+}
+
+export function resolveTextConflict(
+  request: ResolveTextConflictRequest,
+): Promise<ResolveTextConflictResult> {
+  return callBackend<ResolveTextConflictResult>("resolve_text_conflict", { request });
 }
 
 export function getRevisionFileContentDiff(

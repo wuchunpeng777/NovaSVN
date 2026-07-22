@@ -15,7 +15,9 @@ export interface TaskSnapshotSource {
 
 export interface PendingSvnOperationCompletion {
   taskId: string;
+  operationKind: PendingSvnOperationKind | null;
   status: TerminalTaskStatus;
+  error: string | null;
   workingCopyRoot: string | null;
   refresh: "workspace" | "status" | null;
 }
@@ -24,6 +26,7 @@ export interface PendingSvnOperationCompletionHandlers {
   clearPending: () => void;
   refreshWorkspace: (workingCopyRoot: string) => void;
   refreshStatus: (workingCopyRoot: string) => void;
+  notifyCompletion?: (completion: PendingSvnOperationCompletion) => void;
 }
 
 export interface SvnOperationCreationCoordinator {
@@ -65,7 +68,9 @@ export function resolvePendingSvnOperationCompletion(
 
   return {
     taskId: task.task_id,
+    operationKind,
     status: task.status,
+    error: task.error,
     workingCopyRoot: pendingWorkingCopyRoot,
     refresh:
       !canRefresh
@@ -95,6 +100,7 @@ export function consumePendingSvnOperationCompletion(
     return false;
   }
 
+  handlers.notifyCompletion?.(completion);
   handlers.clearPending();
   if (completion.refresh === "workspace" && completion.workingCopyRoot) {
     handlers.refreshWorkspace(completion.workingCopyRoot);

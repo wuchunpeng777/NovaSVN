@@ -3,6 +3,8 @@
   import {
     ChevronDown,
     ChevronUp,
+    CircleCheck,
+    CircleX,
     Download,
     Ellipsis,
     FileUp,
@@ -24,6 +26,7 @@
     X,
   } from "@lucide/svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
+  import ConflictResolver from "./ConflictResolver.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
   import { getRevisionFileContentDiff } from "../../lib/api";
   import { detectSvnAuthenticationFailure } from "../../lib/svn-authentication";
@@ -74,6 +77,7 @@
     AppView,
     ReviewedFileState,
     SafetyCheckSummary,
+    SvnOperationFeedback,
     WorkbenchView,
   } from "../../types/app";
 
@@ -302,9 +306,11 @@
   export let svnBlameError: CommandError | null = null;
   export let diffLoading = false;
   export let contentDiffLoading = false;
+  export let conflictResolutionSaving = false;
   export let selectedPatchLoading = false;
   export let diffError: CommandError | null = null;
   export let contentDiffError: CommandError | null = null;
+  export let conflictResolutionError: CommandError | null = null;
   export let parsedDiffError: CommandError | null = null;
   export let selectedPatchError: CommandError | null = null;
   export let safetyCheck: SafetyCheckSummary = {
@@ -332,6 +338,7 @@
   export let selectedTask: Task | null = null;
   export let runningTaskId: string | null = null;
   export let pendingSvnOperationKind: PendingSvnOperationKind | null = null;
+  export let svnOperationFeedback: SvnOperationFeedback | null = null;
   export let taskError: CommandError | null = null;
   export let backendMessage = "";
   export let commandError: CommandError | null = null;
@@ -381,6 +388,7 @@
   export let onUpdateWorkspace: () => void = () => {};
   export let onUpdatePath: (path: string) => void = () => {};
   export let onCleanupWorkspace: () => void = () => {};
+  export let onDismissSvnOperationFeedback: () => void = () => {};
   export let onChooseApplyPatch: () => void = () => {};
   export let onRunApplyPatch: (dryRun: boolean) => void = () => {};
   export let onCloseApplyPatch: () => void = () => {};
@@ -413,6 +421,10 @@
   export let onResolveWorking: (path: string) => void = () => {};
   export let onResolveMineFull: (path: string) => void = () => {};
   export let onResolveTheirsFull: (path: string) => void = () => {};
+  export let onSaveConflictResolution: (
+    path: string,
+    resolvedText: string,
+  ) => Promise<boolean> = async () => false;
   export let onOpenFileLocation: (path: string) => void = () => {};
   export let onOpenWorkspaceFile: (path: string) => void = () => {};
   export let onLaunchExternalTool: (kind: ExternalToolKind, path: string) => void = () => {};
@@ -692,6 +704,7 @@
   let authenticationUsername = "";
   let authenticationPassword = "";
   let authenticationRememberPassword = true;
+  let conflictResolverOpen = false;
 
   $: if (appSettings.diffMode) {
     diffInline = appSettings.diffMode === "inline";
@@ -1142,6 +1155,13 @@
     onRefreshSvnBlame();
   }
 
+  async function openConflictResolver(path: string) {
+    if (selectedFilePath !== path) {
+      await onSelectFile(path);
+    }
+    conflictResolverOpen = true;
+  }
+
   function isLocalChangedPath(path: string) {
     const scope = changedFileForPath(path)?.change_scope;
     return scope === "local" || scope === "both";
@@ -1401,6 +1421,9 @@
   }
 
   function openCommitForm() {
+    if (commitFiles.length === 0) {
+      onSelectAllCommitFiles();
+    }
     activeInspectorTab = "commit";
     commitMessageFocusRequested = true;
     if (!appSettings.showInspector) {
@@ -2382,7 +2405,7 @@
   data-theme-mode={appSettings.themeMode}
   aria-label="NovaSVN 工作台"
 >
-  <header class="versions-titlebar" inert={applyPatchDialogOpen}>
+  <header class="versions-titlebar" inert={applyPatchDialogOpen || conflictResolverOpen}>
     <div class="window-identity">
       <span class="app-mark" aria-hidden="true">
         <GitCommitHorizontal size={20} strokeWidth={1.9} />
@@ -2504,7 +2527,49 @@
     </div>
   </header>
 
-  <div class="workspace-location" inert={applyPatchDialogOpen}>
+  {#if svnOperationFeedback}
+    <div
+      class="svn-operation-feedback"
+      class:success={svnOperationFeedback.phase === "success"}
+      class:error={svnOperationFeedback.phase === "error"}
+      role={svnOperationFeedback.phase === "error" ? "alert" : "status"}
+      aria-live={svnOperationFeedback.phase === "error" ? "assertive" : "polite"}
+    >
+      <span class="svn-operation-feedback-icon" aria-hidden="true">
+        {#if svnOperationFeedback.phase === "running"}
+          <LoaderCircle class="toolbar-spinner" size={20} strokeWidth={1.9} />
+        {:else if svnOperationFeedback.phase === "success"}
+          <CircleCheck size={20} strokeWidth={1.9} />
+        {:else}
+          <CircleX size={20} strokeWidth={1.9} />
+        {/if}
+      </span>
+      <div class="svn-operation-feedback-copy">
+        <strong>{svnOperationFeedback.title}</strong>
+        <span>{svnOperationFeedback.detail}</span>
+        {#if svnOperationFeedback.phase === "running"}
+          <span
+            class="svn-operation-progress"
+            role="progressbar"
+            aria-label={`${svnOperationFeedback.title}进度`}
+          ><i></i></span>
+        {/if}
+      </div>
+      {#if svnOperationFeedback.phase !== "running"}
+        <button
+          type="button"
+          class="svn-operation-feedback-close"
+          aria-label="关闭操作提示"
+          title="关闭操作提示"
+          on:click={onDismissSvnOperationFeedback}
+        >
+          <X size={16} strokeWidth={1.9} aria-hidden="true" />
+        </button>
+      {/if}
+    </div>
+  {/if}
+
+  <div class="workspace-location" inert={applyPatchDialogOpen || conflictResolverOpen}>
     <span class="location-icon" aria-hidden="true">
       <FolderOpen size={16} strokeWidth={1.8} />
     </span>
@@ -2531,7 +2596,7 @@
   <div
     class="versions-layout"
     class:source-list-hidden={!appSettings.showSourceList}
-    inert={applyPatchDialogOpen}
+    inert={applyPatchDialogOpen || conflictResolverOpen}
   >
     {#if appSettings.showSourceList}
       <aside class="source-list" aria-label="项目列表">
@@ -2942,12 +3007,12 @@
                   </div>
                   <button
                     type="button"
-                    class="icon-button"
+                    class="icon-button revision-diff-close"
                     aria-label="关闭文件 Diff"
-                    title="关闭"
+                    title="关闭文件 Diff"
                     on:click={clearRevisionFileDiff}
                   >
-                    <X size={15} aria-hidden="true" />
+                    <X size={18} strokeWidth={2} aria-hidden="true" />
                   </button>
                 </header>
                 <div class="revision-file-diff-body">
@@ -4648,7 +4713,8 @@
             <button
               type="button"
               class="primary"
-              aria-label="打开提交表单"
+              aria-label="打开提交窗口"
+              title="选择提交内容并填写提交信息"
               on:click={openCommitForm}
               disabled={commitFormOpenDisabled}
             >
@@ -4899,8 +4965,8 @@
                         <button
                           type="button"
                           class="row-primary-action"
-                          aria-label={`Resolve ${node.path}`}
-                          on:click={() => onSelectFile(node.path)}
+                          aria-label={`可视化解决 ${node.path}`}
+                          on:click={() => openConflictResolver(node.path)}
                         >
                           Resolve
                         </button>
@@ -5225,14 +5291,18 @@
 
                 {#if selectedFile && (selectedFile.status === "conflicted" || selectedFile.conflict_kind)}
                   <div class="conflict-actions">
-                    <button type="button" on:click={() => onResolveWorking(selectedFile.path)}>
-                      使用工作副本
+                    <button
+                      type="button"
+                      class="primary"
+                      on:click={() => openConflictResolver(selectedFile.path)}
+                    >
+                      可视化解决
                     </button>
                     <button type="button" on:click={() => onResolveMineFull(selectedFile.path)}>
-                      Mine Full
+                      使用我的版本
                     </button>
                     <button type="button" on:click={() => onResolveTheirsFull(selectedFile.path)}>
-                      Theirs Full
+                      使用对方版本
                     </button>
                   </div>
                 {/if}
@@ -5578,9 +5648,9 @@
           <button
             type="button"
             role="menuitem"
-            on:click={() => runContextMenuAction(() => onSelectFile(contextMenuNode.path))}
+            on:click={() => runContextMenuAction(() => openConflictResolver(contextMenuNode.path))}
           >
-            Resolve
+            可视化解决
           </button>
         {/if}
         {#if selectedCommittablePaths.length > 0}
@@ -5910,4 +5980,19 @@
       </div>
     </div>
   {/if}
+
+  <ConflictResolver
+    open={conflictResolverOpen}
+    filePath={selectedFilePath ?? ""}
+    contentDiff={selectedFileContentDiff}
+    loading={contentDiffLoading}
+    saving={conflictResolutionSaving}
+    error={conflictResolutionError ?? contentDiffError}
+    onClose={() => (conflictResolverOpen = false)}
+    onSave={onSaveConflictResolution}
+    onUseWorking={onResolveWorking}
+    onUseMineFull={onResolveMineFull}
+    onUseTheirsFull={onResolveTheirsFull}
+    onOpenExternalMerge={(path) => onLaunchExternalTool("merge", path)}
+  />
 </section>

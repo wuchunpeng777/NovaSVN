@@ -35,6 +35,7 @@ describe("MainWorkspace", () => {
     const onUpdateWorkspace = vi.fn();
     const onChooseApplyPatch = vi.fn();
     const onCleanupWorkspace = vi.fn();
+    const onDismissSvnOperationFeedback = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
@@ -43,6 +44,7 @@ describe("MainWorkspace", () => {
         onUpdateWorkspace,
         onChooseApplyPatch,
         onCleanupWorkspace,
+        onDismissSvnOperationFeedback,
       },
     });
 
@@ -92,6 +94,19 @@ describe("MainWorkspace", () => {
     expect(
       within(toolbar).getByRole("button", { name: "正在清理工作副本" }),
     ).toHaveAttribute("aria-busy", "true");
+
+    await rerender({
+      pendingSvnOperationKind: null,
+      svnOperationFeedback: {
+        kind: "cleanup",
+        phase: "success",
+        title: "清理工作副本",
+        detail: "操作已完成，工作副本状态正在刷新",
+      },
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("清理工作副本");
+    await fireEvent.click(screen.getByRole("button", { name: "关闭操作提示" }));
+    expect(onDismissSvnOperationFeedback).toHaveBeenCalledOnce();
 
     await rerender({ pendingSvnOperationKind: null, applyPatchRunning: true });
     expect(
@@ -314,7 +329,7 @@ describe("MainWorkspace", () => {
       },
     });
 
-    const openCommitForm = screen.getByRole("button", { name: "打开提交表单" });
+    const openCommitForm = screen.getByRole("button", { name: "打开提交窗口" });
     expect(openCommitForm).toBeEnabled();
     await fireEvent.click(openCommitForm);
     expect(onAppSettingInput).toHaveBeenCalledWith("showInspector", true);
@@ -323,6 +338,30 @@ describe("MainWorkspace", () => {
     await rerender({ appSettings: makeAppSettings({ showInspector: true }) });
     await waitFor(() => expect(screen.getByPlaceholderText("提交信息")).toHaveFocus());
     expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
+  });
+
+  it("starts a complete commit flow when no files were preselected", async () => {
+    const file = makeFile("src/main.ts", "modified", "main-digest");
+    const onSelectAllCommitFiles = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([file]),
+        commitFiles: [],
+        commitFormOpenDisabled: false,
+        onSelectAllCommitFiles,
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "打开提交窗口" }));
+
+    expect(onSelectAllCommitFiles).toHaveBeenCalledOnce();
+    expect(screen.getByRole("tab", { name: "Commit" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await waitFor(() => expect(screen.getByPlaceholderText("提交信息")).toHaveFocus());
   });
 
   it("resolves the system theme and exposes persistent theme controls", async () => {
@@ -683,7 +722,11 @@ Certificate information:
       svn_executable: undefined,
       max_bytes: 20 * 1024 * 1024,
     });
-    expect(await screen.findByLabelText("文件 Diff")).toBeInTheDocument();
+    const fileDiff = await screen.findByLabelText("文件 Diff");
+    const closeFileDiff = within(fileDiff).getByRole("button", { name: "关闭文件 Diff" });
+    expect(closeFileDiff).toHaveAttribute("title", "关闭文件 Diff");
+    await fireEvent.click(closeFileDiff);
+    expect(screen.queryByLabelText("文件 Diff")).not.toBeInTheDocument();
 
     const priorDay = within(timeline).getByRole("group", { name: "2026年7月10日" });
     expect(priorDay).toHaveTextContent("1 revision");
@@ -1638,10 +1681,12 @@ Certificate information:
 
     await fireEvent.click(screen.getByRole("checkbox", { name: "提交目标 local.txt" }));
     await fireEvent.click(screen.getByRole("button", { name: "Update remote.txt" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Resolve conflict.txt" }));
+    await fireEvent.click(screen.getByRole("button", { name: "可视化解决 conflict.txt" }));
     expect(onSelectCommitFile).toHaveBeenCalledWith("local.txt");
     expect(onUpdatePath).toHaveBeenCalledWith("remote.txt");
     expect(onSelectFile).toHaveBeenCalledWith("conflict.txt");
+    expect(screen.getByRole("dialog", { name: "解决文本冲突" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "关闭冲突解决器" }));
 
     const filters = screen.getByRole("region", { name: "改动过滤" });
     await fireEvent.click(within(filters).getByRole("button", { name: "远端更新" }));
@@ -2371,9 +2416,11 @@ Certificate information:
       "aria-selected",
       "true",
     );
-    expect(screen.getByRole("button", { name: "使用工作副本" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Mine Full" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Theirs Full" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "可视化解决" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "使用我的版本" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "使用对方版本" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "可视化解决" }));
+    expect(screen.getByRole("dialog", { name: "解决文本冲突" })).toBeInTheDocument();
   });
 });
 

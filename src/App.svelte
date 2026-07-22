@@ -22,6 +22,7 @@
     openLocalPathLocation,
     openRepositoryTempFile,
     openWorkspaceFile,
+    resolveTextConflict,
   } from "./lib/api";
   import {
     consumePendingSvnOperationCompletion,
@@ -47,6 +48,7 @@
     CommandError,
     ExternalToolKind,
     HealthPayload,
+    PendingSvnOperationKind,
     RepositoryExportResult,
     StartupIntent,
     SvnAuthenticationStatus,
@@ -58,6 +60,7 @@
     TaskSnapshot,
     WorkingCopyStatus,
   } from "./types/api";
+  import type { SvnOperationFeedback } from "./types/app";
 
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
@@ -92,6 +95,10 @@
   let svnCertificateTrustStatus: SvnCertificateTrustStatus | null = null;
   let svnCertificateTrustError: CommandError | null = null;
   let svnCertificateTrustLoading = false;
+  let conflictResolutionSaving = false;
+  let conflictResolutionError: CommandError | null = null;
+  let svnOperationFeedback: SvnOperationFeedback | null = null;
+  let svnOperationFeedbackTimer: ReturnType<typeof window.setTimeout> | null = null;
   const repositoryLayoutTaskChecks = new Set<string>();
   const applyPatchTaskChecks = new Set<string>();
   const missingSvnOperationTaskChecks = new Set<string>();
@@ -112,6 +119,18 @@
     ).length;
   $: commitSafetyBlocked =
     $workspaceStore.safetyCheck.blockers.length > 0 || unconfirmedSafetyWarnings > 0;
+  $: committableChangeCount =
+    $workspaceStore.status?.files.filter(
+      (file) =>
+        ![
+          "normal",
+          "missing",
+          "conflicted",
+          "obstructed",
+          "unversioned",
+          "external",
+        ].includes(file.status),
+    ).length ?? 0;
   $: selectedHunkIds =
     selectedFile === null
       ? []
@@ -166,6 +185,48 @@
       $svnStore.detection?.executable ??
       $svnStore.executableInput.trim();
     return executable || undefined;
+  }
+
+  function trackedOperationTitle(kind: PendingSvnOperationKind) {
+    if (kind === "cleanup") {
+      return "清理工作副本";
+    }
+    if (kind === "update_path") {
+      return "更新所选路径";
+    }
+    return "更新工作副本";
+  }
+
+  function tracksOperationFeedback(
+    kind: PendingSvnOperationKind | null,
+  ): kind is "update" | "update_path" | "cleanup" {
+    return kind === "update" || kind === "update_path" || kind === "cleanup";
+  }
+
+  function showSvnOperationFeedback(feedback: SvnOperationFeedback) {
+    if (svnOperationFeedbackTimer !== null) {
+      window.clearTimeout(svnOperationFeedbackTimer);
+      svnOperationFeedbackTimer = null;
+    }
+    svnOperationFeedback = feedback;
+    backendMessage = `${feedback.title}：${feedback.detail}`;
+    if (feedback.phase !== "running") {
+      svnOperationFeedbackTimer = window.setTimeout(
+        () => {
+          svnOperationFeedback = null;
+          svnOperationFeedbackTimer = null;
+        },
+        feedback.phase === "success" ? 5000 : 8000,
+      );
+    }
+  }
+
+  function dismissSvnOperationFeedback() {
+    if (svnOperationFeedbackTimer !== null) {
+      window.clearTimeout(svnOperationFeedbackTimer);
+      svnOperationFeedbackTimer = null;
+    }
+    svnOperationFeedback = null;
   }
 
   async function applySvnAuthentication() {
@@ -364,6 +425,49 @@
     }
   }
 
+  async function saveConflictResolution(filePath: string, resolvedText: string) {
+    const root = $workspaceStore.current?.working_copy_root;
+    if (!root) {
+      conflictResolutionError = {
+        code: "WORKSPACE_REQUIRED",
+        message: "请先打开 SVN 工作副本",
+        detail: null,
+        recoverable: true,
+      };
+      return false;
+    }
+
+    conflictResolutionSaving = true;
+    conflictResolutionError = null;
+    try {
+      await resolveTextConflict({
+        working_copy_root: root,
+        file_path: filePath,
+        resolved_text: resolvedText,
+        svn_executable: currentSvnExecutable(),
+      });
+      const status = await refreshStatusAndSyncBranchPool(root);
+      const nextConflict = status?.files.find(
+        (file) => file.status === "conflicted" || file.conflict_kind,
+      );
+      const refreshedFile = status?.files.find((file) => file.path === filePath);
+      if (nextConflict) {
+        await workspaceStore.selectFile(nextConflict.path, currentSvnExecutable());
+      } else if (refreshedFile) {
+        await workspaceStore.selectFile(refreshedFile.path, currentSvnExecutable());
+      }
+      backendMessage = nextConflict
+        ? `已解决 ${filePath}，还有 ${status?.conflicted ?? 0} 个冲突待处理`
+        : `已解决 ${filePath}，当前工作副本没有文本冲突`;
+      return true;
+    } catch (error) {
+      conflictResolutionError = error as CommandError;
+      return false;
+    } finally {
+      conflictResolutionSaving = false;
+    }
+  }
+
   async function openSelectedFileLocation(filePath: string) {
     commandError = null;
     const root = $workspaceStore.current?.working_copy_root;
@@ -546,7 +650,19 @@
       }
     }
 
-    await svnOperationCreationCoordinator.create(
+    if (tracksOperationFeedback(kind)) {
+      showSvnOperationFeedback({
+        kind,
+        phase: "running",
+        title: trackedOperationTitle(kind),
+        detail:
+          kind === "cleanup"
+            ? "正在检查锁定并清理工作副本..."
+            : "正在从仓库读取并应用最新变更...",
+      });
+    }
+
+    const created = await svnOperationCreationCoordinator.create(
       () => $workspaceStore.pendingSvnOperationTaskId !== null,
       () =>
         taskStore.createSvnOperation({
@@ -558,6 +674,14 @@
         }),
       (task) => workspaceStore.markSvnOperationTask(task.task_id, kind, workingCopyRoot),
     );
+    if (!created && tracksOperationFeedback(kind) && $workspaceStore.pendingSvnOperationTaskId === null) {
+      showSvnOperationFeedback({
+        kind,
+        phase: "error",
+        title: trackedOperationTitle(kind),
+        detail: $taskStore.error?.message ?? "任务创建失败，请重试",
+      });
+    }
   }
 
   async function loadRepositoryUrl(url?: string) {
@@ -1681,6 +1805,21 @@
       refreshStatus: (workingCopyRoot) => {
         void refreshStatusAndSyncBranchPool(workingCopyRoot);
       },
+      notifyCompletion: (completion) => {
+        if (!tracksOperationFeedback(completion.operationKind)) {
+          return;
+        }
+        const successful = completion.status === "success";
+        showSvnOperationFeedback({
+          kind: completion.operationKind,
+          phase: successful ? "success" : "error",
+          title: trackedOperationTitle(completion.operationKind),
+          detail: successful
+            ? "操作已完成，工作副本状态正在刷新"
+            : completion.error ??
+              (completion.status === "cancelled" ? "操作已取消" : "操作未完成，请检查任务日志"),
+        });
+      },
     },
   );
 
@@ -2212,6 +2351,9 @@
     unlistenAppMenu?.();
     unlistenDragDrop?.();
     taskStore.stopPolling();
+    if (svnOperationFeedbackTimer !== null) {
+      window.clearTimeout(svnOperationFeedbackTimer);
+    }
   });
 </script>
 
@@ -2400,9 +2542,11 @@
   svnBlameError={$workspaceStore.svnBlameError}
   diffLoading={$workspaceStore.diffLoading}
   contentDiffLoading={$workspaceStore.contentDiffLoading}
+  {conflictResolutionSaving}
   selectedPatchLoading={$workspaceStore.selectedPatchLoading}
   diffError={$workspaceStore.diffError}
   contentDiffError={$workspaceStore.contentDiffError}
+  {conflictResolutionError}
   parsedDiffError={$workspaceStore.parsedDiffError}
   selectedPatchError={$workspaceStore.selectedPatchError}
   safetyCheck={$workspaceStore.safetyCheck}
@@ -2415,7 +2559,7 @@
   commitMessage={$workspaceStore.commitMessage}
   commitError={$workspaceStore.commitError}
   commitFormOpenDisabled={
-    $workspaceStore.commitFiles.length === 0 ||
+    committableChangeCount === 0 ||
     $taskStore.snapshot.running_task_id !== null
   }
   commitDisabled={
@@ -2432,6 +2576,7 @@
   selectedTask={$taskStore.selectedTask}
   runningTaskId={$taskStore.snapshot.running_task_id}
   pendingSvnOperationKind={$workspaceStore.pendingSvnOperationKind}
+  {svnOperationFeedback}
   taskError={$taskStore.error}
   backendMessage={backendMessage}
   commandError={commandError}
@@ -2461,6 +2606,7 @@
   onUpdateWorkspace={() => runSvnOperation("update")}
   onUpdatePath={(path) => runSvnOperation("update_path", path)}
   onCleanupWorkspace={() => runSvnOperation("cleanup")}
+  onDismissSvnOperationFeedback={dismissSvnOperationFeedback}
   onChooseApplyPatch={chooseAndPreflightPatch}
   onRunApplyPatch={runApplyPatch}
   onCloseApplyPatch={workspaceStore.closeApplyPatchDialog}
@@ -2493,6 +2639,7 @@
   onResolveWorking={(path) => runSvnOperation("resolve_working", path)}
   onResolveMineFull={(path) => runSvnOperation("resolve_mine_full", path)}
   onResolveTheirsFull={(path) => runSvnOperation("resolve_theirs_full", path)}
+  onSaveConflictResolution={saveConflictResolution}
   onOpenFileLocation={openSelectedFileLocation}
   onOpenWorkspaceFile={openSelectedFile}
   onLaunchExternalTool={openExternalTool}
