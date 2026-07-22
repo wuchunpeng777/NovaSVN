@@ -1,10 +1,16 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
-  import { ChevronDown, ChevronUp, RefreshCw, X } from "@lucide/svelte";
-  import { getPathSvnLog, getRevisionFileContentDiff } from "../lib/api";
+  import { onDestroy, onMount, tick } from "svelte";
+  import { ChevronDown, ChevronUp, History, RefreshCw, X } from "@lucide/svelte";
+  import {
+    getPathSvnLog,
+    getRepositoryFileLog,
+    getRevisionFileContentDiff,
+    launchLogWindow,
+  } from "../lib/api";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import {
     LOG_FILE_DIFF_MAX_BYTES,
+    repositoryPathLogTarget,
     repositoryPathUrlAtRevision,
     revisionBefore,
     summarizeSvnChangeActions,
@@ -21,6 +27,8 @@
   import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
 
   export let targetPath: string;
+  export let repositoryRoot: string | undefined = undefined;
+  export let repositoryRevision: string | undefined = undefined;
   export let svnExecutable: string | undefined = undefined;
   export let themeMode: "system" | "light" | "dark" = "system";
   export let diffMode: "side_by_side" | "inline" = "side_by_side";
@@ -48,6 +56,14 @@
   let revisionDiff: FileContentDiff | null = null;
   let revisionDiffLoading = false;
   let revisionDiffError: CommandError | null = null;
+  let fileContextMenu: {
+    entry: SvnLogEntry;
+    path: SvnChangedPath;
+    x: number;
+    y: number;
+  } | null = null;
+  let fileContextMenuElement: HTMLDivElement | null = null;
+  let launchWindowError: CommandError | null = null;
   let requestGeneration = 0;
   let diffRequestGeneration = 0;
   let systemPrefersDark = false;
@@ -82,6 +98,10 @@
       systemPrefersDark = themeMediaQuery.matches;
       themeMediaQuery.addEventListener("change", handleThemeChange);
     }
+    window.addEventListener("click", closeFileContextMenu);
+    window.addEventListener("blur", closeFileContextMenu);
+    window.addEventListener("resize", closeFileContextMenu);
+    window.addEventListener("keydown", handleWindowKeydown);
     void loadLog(false);
   });
 
@@ -89,6 +109,10 @@
     requestGeneration += 1;
     diffRequestGeneration += 1;
     themeMediaQuery?.removeEventListener("change", handleThemeChange);
+    window.removeEventListener("click", closeFileContextMenu);
+    window.removeEventListener("blur", closeFileContextMenu);
+    window.removeEventListener("resize", closeFileContextMenu);
+    window.removeEventListener("keydown", handleWindowKeydown);
   });
 
   function handleThemeChange(event: MediaQueryListEvent) {
@@ -119,14 +143,26 @@
     loading = true;
     error = null;
     try {
-      const page = await getPathSvnLog({
-        path,
-        svn_executable: svnExecutable?.trim() || undefined,
-        limit,
-        start_revision: startRevision ?? undefined,
-      });
+      const repositoryTarget = currentRepositoryTarget(path);
+      const page = repositoryTarget
+        ? await getRepositoryFileLog({
+            url: repositoryTarget.url,
+            revision: repositoryTarget.revision,
+            svn_executable: svnExecutable?.trim() || undefined,
+            limit,
+            start_revision: startRevision ?? undefined,
+          })
+        : await getPathSvnLog({
+            path,
+            svn_executable: svnExecutable?.trim() || undefined,
+            limit,
+            start_revision: startRevision ?? undefined,
+          });
       if (generation !== requestGeneration) {
         return;
+      }
+      if (repositoryTarget) {
+        page.repository_root = repositoryTarget.root;
       }
       log = append && log ? mergeLogPage(log, page) : page;
     } catch (caught) {
@@ -139,6 +175,15 @@
         loading = false;
       }
     }
+  }
+
+  function currentRepositoryTarget(path: string) {
+    const root = repositoryRoot?.trim();
+    const revision = repositoryRevision?.trim();
+    if (!root || !revision || !/^\d+$/.test(revision)) {
+      return null;
+    }
+    return { url: path, root, revision };
   }
 
   function mergeLogPage(current: SvnLog, page: SvnLog): SvnLog {
@@ -256,6 +301,70 @@
     revisionDiffError = null;
   }
 
+  async function openChangedPathContextMenu(
+    event: MouseEvent,
+    entry: SvnLogEntry,
+    path: SvnChangedPath,
+  ) {
+    event.preventDefault();
+    if (path.kind === "dir") {
+      return;
+    }
+    launchWindowError = null;
+    fileContextMenu = {
+      entry,
+      path,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 180)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 54)),
+    };
+    await tick();
+    fileContextMenuElement?.querySelector<HTMLButtonElement>("button")?.focus();
+  }
+
+  function closeFileContextMenu() {
+    fileContextMenu = null;
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      closeFileContextMenu();
+    }
+  }
+
+  async function openChangedPathLog() {
+    const context = fileContextMenu;
+    closeFileContextMenu();
+    if (!context) {
+      return;
+    }
+
+    const target = repositoryPathLogTarget(
+      log?.repository_root ?? repositoryRoot,
+      context.path.path,
+      context.entry.revision,
+      context.path.action,
+    );
+    if (!target) {
+      launchWindowError = {
+        code: "LOG_WINDOW_CONTEXT_MISSING",
+        message: "无法打开文件 Log",
+        detail: "当前日志缺少有效的仓库路径或 revision 信息，请刷新后重试。",
+        recoverable: true,
+      };
+      return;
+    }
+
+    try {
+      await launchLogWindow({
+        repository_url: target.repositoryUrl,
+        repository_root: (log?.repository_root ?? repositoryRoot)?.trim() ?? "",
+        revision: target.revision,
+      });
+    } catch (caught) {
+      launchWindowError = normalizeCommandError(caught, "无法启动新的 Log 窗口");
+    }
+  }
+
   async function openChangedPathDiff(entry: SvnLogEntry, path: SvnChangedPath) {
     if (path.kind === "dir") {
       return;
@@ -309,13 +418,14 @@
     }
   }
 
-  function normalizeCommandError(error: unknown): CommandError {
+  function normalizeCommandError(
+    error: unknown,
+    fallbackMessage = "Revision diff 失败",
+  ): CommandError {
     if (typeof error === "object" && error !== null && "code" in error && "message" in error) {
       return error as CommandError;
     }
-    return revisionDiffCommandError(
-      error instanceof Error ? error.message : "Revision diff 失败",
-    );
+    return revisionDiffCommandError(error instanceof Error ? error.message : fallbackMessage);
   }
 
   function revisionDiffCommandError(message: string): CommandError {
@@ -402,7 +512,7 @@
   </section>
 
   <div class="log-error">
-    <ErrorNotice {error} />
+    <ErrorNotice error={error ?? launchWindowError} />
   </div>
 
   <div class="log-layout" class:with-diff={selectedDiff !== null}>
@@ -466,6 +576,8 @@
                         aria-label={`查看 r${entry.revision} 的 ${path.path} diff`}
                         disabled={revisionDiffLoading}
                         on:click={() => openChangedPathDiff(entry, path)}
+                        on:contextmenu={(event) =>
+                          openChangedPathContextMenu(event, entry, path)}
                       >
                         <code>{path.path}</code>
                       </button>
@@ -528,6 +640,20 @@
     </aside>
   {/if}
   </div>
+  {#if fileContextMenu}
+    <div
+      bind:this={fileContextMenuElement}
+      class="file-context-menu"
+      role="menu"
+      tabindex="-1"
+      aria-label={`文件菜单 ${fileContextMenu.path.path}`}
+      style={`left: ${fileContextMenu.x}px; top: ${fileContextMenu.y}px`}
+    >
+      <button type="button" role="menuitem" on:click={openChangedPathLog}>
+        <History size={15} aria-hidden="true" /> 显示 Log
+      </button>
+    </div>
+  {/if}
   <SvnAuthenticationDialog
     failure={authenticationFailure}
     savedUsername={svnAuthenticationUsername}
@@ -857,6 +983,36 @@
   .changed-path-button:focus-visible {
     background: color-mix(in srgb, var(--accent) 10%, transparent);
     outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+
+  .file-context-menu {
+    position: fixed;
+    z-index: 40;
+    min-width: 164px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    padding: 4px;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  }
+
+  .file-context-menu button {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    min-height: 30px;
+    border: 0;
+    background: transparent;
+    padding: 5px 8px;
+    text-align: left;
+  }
+
+  .file-context-menu button:hover,
+  .file-context-menu button:focus-visible {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
+    outline: none;
   }
 
   .change-action[data-action="A"],

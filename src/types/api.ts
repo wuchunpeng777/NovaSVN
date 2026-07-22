@@ -19,6 +19,20 @@ export interface HealthPayload {
 export interface StartupIntent {
   action: string | null;
   path: string | null;
+  repository_root: string | null;
+  revision: string | null;
+}
+
+export interface LaunchLogWindowRequest {
+  repository_url: string;
+  repository_root: string;
+  revision: string;
+}
+
+export interface LaunchedLogWindow {
+  repository_url: string;
+  repository_root: string;
+  revision: string;
 }
 
 export interface DiagnosticExport {

@@ -30,7 +30,7 @@ use svn::{
     ConfigureSvnAuthenticationRequest, ConfigureSvnCertificateTrustRequest, DetectSvnRequest,
     SvnAuthenticationStatus, SvnCertificateTrustStatus, SvnClient, SvnDetection,
 };
-use system_integration::StartupIntent;
+use system_integration::{LaunchLogWindowRequest, LaunchedLogWindow, StartupIntent};
 use task::{
     CreateApplyPatchTaskRequest, CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest,
     CreateMergeTaskRequest, CreateMockTaskRequest, CreatePartialCommitTaskRequest,
@@ -406,6 +406,14 @@ fn fail_for_preview() -> CommandResult<()> {
 fn get_startup_intent() -> CommandResult<StartupIntent> {
     Ok(CommandResponse::success(
         system_integration::startup_intent(),
+    ))
+}
+
+#[tauri::command]
+fn launch_log_window(request: LaunchLogWindowRequest) -> CommandResult<LaunchedLogWindow> {
+    println!("[NovaSVN] launch_log_window command received");
+    Ok(CommandResponse::success(
+        system_integration::launch_log_window(request)?,
     ))
 }
 
@@ -1101,6 +1109,7 @@ pub fn run() {
             fail_for_preview,
             sync_app_menu_state,
             get_startup_intent,
+            launch_log_window,
             launch_external_tool,
             open_file_location,
             open_workspace_file,

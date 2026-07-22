@@ -47,6 +47,8 @@ import type {
   InspectUpdateTargetRequest,
   ExternalToolLaunch,
   LaunchExternalToolRequest,
+  LaunchLogWindowRequest,
+  LaunchedLogWindow,
   ListWorkspaceFilesRequest,
   OpenFileLocation,
   OpenFileLocationRequest,
@@ -126,6 +128,12 @@ export function createMockTask(request: CreateMockTaskRequest): Promise<Task> {
 
 export function getStartupIntent(): Promise<StartupIntent> {
   return callBackend<StartupIntent>("get_startup_intent");
+}
+
+export function launchLogWindow(
+  request: LaunchLogWindowRequest,
+): Promise<LaunchedLogWindow> {
+  return callBackend<LaunchedLogWindow>("launch_log_window", { request });
 }
 
 export function launchExternalTool(

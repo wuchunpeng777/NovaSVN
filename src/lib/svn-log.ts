@@ -7,6 +7,11 @@ export interface SvnChangeActionSummary {
   count: number;
 }
 
+export interface RepositoryPathLogTarget {
+  repositoryUrl: string;
+  revision: string;
+}
+
 export function summarizeSvnChangeActions(
   paths: SvnChangedPath[],
 ): SvnChangeActionSummary[] {
@@ -57,11 +62,26 @@ export function repositoryPathUrlAtRevision(
   revision: string,
   action: string,
 ) {
+  const target = repositoryPathLogTarget(
+    repositoryRoot,
+    repositoryPath,
+    revision,
+    action,
+  );
+  return target ? `${target.repositoryUrl}@${target.revision}` : null;
+}
+
+export function repositoryPathLogTarget(
+  repositoryRoot: string | null | undefined,
+  repositoryPath: string,
+  revision: string,
+  action: string,
+): RepositoryPathLogTarget | null {
   const url = repositoryPathUrl(repositoryRoot, repositoryPath);
   const previousRevision = revisionBefore(revision);
   if (!url || !previousRevision) {
     return null;
   }
   const pegRevision = action.toUpperCase() === "D" ? previousRevision : revision.trim();
-  return `${url}@${pegRevision}`;
+  return { repositoryUrl: url, revision: pegRevision };
 }

@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
   getPathSvnLog: vi.fn(),
+  getRepositoryFileLog: vi.fn(),
   getRevisionFileContentDiff: vi.fn(),
+  launchLogWindow: vi.fn(),
 }));
 
 vi.mock("./workbench/MonacoDiffViewer.svelte", () => ({
@@ -16,17 +18,26 @@ vi.mock("./workbench/MonacoDiffViewer.svelte", () => ({
   })),
 }));
 
-import { getPathSvnLog, getRevisionFileContentDiff } from "../lib/api";
+import {
+  getPathSvnLog,
+  getRepositoryFileLog,
+  getRevisionFileContentDiff,
+  launchLogWindow,
+} from "../lib/api";
 import type { SvnLog } from "../types/api";
 import StandaloneLogWindow from "./StandaloneLogWindow.svelte";
 
 const getPathSvnLogMock = vi.mocked(getPathSvnLog);
+const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const getRevisionFileContentDiffMock = vi.mocked(getRevisionFileContentDiff);
+const launchLogWindowMock = vi.mocked(launchLogWindow);
 
 beforeEach(() => {
   localStorage.clear();
   getPathSvnLogMock.mockReset();
+  getRepositoryFileLogMock.mockReset();
   getRevisionFileContentDiffMock.mockReset();
+  launchLogWindowMock.mockReset();
 });
 
 describe("StandaloneLogWindow", () => {
@@ -54,6 +65,37 @@ describe("StandaloneLogWindow", () => {
     await fireEvent.click(screen.getByRole("button", { name: "展开 r20 日志" }));
     expect(screen.getByText("/trunk/src/main.ts")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "收起 r20 日志" })).toBeInTheDocument();
+  });
+
+  it("使用仓库 URL 和 peg revision 读取新窗口中的文件日志", async () => {
+    getRepositoryFileLogMock.mockResolvedValue(
+      makeLog({
+        target: "https://svn.example.test/repo/trunk/src/main.ts",
+        working_copy_root: null,
+        repository_root: null,
+      }),
+    );
+
+    render(StandaloneLogWindow, {
+      props: {
+        targetPath: "https://svn.example.test/repo/trunk/src/main.ts",
+        repositoryRoot: "https://svn.example.test/repo",
+        repositoryRevision: "20",
+        svnExecutable: "C:\\Tools\\svn.exe",
+      },
+    });
+
+    await waitFor(() => {
+      expect(getRepositoryFileLogMock).toHaveBeenCalledWith({
+        url: "https://svn.example.test/repo/trunk/src/main.ts",
+        revision: "20",
+        svn_executable: "C:\\Tools\\svn.exe",
+        limit: 50,
+        start_revision: undefined,
+      });
+    });
+    expect(getPathSvnLogMock).not.toHaveBeenCalled();
+    expect(screen.getByText("Add log window")).toBeInTheDocument();
   });
 
   it("按关键字、作者和日期过滤日志", async () => {
@@ -185,6 +227,41 @@ describe("StandaloneLogWindow", () => {
     const diffPanel = await screen.findByLabelText("文件 Diff");
     expect(within(diffPanel).getByText("r20 文件 Diff")).toBeInTheDocument();
     expect(within(diffPanel).queryByText("-before +after")).not.toBeInTheDocument();
+  });
+
+  it("右键修改文件后可在新的独立窗口中显示该文件 Log", async () => {
+    getPathSvnLogMock.mockResolvedValue(makeLog());
+    launchLogWindowMock.mockResolvedValue({
+      repository_url: "https://svn.example.test/repo/trunk/src/main.ts",
+      repository_root: "https://svn.example.test/repo",
+      revision: "20",
+    });
+    render(StandaloneLogWindow, {
+      props: { targetPath: "C:\\repo\\src\\main.ts" },
+    });
+    await screen.findByText("Add log window");
+    await fireEvent.click(screen.getByRole("button", { name: "查看路径" }));
+    const changedFile = screen.getByRole("button", {
+      name: "查看 r20 的 /trunk/src/main.ts diff",
+    });
+
+    await fireEvent.contextMenu(changedFile, { clientX: 320, clientY: 240 });
+
+    const menu = screen.getByRole("menu", {
+      name: "文件菜单 /trunk/src/main.ts",
+    });
+    expect(within(menu).getByRole("menuitem", { name: "显示 Log" })).toHaveFocus();
+    await fireEvent.click(within(menu).getByRole("menuitem", { name: "显示 Log" }));
+
+    await waitFor(() => {
+      expect(launchLogWindowMock).toHaveBeenCalledWith({
+        repository_url: "https://svn.example.test/repo/trunk/src/main.ts",
+        repository_root: "https://svn.example.test/repo",
+        revision: "20",
+      });
+    });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(getRevisionFileContentDiffMock).not.toHaveBeenCalled();
   });
 
   it("显示可重试的 SVN 错误", async () => {

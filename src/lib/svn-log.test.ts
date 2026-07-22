@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  repositoryPathLogTarget,
   repositoryPathUrlAtRevision,
   summarizeSvnChangeActions,
 } from "./svn-log";
@@ -38,5 +39,16 @@ describe("svn log helpers", () => {
         "M",
       ),
     ).toBe("https://svn.example.test/repo/trunk/modified.txt@20");
+    expect(
+      repositoryPathLogTarget(
+        "https://svn.example.test/repo",
+        "/trunk/deleted file.txt",
+        "20",
+        "D",
+      ),
+    ).toEqual({
+      repositoryUrl: "https://svn.example.test/repo/trunk/deleted%20file.txt",
+      revision: "19",
+    });
   });
 });

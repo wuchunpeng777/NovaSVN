@@ -71,6 +71,8 @@
   let standaloneCommitPath = "";
   let standaloneCommitReady = false;
   let standaloneLogPath = "";
+  let standaloneLogRepositoryRoot: string | undefined = undefined;
+  let standaloneLogRevision: string | undefined = undefined;
   let standaloneLogReady = false;
   let standaloneUpdatePath = "";
   let standaloneUpdateReady = false;
@@ -2229,7 +2231,12 @@
       intent = await getStartupIntent();
     } catch (error) {
       commandError = error as CommandError;
-      intent = { action: null, path: null };
+      intent = {
+        action: null,
+        path: null,
+        repository_root: null,
+        revision: null,
+      };
     }
 
     window.addEventListener("contextmenu", preventNativeContextMenu, true);
@@ -2249,6 +2256,8 @@
 
     if (intent.action === "log") {
       standaloneLogPath = intent.path?.trim() ?? "";
+      standaloneLogRepositoryRoot = intent.repository_root?.trim() || undefined;
+      standaloneLogRevision = intent.revision?.trim() || undefined;
       startupSurface = "log";
       if ($appSettingsStore.svnAuthenticationMode !== "password") {
         await applySvnAuthentication();
@@ -2398,6 +2407,8 @@
 {:else if startupSurface === "log"}
   <StandaloneLogWindow
     targetPath={standaloneLogPath}
+    repositoryRoot={standaloneLogRepositoryRoot}
+    repositoryRevision={standaloneLogRevision}
     svnExecutable={currentSvnExecutable()}
     themeMode={$appSettingsStore.themeMode}
     diffMode={$appSettingsStore.diffMode}
