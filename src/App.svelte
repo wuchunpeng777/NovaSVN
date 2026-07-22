@@ -1295,30 +1295,6 @@
     workspaceStore.markSvnSwitchTask(task.task_id);
   }
 
-  async function runRevisionDiff() {
-    const form = $workspaceStore.revisionDiffForm;
-    const task = await taskStore.createRevisionDiff({
-      mode: form.mode,
-      workingCopyRoot: $workspaceStore.current?.working_copy_root,
-      filePath: form.filePath,
-      targetUrl: form.targetUrl,
-      leftRevision: form.leftRevision,
-      rightRevision: form.rightRevision,
-      leftUrl: form.leftUrl,
-      rightUrl: form.rightUrl,
-      svnExecutable: currentSvnExecutable(),
-    });
-
-    if (!task) {
-      workspaceStore.failRevisionDiffTask(
-        $taskStore.error?.message ?? "Revision diff 任务创建失败",
-      );
-      return;
-    }
-
-    workspaceStore.markRevisionDiffTask(task.task_id);
-  }
-
   async function setSvnLogFileOnlyAndRefresh(value: boolean) {
     workspaceStore.setSvnLogFileOnly(value);
     await workspaceStore.refreshSvnLog(currentSvnExecutable());
@@ -2508,10 +2484,6 @@
   svnLogDateToFilter={$workspaceStore.svnLogDateToFilter}
   svnLogFileOnly={$workspaceStore.svnLogFileOnly}
   svnLogLimit={$workspaceStore.svnLogLimit}
-  revisionDiffForm={$workspaceStore.revisionDiffForm}
-  revisionDiffLoading={$workspaceStore.revisionDiffLoading}
-  revisionDiffError={$workspaceStore.revisionDiffError}
-  revisionDiffResult={$workspaceStore.revisionDiffResult}
   branchPool={$branchPoolStore.pool}
   branchPoolForm={$branchPoolStore.form}
   branchPoolFormErrors={$branchPoolStore.formErrors}
@@ -2699,13 +2671,7 @@
   onSvnLogFileOnlyInput={setSvnLogFileOnlyAndRefresh}
   onSvnLogLimitInput={workspaceStore.setSvnLogLimit}
   onLoadMoreSvnLog={() => workspaceStore.loadMoreSvnLog(currentSvnExecutable())}
-  onRevisionDiffFormInput={workspaceStore.setRevisionDiffForm}
-  onRunRevisionDiff={runRevisionDiff}
-  onPrepareRevisionDiffFromLog={workspaceStore.prepareRevisionDiffFromLog}
-  onPrepareRevisionDiffRange={workspaceStore.prepareRevisionDiffRange}
-  onPrepareWorkingCopyFileRevisionDiff={workspaceStore.prepareWorkingCopyFileRevisionDiff}
   onRevertToRevision={revertWorkspaceToRevision}
-  onExportRevisionDiffPatch={workspaceStore.exportRevisionDiffPatch}
   onCommitMessageInput={workspaceStore.setCommitMessage}
   onCommitTemplateInput={workspaceStore.setCommitTemplate}
   onUseCommitHistoryMessage={workspaceStore.useCommitHistoryMessage}

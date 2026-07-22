@@ -708,9 +708,11 @@ Certificate information:
     expect(newestEntry).toHaveTextContent("/trunk/file-12-3.txt");
     expect(newestEntry).toHaveTextContent("/trunk/file-12-4.txt");
     expect(newestEntry).toHaveTextContent("/trunk/file-12-5.txt");
-    const revisionCompare = screen.getByLabelText("Revision 比较");
-    expect(within(revisionCompare).queryByText("修改文件")).not.toBeInTheDocument();
-    expect(revisionCompare).not.toHaveTextContent("/trunk/file-12-1.txt");
+    const timelineLayout = timeline.parentElement as HTMLElement;
+    expect(timelineLayout).not.toHaveClass("file-diff-open");
+    expect(timelineLayout.children).toHaveLength(1);
+    expect(screen.queryByLabelText("Revision 比较")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("文件 Diff 预览")).not.toBeInTheDocument();
     await fireEvent.click(
       within(newestEntry).getByRole("button", {
         name: "比较 r12 的 /trunk/file-12-4.txt",
@@ -726,13 +728,17 @@ Certificate information:
       max_bytes: 20 * 1024 * 1024,
     });
     const fileDiff = await screen.findByLabelText("文件 Diff");
-    expect(fileDiff.parentElement).toBe(revisionCompare);
-    expect(fileDiff.closest(".timeline-layout")).toHaveClass("file-diff-open");
+    const fileDiffPreview = screen.getByLabelText("文件 Diff 预览");
+    expect(fileDiff.parentElement).toBe(fileDiffPreview);
+    expect(timelineLayout).toHaveClass("file-diff-open");
+    expect(timelineLayout.children).toHaveLength(2);
     const closeFileDiff = within(fileDiff).getByRole("button", { name: "关闭文件 Diff" });
     expect(closeFileDiff).toHaveAttribute("title", "关闭文件 Diff");
     await fireEvent.click(closeFileDiff);
     expect(screen.queryByLabelText("文件 Diff")).not.toBeInTheDocument();
-    expect(revisionCompare.closest(".timeline-layout")).not.toHaveClass("file-diff-open");
+    expect(screen.queryByLabelText("文件 Diff 预览")).not.toBeInTheDocument();
+    expect(timelineLayout).not.toHaveClass("file-diff-open");
+    expect(timelineLayout.children).toHaveLength(1);
 
     const priorDay = within(timeline).getByRole("group", { name: "2026年7月10日" });
     expect(priorDay).toHaveTextContent("1 revision");
@@ -742,117 +748,23 @@ Certificate information:
     const priorEntryButton = within(priorDay).getByRole("button", { name: "展开 r10 日志" });
     await fireEvent.click(priorEntryButton);
     expect(priorEntryButton).toHaveClass("active");
-    expect(within(revisionCompare).queryByText("修改文件")).not.toBeInTheDocument();
   });
 
-  it("selects, orders, preserves, and compares two Timeline revisions", async () => {
-    const onPrepareRevisionDiffRange = vi.fn(() => true);
-    const onRunRevisionDiff = vi.fn();
-    const initialLog = {
-      target: "https://svn.example.test/repo/trunk",
-      has_more: true,
-      next_start_revision: "9",
-      entries: [
-        makeLogEntry("12", "2026-07-11T12:00:00", "alice", "newest"),
-        makeLogEntry("11", "2026-07-11T11:00:00", "alice", "middle"),
-        makeLogEntry("10", "2026-07-11T10:00:00", "alice", "oldest"),
-      ],
-    };
-    const { rerender } = render(MainWorkspace, {
-      props: {
-        view: workbenchViews.history,
-        workspace: makeWorkspace(),
-        svnLog: initialLog,
-        onPrepareRevisionDiffRange,
-        onRunRevisionDiff,
-      },
-    });
-
-    const revision12 = screen.getByRole("checkbox", { name: "选择 r12 进行比较" });
-    const revision11 = screen.getByRole("checkbox", { name: "选择 r11 进行比较" });
-    const revision10 = screen.getByRole("checkbox", { name: "选择 r10 进行比较" });
-    await fireEvent.click(revision12);
-    expect(screen.getByRole("toolbar", { name: "Revision 比较选择" })).toHaveTextContent(
-      "已选择 r12",
-    );
-    await fireEvent.click(revision10);
-
-    const selectionToolbar = screen.getByRole("toolbar", { name: "Revision 比较选择" });
-    expect(selectionToolbar).toHaveTextContent("r10 → r12");
-    expect(revision11).toBeDisabled();
-    expect(onPrepareRevisionDiffRange).toHaveBeenLastCalledWith("10", "12");
-
-    await fireEvent.click(revision12);
-    expect(revision11).toBeEnabled();
-    await fireEvent.click(revision11);
-    expect(selectionToolbar).toHaveTextContent("r10 → r11");
-    await fireEvent.click(
-      within(selectionToolbar).getByRole("button", { name: "比较选中 Revision" }),
-    );
-    expect(onPrepareRevisionDiffRange).toHaveBeenLastCalledWith("10", "11");
-    expect(onRunRevisionDiff).toHaveBeenCalledOnce();
-
-    await rerender({
-      svnLog: {
-        ...initialLog,
-        has_more: false,
-        next_start_revision: null,
-        entries: [...initialLog.entries, makeLogEntry("9", "2026-07-10T09:00:00", "bob", "more")],
-      },
-    });
-    expect(screen.getByRole("checkbox", { name: "选择 r10 进行比较" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "选择 r11 进行比较" })).toBeChecked();
-
-    await rerender({
-      svnLog: {
-        ...initialLog,
-        has_more: false,
-        next_start_revision: null,
-        entries: initialLog.entries.filter((entry) => entry.revision !== "10"),
-      },
-    });
-    await waitFor(() => expect(selectionToolbar).toHaveTextContent("已选择 r11"));
-    expect(
-      within(selectionToolbar).getByRole("button", { name: "比较选中 Revision" }),
-    ).toBeDisabled();
-
-    await fireEvent.click(
-      within(selectionToolbar).getByRole("button", { name: "清除 Revision 比较选择" }),
-    );
-    expect(screen.queryByRole("toolbar", { name: "Revision 比较选择" })).not.toBeInTheDocument();
-  });
-
-  it("compares the selected versioned file with any Timeline revision", async () => {
-    const onPrepareWorkingCopyFileRevisionDiff = vi.fn(() => true);
-    const onRunRevisionDiff = vi.fn();
-    const onRevisionDiffFormInput = vi.fn();
+  it("reverts the working copy from a Timeline revision without comparison controls", async () => {
     const onRevertToRevision = vi.fn();
-    const { rerender } = render(MainWorkspace, {
+    render(MainWorkspace, {
       props: {
         view: workbenchViews.history,
         workspace: makeWorkspace(),
-        workspaceFileTree: makeFileTree(),
-        selectedFilePath: "src/main.ts",
         svnLog: {
           target: "https://svn.example.test/repo/trunk",
           has_more: false,
           next_start_revision: null,
           entries: [makeLogEntry("12", "2026-07-11T12:00:00", "alice", "latest")],
         },
-        onPrepareWorkingCopyFileRevisionDiff,
-        onRunRevisionDiff,
-        onRevisionDiffFormInput,
         onRevertToRevision,
       },
     });
-
-    const compareFile = screen.getByRole("button", {
-      name: "比较 src/main.ts 的工作副本与 r12",
-    });
-    expect(compareFile).toHaveAttribute("title", "比较 src/main.ts 的工作副本与 r12");
-    await fireEvent.click(compareFile);
-    expect(onPrepareWorkingCopyFileRevisionDiff).toHaveBeenCalledWith("src/main.ts", "12");
-    expect(onRunRevisionDiff).toHaveBeenCalledOnce();
 
     const revertRevision = screen.getByRole("button", {
       name: "Revert 工作副本到 r12",
@@ -860,65 +772,11 @@ Certificate information:
     expect(revertRevision).toHaveAttribute("title", "Revert 工作副本到 r12");
     await fireEvent.click(revertRevision);
     expect(onRevertToRevision).toHaveBeenCalledWith("12");
-
-    await fireEvent.click(
-      within(screen.getByLabelText("Revision 比较")).getByRole("button", {
-        name: "工作副本",
-      }),
-    );
-    expect(onRevisionDiffFormInput).toHaveBeenCalledWith("mode", "working_copy_to_revision");
-    expect(onRevisionDiffFormInput).toHaveBeenCalledWith("filePath", "src/main.ts");
-
-    await rerender({ selectedFilePath: "notes/new.txt" });
+    expect(screen.queryByLabelText("Revision 比较")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /进行比较/ })).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "比较工作副本文件与 r12" }),
-    ).toBeDisabled();
-    await rerender({ selectedFilePath: "src" });
-    expect(
-      screen.getByRole("button", { name: "比较工作副本文件与 r12" }),
-    ).toBeDisabled();
-  });
-
-  it("shows the complete Patch location when Revision Diff preview is truncated", async () => {
-    const onExportRevisionDiffPatch = vi.fn();
-    const truncatedResult = {
-      mode: "revisions",
-      target: "C:/repo/wc r10:r12",
-      diff_text: "Index: src/large.ts\n...",
-      file_count: 1,
-      line_count: 50000,
-      truncated: true,
-      max_bytes: 2 * 1024 * 1024,
-      patch_file_path: "C:/Users/TU/AppData/Roaming/NovaSVN/revision-diff-patches/full.patch",
-      patch_file_dir: "C:/Users/TU/AppData/Roaming/NovaSVN/revision-diff-patches",
-      patch_file_name: "full.patch",
-    };
-    const { rerender } = render(MainWorkspace, {
-      props: {
-        view: workbenchViews.history,
-        workspace: makeWorkspace(),
-        revisionDiffResult: truncatedResult,
-        onExportRevisionDiffPatch,
-      },
-    });
-
-    const location = screen.getByRole("status");
-    expect(location).toHaveTextContent("界面仅显示截断预览");
-    expect(location).toHaveTextContent("完整 Patch 已保存为 full.patch");
-    expect(location).toHaveTextContent(truncatedResult.patch_file_path);
-    await fireEvent.click(screen.getByRole("button", { name: "显示完整 Patch 位置" }));
-    expect(onExportRevisionDiffPatch).toHaveBeenCalledOnce();
-
-    await rerender({
-      revisionDiffResult: {
-        ...truncatedResult,
-        patch_file_path: null,
-        patch_file_dir: null,
-        patch_file_name: null,
-      },
-    });
-    expect(screen.getByRole("status")).toHaveTextContent("完整 Patch 文件位置不可用");
-    expect(screen.getByRole("button", { name: "显示完整 Patch 位置" })).toBeDisabled();
+      screen.queryByRole("button", { name: "比较工作副本文件与 r12" }),
+    ).not.toBeInTheDocument();
   });
 
   it("browses repository URLs at an explicit revision and keeps it while navigating", async () => {

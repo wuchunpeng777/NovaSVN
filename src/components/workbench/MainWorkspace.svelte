@@ -10,7 +10,6 @@
     FileUp,
     GitBranch,
     FolderOpen,
-    GitCompareArrows,
     GitCommitHorizontal,
     GripVertical,
     History,
@@ -53,8 +52,6 @@
     ParsedFileDiff,
     RepositoryCopyKind,
     RepositoryListResult,
-    RevisionDiffMode,
-    RevisionDiffResult,
     SvnBlame,
     SvnDetection,
     SvnAuthenticationStatus,
@@ -242,26 +239,6 @@
   export let svnLogDateToFilter = "";
   export let svnLogFileOnly = false;
   export let svnLogLimit = 50;
-  export let revisionDiffForm: {
-    mode: RevisionDiffMode;
-    filePath: string;
-    targetUrl: string;
-    leftRevision: string;
-    rightRevision: string;
-    leftUrl: string;
-    rightUrl: string;
-  } = {
-    mode: "revisions",
-    filePath: "",
-    targetUrl: "",
-    leftRevision: "",
-    rightRevision: "",
-    leftUrl: "",
-    rightUrl: "",
-  };
-  export let revisionDiffLoading = false;
-  export let revisionDiffError: string | null = null;
-  export let revisionDiffResult: RevisionDiffResult | null = null;
 
   export let branchPool: BranchPool = { entries: [] };
   export let branchPoolForm = {
@@ -529,26 +506,7 @@
   export let onSvnLogFileOnlyInput: (value: boolean) => void = () => {};
   export let onSvnLogLimitInput: (value: number) => void = () => {};
   export let onLoadMoreSvnLog: () => void = () => {};
-  export let onRevisionDiffFormInput: (
-    field: keyof typeof revisionDiffForm,
-    value: string,
-  ) => void = () => {};
-  export let onRunRevisionDiff: () => void = () => {};
-  export let onPrepareRevisionDiffFromLog: (
-    revision: string,
-    repositoryPath?: string,
-    action?: string,
-  ) => boolean = () => false;
-  export let onPrepareRevisionDiffRange: (
-    leftRevision: string,
-    rightRevision: string,
-  ) => boolean = () => false;
-  export let onPrepareWorkingCopyFileRevisionDiff: (
-    filePath: string,
-    revision: string,
-  ) => boolean = () => false;
   export let onRevertToRevision: (revision: string) => void = () => {};
-  export let onExportRevisionDiffPatch: () => void = () => {};
 
   export let onCommitMessageInput: (value: string) => void = () => {};
   export let onCommitTemplateInput: (value: string) => void = () => {};
@@ -656,7 +614,6 @@
   let revisionFileDiffError: CommandError | null = null;
   let revisionFileDiffGeneration = 0;
   let expandedTimelineRevisions = new Set<string>();
-  let selectedComparisonRevisions: string[] = [];
   let collapsedTreePaths = new Set<string>();
   let openRowMenuPath: string | null = null;
   let selectedRowPaths = new Set<string>();
@@ -738,7 +695,6 @@
     repositoryCheckoutError,
     repositoryExportError,
     commandErrorText(svnLogError),
-    revisionDiffError,
     commandErrorText(revisionFileDiffError),
     branchCheckoutError,
     mergeError,
@@ -756,7 +712,6 @@
     { error: commandErrorText(workspaceError), retry: onOpenWorkspace },
     { error: commandErrorText(svnBlameError), retry: onRefreshSvnBlame },
     { error: commandErrorText(svnPropertiesError), retry: onRefreshSvnProperties },
-    { error: revisionDiffError, retry: onRunRevisionDiff },
     { error: repositoryFileError, retry: null },
     { error: commandErrorText(repositoryFileLogError), retry: null },
     { error: commandErrorText(repositoryFileBlameError), retry: null },
@@ -2025,69 +1980,7 @@
       clearRevisionFileDiff();
     }
     selectedLogRevision = revision;
-    onPrepareRevisionDiffFromLog(revision);
     toggleTimelineEntryPaths(revision);
-  }
-
-  function sortComparisonRevisions(revisions: string[]) {
-    return [...revisions].sort((left, right) => {
-      if (/^\d+$/.test(left) && /^\d+$/.test(right)) {
-        const leftValue = BigInt(left);
-        const rightValue = BigInt(right);
-        return leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0;
-      }
-      return left.localeCompare(right, undefined, { numeric: true });
-    });
-  }
-
-  function toggleComparisonRevision(revision: string) {
-    const selected = selectedComparisonRevisions.includes(revision);
-    const next = selected
-      ? selectedComparisonRevisions.filter((item) => item !== revision)
-      : selectedComparisonRevisions.length < 2
-        ? [...selectedComparisonRevisions, revision]
-        : selectedComparisonRevisions;
-    selectedComparisonRevisions = next;
-    const range = sortComparisonRevisions(next);
-    if (range.length === 2) {
-      onPrepareRevisionDiffRange(range[0], range[1]);
-    }
-  }
-
-  function reconcileComparisonRevisions(log: SvnLog | null, selected: string[]) {
-    const available = new Set(log?.entries.map((entry) => entry.revision) ?? []);
-    const next = selected.filter((revision) => available.has(revision));
-    if (next.length !== selected.length) {
-      selectedComparisonRevisions = next;
-    }
-  }
-
-  function clearComparisonRevisions() {
-    selectedComparisonRevisions = [];
-  }
-
-  function runSelectedRevisionComparison() {
-    const range = sortComparisonRevisions(selectedComparisonRevisions);
-    if (range.length === 2 && onPrepareRevisionDiffRange(range[0], range[1])) {
-      clearRevisionFileDiff();
-      onRunRevisionDiff();
-    }
-  }
-
-  function selectWorkingCopyRevisionDiffMode() {
-    clearRevisionFileDiff();
-    onRevisionDiffFormInput("mode", "working_copy_to_revision");
-    onRevisionDiffFormInput("filePath", selectedRevisionComparisonFile ?? "");
-  }
-
-  function compareSelectedFileWithRevision(revision: string) {
-    if (
-      selectedRevisionComparisonFile &&
-      onPrepareWorkingCopyFileRevisionDiff(selectedRevisionComparisonFile, revision)
-    ) {
-      clearRevisionFileDiff();
-      onRunRevisionDiff();
-    }
   }
 
   function clearRevisionFileDiff() {
@@ -2355,8 +2248,6 @@
   $: tagEntries =
     repositoryLayoutResults.tags?.entries.filter((entry) => entry.kind === "dir") ?? [];
   $: filteredLogEntries = filterLogEntries(svnLog?.entries ?? []);
-  $: reconcileComparisonRevisions(svnLog, selectedComparisonRevisions);
-  $: selectedComparisonRange = sortComparisonRevisions(selectedComparisonRevisions);
   $: svnLogDateRangeInvalid =
     localDateBoundary(svnLogDateFromFilter) !== null &&
     localDateBoundary(svnLogDateToFilter) !== null &&
@@ -2373,10 +2264,6 @@
     filteredLogEntries[0] ??
     null;
   $: selectedTreeNode = treeNodeForPath(selectedFilePath);
-  $: selectedRevisionComparisonFile =
-    selectedTreeNode?.kind === "file" && selectedTreeNode.versioned
-      ? selectedTreeNode.path
-      : null;
   $: contextMenuNode = treeNodeForPath(contextMenuPath);
   $: unconfirmedWarningCount = safetyCheck.warnings.filter(
     (item) => !safetyCheck.confirmedWarningIds.includes(item.id),
@@ -2795,42 +2682,6 @@
         </section>
         <ErrorNotice error={svnLogError} />
 
-        {#if selectedComparisonRange.length > 0}
-          <div
-            class="timeline-comparison-selection"
-            role="toolbar"
-            aria-label="Revision 比较选择"
-          >
-            <span>
-              已选择
-              <strong>
-                {#if selectedComparisonRange.length === 2}
-                  r{selectedComparisonRange[0]} → r{selectedComparisonRange[1]}
-                {:else}
-                  r{selectedComparisonRange[0]}
-                {/if}
-              </strong>
-            </span>
-            <button
-              type="button"
-              class="primary"
-              disabled={selectedComparisonRange.length !== 2 || revisionDiffLoading}
-              on:click={runSelectedRevisionComparison}
-            >
-              {revisionDiffLoading ? "比较中" : "比较选中 Revision"}
-            </button>
-            <button
-              type="button"
-              class="timeline-comparison-clear"
-              aria-label="清除 Revision 比较选择"
-              title="清除 Revision 比较选择"
-              on:click={clearComparisonRevisions}
-            >
-              <X size={15} strokeWidth={2} aria-hidden="true" />
-            </button>
-          </div>
-        {/if}
-
         <div class="timeline-layout" class:file-diff-open={selectedRevisionFileDiff !== null}>
           <section class="timeline-list" aria-label="Revision 列表">
             {#if timelineGroups.length > 0}
@@ -2843,18 +2694,6 @@
                   {#each group.entries as entry (entry.revision)}
                     <article class="timeline-entry">
                       <header class="timeline-entry-header">
-                        <span class="timeline-comparison-cell">
-                          <input
-                            type="checkbox"
-                            aria-label={`选择 r${entry.revision} 进行比较`}
-                            checked={selectedComparisonRevisions.includes(entry.revision)}
-                            disabled={
-                              selectedComparisonRevisions.length >= 2 &&
-                              !selectedComparisonRevisions.includes(entry.revision)
-                            }
-                            on:change={() => toggleComparisonRevision(entry.revision)}
-                          />
-                        </span>
                         <button
                           type="button"
                           class="timeline-entry-summary"
@@ -2878,20 +2717,6 @@
                           <span class="timeline-path-count">
                             <span>{entry.changed_paths.length} paths</span>
                           </span>
-                        </button>
-                        <button
-                          type="button"
-                          class="timeline-working-copy-compare"
-                          aria-label={selectedRevisionComparisonFile
-                            ? `比较 ${selectedRevisionComparisonFile} 的工作副本与 r${entry.revision}`
-                            : `比较工作副本文件与 r${entry.revision}`}
-                          title={selectedRevisionComparisonFile
-                            ? `比较 ${selectedRevisionComparisonFile} 的工作副本与 r${entry.revision}`
-                            : "先在工作副本中选择版本化文件"}
-                          disabled={!selectedRevisionComparisonFile || revisionDiffLoading}
-                          on:click={() => compareSelectedFileWithRevision(entry.revision)}
-                        >
-                          <GitCompareArrows size={15} strokeWidth={2} aria-hidden="true" />
                         </button>
                         <button
                           type="button"
@@ -2960,8 +2785,8 @@
             {/if}
           </section>
 
-          <aside class="revision-compare" aria-label="Revision 比较">
-            {#if selectedRevisionFileDiff}
+          {#if selectedRevisionFileDiff}
+            <aside class="revision-compare" aria-label="文件 Diff 预览">
               <section class="revision-file-diff" aria-label="文件 Diff">
                 <header>
                   <div>
@@ -3001,144 +2826,8 @@
                   {/if}
                 </div>
               </section>
-            {:else}
-            <h2>比较</h2>
-            <div class="segmented-control">
-              <button
-                type="button"
-                class:active={revisionDiffForm.mode === "revisions"}
-                on:click={() => onRevisionDiffFormInput("mode", "revisions")}
-              >
-                Revision
-              </button>
-              <button
-                type="button"
-                class:active={revisionDiffForm.mode === "working_copy_to_revision"}
-                on:click={selectWorkingCopyRevisionDiffMode}
-              >
-                工作副本
-              </button>
-              <button
-                type="button"
-                class:active={revisionDiffForm.mode === "urls"}
-                on:click={() => onRevisionDiffFormInput("mode", "urls")}
-              >
-                URL
-              </button>
-            </div>
-
-            {#if revisionDiffForm.mode === "urls"}
-              <input
-                type="url"
-                value={revisionDiffForm.leftUrl}
-                placeholder="左侧 URL"
-                on:input={(event) =>
-                  onRevisionDiffFormInput(
-                    "leftUrl",
-                    (event.currentTarget as HTMLInputElement).value,
-                  )}
-              />
-              <input
-                type="url"
-                value={revisionDiffForm.rightUrl}
-                placeholder="右侧 URL"
-                on:input={(event) =>
-                  onRevisionDiffFormInput(
-                    "rightUrl",
-                    (event.currentTarget as HTMLInputElement).value,
-                  )}
-              />
-            {:else}
-              {#if revisionDiffForm.mode === "working_copy_to_revision"}
-                <input
-                  type="text"
-                  value={revisionDiffForm.filePath}
-                  placeholder="未选择文件时比较整个工作副本"
-                  aria-label="工作副本比较文件"
-                  readonly
-                  title={revisionDiffForm.filePath || "未选择文件时比较整个工作副本"}
-                />
-              {/if}
-              {#if revisionDiffForm.mode === "revisions"}
-                <input
-                  type="url"
-                  value={revisionDiffForm.targetUrl}
-                  placeholder="比较目标 URL（留空使用工作副本）"
-                  aria-label="Revision Diff 目标 URL"
-                  on:input={(event) =>
-                    onRevisionDiffFormInput(
-                      "targetUrl",
-                      (event.currentTarget as HTMLInputElement).value,
-                    )}
-                />
-              {/if}
-              {#if revisionDiffForm.mode === "revisions"}
-                <input
-                  type="text"
-                  value={revisionDiffForm.leftRevision}
-                  placeholder="左侧 revision"
-                  on:input={(event) =>
-                    onRevisionDiffFormInput(
-                      "leftRevision",
-                      (event.currentTarget as HTMLInputElement).value,
-                    )}
-                />
-              {/if}
-              <input
-                type="text"
-                value={revisionDiffForm.rightRevision}
-                placeholder={workspace?.revision ? `目标 revision，例如 ${workspace.revision}` : "目标 revision"}
-                on:input={(event) =>
-                  onRevisionDiffFormInput(
-                    "rightRevision",
-                    (event.currentTarget as HTMLInputElement).value,
-                  )}
-              />
-            {/if}
-
-            {#if revisionDiffError}
-              <p class="inline-error">{revisionDiffError}</p>
-            {/if}
-            <button type="button" class="primary" on:click={onRunRevisionDiff} disabled={revisionDiffLoading}>
-              {revisionDiffLoading ? "比较中" : "比较"}
-            </button>
-            <button
-              type="button"
-              class="revision-patch-action"
-              on:click={onExportRevisionDiffPatch}
-              disabled={
-                !revisionDiffResult ||
-                (revisionDiffResult.truncated
-                  ? !revisionDiffResult.patch_file_path
-                  : !revisionDiffResult.diff_text && !revisionDiffResult.patch_file_path)
-              }
-            >
-              {#if revisionDiffResult?.truncated}
-                <FolderOpen size={15} strokeWidth={2} aria-hidden="true" />
-                显示完整 Patch 位置
-              {:else}
-                <Download size={15} strokeWidth={2} aria-hidden="true" />
-                导出完整 Patch
-              {/if}
-            </button>
-            <div class="revision-result">
-              <span>{revisionDiffResult?.file_count ?? 0} 文件</span>
-              <span>{revisionDiffResult?.line_count ?? 0} 行</span>
-            </div>
-            {#if revisionDiffResult?.truncated}
-              <div class="revision-patch-location" role="status">
-                <strong>界面仅显示截断预览</strong>
-                {#if revisionDiffResult.patch_file_path}
-                  <span>完整 Patch 已保存为 {revisionDiffResult.patch_file_name ?? "Patch 文件"}</span>
-                  <code title={revisionDiffResult.patch_file_path}>{revisionDiffResult.patch_file_path}</code>
-                {:else}
-                  <span class="inline-error">完整 Patch 文件位置不可用，请查看任务错误。</span>
-                {/if}
-              </div>
-            {/if}
-            <pre>{revisionDiffResult?.diff_text || "暂无比较结果"}</pre>
-            {/if}
-          </aside>
+            </aside>
+          {/if}
         </div>
       {:else if view.id === "repository"}
         <section class="pane-header">

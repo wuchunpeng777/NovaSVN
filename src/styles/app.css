@@ -1228,7 +1228,6 @@ textarea {
 }
 
 .text-diff,
-.revision-result + pre,
 .advanced-card pre {
   overflow: auto;
   max-height: 260px;
@@ -1417,7 +1416,7 @@ textarea {
 
 .timeline-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -1428,43 +1427,12 @@ textarea {
 .timeline-list {
   min-height: 0;
   overflow: auto;
-  border-right: 1px solid #d0d6dd;
   background: #ffffff;
   padding: 10px 12px;
 }
 
-.timeline-comparison-selection {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  border-bottom: 1px solid #cfd6dd;
-  background: #edf5fb;
-  padding: 5px 12px;
-}
-
-.timeline-comparison-selection > span {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-  color: #536070;
-  font-size: 12px;
-}
-
-.timeline-comparison-selection strong {
-  color: #1d5f9c;
-  font-size: 13px;
-}
-
-.timeline-comparison-selection .timeline-comparison-clear {
-  display: inline-grid;
-  place-items: center;
-  width: 28px;
-  min-width: 28px;
-  min-height: 28px;
-  margin-left: auto;
-  padding: 0;
+.timeline-layout.file-diff-open .timeline-list {
+  border-right: 1px solid #d0d6dd;
 }
 
 .timeline-day-group + .timeline-day-group {
@@ -1500,20 +1468,9 @@ textarea {
 
 .timeline-entry-header {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 28px 28px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   align-items: center;
   gap: 6px;
-}
-
-.timeline-comparison-cell {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-}
-
-.timeline-comparison-cell input {
-  margin: 0;
 }
 
 .timeline-entry-summary {
@@ -1575,7 +1532,6 @@ textarea {
   font-weight: 700;
 }
 
-.timeline-working-copy-compare,
 .timeline-revert-revision {
   display: inline-grid;
   place-items: center;
@@ -1677,41 +1633,6 @@ textarea {
   gap: 0;
   overflow: hidden;
   padding: 0;
-}
-
-.revision-result {
-  display: flex;
-  gap: 10px;
-  color: #687482;
-  font-size: 12px;
-}
-
-.revision-patch-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-
-.revision-patch-location {
-  display: grid;
-  gap: 4px;
-  border-left: 3px solid #4f87b4;
-  background: #e8f1f8;
-  padding: 7px 9px;
-  color: #405264;
-  font-size: 11px;
-}
-
-.revision-patch-location strong {
-  color: #1d5f9c;
-  font-size: 12px;
-}
-
-.revision-patch-location code {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-family: "SFMono-Regular", Consolas, monospace;
 }
 
 .change-action {
@@ -2568,19 +2489,6 @@ textarea {
   color: #d8dee5;
 }
 
-.versions-workbench[data-theme="dark"] .timeline-comparison-selection {
-  border-color: #414852;
-  background: #243545;
-}
-
-.versions-workbench[data-theme="dark"] .timeline-comparison-selection > span {
-  color: #c0c8d0;
-}
-
-.versions-workbench[data-theme="dark"] .timeline-comparison-selection strong {
-  color: #8bc8f5;
-}
-
 .versions-workbench[data-theme="dark"] .summary-strip,
 .versions-workbench[data-theme="dark"] .file-table-head,
 .versions-workbench[data-theme="dark"] .table-head,
@@ -2850,7 +2758,6 @@ textarea {
 .versions-workbench[data-theme="dark"] .task-list span,
 .versions-workbench[data-theme="dark"] .task-list em,
 .versions-workbench[data-theme="dark"] .task-list small,
-.versions-workbench[data-theme="dark"] .revision-result,
 .versions-workbench[data-theme="dark"] .metadata-cell,
 .versions-workbench[data-theme="dark"] .patch-dialog > header p,
 .versions-workbench[data-theme="dark"] .patch-summary span,
@@ -2959,18 +2866,7 @@ textarea {
   color: #d4dbe2;
 }
 
-.versions-workbench[data-theme="dark"] .revision-patch-location {
-  border-left-color: #78acd5;
-  background: #243545;
-  color: #c0c8d0;
-}
-
-.versions-workbench[data-theme="dark"] .revision-patch-location strong {
-  color: #8bc8f5;
-}
-
 .versions-workbench[data-theme="dark"] .text-diff,
-.versions-workbench[data-theme="dark"] .revision-result + pre,
 .versions-workbench[data-theme="dark"] .advanced-card pre,
 .versions-workbench[data-theme="dark"] .patch-output {
   border-color: #414852;
@@ -3720,7 +3616,6 @@ select:focus {
 .blame-table,
 .monaco-diff-viewer,
 .text-diff,
-.revision-result + pre,
 .advanced-card pre {
   border-color: var(--mac-separator);
   border-radius: 7px;
