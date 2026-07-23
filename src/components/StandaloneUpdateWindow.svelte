@@ -30,6 +30,8 @@
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
   import SvnLogRevisionList from "./SvnLogRevisionList.svelte";
 
+  const UPDATE_AUTO_CLOSE_SETTING_KEY = "novasvn:update-close-after-completion";
+
   export let targetPath: string;
   export let svnExecutable: string | undefined = undefined;
   export let themeMode: "system" | "light" | "dark" = "system";
@@ -87,7 +89,8 @@
   let themeMediaQuery: MediaQueryList | null = null;
   let returningToCommit = false;
   let updatedFileSizes = new Map<string, number>();
-  let closeAfterCompletion = false;
+  let closeAfterCompletion = readCloseAfterCompletionSetting();
+  let closeCurrentUpdateAfterCompletion = closeAfterCompletion;
   let autoCloseTriggered = false;
 
   const terminalStatuses: TaskStatus[] = [
@@ -193,6 +196,7 @@
     resolvedUpdateActions = new Map();
     resolvedConflictPaths = new Set();
     updatedFileSizes = new Map();
+    closeCurrentUpdateAfterCompletion = closeAfterCompletion;
     autoCloseTriggered = false;
     autoFollowOutput = true;
     expectedAutoScrollTop = null;
@@ -373,6 +377,7 @@
     resolvedUpdateActions = new Map();
     resolvedConflictPaths = new Set();
     updatedFileSizes = new Map();
+    closeCurrentUpdateAfterCompletion = closeAfterCompletion;
     autoCloseTriggered = false;
     autoFollowOutput = true;
     expectedAutoScrollTop = null;
@@ -694,7 +699,7 @@
       await getCurrentWindow().close();
     } catch (caught) {
       returningToCommit = false;
-      actionError = caught as CommandError;
+      actionError = commandErrorMessage(caught, "无法返回 Commit 窗口");
     }
   }
 
@@ -717,7 +722,7 @@
       }
       return;
     }
-    if (!closeAfterCompletion) {
+    if (!closeCurrentUpdateAfterCompletion) {
       return;
     }
     autoCloseTriggered = true;
@@ -729,14 +734,60 @@
       await getCurrentWindow().close();
     } catch (caught) {
       autoCloseTriggered = false;
-      error = caught as CommandError;
+      error = normalizeAutoCloseError(caught);
     }
   }
 
   function handleCloseAfterCompletionChange(event: Event) {
     closeAfterCompletion = (event.currentTarget as HTMLInputElement).checked;
-    if (closeAfterCompletion) {
-      void maybeCloseCompletedUpdate();
+    writeCloseAfterCompletionSetting(closeAfterCompletion);
+    if (
+      !closeAfterCompletion ||
+      updateTask?.status !== "success" ||
+      conflictCount > 0
+    ) {
+      closeCurrentUpdateAfterCompletion = closeAfterCompletion;
+    }
+  }
+
+  function readCloseAfterCompletionSetting() {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    try {
+      return window.localStorage.getItem(UPDATE_AUTO_CLOSE_SETTING_KEY) === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  function writeCloseAfterCompletionSetting(value: boolean) {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.localStorage.setItem(UPDATE_AUTO_CLOSE_SETTING_KEY, String(value));
+    } catch {
+      // Preference persistence must not interfere with Update.
+    }
+  }
+
+  function commandErrorMessage(value: unknown, fallback: string) {
+    if (value && typeof value === "object" && "message" in value) {
+      return String((value as { message?: unknown }).message || fallback);
+    }
+    return typeof value === "string" && value ? value : fallback;
+  }
+
+  function normalizeAutoCloseError(value: unknown): CommandError {
+    const candidate = value && typeof value === "object"
+      ? value as Partial<CommandError>
+      : null;
+    return {
+      code: candidate?.code || "UPDATE_WINDOW_CLOSE_FAILED",
+      message: commandErrorMessage(value, "Update 完成，但窗口无法自动关闭"),
+      detail: candidate?.detail ?? null,
+      recoverable: true,
     }
   }
 

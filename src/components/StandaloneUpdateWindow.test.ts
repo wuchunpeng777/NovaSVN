@@ -44,6 +44,7 @@ const launchConflictWindowMock = vi.mocked(launchConflictWindow);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(() => {
+  localStorage.clear();
   closeWindowMock.mockReset();
   closeWindowMock.mockResolvedValue(undefined);
   createSvnOperationTaskMock.mockReset();
@@ -151,6 +152,30 @@ describe("StandaloneUpdateWindow", () => {
       check_remote_updates: false,
     });
     expect(closeWindowMock).not.toHaveBeenCalled();
+  });
+
+  it("持久化自动关闭选项，完成后勾选不会立即关闭当前窗口", async () => {
+    const first = render(StandaloneUpdateWindow, {
+      props: { targetPath: "C:\\repo\\src\\main.ts" },
+    });
+    await screen.findByRole("status", { name: "更新完成" });
+    const autoClose = screen.getByRole("checkbox", {
+      name: "更新完成且所有冲突解决后自动关闭",
+    });
+
+    await fireEvent.click(autoClose);
+
+    expect(autoClose).toBeChecked();
+    expect(localStorage.getItem("novasvn:update-close-after-completion")).toBe("true");
+    expect(closeWindowMock).not.toHaveBeenCalled();
+    expect(screen.queryByText("需要处理后再继续")).not.toBeInTheDocument();
+    first.unmount();
+
+    getTaskMock.mockResolvedValue(makeTask("running", ["U    src/main.ts"]));
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo" } });
+    expect(
+      screen.getByRole("checkbox", { name: "更新完成且所有冲突解决后自动关闭" }),
+    ).toBeChecked();
   });
 
   it("主界面模式完成更新后可以返回工作台", async () => {

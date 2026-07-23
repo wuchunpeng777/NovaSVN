@@ -545,9 +545,8 @@ Certificate information:
         name: "更新完成且所有冲突解决后自动关闭",
       }),
     );
-    await waitFor(() =>
-      expect(screen.queryByLabelText("主界面 Update")).not.toBeInTheDocument(),
-    );
+    expect(screen.getByLabelText("主界面 Update")).toBeInTheDocument();
+    expect(localStorage.getItem("novasvn:update-close-after-completion")).toBe("true");
   });
 
   it("远端变化文件使用真实文件级 Update 任务", async () => {

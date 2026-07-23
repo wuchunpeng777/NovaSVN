@@ -323,39 +323,54 @@ const windowsExplorerMenus = [
     root: "Software\\Classes\\Directory\\shell",
     placeholder: "%1",
     submenu: [
-      ["01.Checkout", "Checkout", "checkout"],
-      ["02.Info", "SVN Info", "info"],
+      ["01.Open", "Open", "open"],
+      ["02.Checkout", "Checkout", "checkout"],
+      ["03.Info", "SVN Info", "info"],
+      ["04.Diff", "Diff", "diff"],
+      ["05.Revert", "Revert", "revert"],
+      ["06.Cleanup", "Cleanup", "cleanup"],
+      ["07.BranchWorkspace", "Branch Workspace", "branch-workspace"],
     ],
     direct: [
-      ["Commit", "Commit", "commit"],
-      ["Update", "Update", "update"],
-      ["Log", "Log", "log"],
+      ["Update", "NovaSVN Update", "update"],
+      ["Commit", "NovaSVN Commit", "commit"],
+      ["Log", "NovaSVN Log", "log"],
     ],
   },
   {
     root: "Software\\Classes\\Directory\\Background\\shell",
     placeholder: "%V",
     submenu: [
-      ["01.Checkout", "Checkout", "checkout"],
-      ["02.Info", "SVN Info", "info"],
+      ["01.Open", "Open", "open"],
+      ["02.Checkout", "Checkout", "checkout"],
+      ["03.Info", "SVN Info", "info"],
+      ["04.Diff", "Diff", "diff"],
+      ["05.Revert", "Revert", "revert"],
+      ["06.Cleanup", "Cleanup", "cleanup"],
+      ["07.BranchWorkspace", "Branch Workspace", "branch-workspace"],
     ],
     direct: [
-      ["Commit", "Commit", "commit"],
-      ["Update", "Update", "update"],
-      ["Log", "Log", "log"],
+      ["Update", "NovaSVN Update", "update"],
+      ["Commit", "NovaSVN Commit", "commit"],
+      ["Log", "NovaSVN Log", "log"],
     ],
   },
   {
     root: "Software\\Classes\\*\\shell",
     placeholder: "%1",
     submenu: [
-      ["01.Info", "SVN Info", "info"],
+      ["01.Open", "Open", "open"],
+      ["02.Info", "SVN Info", "info"],
+      ["03.Diff", "Diff", "diff"],
+      ["04.Blame", "Blame", "blame"],
+      ["05.Revert", "Revert", "revert"],
+      ["06.Cleanup", "Cleanup", "cleanup"],
+      ["07.BranchWorkspace", "Branch Workspace", "branch-workspace"],
     ],
     direct: [
-      ["Commit", "Commit", "commit"],
-      ["Update", "Update", "update"],
-      ["Log", "Log", "log"],
-      ["Blame", "Blame", "blame"],
+      ["Update", "NovaSVN Update", "update"],
+      ["Commit", "NovaSVN Commit", "commit"],
+      ["Log", "NovaSVN Log", "log"],
     ],
   },
 ];
@@ -385,6 +400,20 @@ for (const menu of windowsExplorerMenus) {
       failed = true;
     }
   }
+}
+
+const registeredDirectActions = [
+  ...nsisHooks.matchAll(/NOVASVN_REGISTER_DIRECT_ACTION\s+"[^"]+"\s+"([^"]+)"\s+"([^"]+)"\s+"([^"]+)"/g),
+].map((match) => match.slice(1, 4).join("|"));
+const expectedDirectActions = windowsExplorerMenus.flatMap((menu) =>
+  menu.direct.map(([key, label, action]) => [key, label, action].join("|")),
+);
+if (
+  registeredDirectActions.length !== expectedDirectActions.length ||
+  registeredDirectActions.some((action, index) => action !== expectedDirectActions[index])
+) {
+  console.error("Windows Explorer 一级菜单只能包含带 NovaSVN 前缀的 Update、Commit、Log");
+  failed = true;
 }
 
 if (

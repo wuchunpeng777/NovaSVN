@@ -15,19 +15,19 @@ if ($Mode -eq "Install" -and !(Test-Path -LiteralPath $NovaSvnExe -PathType Leaf
 }
 
 $submenuActions = @(
-  @{ Key = "Checkout"; Label = "Checkout"; Action = "checkout"; DirectoriesOnly = $true },
-  @{ Key = "Info"; Label = "SVN Info"; Action = "info" }
-)
-$directActions = @(
   @{ Key = "Open"; Label = "Open"; Action = "open" },
-  @{ Key = "Commit"; Label = "Commit"; Action = "commit" },
-  @{ Key = "Update"; Label = "Update"; Action = "update" },
+  @{ Key = "Checkout"; Label = "Checkout"; Action = "checkout"; DirectoriesOnly = $true },
+  @{ Key = "Info"; Label = "SVN Info"; Action = "info" },
   @{ Key = "Diff"; Label = "Diff"; Action = "diff" },
-  @{ Key = "Log"; Label = "Log"; Action = "log" },
   @{ Key = "Blame"; Label = "Blame"; Action = "blame"; FilesOnly = $true },
   @{ Key = "Revert"; Label = "Revert"; Action = "revert" },
   @{ Key = "Cleanup"; Label = "Cleanup"; Action = "cleanup" },
   @{ Key = "BranchWorkspace"; Label = "Branch Workspace"; Action = "branch-workspace" }
+)
+$directActions = @(
+  @{ Key = "Update"; Label = "NovaSVN Update"; Action = "update" },
+  @{ Key = "Commit"; Label = "NovaSVN Commit"; Action = "commit" },
+  @{ Key = "Log"; Label = "NovaSVN Log"; Action = "log" }
 )
 
 $roots = @(
@@ -41,8 +41,8 @@ foreach ($root in $roots) {
   foreach ($item in @($submenuActions + $directActions)) {
     Remove-Item -LiteralPath (Join-Path $root.Path "NovaSVN.$($item.Key)") -Recurse -Force -ErrorAction SilentlyContinue
   }
+  Remove-Item -LiteralPath $menuPath -Recurse -Force -ErrorAction SilentlyContinue
   if ($Mode -eq "Uninstall") {
-    Remove-Item -LiteralPath $menuPath -Recurse -Force -ErrorAction SilentlyContinue
     continue
   }
 
@@ -54,8 +54,8 @@ foreach ($root in $roots) {
   New-ItemProperty -Path $menuPath -Name "SeparatorBefore" -Value "" -PropertyType String -Force | Out-Null
   New-ItemProperty -Path $menuPath -Name "SeparatorAfter" -Value "" -PropertyType String -Force | Out-Null
 
-  for ($index = 0; $index -lt $submenuActions.Count; $index += 1) {
-    $item = $submenuActions[$index]
+  $submenuIndex = 1
+  foreach ($item in $submenuActions) {
     if ($item.FilesOnly -eq $true -and $root.Path -ne "HKCU:\Software\Classes\*\shell") {
       continue
     }
@@ -63,7 +63,8 @@ foreach ($root in $roots) {
       continue
     }
 
-    $keyPath = Join-Path $submenuPath ("{0:D2}.$($item.Key)" -f ($index + 1))
+    $keyPath = Join-Path $submenuPath ("{0:D2}.$($item.Key)" -f $submenuIndex)
+    $submenuIndex += 1
     $commandPath = Join-Path $keyPath "command"
     New-Item -Path $commandPath -Force | Out-Null
     New-ItemProperty -Path $keyPath -Name "MUIVerb" -Value $item.Label -PropertyType String -Force | Out-Null
