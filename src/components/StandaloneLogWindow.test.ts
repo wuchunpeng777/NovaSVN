@@ -314,15 +314,35 @@ describe("StandaloneLogWindow", () => {
       makeLog({
         entries: [
           makeEntry("20", "alice", "2026-07-10T10:00:00Z", "Newer change"),
-          makeEntry("18", "bob", "2026-07-08T10:00:00Z", "Older change"),
+          {
+            ...makeEntry("18", "bob", "2026-07-08T10:00:00Z", "Older change"),
+            changed_paths: [makeChangedPath("/branches/release/older.ts", "A")],
+          },
         ],
       }),
     );
     render(StandaloneLogWindow, { props: { targetPath: "C:\\repo" } });
     await screen.findByText("Newer change");
 
+    expect(screen.queryByLabelText("已选 Revision 文件变化")).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r20 用于 Merge" }));
+    let changedPaths = screen.getByLabelText("已选 Revision 文件变化");
+    expect(within(changedPaths).getByText("/trunk/src/main.ts")).toBeInTheDocument();
+    expect(within(changedPaths).getByLabelText("r20 文件变化")).toBeInTheDocument();
+
+    await fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Revision Merge 操作" })).getByRole(
+        "button",
+        { name: "清除" },
+      ),
+    );
+    expect(screen.queryByLabelText("已选 Revision 文件变化")).not.toBeInTheDocument();
+
     await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r20 用于 Merge" }));
     await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r18 用于 Merge" }));
+    changedPaths = screen.getByLabelText("已选 Revision 文件变化");
+    expect(within(changedPaths).getByText("/branches/release/older.ts")).toBeInTheDocument();
+    expect(within(changedPaths).getByLabelText("r18 文件变化")).toBeInTheDocument();
     const toolbar = screen.getByRole("toolbar", { name: "Revision Merge 操作" });
     expect(within(toolbar).getByText("已选 2 个 Revision")).toBeInTheDocument();
     expect(within(toolbar).getByText("r18、r20")).toBeInTheDocument();

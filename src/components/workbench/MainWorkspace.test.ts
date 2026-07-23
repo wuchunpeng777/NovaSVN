@@ -983,11 +983,18 @@ Certificate information:
       },
     });
 
+    expect(screen.queryByLabelText("已选 Revision 文件变化")).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r12 用于 Merge" }));
 
     const contentPane = screen.getByRole("main", { name: "日志" });
     const toolbar = screen.getByRole("toolbar", { name: "Revision Merge 操作" });
+    const changedPaths = screen.getByLabelText("已选 Revision 文件变化");
     expect(contentPane).toHaveClass("timeline-merge-active");
+    expect(within(changedPaths).getByLabelText("r12 文件变化")).toBeInTheDocument();
+    expect(within(changedPaths).getByText("/trunk/file-12-1.txt")).toBeInTheDocument();
+    expect(
+      screen.getByRole("slider", { name: "调整文件变化宽度" }),
+    ).toBeInTheDocument();
     expect(toolbar.parentElement).toBe(contentPane);
     expect(within(toolbar).getByRole("button", { name: "Merge 到..." })).toBeVisible();
   });

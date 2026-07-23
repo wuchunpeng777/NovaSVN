@@ -35,6 +35,7 @@
   import ErrorNotice from "./ErrorNotice.svelte";
   import LogMergeDialog from "./LogMergeDialog.svelte";
   import SvnLogRevisionList from "./SvnLogRevisionList.svelte";
+  import SvnLogSelectionDetails from "./SvnLogSelectionDetails.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
   import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
 
@@ -780,7 +781,7 @@
   <div
     bind:this={logLayoutElement}
     class="log-layout"
-    class:with-diff={selectedDiff !== null}
+    class:with-diff={selectedDiff !== null || selectedMergeRevisions.length > 0}
     class:merge-selection-active={selectedMergeRevisions.length > 0}
     class:resizing-diff={diffResizeStart !== null}
     style={`--log-diff-width: ${diffPaneWidth}px`}
@@ -793,7 +794,7 @@
       {expandedRevisions}
       mergeRevisions={mergeRevisions}
       diffLoading={revisionDiffLoading}
-      compact={selectedDiff !== null}
+      compact={selectedDiff !== null || selectedMergeRevisions.length > 0}
       theme={resolvedTheme}
       {formatDate}
       revertDisabled={() => !log?.working_copy_root || loading || revertRunning}
@@ -811,11 +812,11 @@
         : "仅本地工作副本日志支持回退工作区"}
       onRevertWorkspace={(entry) => revertToRevision(entry.revision, true)}
     />
-  {#if selectedDiff}
+  {#if selectedDiff || selectedMergeRevisions.length > 0}
     <div
       class="log-diff-resizer"
       role="slider"
-      aria-label="调整文件 Diff 宽度"
+      aria-label={selectedDiff ? "调整文件 Diff 宽度" : "调整文件变化宽度"}
       aria-orientation="horizontal"
       aria-valuemin={diffPaneMinWidth}
       aria-valuemax={diffPaneMaxWidth}
@@ -841,7 +842,8 @@
         }
       }}
     ></div>
-    <aside class="log-diff" aria-label="文件 Diff">
+    {#if selectedDiff}
+      <aside class="log-diff" aria-label="文件 Diff">
       <header>
         <div>
           <h2>r{selectedDiff.revision} 文件 Diff</h2>
@@ -880,7 +882,17 @@
           <div class="diff-empty">选择文件查看 Diff</div>
         {/if}
       </div>
-    </aside>
+      </aside>
+    {:else}
+      <SvnLogSelectionDetails
+        entries={log?.entries ?? []}
+        selectedRevisions={selectedMergeRevisions}
+        diffLoading={revisionDiffLoading}
+        theme={resolvedTheme}
+        onOpenDiff={openChangedPathDiff}
+        onOpenContextMenu={openChangedPathContextMenu}
+      />
+    {/if}
   {/if}
   </div>
   {#if selectedMergeRevisions.length > 0}

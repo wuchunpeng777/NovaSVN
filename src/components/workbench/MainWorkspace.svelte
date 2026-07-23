@@ -28,6 +28,7 @@
   import StandaloneUpdateWindow from "../StandaloneUpdateWindow.svelte";
   import LogMergeDialog from "../LogMergeDialog.svelte";
   import SvnLogRevisionList from "../SvnLogRevisionList.svelte";
+  import SvnLogSelectionDetails from "../SvnLogSelectionDetails.svelte";
   import ConflictResolver from "./ConflictResolver.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
   import { getRevisionFileContentDiff } from "../../lib/api";
@@ -3246,7 +3247,10 @@
           <ErrorNotice error={svnLogError} />
         </div>
 
-        <div class="timeline-layout" class:file-diff-open={selectedRevisionFileDiff !== null}>
+        <div
+          class="timeline-layout"
+          class:file-diff-open={selectedRevisionFileDiff !== null || selectedTimelineMergeRevisions.length > 0}
+        >
           <SvnLogRevisionList
             entries={filteredLogEntries}
             totalEntries={svnLog?.entries.length ?? 0}
@@ -3255,7 +3259,7 @@
             expandedRevisions={expandedTimelineRevisions}
             mergeRevisions={timelineMergeRevisions}
             diffLoading={revisionFileDiffLoading}
-            compact={selectedRevisionFileDiff !== null}
+            compact={selectedRevisionFileDiff !== null || selectedTimelineMergeRevisions.length > 0}
             theme={resolvedTheme}
             emptyText="点击“读取日志”查看修订历史"
             loadingText="正在读取日志"
@@ -3271,11 +3275,11 @@
             onRevertWorkspace={(entry) => onRevertWorkspaceToRevision(entry.revision)}
           />
 
-          {#if selectedRevisionFileDiff}
+          {#if selectedRevisionFileDiff || selectedTimelineMergeRevisions.length > 0}
             <div
               class="timeline-diff-resizer"
               role="slider"
-              aria-label="调整文件 Diff 宽度"
+              aria-label={selectedRevisionFileDiff ? "调整文件 Diff 宽度" : "调整文件变化宽度"}
               aria-orientation="horizontal"
               aria-valuemin={timelineDiffMinWidth}
               aria-valuemax={timelineDiffMaxWidth}
@@ -3301,8 +3305,9 @@
                 }
               }}
             ></div>
-            <aside class="revision-compare" aria-label="文件 Diff 预览">
-              <section class="revision-file-diff" aria-label="文件 Diff">
+            {#if selectedRevisionFileDiff}
+              <aside class="revision-compare" aria-label="文件 Diff 预览">
+                <section class="revision-file-diff" aria-label="文件 Diff">
                 <header>
                   <div>
                     <h2>r{selectedRevisionFileDiff.revision} 文件 Diff</h2>
@@ -3340,8 +3345,17 @@
                     <div class="revision-file-diff-empty">该文件在此 revision 没有文本 Diff</div>
                   {/if}
                 </div>
-              </section>
-            </aside>
+                </section>
+              </aside>
+            {:else}
+              <SvnLogSelectionDetails
+                entries={svnLog?.entries ?? []}
+                selectedRevisions={selectedTimelineMergeRevisions}
+                diffLoading={revisionFileDiffLoading}
+                theme={resolvedTheme}
+                onOpenDiff={openTimelineEntryDiff}
+              />
+            {/if}
           {/if}
         </div>
         {#if selectedTimelineMergeRevisions.length > 0}
