@@ -96,7 +96,7 @@
   ];
   const diffPaneMinWidth = 320;
   const logListMinWidth = 320;
-  const diffPaneMaxWidth = 900;
+  const diffPaneMaxWidth = 1600;
   const diffPaneDividerWidth = 6;
   let logLayoutElement: HTMLDivElement | null = null;
   let diffPaneWidth = 520;

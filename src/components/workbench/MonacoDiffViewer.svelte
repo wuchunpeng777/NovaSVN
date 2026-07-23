@@ -74,6 +74,11 @@
       renderSideBySide: !inlineMode,
       renderWhitespace: showWhitespace ? "all" : "none",
       scrollBeyondLastLine: false,
+      wordWrap: "off",
+      scrollbar: {
+        horizontal: "auto",
+        horizontalScrollbarSize: 12,
+      },
       fontSize: 12,
       lineNumbersMinChars: 3,
       overviewRulerLanes: 0,

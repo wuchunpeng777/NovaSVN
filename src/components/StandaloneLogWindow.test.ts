@@ -314,6 +314,7 @@ describe("StandaloneLogWindow", () => {
     expect(within(diffPanel).getByText("r20 文件 Diff")).toBeInTheDocument();
     expect(within(diffPanel).queryByText("-before +after")).not.toBeInTheDocument();
     const diffResizer = screen.getByRole("slider", { name: "调整文件 Diff 宽度" });
+    expect(diffResizer).toHaveAttribute("aria-valuemax", "1600");
     await fireEvent.keyDown(diffResizer, { key: "Home" });
     expect(diffResizer).toHaveAttribute("aria-valuenow", "320");
   });
