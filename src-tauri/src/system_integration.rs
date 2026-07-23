@@ -10,11 +10,13 @@ pub struct StartupIntent {
     pub path: Option<String>,
     pub repository_root: Option<String>,
     pub revision: Option<String>,
+    pub return_action: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LaunchPathWindowRequest {
     pub target_path: String,
+    pub return_action: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,6 +51,7 @@ where
     let mut path = None;
     let mut repository_root = None;
     let mut revision = None;
+    let mut return_action = None;
     let mut args = args.into_iter().map(Into::into);
 
     while let Some(arg) = args.next() {
@@ -61,6 +64,9 @@ where
                 repository_root = args.next().and_then(normalize_startup_path)
             }
             "--novasvn-revision" => revision = args.next().and_then(normalize_startup_revision),
+            "--novasvn-return-action" => {
+                return_action = args.next().and_then(normalize_return_action)
+            }
             _ if path.is_none() => path = normalize_startup_path(arg),
             _ => {}
         }
@@ -71,7 +77,12 @@ where
         path,
         repository_root,
         revision,
+        return_action,
     }
+}
+
+fn normalize_return_action(action: String) -> Option<String> {
+    (action.trim() == "commit").then(|| "commit".to_string())
 }
 
 fn normalize_action(action: String) -> Option<String> {
@@ -178,6 +189,12 @@ pub fn launch_update_window(
     launch_path_window(request, "update", "UPDATE_WINDOW")
 }
 
+pub fn launch_commit_window(
+    request: LaunchPathWindowRequest,
+) -> Result<LaunchedPathWindow, NovaError> {
+    launch_path_window(request, "commit", "COMMIT_WINDOW")
+}
+
 pub fn launch_conflict_window(
     request: LaunchPathWindowRequest,
 ) -> Result<LaunchedPathWindow, NovaError> {
@@ -205,13 +222,22 @@ fn launch_path_window(
             true,
         )
     })?;
+    let mut arguments = vec![
+        "--novasvn-action".to_string(),
+        action.to_string(),
+        "--novasvn-path".to_string(),
+        target_path.clone(),
+    ];
+    if let Some(return_action) = request
+        .return_action
+        .as_deref()
+        .and_then(|value| normalize_return_action(value.to_string()))
+    {
+        arguments.push("--novasvn-return-action".to_string());
+        arguments.push(return_action);
+    }
     Command::new(&executable)
-        .args([
-            "--novasvn-action".to_string(),
-            action.to_string(),
-            "--novasvn-path".to_string(),
-            target_path.clone(),
-        ])
+        .args(arguments)
         .spawn()
         .map_err(|error| {
             NovaError::command(

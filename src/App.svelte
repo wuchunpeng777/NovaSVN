@@ -81,6 +81,7 @@
   let standaloneLogReady = false;
   let standaloneUpdatePath = "";
   let standaloneUpdateReady = false;
+  let standaloneUpdateReturnAction: string | null = null;
   let standaloneConflictPath = "";
   let standaloneConflictReady = false;
   let unlistenAppMenu: UnlistenFn | null = null;
@@ -2283,6 +2284,7 @@
         path: null,
         repository_root: null,
         revision: null,
+        return_action: null,
       };
     }
 
@@ -2332,6 +2334,7 @@
 
     if (intent.action === "update") {
       standaloneUpdatePath = intent.path?.trim() ?? "";
+      standaloneUpdateReturnAction = intent.return_action?.trim() || null;
       startupSurface = "update";
       if ($svnStore.executableInput.trim()) {
         void svnStore.detectWithInputFallback();
@@ -2490,6 +2493,7 @@
 {:else if startupSurface === "update"}
   <StandaloneUpdateWindow
     targetPath={standaloneUpdatePath}
+    returnToCommit={standaloneUpdateReturnAction === "commit"}
     svnExecutable={currentSvnExecutable()}
     themeMode={$appSettingsStore.themeMode}
     svnAuthenticationUsername={$appSettingsStore.svnUsername}

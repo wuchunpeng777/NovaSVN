@@ -146,6 +146,12 @@ export function launchUpdateWindow(
   return callBackend<LaunchedPathWindow>("launch_update_window", { request });
 }
 
+export function launchCommitWindow(
+  request: LaunchPathWindowRequest,
+): Promise<LaunchedPathWindow> {
+  return callBackend<LaunchedPathWindow>("launch_commit_window", { request });
+}
+
 export function launchConflictWindow(
   request: LaunchPathWindowRequest,
 ): Promise<LaunchedPathWindow> {

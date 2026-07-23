@@ -21,6 +21,7 @@ export interface StartupIntent {
   path: string | null;
   repository_root: string | null;
   revision: string | null;
+  return_action: string | null;
 }
 
 export interface LaunchLogWindowRequest {
@@ -37,6 +38,7 @@ export interface LaunchedLogWindow {
 
 export interface LaunchPathWindowRequest {
   target_path: string;
+  return_action?: "commit";
 }
 
 export interface LaunchedPathWindow {

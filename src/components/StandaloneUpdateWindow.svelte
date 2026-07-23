@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { ArrowLeft, CircleCheck, FilePenLine, History, RefreshCw, RotateCw, Square, X } from "@lucide/svelte";
   import {
     cancelTask,
@@ -7,6 +8,7 @@
     getSvnLog,
     getTask,
     inspectUpdateTarget,
+    launchCommitWindow,
     launchConflictWindow,
     openWorkspaceFile,
     scanWorkspaceStatus,
@@ -36,6 +38,7 @@
   export let svnAuthenticationError: CommandError | null = null;
   export let showReturnToMain = false;
   export let onReturnToMain: () => void = () => {};
+  export let returnToCommit = false;
   export let onSvnAuthenticationSubmit: (
     username: string,
     password: string,
@@ -73,6 +76,7 @@
   let generation = 0;
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
+  let returningToCommit = false;
 
   const terminalStatuses: TaskStatus[] = [
     "success",
@@ -551,6 +555,21 @@
     return [...files.values()];
   }
 
+  async function returnToCommitWindow() {
+    if (!returnToCommit || !target || !updateComplete || conflictCount > 0 || returningToCommit) {
+      return;
+    }
+    returningToCommit = true;
+    actionError = null;
+    try {
+      await launchCommitWindow({ target_path: target.target_path });
+      await getCurrentWindow().close();
+    } catch (caught) {
+      returningToCommit = false;
+      actionError = caught as CommandError;
+    }
+  }
+
   function applyResolvedUpdateActions(
     files: Array<{ action: string; path: string }>,
     resolutions: Map<string, "L" | "U">,
@@ -627,6 +646,11 @@
         >
           <RotateCw size={15} aria-hidden="true" /> 重新更新
         </button>
+        {#if returnToCommit && updateComplete && conflictCount === 0}
+          <button type="button" class="primary" disabled={returningToCommit} on:click={returnToCommitWindow}>
+            返回提交
+          </button>
+        {/if}
       {/if}
     </div>
   </header>

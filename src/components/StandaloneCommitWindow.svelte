@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { CheckSquare, History, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from "@lucide/svelte";
   import {
     cancelTask,
@@ -9,6 +10,7 @@
     getFileDiff,
     getTask,
     inspectUpdateTarget,
+    launchUpdateWindow,
     scanWorkspaceStatus,
   } from "../lib/api";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
@@ -98,6 +100,7 @@
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
   let pendingMessageTimer: number | null = null;
+  let outOfDateDialogOpen = false;
 
   $: resolvedTheme =
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
@@ -155,6 +158,10 @@
   $: authenticationRetry = statusAuthenticationFailure
     ? () => refreshStatus(generation, true)
     : null;
+  $: commitOutOfDate = commitTask?.status === "failed" && isOutOfDateError(commitTask.error);
+  $: if (commitOutOfDate) {
+    outOfDateDialogOpen = true;
+  }
 
   onMount(() => {
     loadCommitSettings();
@@ -687,6 +694,28 @@
     }
   }
 
+  async function switchToUpdate() {
+    if (!target || typeof launchUpdateWindow !== "function") {
+      error = {
+        code: "UPDATE_WINDOW_UNAVAILABLE",
+        message: "无法启动 Update 窗口",
+        detail: "请重新打开 NovaSVN 后重试。",
+        recoverable: true,
+      };
+      return;
+    }
+    try {
+      await launchUpdateWindow({
+        target_path: target.target_path,
+        return_action: "commit",
+      });
+      outOfDateDialogOpen = false;
+      await getCurrentWindow().close();
+    } catch (caught) {
+      error = caught as CommandError;
+    }
+  }
+
   async function stopAdd() {
     if (!addTask || !addRunning) {
       return;
@@ -897,6 +926,22 @@
     return value
       ? [value.code, value.message, value.detail].filter(Boolean).join("\n")
       : null;
+  }
+
+  function isOutOfDateError(value: string | null) {
+    if (!value) {
+      return false;
+    }
+    const normalized = value.toLowerCase();
+    return [
+      "out of date",
+      "out-of-date",
+      "outdated",
+      "e155011",
+      "e170004",
+      "e160028",
+      "过时",
+    ].some((marker) => normalized.includes(marker));
   }
 </script>
 
@@ -1331,6 +1376,39 @@
     </div>
   </div>
 {/if}
+{#if outOfDateDialogOpen}
+  <div class="revert-backdrop" role="presentation" on:click|self={() => (outOfDateDialogOpen = false)}>
+    <div
+      class="revert-dialog out-of-date-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="out-of-date-dialog-title"
+    >
+      <header>
+        <div>
+          <h2 id="out-of-date-dialog-title">提交失败：工作副本已过期</h2>
+          <p>服务器上的版本更新了，需要先 Update 工作副本，然后再重新提交。</p>
+        </div>
+        <button
+          type="button"
+          class="dialog-close"
+          aria-label="关闭过期提示"
+          title="关闭"
+          on:click={() => (outOfDateDialogOpen = false)}
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+      </header>
+      <pre class="out-of-date-detail">{commitTask?.error}</pre>
+      <footer>
+        <button type="button" on:click={() => (outOfDateDialogOpen = false)}>稍后处理</button>
+        <button type="button" class="primary" on:click={switchToUpdate}>
+          更新后返回提交
+        </button>
+      </footer>
+    </div>
+  </div>
+{/if}
 <SvnAuthenticationDialog
   failure={authenticationFailure}
   savedUsername={svnAuthenticationUsername}
@@ -1604,6 +1682,23 @@
     background: var(--panel-subtle);
     padding: 10px;
     font-size: 12px;
+  }
+
+  .out-of-date-dialog {
+    max-height: min(620px, 100%);
+  }
+
+  .out-of-date-detail {
+    max-height: 180px;
+    overflow: auto;
+    margin: 0;
+    border: 1px solid var(--border);
+    background: var(--panel-subtle);
+    color: var(--secondary);
+    padding: 10px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
   }
 
   .revert-dialog > footer {

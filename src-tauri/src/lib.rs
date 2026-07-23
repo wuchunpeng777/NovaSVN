@@ -432,6 +432,14 @@ fn launch_update_window(request: LaunchPathWindowRequest) -> CommandResult<Launc
 }
 
 #[tauri::command]
+fn launch_commit_window(request: LaunchPathWindowRequest) -> CommandResult<LaunchedPathWindow> {
+    println!("[NovaSVN] launch_commit_window command received");
+    Ok(CommandResponse::success(
+        system_integration::launch_commit_window(request)?,
+    ))
+}
+
+#[tauri::command]
 fn launch_conflict_window(request: LaunchPathWindowRequest) -> CommandResult<LaunchedPathWindow> {
     println!("[NovaSVN] launch_conflict_window command received");
     Ok(CommandResponse::success(
@@ -1155,6 +1163,7 @@ pub fn run() {
             get_startup_intent,
             launch_log_window,
             launch_update_window,
+            launch_commit_window,
             launch_conflict_window,
             launch_external_tool,
             open_file_location,
