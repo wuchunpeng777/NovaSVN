@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/svelte";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/svelte";
+import { describe, expect, it, vi } from "vitest";
 import SvnLogRevisionList from "./SvnLogRevisionList.svelte";
 
 describe("SvnLogRevisionList", () => {
@@ -38,5 +38,43 @@ describe("SvnLogRevisionList", () => {
     expect(revision?.textContent?.replace(/\s/g, "")).toBe("r42M1");
     expect(author).toHaveTextContent("alice");
     expect(time).toHaveTextContent("2026/07/22 18:30");
+  });
+
+  it("highlights the local revision and visually distinguishes both revert actions", async () => {
+    const onRevert = vi.fn();
+    const onRevertWorkspace = vi.fn();
+    render(SvnLogRevisionList, {
+      props: {
+        entries: [
+          {
+            revision: "42",
+            author: "alice",
+            date: "2026-07-22T10:30:00Z",
+            message: "Local revision",
+            changed_paths: [],
+          },
+        ],
+        totalEntries: 1,
+        currentRevision: "42",
+        revertDisabled: () => false,
+        workspaceRevertDisabled: () => false,
+        onRevert,
+        onRevertWorkspace,
+      },
+    });
+
+    const entry = screen.getByText("Local revision").closest(".svn-log-entry");
+    expect(entry).toHaveClass("current-revision");
+    expect(screen.getByLabelText("本地版本")).toBeInTheDocument();
+    const revert = screen.getByRole("button", { name: "撤销提交 r42" });
+    const workspaceRevert = screen.getByRole("button", { name: "回退工作区到 r42" });
+    expect(revert.querySelector(".lucide-undo-2")).toBeInTheDocument();
+    expect(workspaceRevert.querySelector(".lucide-folder-clock")).toBeInTheDocument();
+    expect(workspaceRevert).toHaveClass("svn-log-revert-workspace");
+
+    await fireEvent.click(revert);
+    await fireEvent.click(workspaceRevert);
+    expect(onRevert).toHaveBeenCalledOnce();
+    expect(onRevertWorkspace).toHaveBeenCalledOnce();
   });
 });

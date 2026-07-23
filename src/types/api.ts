@@ -840,6 +840,7 @@ export interface FileContentDiff {
 export interface SvnLog {
   target: string;
   working_copy_root?: string | null;
+  working_copy_revision?: string | null;
   repository_root?: string | null;
   repository_url?: string | null;
   entries: SvnLogEntry[];

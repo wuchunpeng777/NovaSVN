@@ -816,6 +816,7 @@
       mergeRevisions={mergeRevisions}
       diffLoading={revisionDiffLoading}
       compact={selectedDiff !== null || selectedMergeRevisions.length > 0}
+      currentRevision={log?.working_copy_revision ?? null}
       theme={resolvedTheme}
       {formatDate}
       revertDisabled={() => !log?.working_copy_root || loading || revertRunning}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronDown, ChevronUp, RotateCcw } from "@lucide/svelte";
+  import { ChevronDown, ChevronUp, FolderClock, Undo2 } from "@lucide/svelte";
   import { summarizeSvnChangeActions } from "../lib/svn-log";
   import type { SvnChangedPath, SvnLogEntry } from "../types/api";
 
@@ -11,6 +11,7 @@
   export let mergeRevisions: Set<string> | null = null;
   export let diffLoading = false;
   export let compact = false;
+  export let currentRevision: string | null = null;
   export let theme: "light" | "dark" = "light";
   export let emptyText = "没有可显示的日志记录";
   export let loadingText = "正在读取日志...";
@@ -43,7 +44,10 @@
 >
   {#if entries.length > 0}
     {#each entries as entry (entry.revision)}
-      <article class="svn-log-entry">
+      <article
+        class="svn-log-entry"
+        class:current-revision={entry.revision === currentRevision}
+      >
         <header
           class="svn-log-entry-header"
           class:with-merge={mergeRevisions !== null}
@@ -66,6 +70,9 @@
           >
             <span class="svn-log-revision">
               <strong>r{entry.revision}</strong>
+              {#if entry.revision === currentRevision}
+                <span class="svn-log-current-revision" aria-label="本地版本">本地</span>
+              {/if}
               <span class="svn-log-change-counts">
                 {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
                   <span
@@ -105,7 +112,7 @@
               disabled={revertDisabled(entry)}
               on:click={() => onRevert(entry)}
             >
-              <RotateCcw size={15} strokeWidth={2} aria-hidden="true" />
+              <Undo2 size={15} strokeWidth={2} aria-hidden="true" />
             </button>
             <button
               type="button"
@@ -115,7 +122,7 @@
               disabled={workspaceRevertDisabled(entry)}
               on:click={() => onRevertWorkspace(entry)}
             >
-              <RotateCcw size={15} strokeWidth={2.4} aria-hidden="true" />
+              <FolderClock size={15} strokeWidth={2} aria-hidden="true" />
             </button>
           </div>
         </header>
@@ -185,8 +192,14 @@
   }
 
   .svn-log-entry {
+    border-left: 3px solid transparent;
     border-bottom: 1px solid var(--log-border);
-    padding: 9px 2px;
+    padding: 9px 6px;
+  }
+
+  .svn-log-entry.current-revision {
+    border-left-color: var(--log-accent);
+    background: color-mix(in srgb, var(--log-accent) 8%, var(--log-panel));
   }
 
   .svn-log-entry-header {
@@ -267,6 +280,18 @@
 
   .svn-log-revision {
     gap: 7px;
+  }
+
+  .svn-log-current-revision {
+    flex: 0 0 auto;
+    border: 1px solid color-mix(in srgb, var(--log-accent) 55%, transparent);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--log-accent) 12%, var(--log-panel));
+    padding: 1px 5px;
+    color: var(--log-accent);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.25;
   }
 
   .svn-log-revision strong,
@@ -380,12 +405,24 @@
     width: 28px;
     min-width: 28px;
     min-height: 28px;
+    border: 1px solid color-mix(in srgb, var(--log-accent) 45%, var(--log-border));
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--log-accent) 7%, var(--log-panel));
     padding: 0;
+    color: var(--log-accent);
     place-items: center;
   }
 
   .svn-log-revert-workspace {
-    color: #8a5b00;
+    border-color: #d1a24d;
+    background: #fff4d6;
+    color: #805900;
+  }
+
+  .svn-log-list[data-theme="dark"] .svn-log-revert-workspace {
+    border-color: #80651f;
+    background: #4b3b16;
+    color: #f6cf73;
   }
 
   .svn-log-empty {

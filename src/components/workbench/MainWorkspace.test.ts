@@ -506,6 +506,7 @@ describe("MainWorkspace", () => {
   it("reorders projects by dragging the project row and edits the display name inline", async () => {
     const onReorderBranchPoolEntries = vi.fn();
     const onRenameBranchPoolEntry = vi.fn();
+    const onRemoveBranchPoolEntry = vi.fn();
     render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
@@ -536,6 +537,7 @@ describe("MainWorkspace", () => {
         },
         onReorderBranchPoolEntries,
         onRenameBranchPoolEntry,
+        onRemoveBranchPoolEntry,
       },
     });
 
@@ -558,16 +560,36 @@ describe("MainWorkspace", () => {
     expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
 
     onReorderBranchPoolEntries.mockClear();
+    await fireEvent.pointerDown(firstHandle, {
+      button: 0,
+      clientX: 10,
+      clientY: 10,
+      pointerId: 1,
+    });
+    await fireEvent.pointerMove(secondRow, { clientX: 20, clientY: 135, pointerId: 1 });
+    await fireEvent.pointerUp(secondRow, { clientX: 20, clientY: 135, pointerId: 1 });
+    expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
+
+    onReorderBranchPoolEntries.mockClear();
     await fireEvent.keyDown(firstHandle, { key: "ArrowDown" });
     expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
 
-    await fireEvent.click(
-      within(projects).getByRole("button", { name: "修改备注名 主项目" }),
-    );
+    expect(within(projects).queryByRole("button", { name: "修改备注名 主项目" }))
+      .not.toBeInTheDocument();
+    await fireEvent.contextMenu(firstRow, { clientX: 140, clientY: 80 });
+    let projectMenu = screen.getByRole("menu", { name: "项目菜单 主项目" });
+    await fireEvent.click(within(projectMenu).getByRole("menuitem", { name: "修改备注" }));
     const input = within(projects).getByRole("textbox", { name: "项目备注名 主项目" });
     await fireEvent.input(input, { target: { value: "客户生产库" } });
     await fireEvent.keyDown(input, { key: "Enter" });
     expect(onRenameBranchPoolEntry).toHaveBeenCalledWith("first", "客户生产库");
+
+    await fireEvent.contextMenu(secondRow, { clientX: 140, clientY: 120 });
+    projectMenu = screen.getByRole("menu", { name: "项目菜单 feature" });
+    await fireEvent.click(
+      within(projectMenu).getByRole("menuitem", { name: "从项目列表移除" }),
+    );
+    expect(onRemoveBranchPoolEntry).toHaveBeenCalledWith("second", false);
   });
 
   it("starts a complete commit flow when no files were preselected", async () => {
@@ -931,7 +953,7 @@ Certificate information:
         .getByText("r12")
         .closest(".svn-log-revision")
         ?.textContent?.replace(/\s/g, ""),
-    ).toBe("r12M5");
+    ).toBe("r12本地M5");
     expect(newestEntry).not.toHaveTextContent("/trunk/file-12-1.txt");
     await fireEvent.click(
       within(newestEntry).getByRole("button", { name: "展开 r12 日志" }),

@@ -123,6 +123,10 @@ const standaloneCommitWindow = fs.readFileSync(
   path.join(root, "src", "components", "StandaloneCommitWindow.svelte"),
   "utf8",
 );
+const standaloneRevertWindow = fs.readFileSync(
+  path.join(root, "src", "components", "StandaloneRevertWindow.svelte"),
+  "utf8",
+);
 const commitMessageHistory = fs.readFileSync(
   path.join(root, "src", "lib", "commit-message-history.ts"),
   "utf8",
@@ -191,7 +195,6 @@ const systemIntegrationActions = [
 const startupActionViewChecks = [
   { action: "cleanup", view: "changes", operation: "cleanup" },
   { action: "diff", view: "changes" },
-  { action: "revert", view: "changes" },
   { action: "branch-workspace", view: "branches" },
 ];
 let failed = false;
@@ -1437,7 +1440,9 @@ if (
   !standaloneCommitWindow.includes("scanWorkspaceStatus") ||
   !standaloneCommitWindow.includes("createCommitTask") ||
   !standaloneCommitWindow.includes("createSvnOperationTask") ||
+  !standaloneCommitWindow.includes("createSvnBatchOperationTask") ||
   !standaloneCommitWindow.includes('kind: "revert_file"') ||
+  !standaloneCommitWindow.includes('kind: "revert_paths"') ||
   !standaloneCommitWindow.includes("on:contextmenu") ||
   !standaloneCommitWindow.includes("selectedPaths") ||
   !standaloneCommitWindow.includes("commitMessage") ||
@@ -1449,6 +1454,32 @@ if (
   !tauriLib.includes('Some("commit") => Some("NovaSVN Commit")')
 ) {
   console.error("Explorer Commit 必须打开独立提交窗口并支持文件选择、跨窗口日志历史和真实提交任务");
+  failed = true;
+}
+
+const standaloneRevertStartupStart = appSvelte.indexOf('if (intent.action === "revert")');
+const standaloneRevertStartupEnd = appSvelte.indexOf(
+  'if (intent.action === "info")',
+  standaloneRevertStartupStart,
+);
+const standaloneRevertStartup = appSvelte.slice(
+  standaloneRevertStartupStart,
+  standaloneRevertStartupEnd,
+);
+if (
+  standaloneRevertStartupStart < 0 ||
+  standaloneRevertStartupEnd < 0 ||
+  !standaloneRevertStartup.includes('startupSurface = "revert"') ||
+  !standaloneRevertStartup.includes("standaloneRevertReady = true") ||
+  standaloneRevertStartup.includes("workspaceStore") ||
+  !appSvelte.includes("<StandaloneRevertWindow") ||
+  !standaloneRevertWindow.includes("inspectUpdateTarget") ||
+  !standaloneRevertWindow.includes("scanWorkspaceStatus") ||
+  !standaloneRevertWindow.includes("createSvnBatchOperationTask") ||
+  !standaloneRevertWindow.includes('kind: "revert_paths"') ||
+  !tauriLib.includes('Some("revert") => Some("NovaSVN Revert")')
+) {
+  console.error("Explorer Revert 必须打开独立窗口并对勾选的版本化修改执行批量 Revert");
   failed = true;
 }
 

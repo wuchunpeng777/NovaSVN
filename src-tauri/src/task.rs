@@ -2660,10 +2660,7 @@ fn run_svn_operation_task(
                 );
                 return;
             }
-            command
-                .arg("add")
-                .arg("--parents")
-                .arg(root.join(file_path));
+            command.arg("add").arg("--parents").arg(file_path);
             append_task_log(state, task_id, &format!("执行 svn add：{file_path}"));
         }
         SvnOperationKind::DeletePath => {

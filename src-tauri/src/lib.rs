@@ -1151,6 +1151,7 @@ pub fn run() {
                 Some("commit") => Some("NovaSVN Commit"),
                 Some("log") => Some("NovaSVN Log"),
                 Some("blame") => Some("NovaSVN Blame"),
+                Some("revert") => Some("NovaSVN Revert"),
                 Some("update") => Some("NovaSVN Update"),
                 Some("resolve") => Some("NovaSVN Conflict Resolver"),
                 _ => None,

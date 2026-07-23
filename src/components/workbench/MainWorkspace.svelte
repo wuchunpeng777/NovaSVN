@@ -18,7 +18,6 @@
     PanelLeftOpen,
     PanelRightClose,
     PanelRightOpen,
-    Pencil,
     Plus,
     RefreshCw,
     Wrench,
@@ -679,6 +678,7 @@
     repositoryRevision: string;
   } | null = null;
   let contextMenuElement: HTMLElement | null = null;
+  let projectContextMenuElement: HTMLElement | null = null;
   let commitMessageElement: HTMLTextAreaElement | null = null;
   let commitMessageFocusRequested = false;
   let reportedActiveWorkspacePath: string | null | undefined;
@@ -1753,6 +1753,7 @@
   }
 
   function openContextMenuAt(node: WorkspaceTreeRow, clientX: number, clientY: number) {
+    closeProjectContextMenu();
     if (!canShowPathContextMenu(node)) {
       closeContextMenu();
       openRowMenuPath = null;
@@ -1865,12 +1866,20 @@
     ) {
       closeContextMenu();
     }
+    if (
+      projectContextMenuEntryId &&
+      event.target instanceof Node &&
+      !projectContextMenuElement?.contains(event.target)
+    ) {
+      closeProjectContextMenu();
+    }
   }
 
   function closeContextMenuOnWindowChange() {
     if (contextMenuPath) {
       closeContextMenu();
     }
+    closeProjectContextMenu();
   }
 
   function moveActiveRow(targetIndex: number, extendSelection: boolean) {
@@ -2160,26 +2169,105 @@
 
   let draggedBranchPoolEntryId: string | null = null;
   let branchPoolDropTarget: { id: string; position: "before" | "after" } | null = null;
+  let branchPoolPointerDrag: {
+    entryId: string;
+    startX: number;
+    startY: number;
+    active: boolean;
+  } | null = null;
+  let projectContextMenuEntryId: string | null = null;
+  let projectContextMenuEntry: BranchPoolEntry | null = null;
+  let projectContextMenuX = 0;
+  let projectContextMenuY = 0;
   let editingBranchPoolEntryId: string | null = null;
   let branchPoolDisplayNameDraft = "";
+
+  $: projectContextMenuEntry =
+    branchPool.entries.find((entry) => entry.id === projectContextMenuEntryId) ?? null;
 
   function startBranchPoolDrag(event: DragEvent, entryId: string) {
     if (branchPoolLoading || editingBranchPoolEntryId === entryId) {
       event.preventDefault();
       return;
     }
+    closeProjectContextMenu();
     draggedBranchPoolEntryId = entryId;
     branchPoolDropTarget = null;
+    event.dataTransfer?.setData("application/x-novasvn-project", entryId);
     event.dataTransfer?.setData("text/plain", entryId);
     if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+  }
+
+  function startBranchPoolPointerDrag(event: PointerEvent, entryId: string) {
+    if (event.button !== 0 || branchPoolLoading || editingBranchPoolEntryId === entryId) {
+      return;
+    }
+    event.preventDefault();
+    closeProjectContextMenu();
+    branchPoolPointerDrag = {
+      entryId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+    };
+    (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+    window.addEventListener("pointermove", updateBranchPoolPointerDrag);
+    window.addEventListener("pointerup", finishBranchPoolPointerDrag);
+    window.addEventListener("pointercancel", cancelBranchPoolPointerDrag);
+  }
+
+  function updateBranchPoolPointerDrag(event: PointerEvent) {
+    const pointerDrag = branchPoolPointerDrag;
+    if (!pointerDrag) return;
+    if (
+      !pointerDrag.active &&
+      Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY) < 4
+    ) {
+      return;
+    }
+    pointerDrag.active = true;
+    draggedBranchPoolEntryId = pointerDrag.entryId;
+    const pointedElement = document.elementFromPoint?.(event.clientX, event.clientY);
+    const eventElement = event.target instanceof Element ? event.target : null;
+    const targetElement = pointedElement?.closest<HTMLElement>("[data-project-entry-id]")
+      ?? eventElement?.closest<HTMLElement>("[data-project-entry-id]")
+      ?? null;
+    const targetId = targetElement?.dataset.projectEntryId;
+    if (!targetElement || !targetId || targetId === pointerDrag.entryId) {
+      branchPoolDropTarget = null;
+      return;
+    }
+    updateBranchPoolDropPosition(targetElement, targetId, event.clientY);
+    event.preventDefault();
+  }
+
+  function finishBranchPoolPointerDrag() {
+    const pointerDrag = branchPoolPointerDrag;
+    const dropTarget = branchPoolDropTarget;
+    if (pointerDrag?.active && dropTarget) {
+      reorderBranchPoolDrop(pointerDrag.entryId, dropTarget.id, dropTarget.position);
+    }
+    finishBranchPoolDrag();
+  }
+
+  function cancelBranchPoolPointerDrag() {
+    finishBranchPoolDrag();
   }
 
   function updateBranchPoolDropTarget(event: DragEvent, entryId: string) {
     if (!draggedBranchPoolEntryId || draggedBranchPoolEntryId === entryId) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-    const bounds = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
-    const position = bounds.height <= 0 || event.clientY < bounds.top + bounds.height / 2
+    updateBranchPoolDropPosition(event.currentTarget as HTMLDivElement, entryId, event.clientY);
+  }
+
+  function updateBranchPoolDropPosition(
+    targetElement: HTMLElement,
+    entryId: string,
+    clientY: number,
+  ) {
+    const bounds = targetElement.getBoundingClientRect();
+    const position = bounds.height <= 0 || clientY < bounds.top + bounds.height / 2
       ? "before"
       : "after";
     branchPoolDropTarget = { id: entryId, position };
@@ -2187,7 +2275,10 @@
 
   function dropBranchPoolEntry(event: DragEvent, targetId: string) {
     event.preventDefault();
-    const sourceId = draggedBranchPoolEntryId;
+    const sourceId =
+      draggedBranchPoolEntryId ||
+      event.dataTransfer?.getData("application/x-novasvn-project") ||
+      event.dataTransfer?.getData("text/plain");
     const position = branchPoolDropTarget?.id === targetId
       ? branchPoolDropTarget.position
       : "before";
@@ -2195,16 +2286,102 @@
       finishBranchPoolDrag();
       return;
     }
+    reorderBranchPoolDrop(sourceId, targetId, position);
+    finishBranchPoolDrag();
+  }
+
+  function reorderBranchPoolDrop(
+    sourceId: string,
+    targetId: string,
+    position: "before" | "after",
+  ) {
     const ids = branchPool.entries.map((entry) => entry.id).filter((id) => id !== sourceId);
     const targetIndex = ids.indexOf(targetId);
+    if (targetIndex < 0) return;
     ids.splice(targetIndex + (position === "after" ? 1 : 0), 0, sourceId);
-    finishBranchPoolDrag();
     onReorderBranchPoolEntries(ids);
   }
 
   function finishBranchPoolDrag() {
+    branchPoolPointerDrag = null;
     draggedBranchPoolEntryId = null;
     branchPoolDropTarget = null;
+    window.removeEventListener("pointermove", updateBranchPoolPointerDrag);
+    window.removeEventListener("pointerup", finishBranchPoolPointerDrag);
+    window.removeEventListener("pointercancel", cancelBranchPoolPointerDrag);
+  }
+
+  function openProjectContextMenu(event: MouseEvent, entry: BranchPoolEntry) {
+    event.preventDefault();
+    event.stopPropagation();
+    closeContextMenu();
+    projectContextMenuEntryId = entry.id;
+    projectContextMenuX = event.clientX;
+    projectContextMenuY = event.clientY;
+    queueMicrotask(() => {
+      if (!projectContextMenuElement) return;
+      const rect = projectContextMenuElement.getBoundingClientRect();
+      projectContextMenuX = Math.max(
+        8,
+        Math.min(projectContextMenuX, window.innerWidth - rect.width - 8),
+      );
+      projectContextMenuY = Math.max(
+        8,
+        Math.min(projectContextMenuY, window.innerHeight - rect.height - 8),
+      );
+      projectContextMenuElement
+        .querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+        ?.focus();
+    });
+  }
+
+  function closeProjectContextMenu() {
+    projectContextMenuEntryId = null;
+    projectContextMenuElement = null;
+  }
+
+  function runProjectContextMenuAction(action: () => void) {
+    closeProjectContextMenu();
+    action();
+  }
+
+  function editProjectContextMenuEntry() {
+    const entry = projectContextMenuEntry;
+    if (!entry) return;
+    runProjectContextMenuAction(() => editBranchPoolEntry(entry));
+  }
+
+  function removeProjectContextMenuEntry() {
+    const entry = projectContextMenuEntry;
+    if (!entry) return;
+    runProjectContextMenuAction(() => onRemoveBranchPoolEntry(entry.id, false));
+  }
+
+  function handleProjectContextMenuKeydown(event: KeyboardEvent) {
+    const items = Array.from(
+      projectContextMenuElement?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]:not(:disabled)',
+      ) ?? [],
+    );
+    const currentIndex = items.findIndex((item) => item === document.activeElement);
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowDown") {
+      nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
+    } else if (event.key === "ArrowUp") {
+      nextIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = items.length - 1;
+    } else if (event.key === "Escape") {
+      closeProjectContextMenu();
+      event.preventDefault();
+      return;
+    } else {
+      return;
+    }
+    items[nextIndex]?.focus();
+    event.preventDefault();
   }
 
   function moveBranchPoolEntry(entryId: string, offset: -1 | 1) {
@@ -2611,6 +2788,7 @@
 
   onDestroy(() => {
     revisionFileDiffGeneration += 1;
+    finishBranchPoolDrag();
     stopSourceListResize();
     stopInspectorResize();
     stopTimelineDiffResize();
@@ -2987,9 +3165,8 @@
             class:dragging={draggedBranchPoolEntryId === entry.id}
             class:drop-before={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "before"}
             class:drop-after={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "after"}
-            draggable={editingBranchPoolEntryId !== entry.id}
-            on:dragstart={(event) => startBranchPoolDrag(event, entry.id)}
-            on:dragend={finishBranchPoolDrag}
+            data-project-entry-id={entry.id}
+            on:contextmenu={(event) => openProjectContextMenu(event, entry)}
             on:dragover={(event) => updateBranchPoolDropTarget(event, entry.id)}
             on:drop={(event) => dropBranchPoolEntry(event, entry.id)}
           >
@@ -2998,8 +3175,11 @@
               class="project-drag-handle"
               aria-label={`拖动排序 ${workspaceEntryName(entry)}`}
               title="拖动排序；也可使用上下方向键"
-              draggable={editingBranchPoolEntryId !== entry.id}
-              aria-disabled={branchPoolLoading || editingBranchPoolEntryId === entry.id}
+              draggable={!branchPoolLoading && editingBranchPoolEntryId !== entry.id}
+              disabled={branchPoolLoading || editingBranchPoolEntryId === entry.id}
+              on:dragstart|stopPropagation={(event) => startBranchPoolDrag(event, entry.id)}
+              on:dragend|stopPropagation={finishBranchPoolDrag}
+              on:pointerdown={(event) => startBranchPoolPointerDrag(event, entry.id)}
               on:keydown={(event) => handleBranchPoolDragKeydown(event, entry.id)}
             >
               <GripVertical size={15} strokeWidth={2} aria-hidden="true" />
@@ -3039,7 +3219,9 @@
                 type="button"
                 class="source-item workspace-source-item project-source-button"
                 class:active={sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")}
-                draggable={editingBranchPoolEntryId !== entry.id}
+                draggable={!branchPoolLoading && editingBranchPoolEntryId !== entry.id}
+                on:dragstart|stopPropagation={(event) => startBranchPoolDrag(event, entry.id)}
+                on:dragend|stopPropagation={finishBranchPoolDrag}
                 on:click={() => openWorkspaceEntry(entry)}
               >
                 <span class="source-icon" aria-hidden="true">
@@ -3054,16 +3236,6 @@
                     : entry.local_changes}</em>
               </button>
             {/if}
-            <button
-              type="button"
-              class="project-rename-button"
-              aria-label={`修改备注名 ${workspaceEntryName(entry)}`}
-              title="修改备注名"
-              disabled={branchPoolLoading || editingBranchPoolEntryId === entry.id}
-              on:click={() => editBranchPoolEntry(entry)}
-            >
-              <Pencil size={14} strokeWidth={1.9} aria-hidden="true" />
-            </button>
           </div>
         {/each}
       </section>
@@ -3299,6 +3471,7 @@
             mergeRevisions={timelineMergeRevisions}
             diffLoading={revisionFileDiffLoading}
             compact={selectedRevisionFileDiff !== null || selectedTimelineMergeRevisions.length > 0}
+            currentRevision={workspace?.revision ?? null}
             theme={resolvedTheme}
             emptyText="点击“读取日志”查看修订历史"
             loadingText="正在读取日志"
@@ -5874,6 +6047,43 @@
       {/if}
     </main>
   </div>
+
+  {#if projectContextMenuEntry}
+    <div
+      bind:this={projectContextMenuElement}
+      class="workspace-context-menu project-context-menu"
+      role="menu"
+      tabindex="-1"
+      aria-label={`项目菜单 ${workspaceEntryName(projectContextMenuEntry)}`}
+      style={`left: ${projectContextMenuX}px; top: ${projectContextMenuY}px`}
+      on:keydown={handleProjectContextMenuKeydown}
+      on:focusout={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (nextTarget instanceof Node && !event.currentTarget.contains(nextTarget)) {
+          closeProjectContextMenu();
+        }
+      }}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        disabled={branchPoolLoading}
+        on:click={editProjectContextMenuEntry}
+      >
+        修改备注
+      </button>
+      <span role="separator"></span>
+      <button
+        type="button"
+        role="menuitem"
+        class="danger-action"
+        disabled={branchPoolLoading}
+        on:click={removeProjectContextMenuEntry}
+      >
+        从项目列表移除
+      </button>
+    </div>
+  {/if}
 
   {#if contextMenuNode && canShowPathContextMenu(contextMenuNode)}
     <div

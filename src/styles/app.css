@@ -4318,7 +4318,7 @@ select:focus {
 .project-source-row {
   position: relative;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 26px;
+  grid-template-columns: 22px minmax(0, 1fr);
   align-items: center;
   gap: 2px;
   min-width: 0;
@@ -4382,29 +4382,6 @@ select:focus {
 
 .project-source-row.drop-after::after {
   bottom: -2px;
-}
-
-.source-list .project-rename-button {
-  display: grid;
-  width: 22px;
-  height: 30px;
-  min-height: 30px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  padding: 0;
-  color: #77777c;
-  cursor: pointer;
-  place-items: center;
-}
-
-.source-list .project-rename-button {
-  width: 26px;
-}
-
-.source-list .project-rename-button:hover:not(:disabled) {
-  background: #d9d9dc;
-  color: #287ac4;
 }
 
 .project-source-row .project-source-button,
@@ -4687,15 +4664,6 @@ select:focus {
 
 .versions-workbench[data-theme="dark"] .source-list .source-add-button:hover:not(:disabled) {
   background: #343438;
-}
-
-.versions-workbench[data-theme="dark"] .source-list .project-rename-button {
-  color: #aaaab0;
-}
-
-.versions-workbench[data-theme="dark"] .source-list .project-rename-button:hover:not(:disabled) {
-  background: #343438;
-  color: #55a7ef;
 }
 
 .versions-workbench[data-theme="dark"] .source-list .mode-switcher,

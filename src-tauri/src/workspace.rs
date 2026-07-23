@@ -352,6 +352,7 @@ pub struct ResolveTextConflictResult {
 pub struct SvnLog {
     pub target: String,
     pub working_copy_root: Option<String>,
+    pub working_copy_revision: Option<String>,
     pub repository_root: Option<String>,
     pub repository_url: Option<String>,
     pub entries: Vec<SvnLogEntry>,
@@ -615,6 +616,7 @@ pub fn get_path_svn_log(request: GetPathSvnLogRequest) -> Result<SvnLog, NovaErr
         start_revision.as_deref(),
     )?;
     log.working_copy_root = Some(workspace.working_copy_root);
+    log.working_copy_revision = Some(workspace.revision);
     log.repository_root = Some(workspace.repository_root);
     log.repository_url = Some(workspace.repository_url);
     Ok(log)
@@ -3841,6 +3843,7 @@ fn parse_svn_log_xml(xml: &str, target: &str) -> Result<SvnLog, NovaError> {
     Ok(SvnLog {
         target: target.to_string(),
         working_copy_root: None,
+        working_copy_revision: None,
         repository_root: None,
         repository_url: None,
         entries,
@@ -4495,6 +4498,7 @@ mod tests {
         .expect("standalone log reads repository HEAD");
         assert_eq!(standalone_log.entries[0].revision, "2");
         assert_eq!(standalone_log.entries[0].message, "remote change");
+        assert_eq!(standalone_log.working_copy_revision.as_deref(), Some("1"));
 
         let _ = fs::remove_dir_all(root);
     }

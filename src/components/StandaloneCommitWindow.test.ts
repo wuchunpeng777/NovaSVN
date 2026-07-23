@@ -22,6 +22,7 @@ vi.mock("./workbench/MonacoDiffViewer.svelte", () => ({
 vi.mock("../lib/api", () => ({
   cancelTask: vi.fn(),
   createCommitTask: vi.fn(),
+  createSvnBatchOperationTask: vi.fn(),
   createSvnOperationTask: vi.fn(),
   getFileContentDiff: vi.fn(),
   getFileDiff: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("../lib/api", () => ({
 
 import {
   createCommitTask,
+  createSvnBatchOperationTask,
   createSvnOperationTask,
   getFileContentDiff,
   getFileDiff,
@@ -45,6 +47,7 @@ import type { ChangedFile, Task, WorkingCopyStatus } from "../types/api";
 import StandaloneCommitWindow from "./StandaloneCommitWindow.svelte";
 
 const createCommitTaskMock = vi.mocked(createCommitTask);
+const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
 const getFileContentDiffMock = vi.mocked(getFileContentDiff);
 const getFileDiffMock = vi.mocked(getFileDiff);
@@ -58,6 +61,7 @@ beforeEach(() => {
   closeWindowMock.mockReset();
   closeWindowMock.mockResolvedValue(undefined);
   createCommitTaskMock.mockReset();
+  createSvnBatchOperationTaskMock.mockReset();
   createSvnOperationTaskMock.mockReset();
   getFileContentDiffMock.mockReset();
   getFileDiffMock.mockReset();
@@ -83,6 +87,9 @@ beforeEach(() => {
     }),
   );
   createCommitTaskMock.mockResolvedValue(makeTask("pending"));
+  createSvnBatchOperationTaskMock.mockResolvedValue(
+    makeTask("pending", [], { task_id: "batch-revert-1", title: "撤销 3 个路径" }),
+  );
   launchUpdateWindowMock.mockResolvedValue({ target_path: "C:\\repo" });
   getFileContentDiffMock.mockResolvedValue({
     path: "src/main.ts",
@@ -430,6 +437,33 @@ describe("StandaloneCommitWindow", () => {
     expect(screen.getByRole("status")).toHaveTextContent("已 Revert other.ts");
   });
 
+  it("对当前勾选的全部版本化项目执行批量 Revert", async () => {
+    getTaskMock.mockResolvedValue(
+      makeTask("success", [], { task_id: "batch-revert-1", title: "撤销 3 个路径" }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    await screen.findByText("other.ts");
+    await fireEvent.click(screen.getByRole("button", { name: "Revert 已选" }));
+    const dialog = await screen.findByRole("dialog", { name: "确认 Revert" });
+    expect(within(dialog).getByText("src/main.ts")).toBeInTheDocument();
+    expect(within(dialog).getByText("src/nested.ts")).toBeInTheDocument();
+    expect(within(dialog).getByText("other.ts")).toBeInTheDocument();
+    expect(within(dialog).queryByText("src/ignored.ts")).not.toBeInTheDocument();
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "确认 Revert" }));
+    await waitFor(() => {
+      expect(createSvnBatchOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "revert_paths",
+        file_paths: ["src/main.ts", "src/nested.ts", "other.ts"],
+        svn_executable: undefined,
+      });
+    });
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status")).toHaveTextContent("已 Revert 3 个项目");
+  });
+
   it("根据文件状态显示 Revert、Add 和 Delete 菜单项", async () => {
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
     const filePane = screen.getByLabelText("选择提交文件");
@@ -442,7 +476,7 @@ describe("StandaloneCommitWindow", () => {
 
     await fireEvent.contextMenu(await within(filePane).findByText("src/nested.ts"));
     menu = screen.getByRole("menu", { name: "文件菜单 src/nested.ts" });
-    expect(within(menu).queryByRole("menuitem", { name: "Revert" })).not.toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Revert" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
     await fireEvent.keyDown(menu, { key: "Escape" });
 

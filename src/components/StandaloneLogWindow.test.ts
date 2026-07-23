@@ -268,7 +268,7 @@ describe("StandaloneLogWindow", () => {
     expect(screen.getByLabelText("M 2")).toBeInTheDocument();
     expect(screen.getByLabelText("D 1")).toBeInTheDocument();
     const revision = screen.getByText("r20").closest(".svn-log-revision");
-    expect(revision?.textContent?.replace(/\s/g, "")).toBe("r20A1M2D1");
+    expect(revision?.textContent?.replace(/\s/g, "")).toBe("r20本地A1M2D1");
     await fireEvent.click(screen.getByRole("button", { name: "查看路径" }));
     const changedPaths = screen.getByLabelText("r20 改变路径");
     expect(changedPaths.querySelector('[data-action="A"]')).toHaveTextContent("A");
@@ -499,6 +499,7 @@ function makeLog(overrides: Partial<SvnLog> = {}): SvnLog {
     working_copy_root: "C:\\repo",
     repository_root: "https://svn.example.test/repo",
     repository_url: "https://svn.example.test/repo/trunk/src/main.ts",
+    working_copy_revision: "20",
     entries: [makeEntry("20", "alice", "2026-07-10T10:00:00Z", "Add log window")],
     has_more: false,
     next_start_revision: null,

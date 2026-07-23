@@ -11,6 +11,7 @@
   import StandaloneConflictWindow from "./components/StandaloneConflictWindow.svelte";
   import StandaloneInfoWindow from "./components/StandaloneInfoWindow.svelte";
   import StandaloneLogWindow from "./components/StandaloneLogWindow.svelte";
+  import StandaloneRevertWindow from "./components/StandaloneRevertWindow.svelte";
   import StandaloneUpdateWindow from "./components/StandaloneUpdateWindow.svelte";
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
   import {
@@ -68,7 +69,7 @@
 
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
-  let startupSurface: "loading" | "main" | "blame" | "checkout" | "commit" | "log" | "update" | "resolve" | "info" =
+  let startupSurface: "loading" | "main" | "blame" | "checkout" | "commit" | "log" | "revert" | "update" | "resolve" | "info" =
     hasTauriRuntime() ? "loading" : "main";
   let standaloneBlamePath = "";
   let standaloneBlameReady = false;
@@ -80,6 +81,8 @@
   let standaloneLogRepositoryRoot: string | undefined = undefined;
   let standaloneLogRevision: string | undefined = undefined;
   let standaloneLogReady = false;
+  let standaloneRevertPath = "";
+  let standaloneRevertReady = false;
   let standaloneUpdatePath = "";
   let standaloneUpdateReady = false;
   let standaloneUpdateReturnAction: string | null = null;
@@ -1344,7 +1347,7 @@
           `确定清理该分支工作副本吗？\n\n将删除本地目录并从分支池移除：\n${entry.local_path}`,
         )
       : window.confirm(
-          `确定只从分支池移除该项吗？\n\n不会删除本地目录：\n${entry.local_path}`,
+          `确定从项目列表移除该项目吗？\n\n不会删除本地目录：\n${entry.local_path}`,
         );
     if (!confirmed) {
       return;
@@ -2415,6 +2418,16 @@
       return;
     }
 
+    if (intent.action === "revert") {
+      standaloneRevertPath = intent.path?.trim() ?? "";
+      startupSurface = "revert";
+      if ($svnStore.executableInput.trim()) {
+        void svnStore.detectWithInputFallback();
+      }
+      standaloneRevertReady = true;
+      return;
+    }
+
     if (intent.action === "info") {
       standaloneInfoPath = intent.path?.trim() ?? "";
       startupSurface = "info";
@@ -2523,6 +2536,7 @@
   (startupSurface === "checkout" && !standaloneCheckoutReady) ||
   (startupSurface === "commit" && !standaloneCommitReady) ||
   (startupSurface === "log" && !standaloneLogReady) ||
+  (startupSurface === "revert" && !standaloneRevertReady) ||
   (startupSurface === "update" && !standaloneUpdateReady) ||
   (startupSurface === "resolve" && !standaloneConflictReady) ||
   (startupSurface === "info" && !standaloneInfoReady)}
@@ -2537,6 +2551,8 @@
         ? "正在准备 SVN Commit..."
         : startupSurface === "log"
         ? "正在准备 SVN Log..."
+        : startupSurface === "revert"
+        ? "正在准备 SVN Revert..."
         : startupSurface === "update"
           ? "正在准备 SVN Update..."
         : startupSurface === "resolve"
@@ -2590,6 +2606,17 @@
     themeMode={$appSettingsStore.themeMode}
     diffMode={$appSettingsStore.diffMode}
     showWhitespace={$appSettingsStore.showWhitespace}
+    svnAuthenticationUsername={$appSettingsStore.svnUsername}
+    svnRememberPassword={$appSettingsStore.svnRememberPassword}
+    {svnAuthenticationLoading}
+    {svnAuthenticationError}
+    onSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
+  />
+{:else if startupSurface === "revert"}
+  <StandaloneRevertWindow
+    targetPath={standaloneRevertPath}
+    svnExecutable={currentSvnExecutable()}
+    themeMode={$appSettingsStore.themeMode}
     svnAuthenticationUsername={$appSettingsStore.svnUsername}
     svnRememberPassword={$appSettingsStore.svnRememberPassword}
     {svnAuthenticationLoading}

@@ -5,6 +5,7 @@
   import {
     cancelTask,
     createCommitTask,
+    createSvnBatchOperationTask,
     createSvnOperationTask,
     getFileContentDiff,
     getFileDiff,
@@ -62,12 +63,13 @@
   let revertTask: Task | null = null;
   let addingPath: string | null = null;
   let deletingPath: string | null = null;
-  let revertingPath: string | null = null;
+  let revertingPaths: string[] = [];
   let deleteNotice: string | null = null;
   let revertNotice: string | null = null;
   let addNotice: string | null = null;
   let deleteCandidate: ChangedFile | null = null;
-  let revertCandidate: ChangedFile | null = null;
+  let revertCandidatePaths: string[] = [];
+  let revertCandidateIsBatch = false;
   let fileContextMenu: { file: ChangedFile; x: number; y: number } | null = null;
   let fileContextMenuElement: HTMLDivElement | null = null;
   let deleteDialogElement: HTMLDivElement | null = null;
@@ -116,6 +118,9 @@
   );
   $: unversionedFiles = visibleFiles.filter((file) => file.status === "unversioned");
   $: selectedCount = committableFiles.filter((file) => selectedPaths.has(file.path)).length;
+  $: selectedRevertableFiles = committableFiles.filter(
+    (file) => selectedPaths.has(file.path) && isRevertableFile(file),
+  );
   $: selectedBytes = committableFiles
     .filter((file) => selectedPaths.has(file.path))
     .reduce((total, file) => total + (file.file_size ?? 0), 0);
@@ -131,7 +136,7 @@
     deleteRunning ||
     deletingPath !== null ||
     revertRunning ||
-    revertingPath !== null;
+    revertingPaths.length > 0;
   $: taskStatus = commitTask
     ? taskStatusLabel(commitTask, initializing)
     : deleteTask
@@ -144,7 +149,9 @@
             ? "正在准备 Delete"
             : addingPath
               ? "正在准备 Add"
-              : taskStatusLabel(null, initializing);
+              : revertingPaths.length > 0
+                ? "正在准备 Revert"
+                : taskStatusLabel(null, initializing);
   $: allSelected = committableFiles.length > 0 && selectedCount === committableFiles.length;
   $: commitDisabled =
     initializing ||
@@ -255,12 +262,13 @@
     revertTask = null;
     addingPath = null;
     deletingPath = null;
-    revertingPath = null;
+    revertingPaths = [];
     deleteNotice = null;
     revertNotice = null;
     addNotice = null;
     deleteCandidate = null;
-    revertCandidate = null;
+    revertCandidatePaths = [];
+    revertCandidateIsBatch = false;
     closeFileContextMenu();
     selectedPaths = new Set();
     clearFilePreview();
@@ -498,7 +506,8 @@
     if (operationRunning || scanning || initializing) {
       return;
     }
-    revertCandidate = null;
+    revertCandidatePaths = [];
+    revertCandidateIsBatch = false;
     fileContextMenu = {
       file,
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - 172)),
@@ -539,7 +548,18 @@
     if (!file) {
       return;
     }
-    revertCandidate = file;
+    revertCandidatePaths = [file.path];
+    revertCandidateIsBatch = false;
+    await tick();
+    revertDialogElement?.focus();
+  }
+
+  async function requestSelectedRevert() {
+    if (operationRunning || scanning || initializing || selectedRevertableFiles.length === 0) {
+      return;
+    }
+    revertCandidatePaths = selectedRevertableFiles.map((file) => file.path);
+    revertCandidateIsBatch = true;
     await tick();
     revertDialogElement?.focus();
   }
@@ -597,32 +617,42 @@
 
   function cancelRevert() {
     if (!revertRunning) {
-      revertCandidate = null;
+      revertCandidatePaths = [];
+      revertCandidateIsBatch = false;
     }
   }
 
   async function confirmRevert() {
-    if (!target || !revertCandidate || operationRunning) {
+    if (!target || revertCandidatePaths.length === 0 || operationRunning) {
       return;
     }
-    const path = revertCandidate.path;
-    revertCandidate = null;
-    revertingPath = path;
+    const paths = [...revertCandidatePaths];
+    const batch = revertCandidateIsBatch;
+    revertCandidatePaths = [];
+    revertCandidateIsBatch = false;
+    revertingPaths = paths;
     revertNotice = null;
     revertTask = null;
     error = null;
     statusError = null;
     try {
-      const task = await createSvnOperationTask({
-        working_copy_root: target.working_copy_root,
-        kind: "revert_file",
-        file_path: path,
-        svn_executable: svnExecutable?.trim() || undefined,
-      });
+      const task = batch
+        ? await createSvnBatchOperationTask({
+            working_copy_root: target.working_copy_root,
+            kind: "revert_paths",
+            file_paths: paths,
+            svn_executable: svnExecutable?.trim() || undefined,
+          })
+        : await createSvnOperationTask({
+            working_copy_root: target.working_copy_root,
+            kind: "revert_file",
+            file_path: paths[0],
+            svn_executable: svnExecutable?.trim() || undefined,
+          });
       revertTask = task;
       schedulePoll(task.task_id, "revert", generation, 0);
     } catch (caught) {
-      revertingPath = null;
+      revertingPaths = [];
       error = caught as CommandError;
     }
   }
@@ -658,7 +688,7 @@
       outOfDateDialogOpen = false;
     } else if (deleteCandidate) {
       cancelDelete();
-    } else if (revertCandidate) {
+    } else if (revertCandidatePaths.length > 0) {
       cancelRevert();
     } else if (historyPickerOpen) {
       closeHistoryPicker();
@@ -783,10 +813,10 @@
         schedulePoll(revertTask.task_id, "revert", generation, 200);
       } else {
         clearPollTimer();
-        const revertedPath = revertingPath;
-        revertingPath = null;
+        const reverted = [...revertingPaths];
+        revertingPaths = [];
         if (revertTask.status === "success") {
-          revertNotice = revertedPath ? `已 Revert ${revertedPath}` : "Revert 完成";
+          revertNotice = revertCompletionNotice(reverted);
           await refreshStatus(generation, true);
         }
       }
@@ -830,10 +860,10 @@
       }
       clearPollTimer();
       if (role === "revert") {
-        const revertedPath = revertingPath;
-        revertingPath = null;
+        const reverted = [...revertingPaths];
+        revertingPaths = [];
         if (task.status === "success") {
-          revertNotice = revertedPath ? `已 Revert ${revertedPath}` : "Revert 完成";
+          revertNotice = revertCompletionNotice(reverted);
           await refreshStatus(currentGeneration, true);
         }
         return;
@@ -936,7 +966,14 @@
   }
 
   function isRevertableFile(file: ChangedFile) {
-    return file.status === "modified" || file.status === "property_modified";
+    return isCommittable(file);
+  }
+
+  function revertCompletionNotice(paths: string[]) {
+    if (paths.length === 1) {
+      return `已 Revert ${paths[0]}`;
+    }
+    return paths.length > 1 ? `已 Revert ${paths.length} 个项目` : "Revert 完成";
   }
 
   function isPathInCommitTarget(path: string) {
@@ -1082,6 +1119,14 @@
             <p>{committableFiles.length} 个可提交文件{unversionedFiles.length > 0 ? ` · ${unversionedFiles.length} 个未版本控制` : ""}</p>
           </div>
           <div class="selection-actions">
+            <button
+              type="button"
+              class="selection-revert-action"
+              on:click={requestSelectedRevert}
+              disabled={operationRunning || scanning || initializing || selectedRevertableFiles.length === 0}
+            >
+              <RotateCcw size={15} aria-hidden="true" /> Revert 已选
+            </button>
             <button type="button" on:click={selectAll} disabled={operationRunning || committableFiles.length === 0 || allSelected}>
               <CheckSquare size={15} aria-hidden="true" /> 全选
             </button>
@@ -1096,7 +1141,7 @@
               class="file-item"
               class:active={activeFilePath === file.path}
               class:unversioned={file.status === "unversioned"}
-              class:reverting={revertingPath === file.path}
+              class:reverting={revertingPaths.includes(file.path)}
               class:adding={addingPath === file.path}
               class:deleting={deletingPath === file.path}
               role="group"
@@ -1409,7 +1454,7 @@
   </div>
 {/if}
 
-{#if revertCandidate}
+{#if revertCandidatePaths.length > 0}
   <div class="revert-backdrop" role="presentation" on:click|self={cancelRevert}>
     <div
       bind:this={revertDialogElement}
@@ -1422,13 +1467,21 @@
       <header>
         <div>
           <h2 id="revert-dialog-title">确认 Revert</h2>
-          <p>本地修改将被丢弃，NovaSVN 无法撤销此操作。</p>
+          <p>
+            {revertCandidatePaths.length === 1
+              ? "该项目的本地修改将被丢弃，NovaSVN 无法撤销此操作。"
+              : `选中的 ${revertCandidatePaths.length} 个项目的本地修改将被丢弃，NovaSVN 无法撤销此操作。`}
+          </p>
         </div>
         <button type="button" class="dialog-close" aria-label="关闭 Revert 确认" title="关闭" on:click={cancelRevert}>
           <X size={16} aria-hidden="true" />
         </button>
       </header>
-      <code title={revertCandidate.path}>{revertCandidate.path}</code>
+      <div class="revert-path-list" aria-label="将 Revert 的项目">
+        {#each revertCandidatePaths as path (path)}
+          <code title={path}>{path}</code>
+        {/each}
+      </div>
       <footer>
         <button type="button" on:click={cancelRevert}>取消</button>
         <button type="button" class="danger-primary" on:click={confirmRevert}>
@@ -1635,6 +1688,11 @@
     color: #a12a2a;
   }
 
+  .selection-revert-action {
+    border-color: color-mix(in srgb, #b93d3d 45%, var(--border));
+    color: #a12a2a;
+  }
+
   .history-backdrop {
     position: fixed;
     inset: 0;
@@ -1741,12 +1799,20 @@
     font-size: 12px;
   }
 
-  .revert-dialog > code {
+  .revert-dialog > code,
+  .revert-path-list code {
     overflow-wrap: anywhere;
     border: 1px solid var(--border);
     background: var(--panel-subtle);
     padding: 10px;
     font-size: 12px;
+  }
+
+  .revert-path-list {
+    display: grid;
+    gap: 6px;
+    max-height: min(280px, 42vh);
+    overflow: auto;
   }
 
   .out-of-date-dialog {
