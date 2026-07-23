@@ -1077,6 +1077,11 @@ if (
   failed = true;
 }
 
+if (!defaultCapability.includes('"core:window:allow-close"')) {
+  console.error("独立窗口必须具备 Tauri window close 权限");
+  failed = true;
+}
+
 if (
   !mainWorkspace.includes("复制当前条目") ||
   !mainWorkspace.includes('aria-label="Repository Copy 源 URL"') ||
