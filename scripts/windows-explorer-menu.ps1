@@ -16,6 +16,7 @@ if ($Mode -eq "Install" -and !(Test-Path -LiteralPath $NovaSvnExe -PathType Leaf
 
 $actions = @(
   @{ Key = "Open"; Label = "Open in NovaSVN"; Action = "open" },
+  @{ Key = "Checkout"; Label = "NovaSVN Checkout"; Action = "checkout"; DirectoriesOnly = $true },
   @{ Key = "Commit"; Label = "NovaSVN Commit"; Action = "commit" },
   @{ Key = "Update"; Label = "NovaSVN Update"; Action = "update" },
   @{ Key = "Diff"; Label = "NovaSVN Diff"; Action = "diff" },
@@ -35,6 +36,9 @@ $roots = @(
 foreach ($root in $roots) {
   foreach ($item in $actions) {
     if ($item.FilesOnly -eq $true -and $root -ne "HKCU:\Software\Classes\*\shell") {
+      continue
+    }
+    if ($item.DirectoriesOnly -eq $true -and $root -eq "HKCU:\Software\Classes\*\shell") {
       continue
     }
 

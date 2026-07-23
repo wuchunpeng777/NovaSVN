@@ -1,4 +1,12 @@
 !macro NSIS_HOOK_POSTINSTALL
+  WriteRegStr HKCU "Software\Classes\Directory\shell\NovaSVN.Checkout" "MUIVerb" "NovaSVN Checkout"
+  WriteRegStr HKCU "Software\Classes\Directory\shell\NovaSVN.Checkout" "Icon" "$INSTDIR\${MAINBINARYNAME}.exe,0"
+  WriteRegStr HKCU "Software\Classes\Directory\shell\NovaSVN.Checkout\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --novasvn-action $\"checkout$\" --novasvn-path $\"%1$\""
+
+  WriteRegStr HKCU "Software\Classes\Directory\Background\shell\NovaSVN.Checkout" "MUIVerb" "NovaSVN Checkout"
+  WriteRegStr HKCU "Software\Classes\Directory\Background\shell\NovaSVN.Checkout" "Icon" "$INSTDIR\${MAINBINARYNAME}.exe,0"
+  WriteRegStr HKCU "Software\Classes\Directory\Background\shell\NovaSVN.Checkout\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --novasvn-action $\"checkout$\" --novasvn-path $\"%V$\""
+
   WriteRegStr HKCU "Software\Classes\Directory\shell\NovaSVN.Commit" "MUIVerb" "NovaSVN Commit"
   WriteRegStr HKCU "Software\Classes\Directory\shell\NovaSVN.Commit" "Icon" "$INSTDIR\${MAINBINARYNAME}.exe,0"
   WriteRegStr HKCU "Software\Classes\Directory\shell\NovaSVN.Commit\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --novasvn-action $\"commit$\" --novasvn-path $\"%1$\""
@@ -41,6 +49,9 @@
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
+  DeleteRegKey HKCU "Software\Classes\Directory\shell\NovaSVN.Checkout"
+  DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\NovaSVN.Checkout"
+
   DeleteRegKey HKCU "Software\Classes\Directory\shell\NovaSVN.Commit"
   DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\NovaSVN.Commit"
   DeleteRegKey HKCU "Software\Classes\*\shell\NovaSVN.Commit"

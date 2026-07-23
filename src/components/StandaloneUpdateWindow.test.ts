@@ -203,7 +203,7 @@ describe("StandaloneUpdateWindow", () => {
     );
   });
 
-  it("用户手动滚动后停止自动置底", async () => {
+  it("用户手动滚动后停止运行中自动跟随，但完成时仍展示最终提示", async () => {
     getTaskMock
       .mockResolvedValueOnce(makeTask("running", ["U    src/first.ts"]))
       .mockResolvedValueOnce(
@@ -219,8 +219,8 @@ describe("StandaloneUpdateWindow", () => {
     await fireEvent.scroll(outputLines);
 
     await screen.findByRole("listitem", { name: "更新文件 src/second.ts" });
-    expect(outputLines.scrollTop).toBe(80);
-    expect(within(outputLines).getByRole("status", { name: "更新完成" })).toBeInTheDocument();
+    await waitFor(() => expect(outputLines.scrollTop).toBe(400));
+    expect(within(outputLines).getByRole("status", { name: "更新完成" })).toBeVisible();
   });
 
   it("工作副本根目录使用完整 Update", async () => {

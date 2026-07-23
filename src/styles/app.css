@@ -464,17 +464,6 @@ textarea {
   font-size: 12px;
 }
 
-.source-sidebar-meta {
-  align-self: end;
-}
-
-.source-sidebar-meta p {
-  margin: 0;
-  padding: 0 8px;
-  color: #687482;
-  font-size: 12px;
-}
-
 .content-pane {
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
@@ -2835,7 +2824,6 @@ textarea {
 .versions-workbench[data-theme="dark"] .source-item small,
 .versions-workbench[data-theme="dark"] .source-item em,
 .versions-workbench[data-theme="dark"] .source-empty,
-.versions-workbench[data-theme="dark"] .source-sidebar-meta p,
 .versions-workbench[data-theme="dark"] .muted,
 .versions-workbench[data-theme="dark"] .pane-header p,
 .versions-workbench[data-theme="dark"] .file-name small,
@@ -3369,7 +3357,6 @@ select:focus {
   color: #ffffff;
 }
 
-.source-sidebar-meta p,
 .source-empty,
 .muted {
   color: var(--mac-secondary);
@@ -3828,7 +3815,6 @@ select:focus {
 .versions-workbench[data-theme="dark"] .source-list h2,
 .versions-workbench[data-theme="dark"] .source-item small,
 .versions-workbench[data-theme="dark"] .source-item em,
-.versions-workbench[data-theme="dark"] .source-sidebar-meta p,
 .versions-workbench[data-theme="dark"] .pane-header p,
 .versions-workbench[data-theme="dark"] .summary-strip,
 .versions-workbench[data-theme="dark"] .muted,
@@ -4424,19 +4410,6 @@ select:focus {
 
 .source-list .mode-switcher button svg {
   justify-self: center;
-}
-
-.source-sidebar-meta {
-  margin-top: auto;
-  padding-top: 7px;
-  border-top: 1px solid var(--mac-separator);
-}
-
-.source-sidebar-meta p {
-  margin: 0;
-  padding: 0 8px;
-  font-size: 10.5px;
-  line-height: 1.4;
 }
 
 .pane-header {

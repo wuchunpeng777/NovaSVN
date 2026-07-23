@@ -651,6 +651,8 @@
   let virtualizedRepositoryBlameSource: SvnBlame | null = null;
   let contextMenuElement: HTMLElement | null = null;
   let commitMessageElement: HTMLTextAreaElement | null = null;
+  let repositoryCheckoutElement: HTMLDetailsElement | null = null;
+  let repositoryCheckoutUrlElement: HTMLInputElement | null = null;
   let commitMessageFocusRequested = false;
   let reportedActiveWorkspacePath: string | null | undefined;
   let selectionWorkspaceRoot: string | null = null;
@@ -2512,6 +2514,10 @@
       syncSystemTheme();
       themeMediaQuery.addEventListener("change", syncSystemTheme);
     }
+    if (view.id === "repository" && repositoryCheckoutForm.localPath.trim()) {
+      repositoryCheckoutElement?.scrollIntoView?.({ block: "center" });
+      repositoryCheckoutUrlElement?.focus();
+    }
   });
 
   $: files = workingCopyStatus?.files ?? [];
@@ -2977,10 +2983,6 @@
         </nav>
       </section>
 
-      <section class="source-sidebar-meta">
-        <h2>状态</h2>
-        <p>{backendMessage}</p>
-      </section>
       </aside>
       <div
         role="slider"
@@ -3986,7 +3988,11 @@
           </div>
         </details>
 
-        <details class="advanced-section" open={Boolean(repositoryCheckoutForm.url || repositoryCheckoutForm.localPath)}>
+        <details
+          bind:this={repositoryCheckoutElement}
+          class="advanced-section"
+          open={Boolean(repositoryCheckoutForm.url || repositoryCheckoutForm.localPath)}
+        >
           <summary>Checkout 到本地</summary>
           <div class="copy-form" aria-label="仓库 Checkout">
             <button
@@ -4000,6 +4006,7 @@
               使用当前 URL
             </button>
             <input
+              bind:this={repositoryCheckoutUrlElement}
               type="url"
               value={repositoryCheckoutForm.url}
               placeholder="仓库 URL"

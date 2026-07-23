@@ -69,6 +69,7 @@ fn normalize_action(action: String) -> Option<String> {
     if matches!(
         value,
         "open"
+            | "checkout"
             | "commit"
             | "update"
             | "diff"
@@ -241,6 +242,19 @@ mod tests {
 
         assert_eq!(intent.action.as_deref(), Some("blame"));
         assert_eq!(intent.path.as_deref(), Some("C:\\wc\\src\\main.rs"));
+    }
+
+    #[test]
+    fn accepts_directory_checkout_action() {
+        let intent = startup_intent_from_args([
+            "--novasvn-action",
+            "checkout",
+            "--novasvn-path",
+            "C:\\checkouts\\project",
+        ]);
+
+        assert_eq!(intent.action.as_deref(), Some("checkout"));
+        assert_eq!(intent.path.as_deref(), Some("C:\\checkouts\\project"));
     }
 
     #[test]

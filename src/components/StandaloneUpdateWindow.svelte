@@ -251,6 +251,9 @@
         }
       }
       await refreshConflicts(currentGeneration);
+      if (role === "update" && task.status === "success" && conflictScanCompleted) {
+        await followUpdateOutput(true);
+      }
       if (role === "resolution") {
         resolutionKind = null;
       }
@@ -463,9 +466,9 @@
     }
   }
 
-  async function followUpdateOutput() {
+  async function followUpdateOutput(force = false) {
     await tick();
-    if (!autoFollowOutput || !outputLinesElement) {
+    if ((!autoFollowOutput && !force) || !outputLinesElement) {
       return;
     }
     const targetScrollTop = Math.max(

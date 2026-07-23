@@ -1489,7 +1489,7 @@
 
   async function handleStartupIntent(intent: StartupIntent) {
     const targetPath = intent.path?.trim();
-    if (targetPath) {
+    if (targetPath && intent.action !== "checkout") {
       workspaceStore.setPathInput(targetPath);
       const workspace = await workspaceStore.openPath(currentSvnExecutable());
       if (workspace) {
@@ -1501,6 +1501,13 @@
     }
 
     switch (intent.action) {
+      case "checkout":
+        setCurrentView("repository");
+        if (targetPath) {
+          workspaceStore.setRepositoryCheckoutForm("localPath", targetPath);
+        }
+        workspaceStore.prepareRepositoryCheckout();
+        break;
       case "diff":
         setCurrentView("changes");
         break;

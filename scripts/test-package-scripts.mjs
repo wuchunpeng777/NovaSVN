@@ -181,6 +181,11 @@ const systemIntegrationActions = [
   "branch-workspace",
 ];
 const startupActionViewChecks = [
+  {
+    action: "checkout",
+    view: "repository",
+    extra: 'setRepositoryCheckoutForm("localPath", targetPath)',
+  },
   { action: "cleanup", view: "changes", operation: "cleanup" },
   { action: "diff", view: "changes" },
   { action: "revert", view: "changes" },
@@ -326,6 +331,23 @@ for (const action of ["Commit", "Log", "Update"]) {
   }
 }
 
+for (const registryPath of [
+  "Software\\Classes\\Directory\\shell\\NovaSVN.Checkout",
+  "Software\\Classes\\Directory\\Background\\shell\\NovaSVN.Checkout",
+]) {
+  if (
+    !nsisHooks.includes(`WriteRegStr HKCU "${registryPath}"`) ||
+    !nsisHooks.includes(`DeleteRegKey HKCU "${registryPath}"`)
+  ) {
+    console.error(`Windows 安装/卸载缺少 Explorer Checkout 注册表入口：${registryPath}`);
+    failed = true;
+  }
+}
+if (nsisHooks.includes("Software\\Classes\\*\\shell\\NovaSVN.Checkout")) {
+  console.error("Windows Explorer Checkout 只能注册到目录和目录背景菜单");
+  failed = true;
+}
+
 const blameRegistryPath = "Software\\Classes\\*\\shell\\NovaSVN.Blame";
 if (
   !nsisHooks.includes(`WriteRegStr HKCU "${blameRegistryPath}"`) ||
@@ -339,6 +361,7 @@ if (
 
 if (
   !nsisHooks.includes('"MUIVerb" "NovaSVN Commit"') ||
+  !nsisHooks.includes('"MUIVerb" "NovaSVN Checkout"') ||
   !nsisHooks.includes('"MUIVerb" "NovaSVN Log"') ||
   !nsisHooks.includes('"MUIVerb" "NovaSVN Update"') ||
   !nsisHooks.includes("--novasvn-action") ||
@@ -1247,6 +1270,14 @@ for (const action of systemIntegrationActions.filter(
     console.error(`启动意图分发缺少 action：${action}`);
     failed = true;
   }
+}
+
+if (
+  !windowsExplorerScript.includes('Action = "checkout"') ||
+  !systemIntegrationRs.includes('"checkout"')
+) {
+  console.error("Windows Explorer Checkout 必须注册菜单 action 并加入后端启动白名单");
+  failed = true;
 }
 
 if (
