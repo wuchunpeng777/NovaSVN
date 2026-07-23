@@ -1,6 +1,14 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const { closeWindowMock } = vi.hoisted(() => ({
+  closeWindowMock: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({ close: closeWindowMock }),
+}));
+
 vi.mock("../lib/api", () => ({
   cancelTask: vi.fn(),
   chooseWorkspaceDirectory: vi.fn(),
@@ -43,6 +51,8 @@ const launchLogWindowMock = vi.mocked(launchLogWindow);
 
 beforeEach(() => {
   localStorage.clear();
+  closeWindowMock.mockReset();
+  closeWindowMock.mockResolvedValue(undefined);
   getPathSvnLogMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
   getRepositoryFileLogMock.mockReset();
@@ -51,6 +61,36 @@ beforeEach(() => {
 });
 
 describe("StandaloneLogWindow", () => {
+  it("空闲时按 Escape 关闭 Log 窗口", async () => {
+    getPathSvnLogMock.mockResolvedValue(makeLog());
+    render(StandaloneLogWindow, { props: { targetPath: "C:\\repo" } });
+    await screen.findByText("Add log window");
+
+    await fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(closeWindowMock).toHaveBeenCalledOnce();
+  });
+
+  it("按 Escape 先关闭文件菜单，再关闭 Log 窗口", async () => {
+    getPathSvnLogMock.mockResolvedValue(makeLog());
+    render(StandaloneLogWindow, { props: { targetPath: "C:\\repo" } });
+    await screen.findByText("Add log window");
+    await fireEvent.click(screen.getByRole("button", { name: "查看路径" }));
+    await fireEvent.contextMenu(
+      screen.getByRole("button", { name: "查看 r20 的 /trunk/src/main.ts diff" }),
+      { clientX: 320, clientY: 240 },
+    );
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+
+    await fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(closeWindowMock).not.toHaveBeenCalled();
+
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(closeWindowMock).toHaveBeenCalledOnce();
+  });
+
   it("自动读取右键选中的绝对路径", async () => {
     getPathSvnLogMock.mockResolvedValue(makeLog());
 

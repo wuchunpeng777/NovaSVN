@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
     GitMerge,
     History,
@@ -575,8 +576,28 @@
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
+    if (event.key !== "Escape" || mergeDialogOpen || authenticationFailure) {
+      return;
+    }
+    if (fileContextMenu) {
       closeFileContextMenu();
+    } else if (selectedDiff) {
+      clearRevisionDiff();
+    } else if (selectedMergeRevisions.length > 0) {
+      clearMergeSelection();
+    } else if (!revertRunning) {
+      void closeLogWindow();
+    } else {
+      return;
+    }
+    event.preventDefault();
+  }
+
+  async function closeLogWindow() {
+    try {
+      await getCurrentWindow().close();
+    } catch (caught) {
+      launchWindowError = normalizeCommandError(caught, "无法关闭 Log 窗口");
     }
   }
 
