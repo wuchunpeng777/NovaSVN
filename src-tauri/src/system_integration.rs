@@ -99,6 +99,8 @@ fn normalize_action(action: String) -> Option<String> {
             | "log"
             | "blame"
             | "revert"
+            | "delete"
+            | "ignore"
             | "cleanup"
             | "branch-workspace"
     ) {
@@ -332,6 +334,21 @@ mod tests {
 
         assert_eq!(intent.action.as_deref(), Some("blame"));
         assert_eq!(intent.path.as_deref(), Some("C:\\wc\\src\\main.rs"));
+    }
+
+    #[test]
+    fn accepts_delete_and_ignore_actions() {
+        for action in ["delete", "ignore"] {
+            let intent = startup_intent_from_args([
+                "--novasvn-action",
+                action,
+                "--novasvn-path",
+                "C:\\wc\\src\\target.txt",
+            ]);
+
+            assert_eq!(intent.action.as_deref(), Some(action));
+            assert_eq!(intent.path.as_deref(), Some("C:\\wc\\src\\target.txt"));
+        }
     }
 
     #[test]

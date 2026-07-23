@@ -545,22 +545,21 @@ describe("MainWorkspace", () => {
     expect(within(projects).getByText("主项目")).toBeInTheDocument();
     const firstRow = within(projects).getByRole("group", { name: "项目 主项目" });
     const secondRow = within(projects).getByRole("group", { name: "项目 feature" });
-    const firstHandle = within(projects).getByRole("button", { name: "拖动排序 主项目" });
     const firstProjectButton = firstRow.querySelector(".project-source-button");
-    expect(firstHandle).toHaveAttribute("draggable", "true");
-    expect(firstHandle).not.toBeDisabled();
-    expect(firstProjectButton).toHaveAttribute("draggable", "true");
+    expect(firstRow).toHaveAttribute("draggable", "true");
+    expect(within(projects).queryByRole("button", { name: "拖动排序 主项目" }))
+      .not.toBeInTheDocument();
     Object.defineProperty(secondRow, "getBoundingClientRect", {
       configurable: true,
       value: () => ({ top: 100, height: 40, bottom: 140, left: 0, right: 200, width: 200 }),
     });
-    await fireEvent.dragStart(firstHandle);
+    await fireEvent.dragStart(firstRow);
     await fireEvent.dragOver(secondRow, { clientY: 135 });
     await fireEvent.drop(secondRow, { clientY: 135 });
     expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
 
     onReorderBranchPoolEntries.mockClear();
-    await fireEvent.pointerDown(firstHandle, {
+    await fireEvent.pointerDown(firstRow, {
       button: 0,
       clientX: 10,
       clientY: 10,
@@ -571,13 +570,14 @@ describe("MainWorkspace", () => {
     expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
 
     onReorderBranchPoolEntries.mockClear();
-    await fireEvent.keyDown(firstHandle, { key: "ArrowDown" });
+    await fireEvent.keyDown(firstProjectButton as HTMLButtonElement, { key: "ArrowDown" });
     expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
 
     expect(within(projects).queryByRole("button", { name: "修改备注名 主项目" }))
       .not.toBeInTheDocument();
     await fireEvent.contextMenu(firstRow, { clientX: 140, clientY: 80 });
     let projectMenu = screen.getByRole("menu", { name: "项目菜单 主项目" });
+    expect(projectMenu).toHaveStyle({ top: "90px" });
     await fireEvent.click(within(projectMenu).getByRole("menuitem", { name: "修改备注" }));
     const input = within(projects).getByRole("textbox", { name: "项目备注名 主项目" });
     await fireEvent.input(input, { target: { value: "客户生产库" } });

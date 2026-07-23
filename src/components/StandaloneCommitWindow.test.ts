@@ -220,6 +220,32 @@ describe("StandaloneCommitWindow", () => {
     expect(screen.getByRole("status")).toHaveTextContent("已 Add src/ignored.ts");
   });
 
+  it("已 Add 文件可 Unadd 且保留为工作区文件", async () => {
+    createSvnOperationTaskMock.mockResolvedValue(
+      makeTask("pending", [], { task_id: "unadd-1", title: "取消 Add src/nested.ts" }),
+    );
+    getTaskMock.mockResolvedValue(
+      makeTask("success", [], { task_id: "unadd-1", title: "取消 Add src/nested.ts" }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const filePane = screen.getByLabelText("选择提交文件");
+
+    await fireEvent.click(
+      await within(filePane).findByRole("button", { name: "Unadd src/nested.ts" }),
+    );
+
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "unadd_file",
+        file_path: "src/nested.ts",
+        svn_executable: undefined,
+      });
+    });
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status")).toHaveTextContent("已 Unadd src/nested.ts");
+  });
+
   it("点击文件条目加载并展示修改内容且不改变提交选择", async () => {
     getFileContentDiffMock.mockResolvedValue({
       path: "src/main.ts",
@@ -476,7 +502,8 @@ describe("StandaloneCommitWindow", () => {
 
     await fireEvent.contextMenu(await within(filePane).findByText("src/nested.ts"));
     menu = screen.getByRole("menu", { name: "文件菜单 src/nested.ts" });
-    expect(within(menu).getByRole("menuitem", { name: "Revert" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Unadd" })).toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "Revert" })).not.toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
     await fireEvent.keyDown(menu, { key: "Escape" });
 

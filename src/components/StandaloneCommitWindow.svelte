@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { CheckSquare, History, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from "@lucide/svelte";
+  import { CheckSquare, History, Minus, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from "@lucide/svelte";
   import {
     cancelTask,
     createCommitTask,
@@ -62,6 +62,7 @@
   let deleteTask: Task | null = null;
   let revertTask: Task | null = null;
   let addingPath: string | null = null;
+  let addAction: "add" | "unadd" | null = null;
   let deletingPath: string | null = null;
   let revertingPaths: string[] = [];
   let deleteNotice: string | null = null;
@@ -144,11 +145,11 @@
       : revertTask
         ? taskStatusLabel(revertTask, initializing, "revert")
         : addTask
-          ? taskStatusLabel(addTask, initializing, "add")
+          ? taskStatusLabel(addTask, initializing, addAction ?? "add")
           : deletingPath
             ? "正在准备 Delete"
             : addingPath
-              ? "正在准备 Add"
+              ? addAction === "unadd" ? "正在准备 Unadd" : "正在准备 Add"
               : revertingPaths.length > 0
                 ? "正在准备 Revert"
                 : taskStatusLabel(null, initializing);
@@ -261,6 +262,7 @@
     deleteTask = null;
     revertTask = null;
     addingPath = null;
+    addAction = null;
     deletingPath = null;
     revertingPaths = [];
     deleteNotice = null;
@@ -622,6 +624,14 @@
     }
   }
 
+  async function requestContextFileUnadd() {
+    const file = fileContextMenu?.file ?? null;
+    closeFileContextMenu();
+    if (file) {
+      await unaddFile(file);
+    }
+  }
+
   async function confirmRevert() {
     if (!target || revertCandidatePaths.length === 0 || operationRunning) {
       return;
@@ -662,6 +672,8 @@
       return;
     }
     addingPath = file.path;
+    addAction = "add";
+    addTask = null;
     addNotice = null;
     error = null;
     statusError = null;
@@ -760,6 +772,31 @@
       outOfDateDialogOpen = false;
       await getCurrentWindow().close();
     } catch (caught) {
+      error = caught as CommandError;
+    }
+  }
+
+  async function unaddFile(file: ChangedFile) {
+    if (!target || file.status !== "added" || operationRunning || scanning || initializing) {
+      return;
+    }
+    addingPath = file.path;
+    addAction = "unadd";
+    addTask = null;
+    addNotice = null;
+    error = null;
+    statusError = null;
+    try {
+      const task = await createSvnOperationTask({
+        working_copy_root: target.working_copy_root,
+        kind: "unadd_file",
+        file_path: file.path,
+        svn_executable: svnExecutable?.trim() || undefined,
+      });
+      addTask = task;
+      schedulePoll(task.task_id, "add", generation, 0);
+    } catch (caught) {
+      addingPath = null;
       error = caught as CommandError;
     }
   }
@@ -881,7 +918,8 @@
         const addedPath = addingPath;
         addingPath = null;
         if (task.status === "success") {
-          addNotice = addedPath ? `已 Add ${addedPath}` : "Add 完成";
+          const actionLabel = addAction === "unadd" ? "Unadd" : "Add";
+          addNotice = addedPath ? `已 ${actionLabel} ${addedPath}` : `${actionLabel} 完成`;
           await refreshStatus(currentGeneration);
         }
         return;
@@ -936,16 +974,16 @@
     }
   }
 
-  function taskStatusLabel(task: Task | null, isInitializing: boolean, role: "commit" | "revert" | "add" | "delete" = "commit") {
+  function taskStatusLabel(task: Task | null, isInitializing: boolean, role: "commit" | "revert" | "add" | "unadd" | "delete" = "commit") {
     switch (task?.status) {
       case "pending":
         return "等待执行";
       case "running":
-        return role === "add" ? "正在 Add" : role === "delete" ? "正在 Delete" : role === "revert" ? "正在 Revert" : "正在提交";
+        return role === "add" ? "正在 Add" : role === "unadd" ? "正在 Unadd" : role === "delete" ? "正在 Delete" : role === "revert" ? "正在 Revert" : "正在提交";
       case "success":
-        return role === "add" ? "Add 完成" : role === "delete" ? "Delete 完成" : role === "revert" ? "Revert 完成" : "提交完成";
+        return role === "add" ? "Add 完成" : role === "unadd" ? "Unadd 完成" : role === "delete" ? "Delete 完成" : role === "revert" ? "Revert 完成" : "提交完成";
       case "failed":
-        return role === "add" ? "Add 失败" : role === "delete" ? "Delete 失败" : role === "revert" ? "Revert 失败" : "提交失败";
+        return role === "add" ? "Add 失败" : role === "unadd" ? "Unadd 失败" : role === "delete" ? "Delete 失败" : role === "revert" ? "Revert 失败" : "提交失败";
       case "cancelled":
         return "已取消";
       case "interrupted":
@@ -1180,6 +1218,16 @@
                 >
                   <Plus size={14} aria-hidden="true" /> Add
                 </button>
+              {:else if file.status === "added"}
+                <button
+                  type="button"
+                  class="file-add-action"
+                  aria-label={`Unadd ${file.path}`}
+                  disabled={operationRunning || scanning || initializing}
+                  on:click={() => unaddFile(file)}
+                >
+                  <Minus size={14} aria-hidden="true" /> Unadd
+                </button>
               {/if}
             </div>
           {:else}
@@ -1350,7 +1398,11 @@
     on:click|stopPropagation
     on:keydown={handleFileContextMenuKeydown}
   >
-    {#if fileContextMenu.file.status === "unversioned"}
+    {#if fileContextMenu.file.status === "added"}
+      <button type="button" role="menuitem" on:click={requestContextFileUnadd}>
+        <Minus size={15} aria-hidden="true" /> Unadd
+      </button>
+    {:else if fileContextMenu.file.status === "unversioned"}
       <button type="button" role="menuitem" on:click={requestContextFileAdd}>
         <Plus size={15} aria-hidden="true" /> Add
       </button>

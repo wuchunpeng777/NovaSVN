@@ -1604,6 +1604,18 @@
       case "revert":
         setCurrentView("changes");
         break;
+      case "delete":
+        setCurrentView("changes");
+        if ($workspaceStore.selectedFilePath) {
+          await runSvnOperation("delete_path", $workspaceStore.selectedFilePath);
+        }
+        break;
+      case "ignore":
+        setCurrentView("changes");
+        if ($workspaceStore.selectedFilePath) {
+          await ignoreWorkspacePath($workspaceStore.selectedFilePath);
+        }
+        break;
       case "branch-workspace":
         setCurrentView("branches");
         break;

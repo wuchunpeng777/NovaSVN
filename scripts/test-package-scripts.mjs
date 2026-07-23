@@ -331,8 +331,10 @@ const windowsExplorerMenus = [
       ["03.Info", "SVN Info", "info"],
       ["04.Diff", "Diff", "diff"],
       ["05.Revert", "Revert", "revert"],
-      ["06.Cleanup", "Cleanup", "cleanup"],
-      ["07.BranchWorkspace", "Branch Workspace", "branch-workspace"],
+      ["06.Delete", "Delete", "delete"],
+      ["07.Ignore", "Ignore", "ignore"],
+      ["08.Cleanup", "Cleanup", "cleanup"],
+      ["09.BranchWorkspace", "Branch Workspace", "branch-workspace"],
     ],
     direct: [
       ["Update", "NovaSVN Update", "update"],
@@ -349,8 +351,10 @@ const windowsExplorerMenus = [
       ["03.Info", "SVN Info", "info"],
       ["04.Diff", "Diff", "diff"],
       ["05.Revert", "Revert", "revert"],
-      ["06.Cleanup", "Cleanup", "cleanup"],
-      ["07.BranchWorkspace", "Branch Workspace", "branch-workspace"],
+      ["06.Delete", "Delete", "delete"],
+      ["07.Ignore", "Ignore", "ignore"],
+      ["08.Cleanup", "Cleanup", "cleanup"],
+      ["09.BranchWorkspace", "Branch Workspace", "branch-workspace"],
     ],
     direct: [
       ["Update", "NovaSVN Update", "update"],
@@ -367,8 +371,10 @@ const windowsExplorerMenus = [
       ["03.Diff", "Diff", "diff"],
       ["04.Blame", "Blame", "blame"],
       ["05.Revert", "Revert", "revert"],
-      ["06.Cleanup", "Cleanup", "cleanup"],
-      ["07.BranchWorkspace", "Branch Workspace", "branch-workspace"],
+      ["06.Delete", "Delete", "delete"],
+      ["07.Ignore", "Ignore", "ignore"],
+      ["08.Cleanup", "Cleanup", "cleanup"],
+      ["09.BranchWorkspace", "Branch Workspace", "branch-workspace"],
     ],
     direct: [
       ["Update", "NovaSVN Update", "update"],
@@ -421,6 +427,7 @@ if (
 
 if (
   !nsisHooks.includes('"SubCommands" ""') ||
+  !nsisHooks.includes('"Position" "Bottom"') ||
   !nsisHooks.includes('"SeparatorBefore" ""') ||
   !nsisHooks.includes('"SeparatorAfter" ""') ||
   !nsisHooks.includes("--novasvn-action") ||
@@ -428,6 +435,19 @@ if (
   !nsisHooks.includes("%V")
 ) {
   console.error("Windows Explorer 操作必须位于带独立分隔线的 NovaSVN 二级菜单中");
+  failed = true;
+}
+
+if (
+  !windowsExplorerScript.includes('Name "Position" -Value "Bottom"') ||
+  !windowsExplorerScript.includes('Action = "delete"') ||
+  !windowsExplorerScript.includes('Action = "ignore"') ||
+  !systemIntegrationRs.includes('"delete"') ||
+  !systemIntegrationRs.includes('"ignore"') ||
+  !appSvelte.includes('case "delete":') ||
+  !appSvelte.includes('case "ignore":')
+) {
+  console.error("Windows Explorer NovaSVN 菜单必须靠下显示，并提供可执行的 Delete、Ignore 二级操作");
   failed = true;
 }
 

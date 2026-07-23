@@ -33,6 +33,12 @@
   ) => void = () => {};
   export let onRevert: (entry: SvnLogEntry) => void = () => {};
   export let onRevertWorkspace: (entry: SvnLogEntry) => void = () => {};
+
+  function isCurrentRevision(revision: string) {
+    const normalize = (value: string | null) => value?.trim().replace(/^r/i, "") ?? "";
+    const normalizedCurrent = normalize(currentRevision);
+    return normalizedCurrent.length > 0 && normalize(revision) === normalizedCurrent;
+  }
 </script>
 
 <section
@@ -46,7 +52,8 @@
     {#each entries as entry (entry.revision)}
       <article
         class="svn-log-entry"
-        class:current-revision={entry.revision === currentRevision}
+        class:current-revision={isCurrentRevision(entry.revision)}
+        aria-current={isCurrentRevision(entry.revision) ? "true" : undefined}
       >
         <header
           class="svn-log-entry-header"
@@ -70,8 +77,8 @@
           >
             <span class="svn-log-revision">
               <strong>r{entry.revision}</strong>
-              {#if entry.revision === currentRevision}
-                <span class="svn-log-current-revision" aria-label="本地版本">本地</span>
+              {#if isCurrentRevision(entry.revision)}
+                <span class="svn-log-current-revision" aria-label={`本地版本 r${entry.revision}`}>本地</span>
               {/if}
               <span class="svn-log-change-counts">
                 {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
@@ -192,14 +199,22 @@
   }
 
   .svn-log-entry {
-    border-left: 3px solid transparent;
+    border-left: 4px solid transparent;
     border-bottom: 1px solid var(--log-border);
     padding: 9px 6px;
   }
 
   .svn-log-entry.current-revision {
     border-left-color: var(--log-accent);
-    background: color-mix(in srgb, var(--log-accent) 8%, var(--log-panel));
+    background: color-mix(in srgb, var(--log-accent) 18%, var(--log-panel));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--log-accent) 34%, transparent);
+  }
+
+  .svn-log-entry.current-revision .svn-log-revision > strong {
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--log-accent) 24%, var(--log-panel));
+    padding: 2px 5px;
+    color: var(--log-accent);
   }
 
   .svn-log-entry-header {
@@ -284,11 +299,11 @@
 
   .svn-log-current-revision {
     flex: 0 0 auto;
-    border: 1px solid color-mix(in srgb, var(--log-accent) 55%, transparent);
+    border: 1px solid var(--log-accent);
     border-radius: 4px;
-    background: color-mix(in srgb, var(--log-accent) 12%, var(--log-panel));
+    background: var(--log-accent);
     padding: 1px 5px;
-    color: var(--log-accent);
+    color: #ffffff;
     font-size: 10px;
     font-weight: 700;
     line-height: 1.25;

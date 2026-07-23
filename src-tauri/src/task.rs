@@ -141,6 +141,7 @@ pub enum SvnOperationKind {
     UpdatePath,
     Cleanup,
     AddFile,
+    UnaddFile,
     DeletePath,
     DeleteUnversionedFile,
     MovePath,
@@ -923,6 +924,11 @@ impl TaskQueue {
             SvnOperationKind::AddFile => Some(normalize_add_path(
                 request.file_path.as_deref().unwrap_or_default(),
             )?),
+            SvnOperationKind::UnaddFile => Some(normalize_relative_file_path(
+                request.file_path.as_deref().unwrap_or_default(),
+                "UNADD_FILE_PATH_INVALID",
+                "Unadd 文件路径无效",
+            )?),
             SvnOperationKind::DeletePath => Some(normalize_delete_path(
                 request.file_path.as_deref().unwrap_or_default(),
             )?),
@@ -984,6 +990,13 @@ impl TaskQueue {
         if matches!(&request.kind, SvnOperationKind::AddFile) {
             working_copy_root = canonicalize_add_working_copy_root(&working_copy_root)?;
             validate_add_target(
+                &svn_executable,
+                &working_copy_root,
+                file_path.as_deref().unwrap_or_default(),
+            )?;
+        } else if matches!(&request.kind, SvnOperationKind::UnaddFile) {
+            working_copy_root = canonicalize_unadd_working_copy_root(&working_copy_root)?;
+            validate_unadd_target(
                 &svn_executable,
                 &working_copy_root,
                 file_path.as_deref().unwrap_or_default(),
@@ -2662,6 +2675,34 @@ fn run_svn_operation_task(
             }
             command.arg("add").arg("--parents").arg(file_path);
             append_task_log(state, task_id, &format!("执行 svn add：{file_path}"));
+        }
+        SvnOperationKind::UnaddFile => {
+            let Some(file_path) = payload.file_path.as_deref() else {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "Unadd 执行失败",
+                    Some("缺少要 unadd 的文件路径。".to_string()),
+                );
+                return;
+            };
+            if let Err(error) = validate_unadd_target(&payload.svn_executable, &root, file_path) {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "Unadd 安全校验失败",
+                    Some(nova_error_text(&error)),
+                );
+                return;
+            }
+            command.arg("revert").arg(root.join(file_path));
+            append_task_log(
+                state,
+                task_id,
+                &format!("执行 svn revert（Unadd）：{file_path}"),
+            );
         }
         SvnOperationKind::DeletePath => {
             let Some(file_path) = payload.file_path.as_deref() else {
@@ -7530,12 +7571,33 @@ fn canonicalize_add_working_copy_root(root: &Path) -> Result<PathBuf, NovaError>
     Ok(canonical_root)
 }
 
+fn canonicalize_unadd_working_copy_root(root: &Path) -> Result<PathBuf, NovaError> {
+    let canonical_root = fs::canonicalize(root).map_err(|error| {
+        NovaError::command(
+            "UNADD_WORKING_COPY_INVALID",
+            "无法解析 Unadd 目标工作副本",
+            Some(format!("路径：{}；错误：{error}", root.display())),
+            true,
+        )
+    })?;
+    if !canonical_root.is_absolute() {
+        return Err(NovaError::command(
+            "UNADD_WORKING_COPY_INVALID",
+            "Unadd 目标工作副本不是绝对路径",
+            Some(format!("路径：{}", canonical_root.display())),
+            true,
+        ));
+    }
+
+    Ok(canonical_root)
+}
+
 fn validate_add_target(
     svn_executable: &str,
     working_copy_root: &Path,
     relative_path: &str,
 ) -> Result<(), NovaError> {
-    let canonical_root = canonicalize_add_working_copy_root(working_copy_root)?;
+    let canonical_root = canonicalize_unadd_working_copy_root(working_copy_root)?;
     if canonical_root != working_copy_root {
         return Err(NovaError::command(
             "ADD_WORKING_COPY_CHANGED",
@@ -7653,6 +7715,104 @@ fn validate_add_target(
             true,
         ));
     }
+    Ok(())
+}
+
+fn validate_unadd_target(
+    svn_executable: &str,
+    working_copy_root: &Path,
+    relative_path: &str,
+) -> Result<(), NovaError> {
+    let canonical_root = canonicalize_add_working_copy_root(working_copy_root)?;
+    if canonical_root != working_copy_root {
+        return Err(NovaError::command(
+            "UNADD_WORKING_COPY_CHANGED",
+            "Unadd 工作副本路径已发生变化",
+            Some(format!(
+                "任务路径：{}；当前路径：{}",
+                working_copy_root.display(),
+                canonical_root.display()
+            )),
+            true,
+        ));
+    }
+
+    let target = working_copy_root.join(relative_path);
+    if let Ok(canonical_target) = fs::canonicalize(&target) {
+        if !canonical_target.starts_with(working_copy_root) {
+            return Err(NovaError::command(
+                "UNADD_TARGET_OUTSIDE_WORKING_COPY",
+                "Unadd 目标位于当前工作副本外",
+                Some(format!(
+                    "工作副本：{}；目标：{}",
+                    working_copy_root.display(),
+                    canonical_target.display()
+                )),
+                true,
+            ));
+        }
+    }
+
+    let output = svn::command(svn_executable)
+        .arg("status")
+        .arg("--xml")
+        .arg("--depth")
+        .arg("empty")
+        .arg(&target)
+        .current_dir(working_copy_root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "UNADD_TARGET_STATUS_FAILED",
+                "无法检查 Unadd 目标的 SVN 状态",
+                Some(format!(
+                    "无法执行 `{svn_executable} status --xml --depth empty`：{error}"
+                )),
+                true,
+            )
+        })?;
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "UNADD_TARGET_STATUS_FAILED",
+            "无法检查 Unadd 目标的 SVN 状态",
+            Some(command_output_error_detail(
+                svn_executable,
+                "status --xml --depth empty",
+                &output,
+            )),
+            true,
+        ));
+    }
+
+    let xml = std::str::from_utf8(&output.stdout).map_err(|error| {
+        NovaError::command(
+            "UNADD_TARGET_STATUS_INVALID",
+            "Unadd 目标的 SVN 状态不是有效 UTF-8",
+            Some(error.to_string()),
+            true,
+        )
+    })?;
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "UNADD_TARGET_STATUS_INVALID",
+            "无法解析 Unadd 目标的 SVN 状态",
+            Some(format!("svn status --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+    let is_added = document
+        .descendants()
+        .filter(|node| node.has_tag_name("wc-status"))
+        .any(|node| node.attribute("item") == Some("added"));
+    if !is_added {
+        return Err(NovaError::command(
+            "UNADD_TARGET_NOT_ADDED",
+            "只能对已 Add 的路径执行 Unadd",
+            Some(format!("路径：{relative_path}")),
+            true,
+        ));
+    }
+
     Ok(())
 }
 
@@ -8480,6 +8640,9 @@ fn operation_title(
         SvnOperationKind::Cleanup => "清理工作副本".to_string(),
         SvnOperationKind::AddFile => {
             format!("添加文件 {}", file_path.unwrap_or_default())
+        }
+        SvnOperationKind::UnaddFile => {
+            format!("取消 Add {}", file_path.unwrap_or_default())
         }
         SvnOperationKind::DeletePath => {
             format!("删除 {}", file_path.unwrap_or_default())
@@ -11884,6 +12047,7 @@ mod tests {
         for (kind, expected_code) in [
             (SvnOperationKind::UpdatePath, "UPDATE_PATH_INVALID"),
             (SvnOperationKind::AddFile, "ADD_FILE_PATH_INVALID"),
+            (SvnOperationKind::UnaddFile, "UNADD_FILE_PATH_INVALID"),
             (SvnOperationKind::DeletePath, "DELETE_PATH_INVALID"),
             (
                 SvnOperationKind::DeleteUnversionedFile,
@@ -11949,6 +12113,46 @@ mod tests {
         fs::write(working_copy.join("nested/new.txt"), "new file\n").expect("write new file");
 
         let queue = TaskQueue::new();
+        fs::write(working_copy.join("unadd.txt"), "keep me\n").expect("write unadd file");
+        let unadd_setup = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::AddFile,
+                file_path: Some("unadd.txt".to_string()),
+                target_path: None,
+                svn_executable: None,
+            })
+            .expect("unadd setup task should be created");
+        let unadd_setup = wait_for_test_task(&queue, &unadd_setup.task_id);
+        assert!(matches!(unadd_setup.status, TaskStatus::Success));
+
+        let unadd_task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                kind: SvnOperationKind::UnaddFile,
+                file_path: Some("unadd.txt".to_string()),
+                target_path: None,
+                svn_executable: None,
+            })
+            .expect("unadd task should be created");
+        let unadd_task = wait_for_test_task(&queue, &unadd_task.task_id);
+        assert!(
+            matches!(unadd_task.status, TaskStatus::Success),
+            "Unadd 任务失败：{:?}",
+            unadd_task.error
+        );
+        assert_eq!(
+            fs::read_to_string(working_copy.join("unadd.txt")).unwrap(),
+            "keep me\n"
+        );
+        let unadd_status = run_test_command(
+            Command::new("svn")
+                .args(["status", "--xml"])
+                .arg(working_copy.join("unadd.txt")),
+        );
+        let unadd_xml = String::from_utf8_lossy(&unadd_status.stdout);
+        assert!(unadd_xml.contains("item=\"unversioned\""));
+
         let task = queue
             .create_svn_operation_task(CreateSvnOperationTaskRequest {
                 working_copy_root: working_copy.display().to_string(),

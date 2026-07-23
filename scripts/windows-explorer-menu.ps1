@@ -21,6 +21,8 @@ $submenuActions = @(
   @{ Key = "Diff"; Label = "Diff"; Action = "diff" },
   @{ Key = "Blame"; Label = "Blame"; Action = "blame"; FilesOnly = $true },
   @{ Key = "Revert"; Label = "Revert"; Action = "revert" },
+  @{ Key = "Delete"; Label = "Delete"; Action = "delete" },
+  @{ Key = "Ignore"; Label = "Ignore"; Action = "ignore" },
   @{ Key = "Cleanup"; Label = "Cleanup"; Action = "cleanup" },
   @{ Key = "BranchWorkspace"; Label = "Branch Workspace"; Action = "branch-workspace" }
 )
@@ -51,6 +53,7 @@ foreach ($root in $roots) {
   New-ItemProperty -Path $menuPath -Name "MUIVerb" -Value "NovaSVN" -PropertyType String -Force | Out-Null
   New-ItemProperty -Path $menuPath -Name "Icon" -Value $NovaSvnExe -PropertyType String -Force | Out-Null
   New-ItemProperty -Path $menuPath -Name "SubCommands" -Value "" -PropertyType String -Force | Out-Null
+  New-ItemProperty -Path $menuPath -Name "Position" -Value "Bottom" -PropertyType String -Force | Out-Null
   New-ItemProperty -Path $menuPath -Name "SeparatorBefore" -Value "" -PropertyType String -Force | Out-Null
   New-ItemProperty -Path $menuPath -Name "SeparatorAfter" -Value "" -PropertyType String -Force | Out-Null
 
@@ -81,6 +84,7 @@ foreach ($root in $roots) {
     New-Item -Path $commandPath -Force | Out-Null
     New-ItemProperty -Path $keyPath -Name "MUIVerb" -Value $item.Label -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $keyPath -Name "Icon" -Value "$NovaSvnExe,0" -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $keyPath -Name "Position" -Value "Bottom" -PropertyType String -Force | Out-Null
     $command = "`"$NovaSvnExe`" --novasvn-action `"$($item.Action)`" --novasvn-path `"$($root.Placeholder)`""
     (Get-Item -LiteralPath $commandPath).SetValue("", $command)
   }
