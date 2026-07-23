@@ -2798,15 +2798,12 @@ function createWorkspaceStore() {
         state.safetyCheck.confirmedWarningIds,
         state.status,
       );
-      const message = state.commitMessage.trim();
       let commitError: string | null = null;
 
       if (!state.current) {
         commitError = "请先打开 SVN 工作副本";
       } else if (reconciled.length === 0) {
         commitError = "请选择要提交的文件";
-      } else if (!message) {
-        commitError = "请输入提交信息";
       } else if (safetyCheck.blockers.length > 0) {
         commitError = "安全检查存在阻塞项，请先处理冲突、缺失或阻塞文件";
       } else if (unconfirmedWarnings(safetyCheck).length > 0) {
@@ -2861,15 +2858,12 @@ function createWorkspaceStore() {
         state.safetyCheck.confirmedWarningIds,
         state.status,
       );
-      const message = state.commitMessage.trim();
       let commitError: string | null = null;
 
       if (!state.current) {
         commitError = "请先打开 SVN 工作副本";
       } else if (!state.selectedPatch || selectedFiles.length === 0) {
         commitError = "请先选择 hunk 并生成 selected patch";
-      } else if (!message) {
-        commitError = "请输入提交信息";
       } else if (state.status?.mixed_revision) {
         commitError = `当前工作副本 revision 范围为 ${
           state.status.revision_range ?? "未知"

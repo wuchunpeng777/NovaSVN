@@ -139,7 +139,6 @@
     initializing ||
     scanning ||
     operationRunning ||
-    !commitMessage.trim() ||
     selectedCount === 0 ||
     !target;
   $: statusAuthenticationFailure = detectSvnAuthenticationFailure(

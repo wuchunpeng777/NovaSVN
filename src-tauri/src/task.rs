@@ -878,14 +878,6 @@ impl TaskQueue {
         let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
         let files = normalize_commit_files(&request.files)?;
         let message = request.message.trim().to_string();
-        if message.is_empty() {
-            return Err(NovaError::command(
-                "COMMIT_MESSAGE_REQUIRED",
-                "请输入提交信息",
-                None,
-                true,
-            ));
-        }
 
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
@@ -1294,14 +1286,6 @@ impl TaskQueue {
         let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
         let files = normalize_commit_files(&request.files)?;
         let message = request.message.trim().to_string();
-        if message.is_empty() {
-            return Err(NovaError::command(
-                "COMMIT_MESSAGE_REQUIRED",
-                "请输入提交信息",
-                None,
-                true,
-            ));
-        }
         if request.selected_patch.trim().is_empty() {
             return Err(NovaError::command(
                 "SELECTED_PATCH_REQUIRED",
