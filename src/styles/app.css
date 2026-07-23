@@ -1401,6 +1401,31 @@ textarea {
   border-left: 1px solid #edf0f3;
 }
 
+.blame-revision-cell {
+  display: flex;
+  align-items: center;
+}
+
+.blame-revision-button {
+  min-height: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  padding: 1px 2px;
+  color: var(--mac-accent, #2674b9);
+  font: inherit;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.blame-revision-button:hover,
+.blame-revision-button:focus-visible {
+  background: color-mix(in srgb, var(--mac-accent, #2674b9) 12%, transparent);
+  outline: 1px solid var(--mac-accent, #2674b9);
+  outline-offset: 1px;
+}
+
 .blame-head {
   position: sticky;
   top: 0;

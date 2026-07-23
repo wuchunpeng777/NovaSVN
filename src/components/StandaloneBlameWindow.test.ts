@@ -2,18 +2,23 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/sve
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
+  getPathSvnLog: vi.fn(),
+  getRepositoryFileLog: vi.fn(),
+  getSvnLog: vi.fn(),
   getSvnBlame: vi.fn(),
   inspectUpdateTarget: vi.fn(),
 }));
 
-import { getSvnBlame, inspectUpdateTarget } from "../lib/api";
+import { getPathSvnLog, getSvnBlame, inspectUpdateTarget } from "../lib/api";
 import StandaloneBlameWindow from "./StandaloneBlameWindow.svelte";
 
 const getSvnBlameMock = vi.mocked(getSvnBlame);
+const getPathSvnLogMock = vi.mocked(getPathSvnLog);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 
 beforeEach(() => {
   getSvnBlameMock.mockReset();
+  getPathSvnLogMock.mockReset();
   inspectUpdateTargetMock.mockReset();
   inspectUpdateTargetMock.mockResolvedValue({
     target_path: "C:\\repo\\src\\main.ts",
@@ -88,6 +93,56 @@ describe("StandaloneBlameWindow", () => {
     await fireEvent.pointerMove(window, { clientX: 130 });
     await fireEvent.pointerUp(window);
     expect(revisionResizer).toHaveAttribute("data-width", "126");
+  });
+
+  it("点击 Revision 后弹窗显示对应 Log 信息", async () => {
+    getPathSvnLogMock.mockResolvedValue({
+      target: "C:\\repo\\src\\main.ts",
+      working_copy_root: "C:\\repo",
+      repository_root: "https://example.com/svn",
+      repository_url: "https://example.com/svn/trunk/src/main.ts",
+      has_more: false,
+      next_start_revision: null,
+      entries: [
+        {
+          revision: "40",
+          author: "alice",
+          date: "2026-07-10T10:00:00Z",
+          message: "Introduce the answer",
+          changed_paths: [
+            {
+              path: "/trunk/src/main.ts",
+              action: "M",
+              kind: "file",
+              copy_from_path: null,
+              copy_from_revision: null,
+            },
+          ],
+        },
+      ],
+    });
+    render(StandaloneBlameWindow, {
+      props: {
+        targetPath: "C:\\repo\\src\\main.ts",
+        svnExecutable: "C:\\Tools\\svn.exe",
+      },
+    });
+
+    await fireEvent.click(await screen.findByRole("button", { name: "查看 r40 Log" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "r40 Log 信息" });
+    expect(getPathSvnLogMock).toHaveBeenCalledWith({
+      path: "C:\\repo\\src\\main.ts",
+      svn_executable: "C:\\Tools\\svn.exe",
+      limit: 1,
+      start_revision: "40",
+    });
+    expect(within(dialog).getByText("Introduce the answer")).toBeInTheDocument();
+    expect(within(dialog).getByText("/trunk/src/main.ts")).toBeInTheDocument();
+    expect(within(dialog).getByText("alice")).toBeInTheDocument();
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "关闭 Revision Log" }));
+    expect(screen.queryByRole("dialog", { name: "r40 Log 信息" })).not.toBeInTheDocument();
   });
 
   it("拒绝目录目标", async () => {

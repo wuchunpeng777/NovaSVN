@@ -1,6 +1,14 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const { closeWindowMock } = vi.hoisted(() => ({
+  closeWindowMock: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({ close: closeWindowMock }),
+}));
+
 vi.mock("../lib/api", () => ({
   cancelTask: vi.fn(),
   createSvnOperationTask: vi.fn(),
@@ -8,6 +16,7 @@ vi.mock("../lib/api", () => ({
   getTask: vi.fn(),
   getWorkspacePathSizes: vi.fn(),
   inspectUpdateTarget: vi.fn(),
+  launchCommitWindow: vi.fn(),
   launchConflictWindow: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
 }));
@@ -18,6 +27,7 @@ import {
   getTask,
   getWorkspacePathSizes,
   inspectUpdateTarget,
+  launchCommitWindow,
   launchConflictWindow,
   scanWorkspaceStatus,
 } from "../lib/api";
@@ -29,15 +39,19 @@ const getSvnLogMock = vi.mocked(getSvnLog);
 const getTaskMock = vi.mocked(getTask);
 const getWorkspacePathSizesMock = vi.mocked(getWorkspacePathSizes);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
+const launchCommitWindowMock = vi.mocked(launchCommitWindow);
 const launchConflictWindowMock = vi.mocked(launchConflictWindow);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(() => {
+  closeWindowMock.mockReset();
+  closeWindowMock.mockResolvedValue(undefined);
   createSvnOperationTaskMock.mockReset();
   getSvnLogMock.mockReset();
   getTaskMock.mockReset();
   getWorkspacePathSizesMock.mockReset();
   inspectUpdateTargetMock.mockReset();
+  launchCommitWindowMock.mockReset();
   launchConflictWindowMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
   inspectUpdateTargetMock.mockResolvedValue(makeTarget());
@@ -46,6 +60,7 @@ beforeEach(() => {
     makeTask("success", ["SVN 操作开始执行", "U    src/main.ts", "Updated to revision 21."]),
   );
   getWorkspacePathSizesMock.mockResolvedValue([{ path: "src/main.ts", bytes: 2048 }]);
+  launchCommitWindowMock.mockResolvedValue({ target_path: "C:\\repo\\src\\main.ts" });
   launchConflictWindowMock.mockResolvedValue({ target_path: "C:\\repo\\src\\conflict.ts" });
   scanWorkspaceStatusMock.mockResolvedValue(makeStatus());
   getSvnLogMock.mockResolvedValue({
@@ -65,6 +80,25 @@ beforeEach(() => {
 });
 
 describe("StandaloneUpdateWindow", () => {
+  it("从 out of date 提交进入时在更新完成后自动返回 Commit", async () => {
+    render(StandaloneUpdateWindow, {
+      props: {
+        targetPath: "C:\\repo\\src\\main.ts",
+        returnToCommit: true,
+      },
+    });
+
+    expect(
+      screen.getByRole("checkbox", { name: "更新完成且所有冲突解决后自动关闭" }),
+    ).not.toBeChecked();
+    await waitFor(() => {
+      expect(launchCommitWindowMock).toHaveBeenCalledWith({
+        target_path: "C:\\repo\\src\\main.ts",
+      });
+    });
+    expect(closeWindowMock).toHaveBeenCalledOnce();
+  });
+
   it("打开后自动更新右键选中的文件并展示更新内容", async () => {
     render(StandaloneUpdateWindow, {
       props: {
@@ -86,6 +120,9 @@ describe("StandaloneUpdateWindow", () => {
       });
     });
     const output = screen.getByLabelText("更新内容");
+    expect(
+      screen.getByRole("checkbox", { name: "更新完成且所有冲突解决后自动关闭" }),
+    ).not.toBeChecked();
     expect(
       await within(output).findByRole("listitem", { name: "更新文件 src/main.ts" }),
     ).toBeInTheDocument();
@@ -113,6 +150,7 @@ describe("StandaloneUpdateWindow", () => {
       limit: 5000,
       check_remote_updates: false,
     });
+    expect(closeWindowMock).not.toHaveBeenCalled();
   });
 
   it("主界面模式完成更新后可以返回工作台", async () => {
@@ -310,12 +348,16 @@ describe("StandaloneUpdateWindow", () => {
       .mockResolvedValueOnce(makeStatus());
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo\\src" } });
+    await fireEvent.click(
+      screen.getByRole("checkbox", { name: "更新完成且所有冲突解决后自动关闭" }),
+    );
 
     const pane = await screen.findByLabelText("冲突处理");
     await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalled());
     expect(await within(pane).findByText("src/conflict.ts")).toBeInTheDocument();
     expect(within(pane).getByText("文本冲突")).toBeInTheDocument();
     expect(within(pane).queryByText("other/conflict.ts")).not.toBeInTheDocument();
+    expect(closeWindowMock).not.toHaveBeenCalled();
 
     await fireEvent.click(within(pane).getByRole("button", { name: "编辑冲突" }));
     expect(launchConflictWindowMock).toHaveBeenCalledWith({
@@ -338,6 +380,7 @@ describe("StandaloneUpdateWindow", () => {
     expect(screen.getByLabelText("冲突处理记录")).toHaveTextContent("完成");
     expect(screen.getByRole("listitem", { name: "更新文件 src/conflict.ts" }))
       .toHaveTextContent("U");
+    await waitFor(() => expect(closeWindowMock).toHaveBeenCalledOnce());
   });
 
   it("采用我的版本后将更新列表中的冲突状态改为 L", async () => {

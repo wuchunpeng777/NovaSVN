@@ -46,6 +46,7 @@
   export let autoStart = true;
   export let minimized = false;
   export let onToggleMinimized: () => void = () => {};
+  export let onCloseCompleted: () => void = () => {};
   export let onSvnAuthenticationSubmit: (
     username: string,
     password: string,
@@ -86,6 +87,8 @@
   let themeMediaQuery: MediaQueryList | null = null;
   let returningToCommit = false;
   let updatedFileSizes = new Map<string, number>();
+  let closeAfterCompletion = false;
+  let autoCloseTriggered = false;
 
   const terminalStatuses: TaskStatus[] = [
     "success",
@@ -190,6 +193,7 @@
     resolvedUpdateActions = new Map();
     resolvedConflictPaths = new Set();
     updatedFileSizes = new Map();
+    autoCloseTriggered = false;
     autoFollowOutput = true;
     expectedAutoScrollTop = null;
     closeFileContextMenu();
@@ -285,13 +289,14 @@
           actionError = task.error ?? "冲突处理失败";
         }
       }
-      await refreshConflicts(currentGeneration, role !== "resolution");
+      await refreshConflicts(currentGeneration);
       if (role === "update" && task.status === "success" && conflictScanCompleted) {
         await followUpdateOutput(true);
       }
       if (role === "resolution") {
         resolutionKind = null;
       }
+      await maybeCloseCompletedUpdate();
     } catch (caught) {
       if (currentGeneration === generation) {
         error = caught as CommandError;
@@ -368,6 +373,7 @@
     resolvedUpdateActions = new Map();
     resolvedConflictPaths = new Set();
     updatedFileSizes = new Map();
+    autoCloseTriggered = false;
     autoFollowOutput = true;
     expectedAutoScrollTop = null;
     closeFileContextMenu();
@@ -411,7 +417,7 @@
     }
   }
 
-  function handleWindowFocus() {
+  async function handleWindowFocus() {
     if (
       !target ||
       updateRunning ||
@@ -422,7 +428,8 @@
     ) {
       return;
     }
-    void refreshConflicts(generation, false);
+    await refreshConflicts(generation, false);
+    await maybeCloseCompletedUpdate();
   }
 
   async function openFileContextMenu(event: MouseEvent, path: string) {
@@ -688,6 +695,48 @@
     } catch (caught) {
       returningToCommit = false;
       actionError = caught as CommandError;
+    }
+  }
+
+  async function maybeCloseCompletedUpdate() {
+    if (
+      autoCloseTriggered ||
+      !updateComplete ||
+      conflictCount > 0 ||
+      resolutionRunning ||
+      statusError !== null
+    ) {
+      return;
+    }
+
+    if (returnToCommit) {
+      autoCloseTriggered = true;
+      await returnToCommitWindow();
+      if (!returningToCommit) {
+        autoCloseTriggered = false;
+      }
+      return;
+    }
+    if (!closeAfterCompletion) {
+      return;
+    }
+    autoCloseTriggered = true;
+    if (embedded) {
+      onCloseCompleted();
+      return;
+    }
+    try {
+      await getCurrentWindow().close();
+    } catch (caught) {
+      autoCloseTriggered = false;
+      error = caught as CommandError;
+    }
+  }
+
+  function handleCloseAfterCompletionChange(event: Event) {
+    closeAfterCompletion = (event.currentTarget as HTMLInputElement).checked;
+    if (closeAfterCompletion) {
+      void maybeCloseCompletedUpdate();
     }
   }
 
@@ -976,6 +1025,18 @@
     </aside>
   </div>
 
+  <footer class="update-footer" aria-hidden={embedded && minimized ? "true" : undefined}>
+    <label>
+      <input
+        type="checkbox"
+        checked={closeAfterCompletion}
+        disabled={autoCloseTriggered}
+        on:change={handleCloseAfterCompletionChange}
+      />
+      <span>更新完成且所有冲突解决后自动关闭</span>
+    </label>
+  </footer>
+
   {#if fileContextMenu}
     <div
       bind:this={fileContextMenuElement}
@@ -1055,7 +1116,7 @@
     --control: #ffffff;
     --accent: #2674b9;
     display: grid;
-    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
     width: 100vw;
     height: 100vh;
     overflow: hidden;
@@ -1092,7 +1153,8 @@
 
   .standalone-update.embedded.minimized .update-summary,
   .standalone-update.embedded.minimized .update-notices,
-  .standalone-update.embedded.minimized .update-layout {
+  .standalone-update.embedded.minimized .update-layout,
+  .standalone-update.embedded.minimized .update-footer {
     display: none;
   }
 
@@ -1330,6 +1392,31 @@
   .output-line[data-kind="U"] > span,
   .output-line[data-kind="G"] > span {
     color: #24783d;
+  }
+
+  .update-footer {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    padding: 8px 14px;
+  }
+
+  .update-footer label {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--secondary);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .update-footer input {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: var(--accent);
   }
 
   .output-line[data-kind="L"] > span {

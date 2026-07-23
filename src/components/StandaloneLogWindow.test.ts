@@ -316,7 +316,10 @@ describe("StandaloneLogWindow", () => {
           makeEntry("20", "alice", "2026-07-10T10:00:00Z", "Newer change"),
           {
             ...makeEntry("18", "bob", "2026-07-08T10:00:00Z", "Older change"),
-            changed_paths: [makeChangedPath("/branches/release/older.ts", "A")],
+            changed_paths: [
+              makeChangedPath("/branches/release/older.ts", "A"),
+              makeChangedPath("/trunk/src/main.ts", "A"),
+            ],
           },
         ],
       }),
@@ -328,7 +331,7 @@ describe("StandaloneLogWindow", () => {
     await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r20 用于 Merge" }));
     let changedPaths = screen.getByLabelText("已选 Revision 文件变化");
     expect(within(changedPaths).getByText("/trunk/src/main.ts")).toBeInTheDocument();
-    expect(within(changedPaths).getByLabelText("r20 文件变化")).toBeInTheDocument();
+    expect(within(changedPaths).getByLabelText("所选 Revision 文件合集")).toBeInTheDocument();
 
     await fireEvent.click(
       within(screen.getByRole("toolbar", { name: "Revision Merge 操作" })).getByRole(
@@ -342,7 +345,12 @@ describe("StandaloneLogWindow", () => {
     await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r18 用于 Merge" }));
     changedPaths = screen.getByLabelText("已选 Revision 文件变化");
     expect(within(changedPaths).getByText("/branches/release/older.ts")).toBeInTheDocument();
-    expect(within(changedPaths).getByLabelText("r18 文件变化")).toBeInTheDocument();
+    expect(within(changedPaths).getAllByText("/trunk/src/main.ts")).toHaveLength(1);
+    const sharedPath = within(changedPaths).getByRole("button", {
+      name: "查看 r20 的 /trunk/src/main.ts diff",
+    });
+    expect(within(sharedPath).getByLabelText("状态 A、M")).toBeInTheDocument();
+    expect(within(changedPaths).getByText("2 个 Revision，2 个路径")).toBeInTheDocument();
     const toolbar = screen.getByRole("toolbar", { name: "Revision Merge 操作" });
     expect(within(toolbar).getByText("已选 2 个 Revision")).toBeInTheDocument();
     expect(within(toolbar).getByText("r18、r20")).toBeInTheDocument();

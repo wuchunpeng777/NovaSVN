@@ -29,6 +29,7 @@
   import LogMergeDialog from "../LogMergeDialog.svelte";
   import SvnLogRevisionList from "../SvnLogRevisionList.svelte";
   import SvnLogSelectionDetails from "../SvnLogSelectionDetails.svelte";
+  import SvnRevisionLogDialog from "../SvnRevisionLogDialog.svelte";
   import ConflictResolver from "./ConflictResolver.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
   import { getRevisionFileContentDiff } from "../../lib/api";
@@ -382,6 +383,7 @@
   export let onUpdatePath: (path: string) => void = () => {};
   export let onCleanupWorkspace: () => void = () => {};
   export let onToggleInlineUpdate: () => void = () => {};
+  export let onCloseInlineUpdate: () => void = () => {};
   export let onDismissSvnOperationFeedback: () => void = () => {};
   export let onChooseApplyPatch: () => void = () => {};
   export let onRunApplyPatch: (dryRun: boolean) => void = () => {};
@@ -668,6 +670,14 @@
   let virtualizedFileTreeSource: WorkspaceFileTree | null = null;
   let virtualizedWorkspaceBlameSource: SvnBlame | null = null;
   let virtualizedRepositoryBlameSource: SvnBlame | null = null;
+  let blameRevisionLogTarget: {
+    revision: string;
+    targetPath: string;
+    workingCopyRoot: string;
+    filePath: string;
+    repositoryUrl: string;
+    repositoryRevision: string;
+  } | null = null;
   let contextMenuElement: HTMLElement | null = null;
   let commitMessageElement: HTMLTextAreaElement | null = null;
   let commitMessageFocusRequested = false;
@@ -1613,6 +1623,34 @@
     const element = event.currentTarget as HTMLElement;
     repositoryBlameScrollTop = element.scrollTop;
     repositoryBlameViewportHeight = element.clientHeight || repositoryBlameViewportHeight;
+  }
+
+  function openWorkspaceBlameRevisionLog(revision: string) {
+    if (!revision || !workspace?.working_copy_root || !selectedFilePath) {
+      return;
+    }
+    blameRevisionLogTarget = {
+      revision,
+      targetPath: "",
+      workingCopyRoot: workspace.working_copy_root,
+      filePath: selectedFilePath,
+      repositoryUrl: "",
+      repositoryRevision: "",
+    };
+  }
+
+  function openRepositoryBlameRevisionLog(revision: string) {
+    if (!revision || !repositoryFileBlame?.target) {
+      return;
+    }
+    blameRevisionLogTarget = {
+      revision,
+      targetPath: "",
+      workingCopyRoot: "",
+      filePath: "",
+      repositoryUrl: repositoryFileBlame.target,
+      repositoryRevision: repositoryFileBlameRevision ?? "",
+    };
   }
 
   function selectKeyboardRange(anchorPath: string, targetPath: string) {
@@ -3127,6 +3165,7 @@
           initialTarget={inlineUpdateTarget}
           minimized={inlineUpdateMinimized}
           onToggleMinimized={onToggleInlineUpdate}
+          onCloseCompleted={onCloseInlineUpdate}
         />
       {:else if view.id === "history"}
         <section class="pane-header">
@@ -3731,7 +3770,19 @@
                 {/if}
                 {#each repositoryBlameWindow.items as line (line.line_number)}
                   <div class="blame-row" role="row" title={formatDate(line.date)}>
-                    <span role="cell">{line.revision ? `r${line.revision}` : "-"}</span>
+                    <span role="cell" class="blame-revision-cell">
+                      {#if line.revision}
+                        <button
+                          type="button"
+                          class="blame-revision-button"
+                          aria-label={`查看 r${line.revision} Log`}
+                          title={`查看 r${line.revision} 提交信息`}
+                          on:click={() => openRepositoryBlameRevisionLog(line.revision)}
+                        >r{line.revision}</button>
+                      {:else}
+                        -
+                      {/if}
+                    </span>
                     <span role="cell">{line.author || "-"}</span>
                     <span role="cell" class="blame-line-number">{line.line_number}</span>
                     <span role="cell" class="blame-content">
@@ -5565,7 +5616,19 @@
                     {/if}
                     {#each workspaceBlameWindow.items as line (line.line_number)}
                       <div class="blame-row" role="row" title={formatDate(line.date)}>
-                        <span role="cell">{line.revision ? `r${line.revision}` : "-"}</span>
+                        <span role="cell" class="blame-revision-cell">
+                          {#if line.revision}
+                            <button
+                              type="button"
+                              class="blame-revision-button"
+                              aria-label={`查看 r${line.revision} Log`}
+                              title={`查看 r${line.revision} 提交信息`}
+                              on:click={() => openWorkspaceBlameRevisionLog(line.revision)}
+                            >r{line.revision}</button>
+                          {:else}
+                            -
+                          {/if}
+                        </span>
                         <span role="cell">{line.author || "-"}</span>
                         <span role="cell" class="blame-line-number">{line.line_number}</span>
                         <span role="cell" class="blame-content">
@@ -6198,6 +6261,25 @@
         </footer>
       </div>
     </div>
+  {/if}
+
+  {#if blameRevisionLogTarget}
+    <SvnRevisionLogDialog
+      revision={blameRevisionLogTarget.revision}
+      targetPath={blameRevisionLogTarget.targetPath}
+      workingCopyRoot={blameRevisionLogTarget.workingCopyRoot}
+      filePath={blameRevisionLogTarget.filePath}
+      repositoryUrl={blameRevisionLogTarget.repositoryUrl}
+      repositoryRevision={blameRevisionLogTarget.repositoryRevision}
+      svnExecutable={svnExecutableInput.trim() || undefined}
+      theme={resolvedTheme}
+      svnAuthenticationUsername={appSettings.svnUsername}
+      svnRememberPassword={appSettings.svnRememberPassword}
+      {svnAuthenticationLoading}
+      {svnAuthenticationError}
+      onSvnAuthenticationSubmit={onInlineSvnAuthenticationSubmit}
+      onClose={() => (blameRevisionLogTarget = null)}
+    />
   {/if}
 
   <ConflictResolver

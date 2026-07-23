@@ -27,6 +27,7 @@ vi.mock("../lib/api", () => ({
   getFileDiff: vi.fn(),
   getTask: vi.fn(),
   inspectUpdateTarget: vi.fn(),
+  launchUpdateWindow: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
 }));
 
@@ -37,6 +38,7 @@ import {
   getFileDiff,
   getTask,
   inspectUpdateTarget,
+  launchUpdateWindow,
   scanWorkspaceStatus,
 } from "../lib/api";
 import type { ChangedFile, Task, WorkingCopyStatus } from "../types/api";
@@ -48,6 +50,7 @@ const getFileContentDiffMock = vi.mocked(getFileContentDiff);
 const getFileDiffMock = vi.mocked(getFileDiff);
 const getTaskMock = vi.mocked(getTask);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
+const launchUpdateWindowMock = vi.mocked(launchUpdateWindow);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(() => {
@@ -60,6 +63,7 @@ beforeEach(() => {
   getFileDiffMock.mockReset();
   getTaskMock.mockReset();
   inspectUpdateTargetMock.mockReset();
+  launchUpdateWindowMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
   inspectUpdateTargetMock.mockResolvedValue(makeTarget());
   scanWorkspaceStatusMock.mockResolvedValue(
@@ -79,6 +83,7 @@ beforeEach(() => {
     }),
   );
   createCommitTaskMock.mockResolvedValue(makeTask("pending"));
+  launchUpdateWindowMock.mockResolvedValue({ target_path: "C:\\repo" });
   getFileContentDiffMock.mockResolvedValue({
     path: "src/main.ts",
     original_text: "const value = 1;",
@@ -101,6 +106,41 @@ beforeEach(() => {
 });
 
 describe("StandaloneCommitWindow", () => {
+  it("out of date 后关闭 Commit 并打开可自动返回的 Update", async () => {
+    getTaskMock.mockResolvedValue(
+      makeTask("failed", [], {
+        error: "svn: E160028: File is out of date",
+      }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    await fireEvent.input(await screen.findByRole("textbox", { name: "提交日志" }), {
+      target: { value: "保留后重试" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "提交 3 个文件" }));
+    const dialog = await screen.findByRole("dialog", { name: "提交失败：工作副本已过期" });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "更新后返回提交" }));
+
+    expect(launchUpdateWindowMock).toHaveBeenCalledWith({
+      target_path: "C:\\repo",
+      return_action: "commit",
+    });
+    expect(localStorage.getItem("novasvn:pending-commit-message")).toBe("保留后重试");
+    expect(closeWindowMock).toHaveBeenCalledOnce();
+  });
+
+  it("勾选后在提交成功时自动关闭窗口", async () => {
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    const autoClose = screen.getByRole("checkbox", { name: "提交完成后自动关闭" });
+    expect(autoClose).not.toBeChecked();
+    await fireEvent.click(autoClose);
+    await fireEvent.click(await screen.findByRole("button", { name: "提交 3 个文件" }));
+
+    await waitFor(() => expect(closeWindowMock).toHaveBeenCalledOnce());
+    expect(getTaskMock).toHaveBeenCalledWith("commit-1");
+  });
+
   it("空闲时按 Escape 关闭 Commit 窗口", async () => {
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
 

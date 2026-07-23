@@ -12,10 +12,17 @@ vi.mock("./MonacoDiffViewer.svelte", () => ({
 }));
 
 vi.mock("../../lib/api", () => ({
+  getPathSvnLog: vi.fn(),
+  getRepositoryFileLog: vi.fn(),
   getRevisionFileContentDiff: vi.fn(),
+  getSvnLog: vi.fn(),
 }));
 
-import { getRevisionFileContentDiff } from "../../lib/api";
+import {
+  getRepositoryFileLog,
+  getRevisionFileContentDiff,
+  getSvnLog,
+} from "../../lib/api";
 import { workbenchViews } from "../../lib/workbench";
 import type { AppSettingsState } from "../../types/app";
 import type {
@@ -28,6 +35,8 @@ import type {
 import MainWorkspace from "./MainWorkspace.svelte";
 
 const getRevisionFileContentDiffMock = vi.mocked(getRevisionFileContentDiff);
+const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
+const getSvnLogMock = vi.mocked(getSvnLog);
 
 describe("MainWorkspace", () => {
   it("renders accessible toolbar icons and exposes operation running states", async () => {
@@ -155,6 +164,28 @@ describe("MainWorkspace", () => {
 
   it("organizes inspector content into keyboard-accessible tabs", async () => {
     const file = makeFile("src/main.ts", "modified", "main-digest");
+    getSvnLogMock.mockResolvedValue({
+      target: file.path,
+      has_more: false,
+      next_start_revision: null,
+      entries: [
+        {
+          revision: "11",
+          author: "alice",
+          date: "2026-07-11T01:02:03Z",
+          message: "Enable the ready state",
+          changed_paths: [
+            {
+              path: "/trunk/src/main.ts",
+              action: "M",
+              kind: "file",
+              copy_from_path: null,
+              copy_from_revision: null,
+            },
+          ],
+        },
+      ],
+    });
     render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
@@ -214,6 +245,19 @@ describe("MainWorkspace", () => {
     await fireEvent.click(within(tablist).getByRole("tab", { name: "Blame" }));
     expect(screen.getByRole("tabpanel", { name: "Blame" })).toHaveTextContent(
       "const ready = true;",
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "查看 r11 Log" }));
+    const revisionLogDialog = await screen.findByRole("dialog", { name: "r11 Log 信息" });
+    expect(getSvnLogMock).toHaveBeenCalledWith({
+      working_copy_root: "C:/repo/wc",
+      file_path: "src/main.ts",
+      svn_executable: undefined,
+      limit: 1,
+      start_revision: "11",
+    });
+    expect(within(revisionLogDialog).getByText("Enable the ready state")).toBeInTheDocument();
+    await fireEvent.click(
+      within(revisionLogDialog).getByRole("button", { name: "关闭 Revision Log" }),
     );
 
     await fireEvent.click(within(tablist).getByRole("tab", { name: "Commit" }));
@@ -990,7 +1034,7 @@ Certificate information:
     const toolbar = screen.getByRole("toolbar", { name: "Revision Merge 操作" });
     const changedPaths = screen.getByLabelText("已选 Revision 文件变化");
     expect(contentPane).toHaveClass("timeline-merge-active");
-    expect(within(changedPaths).getByLabelText("r12 文件变化")).toBeInTheDocument();
+    expect(within(changedPaths).getByLabelText("所选 Revision 文件合集")).toBeInTheDocument();
     expect(within(changedPaths).getByText("/trunk/file-12-1.txt")).toBeInTheDocument();
     expect(
       screen.getByRole("slider", { name: "调整文件变化宽度" }),
@@ -1367,6 +1411,36 @@ Certificate information:
     expect(within(blamePanel).getByRole("columnheader", { name: "Revision" })).toBeInTheDocument();
     expect(within(blamePanel).getByText("README title")).toBeInTheDocument();
     expect(within(blamePanel).getByText("2 行 · 仅显示前 1 行")).toBeInTheDocument();
+    getRepositoryFileLogMock.mockResolvedValue({
+      target: "https://example.com/svn/trunk/README.md",
+      has_more: false,
+      next_start_revision: null,
+      entries: [
+        {
+          revision: "8",
+          author: "bob",
+          date: "2026-07-09T09:00:00Z",
+          message: "Update README from Blame",
+          changed_paths: [],
+        },
+      ],
+    });
+    await fireEvent.click(within(blamePanel).getByRole("button", { name: "查看 r8 Log" }));
+    const repositoryRevisionDialog = await screen.findByRole("dialog", {
+      name: "r8 Log 信息",
+    });
+    expect(getRepositoryFileLogMock).toHaveBeenCalledWith({
+      url: "https://example.com/svn/trunk/README.md",
+      revision: "10",
+      svn_executable: undefined,
+      limit: 1,
+      start_revision: "8",
+    });
+    expect(within(repositoryRevisionDialog).getByText("Update README from Blame"))
+      .toBeInTheDocument();
+    await fireEvent.click(
+      within(repositoryRevisionDialog).getByRole("button", { name: "关闭 Revision Log" }),
+    );
     await fireEvent.click(
       within(blamePanel).getByRole("button", { name: "关闭仓库文件 Blame" }),
     );

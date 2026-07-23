@@ -90,7 +90,7 @@ function normalizeProjectHistories(value: unknown) {
   );
 }
 
-export function setPendingCommitMessage(message: string) {
+export function setPendingCommitMessage(message: string, notifyCurrentWindow = true) {
   const normalized = message.trim();
   if (!normalized || typeof window === "undefined") {
     return;
@@ -98,7 +98,9 @@ export function setPendingCommitMessage(message: string) {
 
   try {
     window.localStorage.setItem(PENDING_COMMIT_MESSAGE_KEY, normalized);
-    window.dispatchEvent(new Event(COMMIT_MESSAGE_SELECTED_EVENT));
+    if (notifyCurrentWindow) {
+      window.dispatchEvent(new Event(COMMIT_MESSAGE_SELECTED_EVENT));
+    }
   } catch {
     // 本地缓存不可用时不影响日志浏览。
   }

@@ -536,7 +536,18 @@ Certificate information:
     scanWorkspaceStatusMock.mockResolvedValueOnce(makeStatus());
     listWorkspaceFilesMock.mockResolvedValueOnce(makeFileTree());
     await workspaceStore.openPath(undefined, "C:/repo/wc");
-    expect(await screen.findByRole("button", { name: "展开 Update 详情" })).toBeInTheDocument();
+    const expandUpdate = await screen.findByRole("button", { name: "展开 Update 详情" });
+    expect(expandUpdate).toBeInTheDocument();
+    await fireEvent.click(expandUpdate);
+    const restoredUpdatePanel = screen.getByLabelText("主界面 Update");
+    await fireEvent.click(
+      within(restoredUpdatePanel).getByRole("checkbox", {
+        name: "更新完成且所有冲突解决后自动关闭",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByLabelText("主界面 Update")).not.toBeInTheDocument(),
+    );
   });
 
   it("远端变化文件使用真实文件级 Update 任务", async () => {

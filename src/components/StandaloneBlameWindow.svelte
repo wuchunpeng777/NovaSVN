@@ -11,6 +11,7 @@
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
+  import SvnRevisionLogDialog from "./SvnRevisionLogDialog.svelte";
 
   export let targetPath: string;
   export let svnExecutable: string | undefined = undefined;
@@ -60,6 +61,7 @@
     startX: number;
     startWidth: number;
   } | null = null;
+  let selectedLogRevision: string | null = null;
 
   $: resolvedTheme =
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
@@ -191,6 +193,12 @@
   function clearFilter() {
     filterText = "";
     resetTableScroll();
+  }
+
+  function openRevisionLog(revision: string) {
+    if (revision) {
+      selectedLogRevision = revision;
+    }
   }
 
   function resetTableScroll() {
@@ -396,7 +404,19 @@
           role="row"
           style={`grid-template-columns: ${columnTemplate}; min-width: ${tableMinWidth}px`}
         >
-          <span role="cell">{line.revision ? `r${line.revision}` : "-"}</span>
+          <span role="cell" class="revision-cell">
+            {#if line.revision}
+              <button
+                type="button"
+                class="revision-log-button"
+                aria-label={`查看 r${line.revision} Log`}
+                title={`查看 r${line.revision} 提交信息`}
+                on:click={() => openRevisionLog(line.revision)}
+              >r{line.revision}</button>
+            {:else}
+              -
+            {/if}
+          </span>
           <span role="cell" title={line.author || undefined}>{line.author || "-"}</span>
           <span role="cell"><time datetime={line.date} title={line.date}>{formatDate(line.date)}</time></span>
           <span role="cell" class="line-number">{line.line_number}</span>
@@ -422,6 +442,20 @@
     retry={authenticationRetry}
     onSubmit={onSvnAuthenticationSubmit}
   />
+  {#if selectedLogRevision}
+    <SvnRevisionLogDialog
+      revision={selectedLogRevision}
+      {targetPath}
+      {svnExecutable}
+      theme={resolvedTheme}
+      {svnAuthenticationUsername}
+      {svnRememberPassword}
+      {svnAuthenticationLoading}
+      {svnAuthenticationError}
+      {onSvnAuthenticationSubmit}
+      onClose={() => (selectedLogRevision = null)}
+    />
+  {/if}
 </main>
 
 <style>
@@ -614,6 +648,31 @@
 
   .standalone-blame-row > :global(* + *) {
     border-left: 1px solid var(--border);
+  }
+
+  .revision-cell {
+    display: flex;
+    align-items: center;
+  }
+
+  .revision-log-button {
+    min-height: 0;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    padding: 1px 2px;
+    color: var(--accent);
+    font: inherit;
+    font-weight: 650;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .revision-log-button:hover,
+  .revision-log-button:focus-visible {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    outline: 1px solid var(--accent);
+    outline-offset: 1px;
   }
 
   .standalone-blame-head {

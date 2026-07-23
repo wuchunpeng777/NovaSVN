@@ -13,14 +13,75 @@
     path: SvnChangedPath,
   ) => void = () => {};
 
+  type SelectedChangedPath = {
+    entry: SvnLogEntry;
+    path: SvnChangedPath;
+    actions: string[];
+  };
+
+  const actionOrder = new Map([
+    ["A", 0],
+    ["M", 1],
+    ["D", 2],
+  ]);
+
+  function compareRevisions(left: string, right: string) {
+    const leftNumber = Number(left);
+    const rightNumber = Number(right);
+    if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+      return leftNumber - rightNumber;
+    }
+    return left.localeCompare(right, undefined, { numeric: true });
+  }
+
+  function collectChangedPaths(selectedEntries: SvnLogEntry[]): SelectedChangedPath[] {
+    const paths = new Map<
+      string,
+      { entry: SvnLogEntry; path: SvnChangedPath; actions: Set<string> }
+    >();
+
+    for (const entry of selectedEntries) {
+      for (const path of entry.changed_paths) {
+        const action = path.action || "-";
+        const existing = paths.get(path.path);
+        if (!existing) {
+          paths.set(path.path, {
+            entry,
+            path,
+            actions: new Set([action]),
+          });
+          continue;
+        }
+
+        existing.actions.add(action);
+        if (compareRevisions(entry.revision, existing.entry.revision) > 0) {
+          existing.entry = entry;
+          existing.path = path;
+        }
+      }
+    }
+
+    return [...paths.values()]
+      .map(({ entry, path, actions }) => ({
+        entry,
+        path,
+        actions: [...actions].sort(
+          (left, right) =>
+            (actionOrder.get(left) ?? Number.MAX_SAFE_INTEGER) -
+              (actionOrder.get(right) ?? Number.MAX_SAFE_INTEGER) ||
+            left.localeCompare(right),
+        ),
+      }))
+      .sort((left, right) => left.path.path.localeCompare(right.path.path, undefined, {
+        numeric: true,
+      }));
+  }
+
   $: entriesByRevision = new Map(entries.map((entry) => [entry.revision, entry]));
   $: selectedEntries = selectedRevisions
     .map((revision) => entriesByRevision.get(revision))
     .filter((entry): entry is SvnLogEntry => entry !== undefined);
-  $: totalChangedPaths = selectedEntries.reduce(
-    (total, entry) => total + entry.changed_paths.length,
-    0,
-  );
+  $: selectedChangedPaths = collectChangedPaths(selectedEntries);
 </script>
 
 <aside
@@ -32,51 +93,50 @@
     <span class="selection-mark" aria-hidden="true"><ListTree size={17} /></span>
     <div>
       <h2>文件变化</h2>
-      <p>{selectedEntries.length} 个 Revision，{totalChangedPaths} 个路径</p>
+      <p>{selectedEntries.length} 个 Revision，{selectedChangedPaths.length} 个路径</p>
     </div>
   </header>
 
   <div class="selection-body">
-    {#each selectedEntries as entry (entry.revision)}
-      <section class="revision-paths" aria-label={`r${entry.revision} 文件变化`}>
-        <header>
-          <strong>r{entry.revision}</strong>
-          <span title={entry.message || undefined}>{entry.message || "无提交信息"}</span>
-          <em>{entry.changed_paths.length}</em>
-        </header>
-
-        {#if entry.changed_paths.length > 0}
-          <div class="path-list">
-            {#each entry.changed_paths as path (`${entry.revision}:${path.action}:${path.path}`)}
-              {#if path.kind === "dir"}
-                <div class="path-row directory">
-                  <span class="change-action" data-action={path.action}>{path.action || "-"}</span>
-                  <span class="path-icon" aria-hidden="true"><Folder size={15} /></span>
-                  <code title={path.path}>{path.path}</code>
-                  <small>目录</small>
-                </div>
-              {:else}
-                <button
-                  type="button"
-                  class="path-row"
-                  aria-label={`查看 r${entry.revision} 的 ${path.path} diff`}
-                  disabled={diffLoading}
-                  on:click={() => onOpenDiff(entry, path)}
-                  on:contextmenu={(event) => onOpenContextMenu(event, entry, path)}
-                >
-                  <span class="change-action" data-action={path.action}>{path.action || "-"}</span>
-                  <span class="path-icon" aria-hidden="true"><File size={15} /></span>
-                  <code title={path.path}>{path.path}</code>
-                  <small>文件</small>
-                </button>
-              {/if}
-            {/each}
-          </div>
-        {:else}
-          <p class="empty-paths">该 Revision 没有路径变化</p>
-        {/if}
-      </section>
-    {/each}
+    {#if selectedChangedPaths.length > 0}
+      <div class="path-list" aria-label="所选 Revision 文件合集">
+        {#each selectedChangedPaths as changedPath (changedPath.path.path)}
+          {@const { entry, path, actions } = changedPath}
+          {#if path.kind === "dir"}
+            <div class="path-row directory">
+              <span class="change-actions" aria-label={`状态 ${actions.join("、")}`}>
+                {#each actions as action (action)}
+                  <span class="change-action" data-action={action}>{action}</span>
+                {/each}
+              </span>
+              <span class="path-icon" aria-hidden="true"><Folder size={15} /></span>
+              <code title={path.path}>{path.path}</code>
+              <small>目录</small>
+            </div>
+          {:else}
+            <button
+              type="button"
+              class="path-row"
+              aria-label={`查看 r${entry.revision} 的 ${path.path} diff`}
+              disabled={diffLoading}
+              on:click={() => onOpenDiff(entry, path)}
+              on:contextmenu={(event) => onOpenContextMenu(event, entry, path)}
+            >
+              <span class="change-actions" aria-label={`状态 ${actions.join("、")}`}>
+                {#each actions as action (action)}
+                  <span class="change-action" data-action={action}>{action}</span>
+                {/each}
+              </span>
+              <span class="path-icon" aria-hidden="true"><File size={15} /></span>
+              <code title={path.path}>{path.path}</code>
+              <small>文件</small>
+            </button>
+          {/if}
+        {/each}
+      </div>
+    {:else}
+      <p class="empty-paths">所选 Revision 没有路径变化</p>
+    {/if}
   </div>
 </aside>
 
@@ -129,7 +189,6 @@
   }
 
   .selection-heading div,
-  .revision-paths header span,
   .path-row code {
     min-width: 0;
   }
@@ -152,38 +211,7 @@
   .selection-body {
     min-height: 0;
     overflow: auto;
-  }
-
-  .revision-paths {
-    border-bottom: 1px solid var(--details-border);
     padding: 10px 12px 12px;
-  }
-
-  .revision-paths > header {
-    display: grid;
-    grid-template-columns: max-content minmax(0, 1fr) max-content;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 7px;
-  }
-
-  .revision-paths header strong {
-    color: var(--details-accent);
-    font-size: 12px;
-  }
-
-  .revision-paths header span {
-    overflow: hidden;
-    color: var(--details-secondary);
-    font-size: 11px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .revision-paths header em {
-    color: var(--details-secondary);
-    font-size: 11px;
-    font-style: normal;
   }
 
   .path-list {
@@ -197,7 +225,7 @@
 
   .path-row {
     display: grid;
-    grid-template-columns: 24px 16px minmax(0, 1fr) 32px;
+    grid-template-columns: max-content 16px minmax(0, 1fr) 32px;
     align-items: center;
     gap: 6px;
     min-width: 0;
@@ -245,6 +273,11 @@
     color: var(--details-secondary);
     font-size: 10px;
     text-align: right;
+  }
+
+  .change-actions {
+    display: flex;
+    gap: 3px;
   }
 
   .change-action {

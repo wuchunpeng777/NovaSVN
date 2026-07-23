@@ -18,6 +18,7 @@
     COMMIT_MESSAGE_SELECTED_EVENT,
     consumePendingCommitMessage,
     readCommitMessageSettings,
+    setPendingCommitMessage,
     writeCommitMessageSettings,
   } from "../lib/commit-message-history";
   import { LOG_FILE_DIFF_MAX_BYTES } from "../lib/svn-log";
@@ -102,6 +103,8 @@
   let pendingMessageTimer: number | null = null;
   let outOfDateDialogOpen = false;
   let committedBytes = 0;
+  let closeAfterCompletion = false;
+  let autoCloseTriggered = false;
 
   $: resolvedTheme =
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
@@ -263,6 +266,7 @@
     clearFilePreview();
     recordedTaskId = null;
     committedBytes = 0;
+    autoCloseTriggered = false;
 
     try {
       const path = targetPath.trim();
@@ -684,6 +688,7 @@
       commitTask = task;
       committedBytes = nextCommittedBytes;
       recordedTaskId = null;
+      autoCloseTriggered = false;
       schedulePoll(task.task_id, "commit", generation, 0);
     } catch (caught) {
       error = caught as CommandError;
@@ -721,6 +726,7 @@
         target_path: target.target_path,
         return_action: "commit",
       });
+      setPendingCommitMessage(commitMessage, false);
       outOfDateDialogOpen = false;
       await getCurrentWindow().close();
     } catch (caught) {
@@ -854,6 +860,7 @@
         recordedTaskId = task.task_id;
         recordCommitHistory(commitMessage);
         await refreshStatus(currentGeneration);
+        await maybeCloseCompletedCommit();
       }
     } catch (caught) {
       if (currentGeneration === generation) {
@@ -871,6 +878,32 @@
 
   function isTaskRunning(task: Task | null) {
     return task?.status === "pending" || task?.status === "running";
+  }
+
+  async function maybeCloseCompletedCommit() {
+    if (
+      !closeAfterCompletion ||
+      autoCloseTriggered ||
+      commitTask?.status !== "success" ||
+      recordedTaskId !== commitTask.task_id ||
+      scanning
+    ) {
+      return;
+    }
+    autoCloseTriggered = true;
+    try {
+      await getCurrentWindow().close();
+    } catch (caught) {
+      autoCloseTriggered = false;
+      error = caught as CommandError;
+    }
+  }
+
+  function handleCloseAfterCompletionChange(event: Event) {
+    closeAfterCompletion = (event.currentTarget as HTMLInputElement).checked;
+    if (closeAfterCompletion) {
+      void maybeCloseCompletedCommit();
+    }
   }
 
   function taskStatusLabel(task: Task | null, isInitializing: boolean, role: "commit" | "revert" | "add" | "delete" = "commit") {
@@ -1249,6 +1282,18 @@
     </aside>
   </div>
 
+  <footer class="commit-footer">
+    <label>
+      <input
+        type="checkbox"
+        checked={closeAfterCompletion}
+        disabled={autoCloseTriggered}
+        on:change={handleCloseAfterCompletionChange}
+      />
+      <span>提交完成后自动关闭</span>
+    </label>
+  </footer>
+
 {#if fileContextMenu}
   <div
     bind:this={fileContextMenuElement}
@@ -1448,7 +1493,7 @@
     --control: #ffffff;
     --accent: #2674b9;
     display: grid;
-    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
     width: 100vw;
     height: 100vh;
     overflow: hidden;
@@ -1504,6 +1549,9 @@
   [data-theme="dark"] .inline-error { background: #3b2424; color: #ffb0b0; }
   [data-theme="dark"] .revert-notice { background: #213629; color: #9de3aa; }
   .commit-layout { display: grid; grid-template-columns: minmax(320px, 1fr) 8px minmax(280px, var(--message-pane-width)); min-height: 0; padding: 14px 22px 20px; }
+  .commit-footer { display: flex; align-items: center; min-width: 0; border-top: 1px solid var(--border); background: var(--panel); padding: 8px 22px; }
+  .commit-footer label { display: inline-flex; align-items: center; gap: 7px; color: var(--secondary); font-size: 12px; cursor: pointer; }
+  .commit-footer input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
   .review-pane { display: grid; grid-template-rows: minmax(0, 1fr); min-width: 0; min-height: 0; }
   .review-pane.diff-open { grid-template-rows: minmax(140px, 1fr) 8px minmax(180px, var(--diff-pane-height)); }
   .file-pane, .diff-pane, .message-pane { min-width: 0; min-height: 0; border: 1px solid var(--border); background: var(--panel); }
