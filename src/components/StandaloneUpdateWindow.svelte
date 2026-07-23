@@ -11,7 +11,6 @@
     inspectUpdateTarget,
     launchCommitWindow,
     launchConflictWindow,
-    openWorkspaceFile,
     scanWorkspaceStatus,
   } from "../lib/api";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
@@ -492,10 +491,9 @@
     }
     actionError = null;
     try {
-      await openWorkspaceFile({ working_copy_root: target.working_copy_root, file_path: file.path });
-      if (typeof launchConflictWindow === "function") {
-        await launchConflictWindow({ target_path: `${target.working_copy_root}\\${file.path}` });
-      }
+      const root = target.working_copy_root.replace(/[\\/]+$/, "");
+      const relativePath = file.path.replaceAll("/", "\\").replace(/^[\\/]+/, "");
+      await launchConflictWindow({ target_path: `${root}\\${relativePath}` });
     } catch (caught) {
       const commandError = caught as CommandError;
       actionError = commandError.detail
@@ -829,7 +827,7 @@
             <div class="conflict-actions">
               <button
                 type="button"
-                aria-label="打开"
+                aria-label="编辑冲突"
                 disabled={resolutionRunning}
                 on:click={() => openConflict(file)}
               >

@@ -8,7 +8,7 @@ vi.mock("../lib/api", () => ({
   getTask: vi.fn(),
   getWorkspacePathSizes: vi.fn(),
   inspectUpdateTarget: vi.fn(),
-  openWorkspaceFile: vi.fn(),
+  launchConflictWindow: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
 }));
 
@@ -18,7 +18,7 @@ import {
   getTask,
   getWorkspacePathSizes,
   inspectUpdateTarget,
-  openWorkspaceFile,
+  launchConflictWindow,
   scanWorkspaceStatus,
 } from "../lib/api";
 import type { ChangedFile, Task, WorkingCopyStatus } from "../types/api";
@@ -29,7 +29,7 @@ const getSvnLogMock = vi.mocked(getSvnLog);
 const getTaskMock = vi.mocked(getTask);
 const getWorkspacePathSizesMock = vi.mocked(getWorkspacePathSizes);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
-const openWorkspaceFileMock = vi.mocked(openWorkspaceFile);
+const launchConflictWindowMock = vi.mocked(launchConflictWindow);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(() => {
@@ -38,7 +38,7 @@ beforeEach(() => {
   getTaskMock.mockReset();
   getWorkspacePathSizesMock.mockReset();
   inspectUpdateTargetMock.mockReset();
-  openWorkspaceFileMock.mockReset();
+  launchConflictWindowMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
   inspectUpdateTargetMock.mockResolvedValue(makeTarget());
   createSvnOperationTaskMock.mockResolvedValue(makeTask("pending"));
@@ -46,6 +46,7 @@ beforeEach(() => {
     makeTask("success", ["SVN 操作开始执行", "U    src/main.ts", "Updated to revision 21."]),
   );
   getWorkspacePathSizesMock.mockResolvedValue([{ path: "src/main.ts", bytes: 2048 }]);
+  launchConflictWindowMock.mockResolvedValue({ target_path: "C:\\repo\\src\\conflict.ts" });
   scanWorkspaceStatusMock.mockResolvedValue(makeStatus());
   getSvnLogMock.mockResolvedValue({
     target: "src/main.ts",
@@ -307,7 +308,6 @@ describe("StandaloneUpdateWindow", () => {
         }),
       )
       .mockResolvedValueOnce(makeStatus());
-    openWorkspaceFileMock.mockResolvedValue({ target_path: "C:\\repo\\src\\conflict.ts" });
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo\\src" } });
 
@@ -317,10 +317,9 @@ describe("StandaloneUpdateWindow", () => {
     expect(within(pane).getByText("文本冲突")).toBeInTheDocument();
     expect(within(pane).queryByText("other/conflict.ts")).not.toBeInTheDocument();
 
-    await fireEvent.click(within(pane).getByRole("button", { name: "打开" }));
-    expect(openWorkspaceFileMock).toHaveBeenCalledWith({
-      working_copy_root: "C:\\repo",
-      file_path: "src/conflict.ts",
+    await fireEvent.click(within(pane).getByRole("button", { name: "编辑冲突" }));
+    expect(launchConflictWindowMock).toHaveBeenCalledWith({
+      target_path: "C:\\repo\\src\\conflict.ts",
     });
 
     await fireEvent.click(within(pane).getByRole("button", { name: "采用仓库版本" }));
