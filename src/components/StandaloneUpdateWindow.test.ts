@@ -372,6 +372,62 @@ describe("StandaloneUpdateWindow", () => {
     );
   });
 
+  it("解决任务完成后立即移除已解决冲突，不等待状态扫描", async () => {
+    const conflict = makeConflict();
+    const remainingConflict = makeConflict({ path: "src/other-conflict.ts" });
+    let finishRescan: (status: WorkingCopyStatus) => void = () => {};
+    inspectUpdateTargetMock.mockResolvedValue(
+      makeTarget({ target_path: "C:\\repo\\src", relative_path: "src", kind: "dir" }),
+    );
+    createSvnOperationTaskMock
+      .mockResolvedValueOnce(makeTask("pending"))
+      .mockResolvedValueOnce(
+        makeTask("pending", [], { task_id: "resolve-delayed", title: "解决冲突" }),
+      );
+    getTaskMock
+      .mockResolvedValueOnce(makeTask("success", ["C    src/conflict.ts"]))
+      .mockResolvedValueOnce(
+        makeTask("success", [], { task_id: "resolve-delayed", title: "解决冲突" }),
+      );
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce(
+        makeStatus({
+          conflicted: 2,
+          total: 2,
+          returned: 2,
+          files: [conflict, remainingConflict],
+        }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<WorkingCopyStatus>((resolve) => {
+            finishRescan = resolve;
+          }),
+      );
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo\\src" } });
+
+    const pane = await screen.findByLabelText("冲突处理");
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalled());
+    expect(await within(pane).findByText("src/conflict.ts")).toBeInTheDocument();
+    expect(within(pane).getByText("src/other-conflict.ts")).toBeInTheDocument();
+    const conflictItem = within(pane).getByText("src/conflict.ts").closest("article");
+    expect(conflictItem).not.toBeNull();
+    await fireEvent.click(within(conflictItem as HTMLElement).getByRole("button", { name: "采用仓库版本" }));
+
+    await waitFor(() =>
+      expect(within(pane).queryByText("src/conflict.ts")).not.toBeInTheDocument(),
+    );
+    expect(within(pane).getByText("src/other-conflict.ts")).toBeInTheDocument();
+
+    finishRescan(makeStatus({
+      conflicted: 1,
+      total: 1,
+      returned: 1,
+      files: [remainingConflict],
+    }));
+  });
+
   it("目标检查失败时显示后端错误", async () => {
     inspectUpdateTargetMock.mockRejectedValue({
       code: "WORKSPACE_NOT_SVN",

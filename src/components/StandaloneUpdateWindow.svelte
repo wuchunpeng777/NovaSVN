@@ -54,6 +54,7 @@
   let resolutionPath: string | null = null;
   let resolutionKind: SvnOperationKind | null = null;
   let resolvedUpdateActions = new Map<string, "L" | "U">();
+  let resolvedConflictPaths = new Set<string>();
   let status: WorkingCopyStatus | null = null;
   let conflicts: ChangedFile[] = [];
   let conflictScanCompleted = false;
@@ -146,6 +147,7 @@
     window.addEventListener("blur", closeFileContextMenu);
     window.addEventListener("resize", closeFileContextMenu);
     window.addEventListener("keydown", handleWindowKeydown);
+    window.addEventListener("focus", handleWindowFocus);
     void startUpdate();
   });
 
@@ -158,6 +160,7 @@
     window.removeEventListener("blur", closeFileContextMenu);
     window.removeEventListener("resize", closeFileContextMenu);
     window.removeEventListener("keydown", handleWindowKeydown);
+    window.removeEventListener("focus", handleWindowFocus);
   });
 
   function handleThemeChange(event: MediaQueryListEvent) {
@@ -180,6 +183,7 @@
     resolutionPath = null;
     resolutionKind = null;
     resolvedUpdateActions = new Map();
+    resolvedConflictPaths = new Set();
     updatedFileSizes = new Map();
     autoFollowOutput = true;
     expectedAutoScrollTop = null;
@@ -267,13 +271,16 @@
       if (role === "resolution") {
         resolutionHistory = [...resolutionHistory, task];
         if (task.status === "success" && resolutionPath && resolutionKind) {
+          const resolvedPath = resolutionPath;
           const action = resolutionKind === "resolve_theirs_full" ? "U" : "L";
-          resolvedUpdateActions = new Map(resolvedUpdateActions).set(resolutionPath, action);
+          resolvedUpdateActions = new Map(resolvedUpdateActions).set(resolvedPath, action);
+          resolvedConflictPaths = new Set(resolvedConflictPaths).add(resolvedPath);
+          conflicts = conflicts.filter((file) => file.path !== resolvedPath);
         } else if (task.status !== "success") {
           actionError = task.error ?? "冲突处理失败";
         }
       }
-      await refreshConflicts(currentGeneration);
+      await refreshConflicts(currentGeneration, role !== "resolution");
       if (role === "update" && task.status === "success" && conflictScanCompleted) {
         await followUpdateOutput(true);
       }
@@ -287,12 +294,17 @@
     }
   }
 
-  async function refreshConflicts(currentGeneration = generation) {
+  async function refreshConflicts(
+    currentGeneration = generation,
+    showScanning = true,
+  ) {
     if (!target) {
       return;
     }
-    scanning = true;
-    conflictScanCompleted = false;
+    if (showScanning) {
+      scanning = true;
+      conflictScanCompleted = false;
+    }
     statusError = null;
     try {
       const nextStatus = await scanWorkspaceStatus({
@@ -311,9 +323,12 @@
       conflicts = nextStatus.files.filter(
         (file) =>
           (file.status === "conflicted" || file.conflict_kind !== null) &&
-          isPathInUpdateTarget(file.path),
+          isPathInUpdateTarget(file.path) &&
+          !resolvedConflictPaths.has(file.path),
       );
-      conflictScanCompleted = true;
+      if (showScanning) {
+        conflictScanCompleted = true;
+      }
       if (!isTaskRunning(resolutionTask)) {
         resolutionPath = null;
       }
@@ -323,9 +338,25 @@
       }
     } finally {
       if (currentGeneration === generation) {
-        scanning = false;
+        if (showScanning) {
+          scanning = false;
+        }
       }
     }
+  }
+
+  function handleWindowFocus() {
+    if (
+      !target ||
+      updateRunning ||
+      resolutionRunning ||
+      scanning ||
+      !conflictScanCompleted ||
+      updateTask?.status !== "success"
+    ) {
+      return;
+    }
+    void refreshConflicts(generation, false);
   }
 
   async function openFileContextMenu(event: MouseEvent, path: string) {
