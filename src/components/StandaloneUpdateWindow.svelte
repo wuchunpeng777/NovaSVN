@@ -7,6 +7,7 @@
     createSvnOperationTask,
     getSvnLog,
     getTask,
+    getWorkspacePathSizes,
     inspectUpdateTarget,
     launchCommitWindow,
     launchConflictWindow,
@@ -77,6 +78,7 @@
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
   let returningToCommit = false;
+  let updatedFileSizes = new Map<string, number>();
 
   const terminalStatuses: TaskStatus[] = [
     "success",
@@ -112,6 +114,10 @@
   $: updatedFiles = applyResolvedUpdateActions(
     extractUpdatedFiles(updateTask?.logs ?? []),
     resolvedUpdateActions,
+  );
+  $: updatedBytes = updatedFiles.reduce(
+    (total, file) => total + (updatedFileSizes.get(file.path) ?? 0),
+    0,
   );
   $: provisionalConflictPaths = updatedFiles
     .filter((file) => file.action.includes("C"))
@@ -173,6 +179,7 @@
     resolutionPath = null;
     resolutionKind = null;
     resolvedUpdateActions = new Map();
+    updatedFileSizes = new Map();
     autoFollowOutput = true;
     expectedAutoScrollTop = null;
     closeFileContextMenu();
@@ -241,6 +248,10 @@
         return;
       }
       if (role === "update") {
+        await refreshUpdatedFileSizes(task.logs, currentGeneration);
+        if (currentGeneration !== generation) {
+          return;
+        }
         updateTask = task;
         void followUpdateOutput();
       } else {
@@ -547,12 +558,59 @@
         continue;
       }
       const action = match[1].replaceAll(" ", "");
-      const path = match[2].trim();
+      const path = normalizeUpdateOutputPath(match[2]);
       if (action && path) {
         files.set(path, { action, path });
       }
     }
     return [...files.values()];
+  }
+
+  async function refreshUpdatedFileSizes(
+    logs: Task["logs"],
+    currentGeneration: number,
+  ) {
+    if (!target) {
+      return;
+    }
+    const paths = extractUpdatedFiles(logs).map((file) => file.path);
+    if (paths.length === 0) {
+      return;
+    }
+    try {
+      const sizes = await getWorkspacePathSizes({
+        working_copy_root: target.working_copy_root,
+        paths,
+      });
+      if (currentGeneration !== generation) {
+        return;
+      }
+      const next = new Map(updatedFileSizes);
+      for (const entry of sizes) {
+        next.set(normalizeUpdateOutputPath(entry.path), entry.bytes);
+      }
+      updatedFileSizes = next;
+    } catch {
+      // Size metrics are supplementary and must not turn a successful Update into an error.
+    }
+  }
+
+  function normalizeUpdateOutputPath(path: string) {
+    let normalizedPath = path.trim().replaceAll("\\", "/").replace(/^\.\//, "");
+    const normalizedRoot = target?.working_copy_root
+      .trim()
+      .replaceAll("\\", "/")
+      .replace(/\/+$/, "");
+    if (!normalizedRoot) {
+      return normalizedPath;
+    }
+    const windowsPath = /^[a-z]:\//i.test(normalizedRoot) || normalizedRoot.startsWith("//");
+    const comparablePath = windowsPath ? normalizedPath.toLocaleLowerCase("en-US") : normalizedPath;
+    const comparableRoot = windowsPath ? normalizedRoot.toLocaleLowerCase("en-US") : normalizedRoot;
+    if (comparablePath.startsWith(`${comparableRoot}/`)) {
+      normalizedPath = normalizedPath.slice(normalizedRoot.length + 1);
+    }
+    return normalizedPath;
   }
 
   async function returnToCommitWindow() {
@@ -659,7 +717,12 @@
     <span>目标 <strong>{target?.relative_path ?? "工作副本根目录"}</strong></span>
     <span>Revision <strong>{status?.revision_range ?? target?.revision ?? "-"}</strong></span>
     <span>冲突 <strong class:has-conflicts={conflictCount > 0}>{conflictCount}</strong></span>
-    <OperationMetrics task={updateTask} total={updatedFiles.length} label="总更新量" active={updateRunning} />
+    <OperationMetrics
+      task={updateTask}
+      totalBytes={updatedBytes}
+      label="总更新量"
+      active={updateRunning}
+    />
     <button
       type="button"
       class="icon-button"

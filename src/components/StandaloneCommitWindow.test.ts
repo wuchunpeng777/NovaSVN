@@ -114,6 +114,12 @@ describe("StandaloneCommitWindow", () => {
     expect(within(pane).getByRole("button", { name: "Add src/ignored.ts" })).toBeInTheDocument();
     expect(within(pane).getAllByRole("checkbox")).toHaveLength(2);
     expect(within(pane).getAllByRole("checkbox").every((input) => (input as HTMLInputElement).checked)).toBe(true);
+    const metrics = screen.getByLabelText("操作指标");
+    expect(metrics).toHaveTextContent("总提交量 200 B");
+    expect(metrics).not.toHaveTextContent("项/秒");
+
+    await fireEvent.click(within(pane).getByRole("checkbox", { name: "src/main.ts" }));
+    expect(metrics).toHaveTextContent("总提交量 100 B");
   });
 
   it("显示未版本控制文件并可 Add 后刷新列表", async () => {
@@ -285,6 +291,7 @@ describe("StandaloneCommitWindow", () => {
       });
     });
     expect(await screen.findByText("提交完成")).toBeInTheDocument();
+    expect(screen.getByLabelText("操作指标")).toHaveTextContent("总提交量 100 B");
     expect(JSON.parse(localStorage.getItem("novasvn:commit-message-settings") ?? "{}"))
       .toMatchObject({
         template: "默认模板",

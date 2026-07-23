@@ -6,6 +6,7 @@ vi.mock("../lib/api", () => ({
   createSvnOperationTask: vi.fn(),
   getSvnLog: vi.fn(),
   getTask: vi.fn(),
+  getWorkspacePathSizes: vi.fn(),
   inspectUpdateTarget: vi.fn(),
   openWorkspaceFile: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
@@ -15,6 +16,7 @@ import {
   createSvnOperationTask,
   getSvnLog,
   getTask,
+  getWorkspacePathSizes,
   inspectUpdateTarget,
   openWorkspaceFile,
   scanWorkspaceStatus,
@@ -25,6 +27,7 @@ import StandaloneUpdateWindow from "./StandaloneUpdateWindow.svelte";
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
 const getSvnLogMock = vi.mocked(getSvnLog);
 const getTaskMock = vi.mocked(getTask);
+const getWorkspacePathSizesMock = vi.mocked(getWorkspacePathSizes);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 const openWorkspaceFileMock = vi.mocked(openWorkspaceFile);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
@@ -33,6 +36,7 @@ beforeEach(() => {
   createSvnOperationTaskMock.mockReset();
   getSvnLogMock.mockReset();
   getTaskMock.mockReset();
+  getWorkspacePathSizesMock.mockReset();
   inspectUpdateTargetMock.mockReset();
   openWorkspaceFileMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
@@ -41,6 +45,7 @@ beforeEach(() => {
   getTaskMock.mockResolvedValue(
     makeTask("success", ["SVN 操作开始执行", "U    src/main.ts", "Updated to revision 21."]),
   );
+  getWorkspacePathSizesMock.mockResolvedValue([{ path: "src/main.ts", bytes: 2048 }]);
   scanWorkspaceStatusMock.mockResolvedValue(makeStatus());
   getSvnLogMock.mockResolvedValue({
     target: "src/main.ts",
@@ -91,6 +96,13 @@ describe("StandaloneUpdateWindow", () => {
       "工作副本已更新到 Revision 21 · 冲突 0",
     );
     expect(screen.queryByRole("button", { name: "返回主界面" })).not.toBeInTheDocument();
+    expect(getWorkspacePathSizesMock).toHaveBeenCalledWith({
+      working_copy_root: "C:\\repo",
+      paths: ["src/main.ts"],
+    });
+    const metrics = screen.getByLabelText("操作指标");
+    expect(metrics).toHaveTextContent("总更新量 2.00 KB");
+    expect(metrics).not.toHaveTextContent("项/秒");
     expect(scanWorkspaceStatusMock).toHaveBeenCalledWith({
       working_copy_root: "C:\\repo",
       scope_path: "src/main.ts",

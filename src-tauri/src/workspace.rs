@@ -82,6 +82,18 @@ pub struct ListWorkspaceFilesRequest {
     pub max_files: Option<usize>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetWorkspacePathSizesRequest {
+    pub working_copy_root: String,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspacePathSize {
+    pub path: String,
+    pub bytes: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkingCopyStatus {
     pub working_copy_root: String,
@@ -1577,6 +1589,39 @@ pub fn list_workspace_files(
         truncated: read_state.truncated,
         nodes,
     })
+}
+
+pub fn get_workspace_path_sizes(
+    request: GetWorkspacePathSizesRequest,
+) -> Result<Vec<WorkspacePathSize>, NovaError> {
+    const MAX_PATHS: usize = 5000;
+
+    if request.paths.len() > MAX_PATHS {
+        return Err(NovaError::command(
+            "WORKSPACE_PATH_SIZE_LIMIT_EXCEEDED",
+            "读取文件大小的路径过多",
+            Some(format!("最多允许读取 {MAX_PATHS} 个路径。")),
+            true,
+        ));
+    }
+
+    let root = normalize_workspace_path(&request.working_copy_root)?;
+    request
+        .paths
+        .into_iter()
+        .map(|path| {
+            let normalized_path = normalize_relative_file_path(&path)?;
+            let bytes = fs::metadata(root.join(&normalized_path))
+                .ok()
+                .filter(|metadata| metadata.is_file())
+                .map(|metadata| metadata.len())
+                .unwrap_or(0);
+            Ok(WorkspacePathSize {
+                path: normalized_path,
+                bytes,
+            })
+        })
+        .collect()
 }
 
 fn run_status_with_updates(
@@ -6106,6 +6151,29 @@ line two</property>
         assert!(normalize_svn_property_name(" ").is_err());
         assert!(normalize_svn_property_name("svn:ignore\nnext").is_err());
     }
+
+    #[test]
+    fn reads_workspace_path_sizes_and_reports_missing_files_as_zero() {
+        let root =
+            std::env::temp_dir().join(format!("novasvn-path-size-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.txt"), b"123456").unwrap();
+
+        let sizes = get_workspace_path_sizes(GetWorkspacePathSizesRequest {
+            working_copy_root: root.display().to_string(),
+            paths: vec!["src/main.txt".to_string(), "src/missing.txt".to_string()],
+        })
+        .unwrap();
+
+        assert_eq!(sizes.len(), 2);
+        assert_eq!(sizes[0].path, "src/main.txt");
+        assert_eq!(sizes[0].bytes, 6);
+        assert_eq!(sizes[1].path, "src/missing.txt");
+        assert_eq!(sizes[1].bytes, 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn chooses_property_delete_for_blank_values() {
         assert_eq!(

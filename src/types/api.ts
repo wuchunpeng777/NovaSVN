@@ -565,6 +565,16 @@ export interface ListWorkspaceFilesRequest {
   max_files?: number;
 }
 
+export interface GetWorkspacePathSizesRequest {
+  working_copy_root: string;
+  paths: string[];
+}
+
+export interface WorkspacePathSize {
+  path: string;
+  bytes: number;
+}
+
 export interface ChangedFile {
   path: string;
   status: string;

@@ -101,6 +101,7 @@
   let themeMediaQuery: MediaQueryList | null = null;
   let pendingMessageTimer: number | null = null;
   let outOfDateDialogOpen = false;
+  let committedBytes = 0;
 
   $: resolvedTheme =
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
@@ -112,6 +113,10 @@
   );
   $: unversionedFiles = visibleFiles.filter((file) => file.status === "unversioned");
   $: selectedCount = committableFiles.filter((file) => selectedPaths.has(file.path)).length;
+  $: selectedBytes = committableFiles
+    .filter((file) => selectedPaths.has(file.path))
+    .reduce((total, file) => total + (file.file_size ?? 0), 0);
+  $: displayedCommitBytes = commitTask ? committedBytes : selectedBytes;
   $: commitRunning = isTaskRunning(commitTask);
   $: addRunning = isTaskRunning(addTask);
   $: deleteRunning = isTaskRunning(deleteTask);
@@ -257,6 +262,7 @@
     selectedPaths = new Set();
     clearFilePreview();
     recordedTaskId = null;
+    committedBytes = 0;
 
     try {
       const path = targetPath.trim();
@@ -661,6 +667,7 @@
     }
     error = null;
     statusError = null;
+    const nextCommittedBytes = selectedBytes;
     try {
       const task = await createCommitTask({
         working_copy_root: target.working_copy_root,
@@ -671,6 +678,7 @@
         svn_executable: svnExecutable?.trim() || undefined,
       });
       commitTask = task;
+      committedBytes = nextCommittedBytes;
       recordedTaskId = null;
       schedulePoll(task.task_id, "commit", generation, 0);
     } catch (caught) {
@@ -981,7 +989,12 @@
     <span>目标 <strong>{target?.relative_path ?? "工作副本根目录"}</strong></span>
     <span>Revision <strong>{status?.revision_range ?? target?.revision ?? "-"}</strong></span>
     <span>已选择 <strong>{selectedCount} / {committableFiles.length}</strong></span>
-    <OperationMetrics task={commitTask} total={selectedCount} label="总提交量" active={commitRunning} />
+    <OperationMetrics
+      task={commitTask}
+      totalBytes={displayedCommitBytes}
+      label="总提交量"
+      active={commitRunning}
+    />
   </section>
 
   <section

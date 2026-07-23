@@ -3,7 +3,7 @@
   import type { Task } from "../types/api";
 
   export let task: Task | null = null;
-  export let total = 0;
+  export let totalBytes = 0;
   export let label = "总量";
   export let active = false;
 
@@ -16,7 +16,7 @@
   }
   $: elapsedMs = task ? Math.max(0, (active ? now : task.updated_at) - task.created_at) : 0;
   $: elapsedSeconds = elapsedMs / 1000;
-  $: rate = elapsedSeconds > 0 ? total / elapsedSeconds : 0;
+  $: rateBytes = elapsedSeconds > 0 ? totalBytes / elapsedSeconds : 0;
 
   onDestroy(() => {
     if (timer !== null) window.clearInterval(timer);
@@ -31,12 +31,27 @@
       ? `${hours}:${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`
       : `${minutes}:${String(rest).padStart(2, "0")}`;
   }
+
+  function formatBytes(value: number) {
+    if (!Number.isFinite(value) || value <= 0) {
+      return "0 B";
+    }
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let size = value;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex += 1;
+    }
+    const precision = unitIndex === 0 ? 0 : size >= 100 ? 0 : size >= 10 ? 1 : 2;
+    return `${size.toFixed(precision)} ${units[unitIndex]}`;
+  }
 </script>
 
 <div class="operation-metrics" aria-label="操作指标">
   <span>用时 <strong>{formatElapsed(elapsedSeconds)}</strong></span>
-  <span>当前速度 <strong>{rate.toFixed(rate >= 10 ? 0 : 1)} 项/秒</strong></span>
-  <span>{label} <strong>{total}</strong></span>
+  <span>当前速度 <strong>{formatBytes(rateBytes)}/秒</strong></span>
+  <span>{label} <strong>{formatBytes(totalBytes)}</strong></span>
 </div>
 
 <style>

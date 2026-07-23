@@ -43,6 +43,7 @@ import type {
   GetSvnBlameRequest,
   GetSvnLogRequest,
   GetSvnPropertiesRequest,
+  GetWorkspacePathSizesRequest,
   IgnoreWorkspacePathRequest,
   InspectUpdateTargetRequest,
   ExternalToolLaunch,
@@ -91,6 +92,7 @@ import type {
   UpdateTargetSummary,
   WorkingCopyStatus,
   WorkspaceFileTree,
+  WorkspacePathSize,
   WorkspaceSummary,
 } from "../types/api";
 
@@ -420,6 +422,12 @@ export function listWorkspaceFiles(
   request: ListWorkspaceFilesRequest,
 ): Promise<WorkspaceFileTree> {
   return callBackend<WorkspaceFileTree>("list_workspace_files", { request });
+}
+
+export function getWorkspacePathSizes(
+  request: GetWorkspacePathSizesRequest,
+): Promise<WorkspacePathSize[]> {
+  return callBackend<WorkspacePathSize[]>("get_workspace_path_sizes", { request });
 }
 
 export function getFileDiff(request: GetFileDiffRequest): Promise<FileDiff> {

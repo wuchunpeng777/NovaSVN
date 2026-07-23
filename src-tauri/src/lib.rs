@@ -55,10 +55,11 @@ use workspace::{
     FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, GetPathSvnLogRequest,
     GetRepositoryFileBlameRequest, GetRepositoryFileLogRequest, GetRepositoryFilePropertiesRequest,
     GetRevisionFileContentDiffRequest, GetSvnBlameRequest, GetSvnLogRequest,
-    GetSvnPropertiesRequest, IgnoreWorkspacePathRequest, InspectUpdateTargetRequest,
-    ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace, ResolveTextConflictRequest,
-    ResolveTextConflictResult, ScanWorkspaceStatusRequest, SetSvnPropertyRequest, SvnBlame, SvnLog,
-    SvnProperties, UpdateTargetSummary, WorkingCopyStatus, WorkspaceFileTree, WorkspaceSummary,
+    GetSvnPropertiesRequest, GetWorkspacePathSizesRequest, IgnoreWorkspacePathRequest,
+    InspectUpdateTargetRequest, ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace,
+    ResolveTextConflictRequest, ResolveTextConflictResult, ScanWorkspaceStatusRequest,
+    SetSvnPropertyRequest, SvnBlame, SvnLog, SvnProperties, UpdateTargetSummary, WorkingCopyStatus,
+    WorkspaceFileTree, WorkspacePathSize, WorkspaceSummary,
 };
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -961,6 +962,17 @@ async fn list_workspace_files(
 }
 
 #[tauri::command]
+async fn get_workspace_path_sizes(
+    request: GetWorkspacePathSizesRequest,
+) -> CommandResult<Vec<WorkspacePathSize>> {
+    let sizes = run_blocking_command("读取工作副本文件大小", move || {
+        workspace::get_workspace_path_sizes(request)
+    })
+    .await?;
+    Ok(CommandResponse::success(sizes))
+}
+
+#[tauri::command]
 fn get_file_diff(request: GetFileDiffRequest) -> CommandResult<FileDiff> {
     println!("[NovaSVN] get_file_diff command received");
     Ok(CommandResponse::success(workspace::get_file_diff(request)?))
@@ -1213,6 +1225,7 @@ pub fn run() {
             get_recent_workspace,
             scan_workspace_status,
             list_workspace_files,
+            get_workspace_path_sizes,
             get_file_diff,
             get_file_content_diff,
             resolve_text_conflict,
