@@ -33,7 +33,10 @@ use svn::{
     ConfigureSvnAuthenticationRequest, ConfigureSvnCertificateTrustRequest, DetectSvnRequest,
     SvnAuthenticationStatus, SvnCertificateTrustStatus, SvnClient, SvnDetection,
 };
-use system_integration::{LaunchLogWindowRequest, LaunchedLogWindow, StartupIntent};
+use system_integration::{
+    LaunchLogWindowRequest, LaunchPathWindowRequest, LaunchedLogWindow, LaunchedPathWindow,
+    StartupIntent,
+};
 use task::{
     CreateApplyPatchTaskRequest, CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest,
     CreateMergeTaskRequest, CreateMockTaskRequest, CreatePartialCommitTaskRequest,
@@ -417,6 +420,22 @@ fn launch_log_window(request: LaunchLogWindowRequest) -> CommandResult<LaunchedL
     println!("[NovaSVN] launch_log_window command received");
     Ok(CommandResponse::success(
         system_integration::launch_log_window(request)?,
+    ))
+}
+
+#[tauri::command]
+fn launch_update_window(request: LaunchPathWindowRequest) -> CommandResult<LaunchedPathWindow> {
+    println!("[NovaSVN] launch_update_window command received");
+    Ok(CommandResponse::success(
+        system_integration::launch_update_window(request)?,
+    ))
+}
+
+#[tauri::command]
+fn launch_conflict_window(request: LaunchPathWindowRequest) -> CommandResult<LaunchedPathWindow> {
+    println!("[NovaSVN] launch_conflict_window command received");
+    Ok(CommandResponse::success(
+        system_integration::launch_conflict_window(request)?,
     ))
 }
 
@@ -1097,10 +1116,12 @@ pub fn run() {
             let startup_intent = system_integration::startup_intent();
             let window_surface = window_state::surface_name(startup_intent.action.as_deref());
             let standalone_title = match startup_intent.action.as_deref() {
+                Some("checkout") => Some("NovaSVN Checkout"),
                 Some("commit") => Some("NovaSVN Commit"),
                 Some("log") => Some("NovaSVN Log"),
                 Some("blame") => Some("NovaSVN Blame"),
                 Some("update") => Some("NovaSVN Update"),
+                Some("resolve") => Some("NovaSVN Conflict Resolver"),
                 _ => None,
             };
             let app_data_dir = app.path().app_data_dir()?;
@@ -1133,6 +1154,8 @@ pub fn run() {
             sync_app_menu_state,
             get_startup_intent,
             launch_log_window,
+            launch_update_window,
+            launch_conflict_window,
             launch_external_tool,
             open_file_location,
             open_workspace_file,

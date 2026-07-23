@@ -6,6 +6,7 @@
     Download,
     Ellipsis,
     FileUp,
+    GitMerge,
     GitBranch,
     FolderOpen,
     GitCommitHorizontal,
@@ -24,6 +25,7 @@
     X,
   } from "@lucide/svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
+  import LogMergeDialog from "../LogMergeDialog.svelte";
   import SvnLogRevisionList from "../SvnLogRevisionList.svelte";
   import ConflictResolver from "./ConflictResolver.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
@@ -318,7 +320,6 @@
   export let pendingSvnOperationKind: PendingSvnOperationKind | null = null;
   export let svnOperationFeedback: SvnOperationFeedback | null = null;
   export let taskError: CommandError | null = null;
-  export let backendMessage = "";
   export let commandError: CommandError | null = null;
 
   export let svnDetection: SvnDetection | null = null;
@@ -629,6 +630,9 @@
   let revisionFileDiffError: CommandError | null = null;
   let revisionFileDiffGeneration = 0;
   let expandedTimelineRevisions = new Set<string>();
+  let timelineMergeRevisions = new Set<string>();
+  let timelineMergeSelectionAnchor: string | null = null;
+  let timelineMergeDialogOpen = false;
   let collapsedTreePaths = new Set<string>();
   let openRowMenuPath: string | null = null;
   let selectedRowPaths = new Set<string>();
@@ -651,8 +655,6 @@
   let virtualizedRepositoryBlameSource: SvnBlame | null = null;
   let contextMenuElement: HTMLElement | null = null;
   let commitMessageElement: HTMLTextAreaElement | null = null;
-  let repositoryCheckoutElement: HTMLDetailsElement | null = null;
-  let repositoryCheckoutUrlElement: HTMLInputElement | null = null;
   let commitMessageFocusRequested = false;
   let reportedActiveWorkspacePath: string | null | undefined;
   let selectionWorkspaceRoot: string | null = null;
@@ -1124,6 +1126,51 @@
     }
     expandedTimelineRevisions = next;
   }
+
+  function toggleTimelineMerge(event: MouseEvent, revision: string) {
+    const checkbox = event.currentTarget as HTMLInputElement;
+    const next = new Set(timelineMergeRevisions);
+    if (event.shiftKey && timelineMergeSelectionAnchor) {
+      const anchorIndex = filteredLogEntries.findIndex(
+        (entry) => entry.revision === timelineMergeSelectionAnchor,
+      );
+      const targetIndex = filteredLogEntries.findIndex((entry) => entry.revision === revision);
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const [start, end] = [anchorIndex, targetIndex].sort((left, right) => left - right);
+        for (const entry of filteredLogEntries.slice(start, end + 1)) {
+          if (checkbox.checked) next.add(entry.revision);
+          else next.delete(entry.revision);
+        }
+      }
+    } else if (checkbox.checked) {
+      next.add(revision);
+    } else {
+      next.delete(revision);
+    }
+    timelineMergeRevisions = next;
+    timelineMergeSelectionAnchor = revision;
+  }
+
+  function clearTimelineMergeSelection() {
+    timelineMergeRevisions = new Set();
+    timelineMergeSelectionAnchor = null;
+    timelineMergeDialogOpen = false;
+  }
+
+  function openTimelineMergeDialog() {
+    if (!workspace?.repository_url || !workspace.repository_root || timelineMergeRevisions.size === 0) {
+      return;
+    }
+    timelineMergeDialogOpen = true;
+  }
+
+  function closeTimelineMergeDialog() {
+    timelineMergeDialogOpen = false;
+  }
+
+  $: selectedTimelineMergeRevisions = [...timelineMergeRevisions].sort(
+    (left, right) => Number(left) - Number(right),
+  );
 
   function openTimelineEntryDiff(entry: SvnLogEntry, path: SvnChangedPath) {
     return openChangedPathRevisionDiff(entry.revision, path.path, path.action);
@@ -2514,10 +2561,6 @@
       syncSystemTheme();
       themeMediaQuery.addEventListener("change", syncSystemTheme);
     }
-    if (view.id === "repository" && repositoryCheckoutForm.localPath.trim()) {
-      repositoryCheckoutElement?.scrollIntoView?.({ block: "center" });
-      repositoryCheckoutUrlElement?.focus();
-    }
   });
 
   $: files = workingCopyStatus?.files ?? [];
@@ -3138,6 +3181,7 @@
             loading={svnLogLoading}
             hasLoadError={svnLogError !== null}
             expandedRevisions={expandedTimelineRevisions}
+            mergeRevisions={timelineMergeRevisions}
             diffLoading={revisionFileDiffLoading}
             compact={selectedRevisionFileDiff !== null}
             theme={resolvedTheme}
@@ -3146,6 +3190,7 @@
             formatDate={formatTimelineDate}
             revertDisabled={timelineRevertDisabled}
             onTogglePaths={toggleTimelineEntryPaths}
+            onToggleMerge={toggleTimelineMerge}
             onOpenDiff={openTimelineEntryDiff}
             onRevert={revertTimelineEntry}
           />
@@ -3223,6 +3268,37 @@
             </aside>
           {/if}
         </div>
+        {#if selectedTimelineMergeRevisions.length > 0}
+          <div class="merge-selection-bar" role="toolbar" aria-label="Revision Merge 操作">
+            <div>
+              <strong>已选 {selectedTimelineMergeRevisions.length} 个 Revision</strong>
+              <span>
+                {selectedTimelineMergeRevisions.length <= 8
+                  ? selectedTimelineMergeRevisions.map((revision) => `r${revision}`).join("、")
+                  : `r${selectedTimelineMergeRevisions[0]} 至 r${selectedTimelineMergeRevisions[selectedTimelineMergeRevisions.length - 1]}`}
+              </span>
+            </div>
+            <button type="button" on:click={clearTimelineMergeSelection}>清除</button>
+            <button type="button" class="primary" on:click={openTimelineMergeDialog}>
+              <GitMerge size={16} aria-hidden="true" /> Merge 到...
+            </button>
+          </div>
+        {/if}
+        {#if timelineMergeDialogOpen && workspace?.repository_url && workspace.repository_root}
+          <LogMergeDialog
+            sourceUrl={workspace.repository_url}
+            sourceRepositoryRoot={workspace.repository_root}
+            sourceWorkingCopyRoot={workspace.working_copy_root}
+            revisions={selectedTimelineMergeRevisions}
+            svnExecutable={svnExecutableInput.trim() || undefined}
+            onClose={closeTimelineMergeDialog}
+            onMerged={() => {
+              timelineMergeDialogOpen = false;
+              timelineMergeRevisions = new Set();
+              timelineMergeSelectionAnchor = null;
+            }}
+          />
+        {/if}
       {:else if view.id === "repository"}
         <section class="pane-header">
           <div>
@@ -3988,11 +4064,7 @@
           </div>
         </details>
 
-        <details
-          bind:this={repositoryCheckoutElement}
-          class="advanced-section"
-          open={Boolean(repositoryCheckoutForm.url || repositoryCheckoutForm.localPath)}
-        >
+        <details class="advanced-section" open={Boolean(repositoryCheckoutForm.url || repositoryCheckoutForm.localPath)}>
           <summary>Checkout 到本地</summary>
           <div class="copy-form" aria-label="仓库 Checkout">
             <button
@@ -4006,7 +4078,6 @@
               使用当前 URL
             </button>
             <input
-              bind:this={repositoryCheckoutUrlElement}
               type="url"
               value={repositoryCheckoutForm.url}
               placeholder="仓库 URL"
@@ -5625,7 +5696,7 @@
                   {/if}
                 </div>
               {:else}
-                <p class="muted">{backendMessage || "暂无后台任务"}</p>
+                <p class="muted">暂无后台任务</p>
               {/if}
               <div class="task-list">
                 {#each tasks.slice(0, 6) as task (task.task_id)}

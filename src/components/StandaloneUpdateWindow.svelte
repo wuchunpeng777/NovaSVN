@@ -7,6 +7,7 @@
     getSvnLog,
     getTask,
     inspectUpdateTarget,
+    launchConflictWindow,
     openWorkspaceFile,
     scanWorkspaceStatus,
   } from "../lib/api";
@@ -22,7 +23,9 @@
     WorkingCopyStatus,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import OperationMetrics from "./OperationMetrics.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
+  import SvnLogRevisionList from "./SvnLogRevisionList.svelte";
 
   export let targetPath: string;
   export let svnExecutable: string | undefined = undefined;
@@ -57,6 +60,7 @@
   let fileLogError: CommandError | null = null;
   let fileLogGeneration = 0;
   let fileLogDialogElement: HTMLDivElement | null = null;
+  let expandedFileLogRevisions = new Set<string>();
   let initializing = true;
   let scanning = false;
   let error: CommandError | null = null;
@@ -117,6 +121,9 @@
     ...conflicts.map((file) => file.path),
     ...provisionalConflictPaths,
   ]).size;
+  $: if (updateComplete) {
+    void followUpdateOutput(true);
+  }
 
   onMount(() => {
     if (typeof window.matchMedia === "function") {
@@ -372,6 +379,14 @@
     fileLogPath = null;
     fileLogLoading = false;
     fileLogError = null;
+    expandedFileLogRevisions = new Set();
+  }
+
+  function toggleFileLogPaths(revision: string) {
+    const next = new Set(expandedFileLogRevisions);
+    if (next.has(revision)) next.delete(revision);
+    else next.add(revision);
+    expandedFileLogRevisions = next;
   }
 
   function formatLogDate(value: string) {
@@ -430,10 +445,10 @@
     }
     actionError = null;
     try {
-      await openWorkspaceFile({
-        working_copy_root: target.working_copy_root,
-        file_path: file.path,
-      });
+      await openWorkspaceFile({ working_copy_root: target.working_copy_root, file_path: file.path });
+      if (typeof launchConflictWindow === "function") {
+        await launchConflictWindow({ target_path: `${target.working_copy_root}\\${file.path}` });
+      }
     } catch (caught) {
       const commandError = caught as CommandError;
       actionError = commandError.detail
@@ -620,6 +635,7 @@
     <span>目标 <strong>{target?.relative_path ?? "工作副本根目录"}</strong></span>
     <span>Revision <strong>{status?.revision_range ?? target?.revision ?? "-"}</strong></span>
     <span>冲突 <strong class:has-conflicts={conflictCount > 0}>{conflictCount}</strong></span>
+    <OperationMetrics task={updateTask} total={updatedFiles.length} label="总更新量" active={updateRunning} />
     <button
       type="button"
       class="icon-button"
@@ -728,10 +744,11 @@
             <div class="conflict-actions">
               <button
                 type="button"
+                aria-label="打开"
                 disabled={resolutionRunning}
                 on:click={() => openConflict(file)}
               >
-                <FilePenLine size={15} aria-hidden="true" /> 打开
+                <FilePenLine size={15} aria-hidden="true" /> 编辑
               </button>
               <button
                 type="button"
@@ -824,22 +841,17 @@
         </header>
         <ErrorNotice error={fileLogError} />
         <div class="file-log-list" aria-busy={fileLogLoading}>
-          {#if fileLogLoading}
-            <div class="empty-output" role="status">正在读取文件 Log...</div>
-          {:else if fileLog?.entries.length}
-            {#each fileLog.entries as entry (entry.revision)}
-              <article class="file-log-entry">
-                <header>
-                  <strong>r{entry.revision}</strong>
-                  <span>{entry.author || "-"}</span>
-                  <time datetime={entry.date}>{formatLogDate(entry.date)}</time>
-                </header>
-                <p>{entry.message || "无提交信息"}</p>
-              </article>
-            {/each}
-          {:else if !fileLogError}
-            <div class="empty-output">没有可显示的 Log</div>
-          {/if}
+          <SvnLogRevisionList
+            entries={fileLog?.entries ?? []}
+            totalEntries={fileLog?.entries.length ?? 0}
+            loading={fileLogLoading}
+            hasLoadError={fileLogError !== null}
+            expandedRevisions={expandedFileLogRevisions}
+            theme={resolvedTheme}
+            formatDate={formatLogDate}
+            emptyText="没有可显示的 Log"
+            onTogglePaths={toggleFileLogPaths}
+          />
         </div>
       </div>
     </div>
@@ -1338,35 +1350,6 @@
     min-height: 0;
     overflow: auto;
     padding: 8px 12px 14px;
-  }
-
-  .file-log-entry {
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
-    padding: 10px 2px;
-  }
-
-  .file-log-entry > header {
-    display: grid;
-    grid-template-columns: 70px minmax(0, 1fr) auto;
-    gap: 8px;
-    align-items: center;
-    color: var(--secondary);
-    font-size: 11px;
-  }
-
-  .file-log-entry > header strong {
-    color: var(--accent);
-  }
-
-  .file-log-entry > header span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .file-log-entry p {
-    margin-top: 6px;
-    white-space: pre-wrap;
   }
 
   .resolution-history p {

@@ -6,7 +6,9 @@
   import { startDrag } from "@crabnebula/tauri-plugin-drag";
   import dragPreviewIcon from "../src-tauri/icons/icon.png?inline";
   import StandaloneBlameWindow from "./components/StandaloneBlameWindow.svelte";
+  import StandaloneCheckoutWindow from "./components/StandaloneCheckoutWindow.svelte";
   import StandaloneCommitWindow from "./components/StandaloneCommitWindow.svelte";
+  import StandaloneConflictWindow from "./components/StandaloneConflictWindow.svelte";
   import StandaloneLogWindow from "./components/StandaloneLogWindow.svelte";
   import StandaloneUpdateWindow from "./components/StandaloneUpdateWindow.svelte";
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
@@ -18,6 +20,7 @@
     configureSvnCertificateTrust,
     getStartupIntent,
     launchExternalTool,
+    launchUpdateWindow,
     openFileLocation,
     openLocalPathLocation,
     openRepositoryTempFile,
@@ -64,10 +67,12 @@
 
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
-  let startupSurface: "loading" | "main" | "blame" | "commit" | "log" | "update" =
+  let startupSurface: "loading" | "main" | "blame" | "checkout" | "commit" | "log" | "update" | "resolve" =
     hasTauriRuntime() ? "loading" : "main";
   let standaloneBlamePath = "";
   let standaloneBlameReady = false;
+  let standaloneCheckoutPath = "";
+  let standaloneCheckoutReady = false;
   let standaloneCommitPath = "";
   let standaloneCommitReady = false;
   let standaloneLogPath = "";
@@ -76,7 +81,8 @@
   let standaloneLogReady = false;
   let standaloneUpdatePath = "";
   let standaloneUpdateReady = false;
-  let standaloneUpdateReturnsToMain = false;
+  let standaloneConflictPath = "";
+  let standaloneConflictReady = false;
   let unlistenAppMenu: UnlistenFn | null = null;
   let unlistenDragDrop: UnlistenFn | null = null;
   let repositoryImportDropActive = false;
@@ -318,7 +324,7 @@
 
   function queueAppMenuStateSync(
     state: AppMenuState,
-    surface: "loading" | "main" | "blame" | "commit" | "log" | "update",
+    surface: "loading" | "main" | "blame" | "commit" | "log" | "update" | "resolve",
   ) {
     if (!hasTauriRuntime() || surface !== "main") {
       return;
@@ -1349,21 +1355,16 @@
     await workspaceStore.refreshSvnLog(currentSvnExecutable());
   }
 
-  function openWorkspaceUpdatePage() {
+  async function openWorkspaceUpdatePage() {
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
     if (!workingCopyRoot) {
       return;
     }
-    standaloneUpdatePath = workingCopyRoot;
-    standaloneUpdateReturnsToMain = true;
-    standaloneUpdateReady = true;
-    startupSurface = "update";
-  }
-
-  async function returnFromWorkspaceUpdatePage() {
-    startupSurface = "main";
-    standaloneUpdateReturnsToMain = false;
-    await refreshStatusAndSyncBranchPool();
+    try {
+      await launchUpdateWindow({ target_path: workingCopyRoot });
+    } catch (error) {
+      commandError = error as CommandError;
+    }
   }
 
   async function runMerge() {
@@ -1489,7 +1490,7 @@
 
   async function handleStartupIntent(intent: StartupIntent) {
     const targetPath = intent.path?.trim();
-    if (targetPath && intent.action !== "checkout") {
+    if (targetPath) {
       workspaceStore.setPathInput(targetPath);
       const workspace = await workspaceStore.openPath(currentSvnExecutable());
       if (workspace) {
@@ -1501,13 +1502,6 @@
     }
 
     switch (intent.action) {
-      case "checkout":
-        setCurrentView("repository");
-        if (targetPath) {
-          workspaceStore.setRepositoryCheckoutForm("localPath", targetPath);
-        }
-        workspaceStore.prepareRepositoryCheckout();
-        break;
       case "diff":
         setCurrentView("changes");
         break;
@@ -2297,9 +2291,6 @@
     if (intent.action === "blame") {
       standaloneBlamePath = intent.path?.trim() ?? "";
       startupSurface = "blame";
-      if ($appSettingsStore.svnAuthenticationMode !== "password") {
-        await applySvnAuthentication();
-      }
       if ($svnStore.executableInput.trim()) {
         void svnStore.detectWithInputFallback();
       }
@@ -2312,9 +2303,6 @@
       standaloneLogRepositoryRoot = intent.repository_root?.trim() || undefined;
       standaloneLogRevision = intent.revision?.trim() || undefined;
       startupSurface = "log";
-      if ($appSettingsStore.svnAuthenticationMode !== "password") {
-        await applySvnAuthentication();
-      }
       if ($svnStore.executableInput.trim()) {
         void svnStore.detectWithInputFallback();
       }
@@ -2325,9 +2313,6 @@
     if (intent.action === "commit") {
       standaloneCommitPath = intent.path?.trim() ?? "";
       startupSurface = "commit";
-      if ($appSettingsStore.svnAuthenticationMode !== "password") {
-        await applySvnAuthentication();
-      }
       if ($svnStore.executableInput.trim()) {
         void svnStore.detectWithInputFallback();
       }
@@ -2335,17 +2320,33 @@
       return;
     }
 
+    if (intent.action === "checkout") {
+      standaloneCheckoutPath = intent.path?.trim() ?? "";
+      startupSurface = "checkout";
+      if ($svnStore.executableInput.trim()) {
+        void svnStore.detectWithInputFallback();
+      }
+      standaloneCheckoutReady = true;
+      return;
+    }
+
     if (intent.action === "update") {
       standaloneUpdatePath = intent.path?.trim() ?? "";
-      standaloneUpdateReturnsToMain = false;
       startupSurface = "update";
-      if ($appSettingsStore.svnAuthenticationMode !== "password") {
-        await applySvnAuthentication();
-      }
       if ($svnStore.executableInput.trim()) {
         void svnStore.detectWithInputFallback();
       }
       standaloneUpdateReady = true;
+      return;
+    }
+
+    if (intent.action === "resolve") {
+      standaloneConflictPath = intent.path?.trim() ?? "";
+      startupSurface = "resolve";
+      if ($svnStore.executableInput.trim()) {
+        void svnStore.detectWithInputFallback();
+      }
+      standaloneConflictReady = true;
       return;
     }
 
@@ -2379,9 +2380,6 @@
         unlistenDragDrop = unlisten;
       });
     taskStore.startPolling();
-    if ($appSettingsStore.svnAuthenticationMode !== "password") {
-      void applySvnAuthentication();
-    }
     void svnStore.detectWithInputFallback();
     void branchPoolStore.load();
     void taskWorkspaceStore.load();
@@ -2416,26 +2414,43 @@
 
 {#if startupSurface === "loading" ||
   (startupSurface === "blame" && !standaloneBlameReady) ||
+  (startupSurface === "checkout" && !standaloneCheckoutReady) ||
   (startupSurface === "commit" && !standaloneCommitReady) ||
   (startupSurface === "log" && !standaloneLogReady) ||
-  (startupSurface === "update" && !standaloneUpdateReady)}
+  (startupSurface === "update" && !standaloneUpdateReady) ||
+  (startupSurface === "resolve" && !standaloneConflictReady)}
   <main class="startup-loading" aria-label="NovaSVN 启动中" role="status">
     <span></span>
     <p>
       {startupSurface === "blame"
         ? "正在准备 SVN Blame..."
+        : startupSurface === "checkout"
+        ? "正在准备 SVN Checkout..."
         : startupSurface === "commit"
         ? "正在准备 SVN Commit..."
         : startupSurface === "log"
         ? "正在准备 SVN Log..."
         : startupSurface === "update"
           ? "正在准备 SVN Update..."
-          : "正在启动 NovaSVN..."}
+        : startupSurface === "resolve"
+          ? "正在准备冲突处理..."
+        : "正在启动 NovaSVN..."}
     </p>
   </main>
 {:else if startupSurface === "blame"}
   <StandaloneBlameWindow
     targetPath={standaloneBlamePath}
+    svnExecutable={currentSvnExecutable()}
+    themeMode={$appSettingsStore.themeMode}
+    svnAuthenticationUsername={$appSettingsStore.svnUsername}
+    svnRememberPassword={$appSettingsStore.svnRememberPassword}
+    {svnAuthenticationLoading}
+    {svnAuthenticationError}
+    onSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
+  />
+{:else if startupSurface === "checkout"}
+  <StandaloneCheckoutWindow
+    targetPath={standaloneCheckoutPath}
     svnExecutable={currentSvnExecutable()}
     themeMode={$appSettingsStore.themeMode}
     svnAuthenticationUsername={$appSettingsStore.svnUsername}
@@ -2481,8 +2496,17 @@
     svnRememberPassword={$appSettingsStore.svnRememberPassword}
     {svnAuthenticationLoading}
     {svnAuthenticationError}
-    showReturnToMain={standaloneUpdateReturnsToMain}
-    onReturnToMain={returnFromWorkspaceUpdatePage}
+    onSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
+  />
+{:else if startupSurface === "resolve"}
+  <StandaloneConflictWindow
+    targetPath={standaloneConflictPath}
+    svnExecutable={currentSvnExecutable()}
+    externalMergeTool={$appSettingsStore.externalMergeTool}
+    svnAuthenticationUsername={$appSettingsStore.svnUsername}
+    svnRememberPassword={$appSettingsStore.svnRememberPassword}
+    {svnAuthenticationLoading}
+    {svnAuthenticationError}
     onSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
   />
 {:else}
@@ -2635,7 +2659,6 @@
   pendingSvnOperationKind={$workspaceStore.pendingSvnOperationKind}
   {svnOperationFeedback}
   taskError={$taskStore.error}
-  backendMessage={backendMessage}
   commandError={commandError}
   svnDetection={$svnStore.detection}
   svnError={$svnStore.error}

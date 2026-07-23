@@ -49,6 +49,8 @@ import type {
   LaunchExternalToolRequest,
   LaunchLogWindowRequest,
   LaunchedLogWindow,
+  LaunchPathWindowRequest,
+  LaunchedPathWindow,
   ListWorkspaceFilesRequest,
   OpenFileLocation,
   OpenFileLocationRequest,
@@ -136,6 +138,18 @@ export function launchLogWindow(
   request: LaunchLogWindowRequest,
 ): Promise<LaunchedLogWindow> {
   return callBackend<LaunchedLogWindow>("launch_log_window", { request });
+}
+
+export function launchUpdateWindow(
+  request: LaunchPathWindowRequest,
+): Promise<LaunchedPathWindow> {
+  return callBackend<LaunchedPathWindow>("launch_update_window", { request });
+}
+
+export function launchConflictWindow(
+  request: LaunchPathWindowRequest,
+): Promise<LaunchedPathWindow> {
+  return callBackend<LaunchedPathWindow>("launch_conflict_window", { request });
 }
 
 export function launchExternalTool(
@@ -503,6 +517,16 @@ export async function chooseCheckoutDirectory(): Promise<string | null> {
     directory: true,
     multiple: false,
     title: "选择 Checkout 父目录",
+  });
+
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function chooseCheckoutTargetDirectory(): Promise<string | null> {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "选择 Checkout 目录",
   });
 
   return typeof selected === "string" ? selected : null;

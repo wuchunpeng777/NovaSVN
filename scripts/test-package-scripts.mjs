@@ -131,6 +131,10 @@ const standaloneUpdateWindow = fs.readFileSync(
   path.join(root, "src", "components", "StandaloneUpdateWindow.svelte"),
   "utf8",
 );
+const standaloneCheckoutWindow = fs.readFileSync(
+  path.join(root, "src", "components", "StandaloneCheckoutWindow.svelte"),
+  "utf8",
+);
 const appStore = fs.readFileSync(path.join(root, "src", "stores", "app.ts"), "utf8");
 const tauriLib = fs.readFileSync(path.join(root, "src-tauri", "src", "lib.rs"), "utf8");
 const diagnosticsRs = fs.readFileSync(
@@ -181,11 +185,6 @@ const systemIntegrationActions = [
   "branch-workspace",
 ];
 const startupActionViewChecks = [
-  {
-    action: "checkout",
-    view: "repository",
-    extra: 'setRepositoryCheckoutForm("localPath", targetPath)',
-  },
   { action: "cleanup", view: "changes", operation: "cleanup" },
   { action: "diff", view: "changes" },
   { action: "revert", view: "changes" },
@@ -1397,6 +1396,32 @@ if (
   !workspaceRs.includes("pub fn inspect_update_target(")
 ) {
   console.error("Explorer Update 必须自动执行路径级更新、展示输出并提供独立冲突处理窗口");
+  failed = true;
+}
+
+const standaloneCheckoutStartupStart = appSvelte.indexOf('if (intent.action === "checkout")');
+const standaloneCheckoutStartupEnd = appSvelte.indexOf(
+  'if (intent.action === "update")',
+  standaloneCheckoutStartupStart,
+);
+const standaloneCheckoutStartup = appSvelte.slice(
+  standaloneCheckoutStartupStart,
+  standaloneCheckoutStartupEnd,
+);
+if (
+  standaloneCheckoutStartupStart < 0 ||
+  standaloneCheckoutStartupEnd < 0 ||
+  !standaloneCheckoutStartup.includes('startupSurface = "checkout"') ||
+  !standaloneCheckoutStartup.includes("standaloneCheckoutReady = true") ||
+  standaloneCheckoutStartup.includes("workspaceStore") ||
+  !appSvelte.includes("<StandaloneCheckoutWindow") ||
+  !standaloneCheckoutWindow.includes("createRepositoryCheckoutTask") ||
+  !standaloneCheckoutWindow.includes("getTask") ||
+  !standaloneCheckoutWindow.includes("cancelTask") ||
+  !standaloneCheckoutWindow.includes("chooseCheckoutTargetDirectory") ||
+  !tauriLib.includes('Some("checkout") => Some("NovaSVN Checkout")')
+) {
+  console.error("Explorer Checkout 必须打开独立窗口并执行真实仓库 Checkout 任务");
   failed = true;
 }
 

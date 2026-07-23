@@ -30,6 +30,7 @@
     WorkingCopyStatus,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import OperationMetrics from "./OperationMetrics.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
   import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
 
@@ -936,6 +937,7 @@
     <span>目标 <strong>{target?.relative_path ?? "工作副本根目录"}</strong></span>
     <span>Revision <strong>{status?.revision_range ?? target?.revision ?? "-"}</strong></span>
     <span>已选择 <strong>{selectedCount} / {committableFiles.length}</strong></span>
+    <OperationMetrics task={commitTask} total={selectedCount} label="总提交量" active={commitRunning} />
   </section>
 
   <section

@@ -35,6 +35,14 @@ export interface LaunchedLogWindow {
   revision: string;
 }
 
+export interface LaunchPathWindowRequest {
+  target_path: string;
+}
+
+export interface LaunchedPathWindow {
+  target_path: string;
+}
+
 export interface DiagnosticExport {
   path: string;
   file_name: string;

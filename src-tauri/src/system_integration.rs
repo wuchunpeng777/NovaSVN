@@ -13,6 +13,16 @@ pub struct StartupIntent {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct LaunchPathWindowRequest {
+    pub target_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LaunchedPathWindow {
+    pub target_path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct LaunchLogWindowRequest {
     pub repository_url: String,
     pub repository_root: String,
@@ -72,6 +82,7 @@ fn normalize_action(action: String) -> Option<String> {
             | "checkout"
             | "commit"
             | "update"
+            | "resolve"
             | "diff"
             | "log"
             | "blame"
@@ -159,6 +170,58 @@ pub fn launch_log_window(request: LaunchLogWindowRequest) -> Result<LaunchedLogW
         repository_root,
         revision: revision.to_string(),
     })
+}
+
+pub fn launch_update_window(
+    request: LaunchPathWindowRequest,
+) -> Result<LaunchedPathWindow, NovaError> {
+    launch_path_window(request, "update", "UPDATE_WINDOW")
+}
+
+pub fn launch_conflict_window(
+    request: LaunchPathWindowRequest,
+) -> Result<LaunchedPathWindow, NovaError> {
+    launch_path_window(request, "resolve", "CONFLICT_WINDOW")
+}
+
+fn launch_path_window(
+    request: LaunchPathWindowRequest,
+    action: &str,
+    code_prefix: &str,
+) -> Result<LaunchedPathWindow, NovaError> {
+    let target_path = normalize_startup_path(request.target_path).ok_or_else(|| {
+        NovaError::command(
+            format!("{code_prefix}_TARGET_INVALID"),
+            "无法启动独立窗口",
+            Some("目标路径不能为空。".to_string()),
+            true,
+        )
+    })?;
+    let executable = std::env::current_exe().map_err(|error| {
+        NovaError::command(
+            format!("{code_prefix}_EXECUTABLE_MISSING"),
+            "无法启动独立窗口",
+            Some(error.to_string()),
+            true,
+        )
+    })?;
+    Command::new(&executable)
+        .args([
+            "--novasvn-action".to_string(),
+            action.to_string(),
+            "--novasvn-path".to_string(),
+            target_path.clone(),
+        ])
+        .spawn()
+        .map_err(|error| {
+            NovaError::command(
+                format!("{code_prefix}_LAUNCH_FAILED"),
+                "无法启动独立窗口",
+                Some(format!("执行 `{}` 失败：{error}", executable.display())),
+                true,
+            )
+        })?;
+    Ok(LaunchedPathWindow { target_path })
 }
 
 fn normalize_repository_argument(
@@ -255,6 +318,19 @@ mod tests {
 
         assert_eq!(intent.action.as_deref(), Some("checkout"));
         assert_eq!(intent.path.as_deref(), Some("C:\\checkouts\\project"));
+    }
+
+    #[test]
+    fn accepts_conflict_resolver_action() {
+        let intent = startup_intent_from_args([
+            "--novasvn-action",
+            "resolve",
+            "--novasvn-path",
+            "C:\\wc\\src\\conflict.rs",
+        ]);
+
+        assert_eq!(intent.action.as_deref(), Some("resolve"));
+        assert_eq!(intent.path.as_deref(), Some("C:\\wc\\src\\conflict.rs"));
     }
 
     #[test]
