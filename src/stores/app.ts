@@ -107,6 +107,8 @@ import type {
 } from "../types/api";
 import { isSameWorkingCopyRoot } from "../lib/svn-operation-completion";
 import {
+  loadAllSvnLogPages,
+  mergeSvnLogPage,
   repositoryPathUrl,
   repositoryPathUrlAtRevision,
   revisionBefore,
@@ -4956,6 +4958,79 @@ function createWorkspaceStore() {
     await fetchSvnLogPage(svnExecutable, true);
   }
 
+  async function loadAllSvnLog(svnExecutable?: string | null) {
+    const state = get({ subscribe });
+    const initial = state.svnLog;
+    if (
+      state.svnLogLoading ||
+      !state.current ||
+      !initial?.has_more ||
+      !initial.next_start_revision
+    ) {
+      return;
+    }
+
+    const workingCopyRoot = state.current.working_copy_root;
+    const fileOnly = state.svnLogFileOnly;
+    const selectedFilePath = state.selectedFilePath;
+    const requestIsCurrent = () => {
+      const current = get({ subscribe });
+      return Boolean(
+        current.current &&
+          isSameWorkingCopyRoot(current.current.working_copy_root, workingCopyRoot) &&
+          current.svnLogFileOnly === fileOnly &&
+          (!fileOnly || current.selectedFilePath === selectedFilePath),
+      );
+    };
+
+    update((current) => ({
+      ...current,
+      svnLogLoading: true,
+      svnLogError: null,
+    }));
+
+    try {
+      await loadAllSvnLogPages(
+        initial,
+        (startRevision) =>
+          getSvnLog({
+            working_copy_root: workingCopyRoot,
+            file_path: fileOnly ? selectedFilePath || undefined : undefined,
+            svn_executable: svnExecutable || undefined,
+            limit: state.svnLogLimit,
+            start_revision: startRevision,
+          }),
+        (svnLog) => {
+          if (!requestIsCurrent()) {
+            return;
+          }
+          update((current) => ({
+            ...current,
+            svnLog,
+            svnLogLoading: true,
+            svnLogError: null,
+          }));
+        },
+        requestIsCurrent,
+      );
+      if (requestIsCurrent()) {
+        update((current) => ({
+          ...current,
+          svnLogLoading: false,
+          svnLogError: null,
+        }));
+      }
+    } catch (error) {
+      if (requestIsCurrent()) {
+        update((current) => ({
+          ...current,
+          svnLogLoading: false,
+          svnLogError: error as CommandError,
+        }));
+      }
+    }
+  }
+
   async function fetchSvnLogPage(svnExecutable: string | null | undefined, append: boolean) {
     const state = get({ subscribe });
     if (!state.current) {
@@ -5487,6 +5562,7 @@ function createWorkspaceStore() {
     ignorePath,
     refreshSvnLog,
     loadMoreSvnLog,
+    loadAllSvnLog,
     setSvnLogFilter,
     setSvnLogFileOnly,
     setSvnLogLimit,
@@ -6263,23 +6339,6 @@ function reconcileSafetyWarningConfirmations(
 function unconfirmedWarnings(safetyCheck: SafetyCheckSummary) {
   const confirmed = new Set(safetyCheck.confirmedWarningIds);
   return safetyCheck.warnings.filter((item) => !confirmed.has(item.id));
-}
-
-function mergeSvnLogPage(current: SvnLog, next: SvnLog): SvnLog {
-  const revisions = new Set(current.entries.map((entry) => entry.revision));
-  const appendedEntries = next.entries.filter((entry) => {
-    if (revisions.has(entry.revision)) {
-      return false;
-    }
-    revisions.add(entry.revision);
-    return true;
-  });
-
-  return {
-    ...next,
-    target: current.target,
-    entries: [...current.entries, ...appendedEntries],
-  };
 }
 
 function labelSafetyStatus(status: string) {

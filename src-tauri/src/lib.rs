@@ -54,12 +54,12 @@ use tauri::{Emitter, Manager};
 use workspace::{
     FileContentDiff, FileDiff, GetFileContentDiffRequest, GetFileDiffRequest, GetPathSvnLogRequest,
     GetRepositoryFileBlameRequest, GetRepositoryFileLogRequest, GetRepositoryFilePropertiesRequest,
-    GetRevisionFileContentDiffRequest, GetSvnBlameRequest, GetSvnLogRequest,
+    GetRevisionFileContentDiffRequest, GetSvnBlameRequest, GetSvnInfoRequest, GetSvnLogRequest,
     GetSvnPropertiesRequest, GetWorkspacePathSizesRequest, IgnoreWorkspacePathRequest,
     InspectUpdateTargetRequest, ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace,
     ResolveTextConflictRequest, ResolveTextConflictResult, ScanWorkspaceStatusRequest,
-    SetSvnPropertyRequest, SvnBlame, SvnLog, SvnProperties, UpdateTargetSummary, WorkingCopyStatus,
-    WorkspaceFileTree, WorkspacePathSize, WorkspaceSummary,
+    SetSvnPropertyRequest, SvnBlame, SvnInfo, SvnLog, SvnProperties, UpdateTargetSummary,
+    WorkingCopyStatus, WorkspaceFileTree, WorkspacePathSize, WorkspaceSummary,
 };
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -931,6 +931,16 @@ async fn inspect_update_target(
 }
 
 #[tauri::command]
+async fn get_svn_info(request: GetSvnInfoRequest) -> CommandResult<SvnInfo> {
+    println!("[NovaSVN] get_svn_info command received");
+    let info = run_blocking_command("读取 SVN 信息", move || {
+        workspace::get_svn_info(request)
+    })
+    .await?;
+    Ok(CommandResponse::success(info))
+}
+
+#[tauri::command]
 fn get_recent_workspace(app: tauri::AppHandle) -> CommandResult<RecentWorkspace> {
     Ok(CommandResponse::success(workspace::read_recent_workspace(
         &app,
@@ -1137,6 +1147,7 @@ pub fn run() {
             let window_surface = window_state::surface_name(startup_intent.action.as_deref());
             let standalone_title = match startup_intent.action.as_deref() {
                 Some("checkout") => Some("NovaSVN Checkout"),
+                Some("info") => Some("NovaSVN Info"),
                 Some("commit") => Some("NovaSVN Commit"),
                 Some("log") => Some("NovaSVN Log"),
                 Some("blame") => Some("NovaSVN Blame"),
@@ -1222,6 +1233,7 @@ pub fn run() {
             clear_svn_certificate_trust,
             open_workspace,
             inspect_update_target,
+            get_svn_info,
             get_recent_workspace,
             scan_workspace_status,
             list_workspace_files,

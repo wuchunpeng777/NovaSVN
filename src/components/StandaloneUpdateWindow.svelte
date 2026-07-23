@@ -15,6 +15,7 @@
     scanWorkspaceStatus,
   } from "../lib/api";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
+  import { extractSvnFileChanges, normalizeSvnOutputPath } from "../lib/svn-operation-output";
   import type {
     ChangedFile,
     CommandError,
@@ -112,7 +113,7 @@
   $: updateComplete =
     updateTask?.status === "success" && conflictScanCompleted && !scanning;
   $: updatedFiles = applyResolvedUpdateActions(
-    extractUpdatedFiles(updateTask?.logs ?? []),
+    extractSvnFileChanges(updateTask?.logs ?? [], target?.working_copy_root),
     resolvedUpdateActions,
   );
   $: updatedBytes = updatedFiles.reduce(
@@ -550,22 +551,6 @@
     }
   }
 
-  function extractUpdatedFiles(logs: Task["logs"]) {
-    const files = new Map<string, { action: string; path: string }>();
-    for (const log of logs) {
-      const match = /^([ACDMRUGER!~ ]{1,4})\s+(.+?)\s*$/.exec(log.message);
-      if (!match) {
-        continue;
-      }
-      const action = match[1].replaceAll(" ", "");
-      const path = normalizeUpdateOutputPath(match[2]);
-      if (action && path) {
-        files.set(path, { action, path });
-      }
-    }
-    return [...files.values()];
-  }
-
   async function refreshUpdatedFileSizes(
     logs: Task["logs"],
     currentGeneration: number,
@@ -573,7 +558,7 @@
     if (!target) {
       return;
     }
-    const paths = extractUpdatedFiles(logs).map((file) => file.path);
+    const paths = extractSvnFileChanges(logs, target.working_copy_root).map((file) => file.path);
     if (paths.length === 0) {
       return;
     }
@@ -587,30 +572,12 @@
       }
       const next = new Map(updatedFileSizes);
       for (const entry of sizes) {
-        next.set(normalizeUpdateOutputPath(entry.path), entry.bytes);
+        next.set(normalizeSvnOutputPath(entry.path, target.working_copy_root), entry.bytes);
       }
       updatedFileSizes = next;
     } catch {
       // Size metrics are supplementary and must not turn a successful Update into an error.
     }
-  }
-
-  function normalizeUpdateOutputPath(path: string) {
-    let normalizedPath = path.trim().replaceAll("\\", "/").replace(/^\.\//, "");
-    const normalizedRoot = target?.working_copy_root
-      .trim()
-      .replaceAll("\\", "/")
-      .replace(/\/+$/, "");
-    if (!normalizedRoot) {
-      return normalizedPath;
-    }
-    const windowsPath = /^[a-z]:\//i.test(normalizedRoot) || normalizedRoot.startsWith("//");
-    const comparablePath = windowsPath ? normalizedPath.toLocaleLowerCase("en-US") : normalizedPath;
-    const comparableRoot = windowsPath ? normalizedRoot.toLocaleLowerCase("en-US") : normalizedRoot;
-    if (comparablePath.startsWith(`${comparableRoot}/`)) {
-      normalizedPath = normalizedPath.slice(normalizedRoot.length + 1);
-    }
-    return normalizedPath;
   }
 
   async function returnToCommitWindow() {

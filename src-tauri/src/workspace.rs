@@ -39,6 +39,12 @@ pub struct InspectUpdateTargetRequest {
     pub svn_executable: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetSvnInfoRequest {
+    pub path: String,
+    pub svn_executable: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceSummary {
     pub local_path: String,
@@ -73,6 +79,21 @@ pub struct UpdateTargetSummary {
     pub repository_root: String,
     pub revision: String,
     pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SvnInfo {
+    pub target_path: String,
+    pub working_copy_root: String,
+    pub relative_path: Option<String>,
+    pub kind: String,
+    pub repository_url: String,
+    pub repository_root: String,
+    pub repository_uuid: Option<String>,
+    pub revision: String,
+    pub last_changed_revision: Option<String>,
+    pub last_changed_author: Option<String>,
+    pub last_changed_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -462,6 +483,45 @@ pub fn inspect_update_target(
             "file".to_string()
         },
     })
+}
+
+pub fn get_svn_info(request: GetSvnInfoRequest) -> Result<SvnInfo, NovaError> {
+    let target = normalize_standalone_target_path(
+        &request.path,
+        "SVN_INFO_TARGET_INVALID",
+        "SVN_INFO_TARGET_NOT_ABSOLUTE",
+        "SVN_INFO_TARGET_NOT_FOUND",
+        "SVN_INFO_TARGET_UNSUPPORTED",
+        "SVN Info 目标",
+    )?;
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let output = svn::command(&executable)
+        .args(["info", "--xml", "--"])
+        .arg(&target)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_INFO_FAILED",
+                "无法读取 SVN 信息",
+                Some(format!(
+                    "执行 `svn info --xml {}` 失败：{error}",
+                    target.display()
+                )),
+                true,
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "SVN_INFO_FAILED",
+            "无法读取 SVN 信息",
+            Some(svn_info_error_detail(&executable, &target, &output)),
+            true,
+        ));
+    }
+
+    let xml = String::from_utf8_lossy(&output.stdout);
+    parse_svn_info_details_xml(&xml, &target)
 }
 
 fn read_workspace_summary(path: &Path, executable: &str) -> Result<WorkspaceSummary, NovaError> {
@@ -3663,6 +3723,81 @@ fn parse_svn_info_xml(xml: &str, requested_path: &Path) -> Result<WorkspaceSumma
     })
 }
 
+fn parse_svn_info_details_xml(xml: &str, requested_path: &Path) -> Result<SvnInfo, NovaError> {
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            "SVN_INFO_XML_PARSE_FAILED",
+            "解析 SVN 信息失败",
+            Some(format!("svn info --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+
+    let entry = document
+        .descendants()
+        .find(|node| node.has_tag_name("entry"))
+        .ok_or_else(|| {
+            NovaError::command(
+                "SVN_INFO_ENTRY_MISSING",
+                "SVN 信息缺少 entry 节点",
+                None,
+                true,
+            )
+        })?;
+
+    let target_path = entry
+        .attribute("path")
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| requested_path.display().to_string());
+    let working_copy_root = text_child(entry, "wcroot-abspath")
+        .unwrap_or_else(|_| requested_path.display().to_string());
+    let relative_path = relative_path_from_root(requested_path, Path::new(&working_copy_root));
+    let repository = entry
+        .descendants()
+        .find(|node| node.has_tag_name("repository"));
+    let repository_root = repository
+        .and_then(|node| optional_text_child(node, "root"))
+        .unwrap_or_default();
+    let repository_uuid = repository.and_then(|node| optional_text_child(node, "uuid"));
+    let commit = entry.children().find(|node| node.has_tag_name("commit"));
+
+    Ok(SvnInfo {
+        target_path,
+        working_copy_root,
+        relative_path,
+        kind: entry
+            .attribute("kind")
+            .unwrap_or_else(|| {
+                if requested_path.is_dir() {
+                    "dir"
+                } else {
+                    "file"
+                }
+            })
+            .to_string(),
+        repository_url: text_child(entry, "url")?,
+        repository_root,
+        repository_uuid,
+        revision: entry.attribute("revision").unwrap_or("").to_string(),
+        last_changed_revision: commit
+            .and_then(|node| node.attribute("revision").map(ToString::to_string)),
+        last_changed_author: commit.and_then(|node| optional_text_child(node, "author")),
+        last_changed_date: commit.and_then(|node| optional_text_child(node, "date")),
+    })
+}
+
+fn relative_path_from_root(target: &Path, root: &Path) -> Option<String> {
+    let canonical_target = fs::canonicalize(target).ok()?;
+    let canonical_root = fs::canonicalize(root).ok()?;
+    let relative = canonical_target
+        .strip_prefix(canonical_root)
+        .ok()?
+        .to_str()?;
+    let relative = relative.trim_matches(['/', '\\']);
+    (!relative.is_empty()).then(|| normalize_runtime_separators(relative))
+}
+
 fn parse_svn_log_xml(xml: &str, target: &str) -> Result<SvnLog, NovaError> {
     let document = Document::parse(xml).map_err(|error| {
         NovaError::command(
@@ -4434,6 +4569,41 @@ mod tests {
         assert_eq!(summary.repository_url, "https://example.com/svn/trunk");
         assert_eq!(summary.repository_root, "https://example.com/svn");
         assert_eq!(summary.working_copy_root, "C:\\wc");
+    }
+
+    #[test]
+    fn parses_detailed_svn_info_xml() {
+        let xml = r#"
+<info>
+  <entry kind="file" path="C:\wc\src\main.rs" revision="42">
+    <url>https://example.com/svn/trunk/src/main.rs</url>
+    <repository>
+      <root>https://example.com/svn</root>
+      <uuid>abc-123</uuid>
+    </repository>
+    <wc-info><wcroot-abspath>C:\wc</wcroot-abspath></wc-info>
+    <commit revision="41"><author>alice</author><date>2026-07-23T10:20:30.000000Z</date></commit>
+  </entry>
+</info>
+"#;
+
+        let info = parse_svn_info_details_xml(xml, Path::new("C:\\wc\\src\\main.rs"))
+            .expect("detailed info parses");
+
+        assert_eq!(info.kind, "file");
+        assert_eq!(
+            info.repository_url,
+            "https://example.com/svn/trunk/src/main.rs"
+        );
+        assert_eq!(info.repository_root, "https://example.com/svn");
+        assert_eq!(info.repository_uuid.as_deref(), Some("abc-123"));
+        assert_eq!(info.revision, "42");
+        assert_eq!(info.last_changed_revision.as_deref(), Some("41"));
+        assert_eq!(info.last_changed_author.as_deref(), Some("alice"));
+        assert_eq!(
+            info.last_changed_date.as_deref(),
+            Some("2026-07-23T10:20:30.000000Z")
+        );
     }
 
     #[test]

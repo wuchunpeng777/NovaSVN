@@ -1186,6 +1186,43 @@ describe("workspaceStore svn log", () => {
       svnLogKeywordFilter: "feature",
     });
   });
+
+  it("loads every remaining workspace log page", async () => {
+    openWorkspaceMock.mockResolvedValue(makeWorkspace());
+    scanWorkspaceStatusMock.mockResolvedValue(makeStatus([]));
+    getSvnLogMock
+      .mockResolvedValueOnce(makeSvnLog([
+        makeSvnLogEntry({ revision: "12" }),
+        makeSvnLogEntry({ revision: "11" }),
+      ], { has_more: true, next_start_revision: "11" }))
+      .mockResolvedValueOnce(makeSvnLog([
+        makeSvnLogEntry({ revision: "11" }),
+        makeSvnLogEntry({ revision: "10" }),
+      ], { has_more: true, next_start_revision: "10" }))
+      .mockResolvedValueOnce(makeSvnLog([
+        makeSvnLogEntry({ revision: "10" }),
+        makeSvnLogEntry({ revision: "9" }),
+      ], { has_more: false, next_start_revision: null }));
+
+    workspaceStore.setPathInput("C:/repo/wc");
+    await workspaceStore.openPath();
+    await workspaceStore.refreshSvnLog();
+    await workspaceStore.loadAllSvnLog();
+
+    expect(getSvnLogMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      start_revision: "11",
+    }));
+    expect(getSvnLogMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      start_revision: "10",
+    }));
+    expect(get(workspaceStore).svnLog?.entries.map((entry) => entry.revision)).toEqual([
+      "12",
+      "11",
+      "10",
+      "9",
+    ]);
+    expect(get(workspaceStore).svnLogLoading).toBe(false);
+  });
 });
 
 describe("taskStore repository list tasks", () => {

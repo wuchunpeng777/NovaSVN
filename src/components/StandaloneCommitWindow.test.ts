@@ -1,6 +1,14 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const { closeWindowMock } = vi.hoisted(() => ({
+  closeWindowMock: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({ close: closeWindowMock }),
+}));
+
 vi.mock("./workbench/MonacoDiffViewer.svelte", () => ({
   default: vi.fn().mockImplementation((internals) => ({
     c: vi.fn(),
@@ -44,6 +52,8 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(() => {
   localStorage.clear();
+  closeWindowMock.mockReset();
+  closeWindowMock.mockResolvedValue(undefined);
   createCommitTaskMock.mockReset();
   createSvnOperationTaskMock.mockReset();
   getFileContentDiffMock.mockReset();
@@ -91,6 +101,25 @@ beforeEach(() => {
 });
 
 describe("StandaloneCommitWindow", () => {
+  it("空闲时按 Escape 关闭 Commit 窗口", async () => {
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    await screen.findByLabelText("选择提交文件");
+    await fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(closeWindowMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("提交过程中按 Escape 不关闭 Commit 窗口", async () => {
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    await fireEvent.click(await screen.findByRole("button", { name: "提交 3 个文件" }));
+    await waitFor(() => expect(createCommitTaskMock).toHaveBeenCalledTimes(1));
+    await fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(closeWindowMock).not.toHaveBeenCalled();
+  });
+
   it("只显示右键目录范围内的可提交文件并默认全选", async () => {
     inspectUpdateTargetMock.mockResolvedValue(
       makeTarget({ target_path: "C:\\repo\\src", relative_path: "src", kind: "dir" }),

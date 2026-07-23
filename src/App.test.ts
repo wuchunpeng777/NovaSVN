@@ -39,6 +39,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     createSvnOperationTask: vi.fn(),
     ignoreWorkspacePath: vi.fn(),
     getTask: vi.fn(),
+    getWorkspacePathSizes: vi.fn(),
     getSvnLog: vi.fn(),
     inspectUpdateTarget: vi.fn(),
     getRepositoryFileBlame: vi.fn(),
@@ -81,6 +82,7 @@ import {
   createSvnBatchOperationTask,
   ignoreWorkspacePath,
   getTask,
+  getWorkspacePathSizes,
   getSvnLog,
   inspectUpdateTarget,
   getRepositoryFileBlame,
@@ -136,6 +138,7 @@ const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
 const ignoreWorkspacePathMock = vi.mocked(ignoreWorkspacePath);
 const getTaskMock = vi.mocked(getTask);
+const getWorkspacePathSizesMock = vi.mocked(getWorkspacePathSizes);
 const getSvnLogMock = vi.mocked(getSvnLog);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 const getRepositoryFileBlameMock = vi.mocked(getRepositoryFileBlame);
@@ -175,6 +178,7 @@ beforeEach(async () => {
   createSvnBatchOperationTaskMock.mockReset();
   ignoreWorkspacePathMock.mockReset();
   getTaskMock.mockReset();
+  getWorkspacePathSizesMock.mockReset();
   getSvnLogMock.mockReset();
   inspectUpdateTargetMock.mockReset();
   getRepositoryFileBlameMock.mockReset();
@@ -193,6 +197,7 @@ beforeEach(async () => {
   saveBranchPoolEntryMock.mockReset();
   startDragMock.mockReset();
   startDragMock.mockResolvedValue(undefined);
+  getWorkspacePathSizesMock.mockResolvedValue([]);
 
   listTasksMock.mockResolvedValue(makeTaskSnapshot([]));
   chooseWorkspaceDirectoryMock.mockResolvedValue(null);
@@ -469,16 +474,7 @@ Certificate information:
     await waitFor(() => expect(getSvnLogMock).toHaveBeenCalledTimes(2));
   });
 
-  it("点击主界面更新后切换到完整 Update 页面并可返回", async () => {
-    inspectUpdateTargetMock.mockResolvedValue({
-      target_path: "C:/repo/wc",
-      working_copy_root: "C:/repo/wc",
-      relative_path: null,
-      repository_url: "https://example.com/svn/trunk",
-      repository_root: "https://example.com/svn",
-      revision: "20",
-      kind: "dir",
-    });
+  it("点击主界面更新后在工作台内显示可最小化的流式 Update", async () => {
     createSvnOperationTaskMock.mockResolvedValue(
       makeTask({ task_id: "svn-update", status: "pending" }),
     );
@@ -492,24 +488,18 @@ Certificate information:
         ],
       }),
     );
-    scanWorkspaceStatusMock.mockResolvedValue({
-      ...makeStatus(),
-      revision_range: "21",
-      repository_revision: "21",
-    });
-    scanWorkspaceStatusMock.mockClear();
+    getWorkspacePathSizesMock.mockResolvedValue([
+      { path: "src/main.ts", bytes: 2048 },
+    ]);
     render(App);
 
     await fireEvent.click(screen.getByRole("button", { name: "更新工作副本" }));
 
-    const updatePage = await screen.findByLabelText("NovaSVN Update");
-    expect(updatePage).toBeInTheDocument();
-    expect(screen.queryByLabelText("NovaSVN 工作台")).not.toBeInTheDocument();
+    const updatePanel = await screen.findByLabelText("主界面 Update");
+    expect(updatePanel).toBeInTheDocument();
+    expect(screen.getByLabelText("NovaSVN 工作台")).toBeInTheDocument();
+    expect(screen.queryByLabelText("NovaSVN Update")).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(inspectUpdateTargetMock).toHaveBeenCalledWith({
-        path: "C:/repo/wc",
-        svn_executable: undefined,
-      });
       expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
         working_copy_root: "C:/repo/wc",
         kind: "update",
@@ -517,14 +507,36 @@ Certificate information:
         svn_executable: undefined,
       });
     });
-    expect(await screen.findByRole("status", { name: "更新完成" })).toHaveTextContent(
-      "Revision 21",
-    );
+    expect(inspectUpdateTargetMock).not.toHaveBeenCalled();
+    expect((await within(updatePanel).findAllByText("src/main.ts")).length).toBeGreaterThan(0);
+    await waitFor(() => expect(within(updatePanel).getByText("2.00 KB")).toBeInTheDocument());
 
-    await fireEvent.click(screen.getByRole("button", { name: "返回主界面" }));
-    expect(await screen.findByLabelText("NovaSVN 工作台")).toBeInTheDocument();
-    expect(screen.queryByLabelText("NovaSVN Update")).not.toBeInTheDocument();
-    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(2));
+    await fireEvent.click(within(updatePanel).getByRole("button", { name: "最小化 Update" }));
+    expect(within(updatePanel).getByLabelText("Update 简要信息")).toBeInTheDocument();
+    expect(within(updatePanel).queryByRole("listitem")).not.toBeInTheDocument();
+    expect(within(updatePanel).getByRole("button", { name: "展开 Update 详情" })).toBeInTheDocument();
+
+    openWorkspaceMock.mockResolvedValueOnce({
+      ...makeWorkspace(),
+      local_path: "D:/repo/other",
+      working_copy_root: "D:/repo/other",
+    });
+    scanWorkspaceStatusMock.mockResolvedValueOnce({
+      ...makeStatus(),
+      working_copy_root: "D:/repo/other",
+    });
+    listWorkspaceFilesMock.mockResolvedValueOnce({
+      ...makeFileTree(),
+      working_copy_root: "D:/repo/other",
+    });
+    await workspaceStore.openPath(undefined, "D:/repo/other");
+    await waitFor(() => expect(screen.queryByLabelText("主界面 Update")).not.toBeInTheDocument());
+
+    openWorkspaceMock.mockResolvedValueOnce(makeWorkspace());
+    scanWorkspaceStatusMock.mockResolvedValueOnce(makeStatus());
+    listWorkspaceFilesMock.mockResolvedValueOnce(makeFileTree());
+    await workspaceStore.openPath(undefined, "C:/repo/wc");
+    expect(await screen.findByRole("button", { name: "展开 Update 详情" })).toBeInTheDocument();
   });
 
   it("远端变化文件使用真实文件级 Update 任务", async () => {
@@ -582,9 +594,9 @@ Certificate information:
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(App);
 
-    const revertButton = screen.getByRole("button", { name: "Revert 工作副本到 r10" });
+    const revertButton = screen.getByRole("button", { name: "撤销提交 r10" });
     await fireEvent.click(revertButton);
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("反向 Merge"));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("反向应用该次提交"));
     expect(createRevertRevisionTaskMock).not.toHaveBeenCalled();
 
     confirm.mockReturnValue(true);
@@ -705,7 +717,7 @@ Certificate information:
     await waitFor(() => {
       expect(get(workspaceStore).pendingSvnOperationTaskId).toBeNull();
     });
-    expect(screen.getByText("操作已完成，工作副本状态正在刷新")).toBeInTheDocument();
+    expect(screen.queryByText("操作已完成，工作副本状态正在刷新")).not.toBeInTheDocument();
     expect(get(taskStore).selectedTask?.task_id).toBe("other-task");
     await waitFor(() => {
       expect(openWorkspaceMock).toHaveBeenLastCalledWith({

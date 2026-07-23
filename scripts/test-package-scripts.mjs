@@ -135,6 +135,10 @@ const standaloneCheckoutWindow = fs.readFileSync(
   path.join(root, "src", "components", "StandaloneCheckoutWindow.svelte"),
   "utf8",
 );
+const standaloneInfoWindow = fs.readFileSync(
+  path.join(root, "src", "components", "StandaloneInfoWindow.svelte"),
+  "utf8",
+);
 const appStore = fs.readFileSync(path.join(root, "src", "stores", "app.ts"), "utf8");
 const tauriLib = fs.readFileSync(path.join(root, "src-tauri", "src", "lib.rs"), "utf8");
 const diagnosticsRs = fs.readFileSync(
@@ -314,60 +318,70 @@ if (tauriConfig.bundle?.windows?.nsis?.installerHooks !== "nsis-hooks.nsh") {
   failed = true;
 }
 
-for (const action of ["Commit", "Log", "Update"]) {
-  for (const registryPath of [
-    `Software\\Classes\\Directory\\shell\\NovaSVN.${action}`,
-    `Software\\Classes\\Directory\\Background\\shell\\NovaSVN.${action}`,
-    `Software\\Classes\\*\\shell\\NovaSVN.${action}`,
-  ]) {
-    if (
-      !nsisHooks.includes(`WriteRegStr HKCU "${registryPath}"`) ||
-      !nsisHooks.includes(`DeleteRegKey HKCU "${registryPath}"`)
-    ) {
-      console.error(`Windows 安装/卸载缺少 Explorer ${action} 注册表入口：${registryPath}`);
+const windowsExplorerMenus = [
+  {
+    root: "Software\\Classes\\Directory\\shell",
+    placeholder: "%1",
+    actions: [
+      ["01.Checkout", "Checkout", "checkout"],
+      ["02.Commit", "Commit", "commit"],
+      ["03.Update", "Update", "update"],
+      ["04.Info", "SVN Info", "info"],
+      ["05.Log", "Log", "log"],
+    ],
+  },
+  {
+    root: "Software\\Classes\\Directory\\Background\\shell",
+    placeholder: "%V",
+    actions: [
+      ["01.Checkout", "Checkout", "checkout"],
+      ["02.Commit", "Commit", "commit"],
+      ["03.Update", "Update", "update"],
+      ["04.Info", "SVN Info", "info"],
+      ["05.Log", "Log", "log"],
+    ],
+  },
+  {
+    root: "Software\\Classes\\*\\shell",
+    placeholder: "%1",
+    actions: [
+      ["02.Commit", "Commit", "commit"],
+      ["03.Update", "Update", "update"],
+      ["04.Info", "SVN Info", "info"],
+      ["05.Log", "Log", "log"],
+      ["06.Blame", "Blame", "blame"],
+    ],
+  },
+];
+
+for (const menu of windowsExplorerMenus) {
+  if (
+    !nsisHooks.includes(`!insertmacro NOVASVN_REGISTER_MENU "${menu.root}"`) ||
+    !nsisHooks.includes(`DeleteRegKey HKCU "${menu.root}\\NovaSVN"`) ||
+    !nsisHooks.includes(`!insertmacro NOVASVN_DELETE_LEGACY_ACTIONS "${menu.root}"`)
+  ) {
+    console.error(`Windows 安装/卸载缺少 NovaSVN Explorer 级联菜单：${menu.root}`);
+    failed = true;
+  }
+  for (const [key, label, action] of menu.actions) {
+    const registration =
+      `!insertmacro NOVASVN_REGISTER_ACTION "${menu.root}" "${key}" "${label}" "${action}" "${menu.placeholder}"`;
+    if (!nsisHooks.includes(registration)) {
+      console.error(`Windows Explorer 级联菜单缺少 ${label}：${menu.root}`);
       failed = true;
     }
   }
 }
 
-for (const registryPath of [
-  "Software\\Classes\\Directory\\shell\\NovaSVN.Checkout",
-  "Software\\Classes\\Directory\\Background\\shell\\NovaSVN.Checkout",
-]) {
-  if (
-    !nsisHooks.includes(`WriteRegStr HKCU "${registryPath}"`) ||
-    !nsisHooks.includes(`DeleteRegKey HKCU "${registryPath}"`)
-  ) {
-    console.error(`Windows 安装/卸载缺少 Explorer Checkout 注册表入口：${registryPath}`);
-    failed = true;
-  }
-}
-if (nsisHooks.includes("Software\\Classes\\*\\shell\\NovaSVN.Checkout")) {
-  console.error("Windows Explorer Checkout 只能注册到目录和目录背景菜单");
-  failed = true;
-}
-
-const blameRegistryPath = "Software\\Classes\\*\\shell\\NovaSVN.Blame";
 if (
-  !nsisHooks.includes(`WriteRegStr HKCU "${blameRegistryPath}"`) ||
-  !nsisHooks.includes(`DeleteRegKey HKCU "${blameRegistryPath}"`) ||
-  nsisHooks.includes("Software\\Classes\\Directory\\shell\\NovaSVN.Blame") ||
-  nsisHooks.includes("Software\\Classes\\Directory\\Background\\shell\\NovaSVN.Blame")
-) {
-  console.error("Windows Explorer Blame 必须仅注册到文件右键菜单并支持完整卸载");
-  failed = true;
-}
-
-if (
-  !nsisHooks.includes('"MUIVerb" "NovaSVN Commit"') ||
-  !nsisHooks.includes('"MUIVerb" "NovaSVN Checkout"') ||
-  !nsisHooks.includes('"MUIVerb" "NovaSVN Log"') ||
-  !nsisHooks.includes('"MUIVerb" "NovaSVN Update"') ||
+  !nsisHooks.includes('"SubCommands" ""') ||
+  !nsisHooks.includes('"SeparatorBefore" ""') ||
+  !nsisHooks.includes('"SeparatorAfter" ""') ||
   !nsisHooks.includes("--novasvn-action") ||
   !nsisHooks.includes("%1") ||
   !nsisHooks.includes("%V")
 ) {
-  console.error("Windows Explorer Log 菜单必须传递文件、目录和目录背景路径");
+  console.error("Windows Explorer 操作必须位于带独立分隔线的 NovaSVN 二级菜单中");
   failed = true;
 }
 
@@ -776,12 +790,13 @@ if (
   !mainWorkspace.includes('class="timeline-revert-revision"') ||
   !mainWorkspace.includes("onRevertToRevision(entry.revision)") ||
   !appSvelte.includes("revertWorkspaceToRevision") ||
-  !appSvelte.includes('"revert_to_revision"') ||
+  !appSvelte.includes("反向应用该次提交") ||
   !taskRs.includes("fn execute_revert_revision(") ||
-  !taskRs.includes('["merge", "--ignore-ancestry", "-r"]') ||
+  !taskRs.includes('["merge", "--ignore-ancestry", "-c"]') ||
+  !taskRs.includes('format!("-{target_number}")') ||
   !tauriLib.includes("create_revert_revision_task")
 ) {
-  console.error("Timeline Revert 到 Revision 必须执行带运行时安全检查的真实反向 Merge");
+  console.error("Timeline 日志撤销必须只反向应用单次提交");
   failed = true;
 }
 
@@ -1284,6 +1299,26 @@ if (
   !windowsExplorerScript.includes('$item.FilesOnly -eq $true')
 ) {
   console.error("Windows Explorer 脚本必须仅为文件注册 Blame 菜单");
+  failed = true;
+}
+
+if (
+  !windowsExplorerScript.includes('Action = "info"') ||
+  !windowsExplorerScript.includes('Label = "SVN Info"') ||
+  !windowsExplorerScript.includes('Join-Path $menuPath "shell"') ||
+  !windowsExplorerScript.includes('Name "SubCommands"') ||
+  !windowsExplorerScript.includes('Name "SeparatorBefore"') ||
+  !windowsExplorerScript.includes('Name "SeparatorAfter"') ||
+  !systemIntegrationRs.includes('"info"') ||
+  !appSvelte.includes('startupSurface = "info"') ||
+  !appSvelte.includes("<StandaloneInfoWindow") ||
+  !standaloneInfoWindow.includes("getSvnInfo") ||
+  !standaloneInfoWindow.includes("SvnAuthenticationDialog") ||
+  !frontendApi.includes('"get_svn_info"') ||
+  !tauriLib.includes("get_svn_info,") ||
+  !workspaceRs.includes("pub fn get_svn_info(")
+) {
+  console.error("Windows Explorer Info 必须打开独立 SVN 信息窗口并接通后端读取");
   failed = true;
 }
 

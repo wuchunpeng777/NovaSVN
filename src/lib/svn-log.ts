@@ -1,4 +1,4 @@
-import type { SvnChangedPath } from "../types/api";
+import type { SvnChangedPath, SvnLog } from "../types/api";
 
 export const LOG_FILE_DIFF_MAX_BYTES = 20 * 1024 * 1024;
 
@@ -10,6 +10,50 @@ export interface SvnChangeActionSummary {
 export interface RepositoryPathLogTarget {
   repositoryUrl: string;
   revision: string;
+}
+
+export function mergeSvnLogPage(current: SvnLog, next: SvnLog): SvnLog {
+  const revisions = new Set(current.entries.map((entry) => entry.revision));
+  const appendedEntries = next.entries.filter((entry) => {
+    if (revisions.has(entry.revision)) {
+      return false;
+    }
+    revisions.add(entry.revision);
+    return true;
+  });
+
+  return {
+    ...next,
+    target: current.target,
+    entries: [...current.entries, ...appendedEntries],
+  };
+}
+
+export async function loadAllSvnLogPages(
+  initial: SvnLog,
+  loadPage: (startRevision: string) => Promise<SvnLog>,
+  onPage?: (log: SvnLog) => void,
+  shouldContinue: () => boolean = () => true,
+): Promise<SvnLog> {
+  let current = initial;
+  const requestedRevisions = new Set<string>();
+
+  while (current.has_more && current.next_start_revision && shouldContinue()) {
+    const startRevision = current.next_start_revision;
+    if (requestedRevisions.has(startRevision)) {
+      break;
+    }
+    requestedRevisions.add(startRevision);
+
+    const next = await loadPage(startRevision);
+    if (!shouldContinue()) {
+      break;
+    }
+    current = mergeSvnLogPage(current, next);
+    onPage?.(current);
+  }
+
+  return current;
 }
 
 export function summarizeSvnChangeActions(

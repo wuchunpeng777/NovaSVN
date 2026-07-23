@@ -70,10 +70,44 @@ describe("StandaloneCheckoutWindow", () => {
       });
     });
     const output = screen.getByRole("log");
-    expect(await within(output).findByText("Checked out revision 42.")).toBeInTheDocument();
+    expect(
+      await within(output).findByRole("listitem", { name: "Checkout 文件 src/main.ts" }),
+    ).toBeInTheDocument();
+    expect(within(output).queryByText("Checked out revision 42.")).not.toBeInTheDocument();
     expect(within(output).getByRole("status", { name: "Checkout 完成" })).toHaveTextContent(
       "C:\\work\\project",
     );
+  });
+
+  it("Checkout 运行期间逐次展示新增文件", async () => {
+    getTaskMock
+      .mockResolvedValueOnce(
+        makeTask("running", ["仓库 Checkout 开始执行", "A    src/first.ts"]),
+      )
+      .mockResolvedValueOnce(
+        makeTask("success", [
+          "仓库 Checkout 开始执行",
+          "A    src/first.ts",
+          "A    src/second.ts",
+          "Checked out revision 42.",
+        ]),
+      );
+    render(StandaloneCheckoutWindow, { props: { targetPath: "C:\\work\\project" } });
+    await fireEvent.input(screen.getByLabelText("仓库 URL"), {
+      target: { value: "https://example.com/svn/project/trunk" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
+
+    expect(
+      await screen.findByRole("listitem", { name: "Checkout 文件 src/first.ts" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("listitem", { name: "Checkout 文件 src/second.ts" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("listitem", { name: "Checkout 文件 src/second.ts" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Checkout 完成" })).toBeInTheDocument();
   });
 
   it("缺少仓库 URL 时在窗口内显示校验错误", async () => {

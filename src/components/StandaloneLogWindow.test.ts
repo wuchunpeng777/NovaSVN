@@ -169,6 +169,42 @@ describe("StandaloneLogWindow", () => {
     expect(screen.getAllByText("r20")).toHaveLength(1);
   });
 
+  it("连续加载所有剩余日志页", async () => {
+    getPathSvnLogMock
+      .mockResolvedValueOnce(makeLog({ has_more: true, next_start_revision: "19" }))
+      .mockResolvedValueOnce(
+        makeLog({
+          entries: [
+            makeEntry("20", "alice", "2026-07-10T10:00:00Z", "duplicate"),
+            makeEntry("19", "bob", "2026-07-09T10:00:00Z", "Second page"),
+          ],
+          has_more: true,
+          next_start_revision: "18",
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeLog({
+          entries: [makeEntry("18", "carol", "2026-07-08T10:00:00Z", "Final page")],
+          has_more: false,
+          next_start_revision: null,
+        }),
+      );
+    render(StandaloneLogWindow, { props: { targetPath: "C:\\repo" } });
+    await screen.findByText("Add log window");
+
+    await fireEvent.click(screen.getByRole("button", { name: "加载全部" }));
+
+    expect(await screen.findByText("Final page")).toBeInTheDocument();
+    expect(getPathSvnLogMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      start_revision: "19",
+    }));
+    expect(getPathSvnLogMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      start_revision: "18",
+    }));
+    expect(screen.getAllByText("r20")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "加载全部" })).toBeDisabled();
+  });
+
   it("显示每条日志的 A/M/D 数量和状态标记", async () => {
     getPathSvnLogMock.mockResolvedValue(
       makeLog({
@@ -242,11 +278,11 @@ describe("StandaloneLogWindow", () => {
     expect(diffResizer).toHaveAttribute("aria-valuenow", "320");
   });
 
-  it("从独立 Log 将工作副本 Revert 到指定 Revision", async () => {
+  it("从独立 Log 撤销指定的单次提交", async () => {
     const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
     getPathSvnLogMock.mockResolvedValue(makeLog());
     createRevertRevisionTaskMock.mockResolvedValue(
-      makeTask({ status: "success", title: "Revert 到 r20" }),
+      makeTask({ status: "success", title: "撤销提交 r20" }),
     );
     render(StandaloneLogWindow, {
       props: {
@@ -257,7 +293,7 @@ describe("StandaloneLogWindow", () => {
     await screen.findByText("Add log window");
 
     const revertButton = screen.getByRole("button", {
-      name: "Revert 工作副本到 r20",
+      name: "撤销提交 r20",
     });
     await fireEvent.click(revertButton);
 
@@ -268,7 +304,7 @@ describe("StandaloneLogWindow", () => {
       svn_executable: "C:\\Tools\\svn.exe",
     });
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "已 Revert 到 r20，本地修改已生成",
+      "已撤销提交 r20，本地修改已生成",
     );
     confirmMock.mockRestore();
   });

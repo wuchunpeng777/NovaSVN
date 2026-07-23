@@ -16,9 +16,9 @@
   export let loadingText = "正在读取日志...";
   export let filteredEmptyText = "没有符合当前过滤条件的 revision";
   export let formatDate: (value: string) => string = (value) => value || "-";
-  export let revertDisabled: (entry: SvnLogEntry) => boolean = () => false;
+  export let revertDisabled: (entry: SvnLogEntry) => boolean = () => true;
   export let revertTitle: (entry: SvnLogEntry) => string = (entry) =>
-    `Revert 工作副本到 r${entry.revision}`;
+    `撤销提交 r${entry.revision}`;
   export let onTogglePaths: (revision: string) => void = () => {};
   export let onToggleMerge: (event: MouseEvent, revision: string) => void = () => {};
   export let onOpenDiff: (entry: SvnLogEntry, path: SvnChangedPath) => void = () => {};
@@ -96,7 +96,7 @@
             <button
               type="button"
               class="svn-log-revert"
-              aria-label={`Revert 工作副本到 r${entry.revision}`}
+              aria-label={`撤销提交 r${entry.revision}`}
               title={revertTitle(entry)}
               disabled={revertDisabled(entry)}
               on:click={() => onRevert(entry)}

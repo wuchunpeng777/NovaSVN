@@ -9,6 +9,7 @@
     openLocalPathLocation,
   } from "../lib/api";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
+  import { extractSvnFileChanges } from "../lib/svn-operation-output";
   import type { CommandError, Task, TaskStatus } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
@@ -38,6 +39,8 @@
   let generation = 0;
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
+  let autoFollowOutput = true;
+  let expectedAutoScrollTop: number | null = null;
 
   const terminalStatuses: TaskStatus[] = ["success", "failed", "cancelled", "interrupted"];
 
@@ -45,6 +48,7 @@
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
   $: checkoutRunning = isTaskRunning(checkoutTask);
   $: checkoutComplete = checkoutTask?.status === "success";
+  $: checkedOutFiles = extractSvnFileChanges(checkoutTask?.logs ?? [], localPath.trim());
   $: authenticationFailure =
     detectSvnAuthenticationFailure(commandErrorText(commandError)) ??
     detectSvnAuthenticationFailure(checkoutTask?.error ?? null) ??
@@ -108,6 +112,8 @@
     commandError = null;
     locationError = null;
     checkoutTask = null;
+    autoFollowOutput = true;
+    expectedAutoScrollTop = null;
     try {
       const task = await createRepositoryCheckoutTask({
         url,
@@ -146,7 +152,7 @@
       await followOutput();
       if (terminalStatuses.includes(task.status)) {
         clearPollTimer();
-        await followOutput();
+        await followOutput(true);
         return;
       }
       schedulePoll(taskId, currentGeneration, 350);
@@ -201,11 +207,32 @@
     }
   }
 
-  async function followOutput() {
+  async function followOutput(force = false) {
     await tick();
-    if (outputElement) {
-      outputElement.scrollTop = Math.max(0, outputElement.scrollHeight - outputElement.clientHeight);
+    if ((!autoFollowOutput && !force) || !outputElement) {
+      return;
     }
+    const targetScrollTop = Math.max(
+      0,
+      outputElement.scrollHeight - outputElement.clientHeight,
+    );
+    expectedAutoScrollTop = targetScrollTop;
+    outputElement.scrollTop = targetScrollTop;
+  }
+
+  function handleOutputScroll() {
+    if (!outputElement) {
+      return;
+    }
+    if (
+      expectedAutoScrollTop !== null &&
+      Math.abs(outputElement.scrollTop - expectedAutoScrollTop) <= 1
+    ) {
+      expectedAutoScrollTop = null;
+      return;
+    }
+    expectedAutoScrollTop = null;
+    autoFollowOutput = false;
   }
 
   function clearPollTimer() {
@@ -241,15 +268,6 @@
       default:
         return "等待开始";
     }
-  }
-
-  function formatTaskTime(value: number) {
-    return new Intl.DateTimeFormat("zh-CN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }).format(new Date(value));
   }
 
   function formError(code: string, message: string, detail: string): CommandError {
@@ -385,17 +403,32 @@
 
     <section class="checkout-output" aria-label="Checkout 输出" aria-busy={checkoutRunning}>
       <header>
-        <h2>执行输出</h2>
-        <span>{checkoutTask?.logs.length ?? 0} 条</span>
+        <h2>Checkout 内容</h2>
+        <span>{checkedOutFiles.length} 个文件</span>
       </header>
-      <div bind:this={outputElement} class="output-lines" role="log" aria-live="polite">
-        {#if checkoutTask?.logs.length}
-          {#each checkoutTask.logs as log, index (`${log.created_at}-${index}`)}
-            <p role="listitem">
-              <time datetime={new Date(log.created_at).toISOString()}>{formatTaskTime(log.created_at)}</time>
-              <span>{log.message}</span>
-            </p>
+      <div
+        bind:this={outputElement}
+        class="output-lines"
+        role="log"
+        aria-live="polite"
+        on:scroll={handleOutputScroll}
+      >
+        {#if checkedOutFiles.length > 0}
+          {#each checkedOutFiles as file (file.path)}
+            <div
+              class="output-line"
+              data-kind={file.action}
+              role="listitem"
+              aria-label={`Checkout 文件 ${file.path}`}
+            >
+              <span>{file.action}</span>
+              <code title={file.path}>{file.path}</code>
+            </div>
           {/each}
+        {:else if checkoutRunning}
+          <div class="empty-output" role="status">正在等待 Checkout 文件...</div>
+        {:else if checkoutTask}
+          <div class="empty-output">没有 Checkout 文件</div>
         {:else}
           <div class="empty-output" role="status">等待 Checkout</div>
         {/if}
@@ -710,28 +743,41 @@
     padding: 8px 0 16px;
   }
 
-  .output-lines > p {
+  .output-line {
     display: grid;
-    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-columns: 32px minmax(0, 1fr);
+    align-items: start;
     gap: 8px;
     min-height: 28px;
     padding: 5px 12px;
-    font-family: Consolas, "SFMono-Regular", monospace;
-    font-size: 12px;
     line-height: 1.45;
   }
 
-  .output-lines > p:hover {
+  .output-line:hover {
     background: var(--panel);
   }
 
-  time {
-    color: var(--secondary);
+  .output-line > span {
+    font-weight: 700;
+    text-align: center;
   }
 
-  .output-lines > p span {
+  .output-line[data-kind="A"] > span,
+  .output-line[data-kind="U"] > span,
+  .output-line[data-kind="G"] > span {
+    color: #24783d;
+  }
+
+  .output-line[data-kind="D"] > span,
+  .output-line[data-kind="C"] > span {
+    color: #bc3f39;
+  }
+
+  .output-line code {
     min-width: 0;
     overflow-wrap: anywhere;
+    font-family: Consolas, "SFMono-Regular", monospace;
+    font-size: 12px;
     white-space: pre-wrap;
   }
 

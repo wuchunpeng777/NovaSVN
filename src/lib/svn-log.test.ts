@@ -1,11 +1,66 @@
 import { describe, expect, it } from "vitest";
 import {
+  loadAllSvnLogPages,
+  mergeSvnLogPage,
   repositoryPathLogTarget,
   repositoryPathUrlAtRevision,
   summarizeSvnChangeActions,
 } from "./svn-log";
+import type { SvnLog } from "../types/api";
 
 describe("svn log helpers", () => {
+  it("loads every remaining page and removes duplicate revisions", async () => {
+    const pages: Record<string, SvnLog> = {
+      "9": makeLog(["9", "8"], true, "8"),
+      "8": makeLog(["8", "7"], false, null),
+    };
+    const requested: string[] = [];
+    const snapshots: string[][] = [];
+
+    const result = await loadAllSvnLogPages(
+      makeLog(["10", "9"], true, "9"),
+      async (startRevision) => {
+        requested.push(startRevision);
+        return pages[startRevision];
+      },
+      (log) => snapshots.push(log.entries.map((entry) => entry.revision)),
+    );
+
+    expect(requested).toEqual(["9", "8"]);
+    expect(snapshots).toEqual([
+      ["10", "9", "8"],
+      ["10", "9", "8", "7"],
+    ]);
+    expect(result.entries.map((entry) => entry.revision)).toEqual(["10", "9", "8", "7"]);
+    expect(result.has_more).toBe(false);
+  });
+
+  it("stops loading when a server repeats the pagination cursor", async () => {
+    let calls = 0;
+    const result = await loadAllSvnLogPages(
+      makeLog(["10"], true, "9"),
+      async () => {
+        calls += 1;
+        return makeLog(["9"], true, "9");
+      },
+    );
+
+    expect(calls).toBe(1);
+    expect(result.entries.map((entry) => entry.revision)).toEqual(["10", "9"]);
+  });
+
+  it("merges pages without changing the original log target", () => {
+    expect(
+      mergeSvnLogPage(
+        makeLog(["10", "9"], true, "9", "working-copy"),
+        makeLog(["9", "8"], false, null, "repository-url"),
+      ),
+    ).toMatchObject({
+      target: "working-copy",
+      entries: [{ revision: "10" }, { revision: "9" }, { revision: "8" }],
+    });
+  });
+
   it("summarizes A/M/D paths in stable order", () => {
     const path = (action: string) => ({
       path: `/trunk/${action}.txt`,
@@ -52,3 +107,23 @@ describe("svn log helpers", () => {
     });
   });
 });
+
+function makeLog(
+  revisions: string[],
+  hasMore: boolean,
+  nextStartRevision: string | null,
+  target = "target",
+): SvnLog {
+  return {
+    target,
+    entries: revisions.map((revision) => ({
+      revision,
+      author: "alice",
+      date: "2026-07-23T00:00:00Z",
+      message: revision,
+      changed_paths: [],
+    })),
+    has_more: hasMore,
+    next_start_revision: nextStartRevision,
+  };
+}

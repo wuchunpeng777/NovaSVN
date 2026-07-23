@@ -1954,10 +1954,10 @@ impl TaskQueue {
         let now = timestamp_millis();
         let task = Task {
             task_id: task_id.clone(),
-            title: format!("Revert 到 r{target_revision}"),
+            title: format!("撤销提交 r{target_revision}"),
             status: TaskStatus::Pending,
             logs: vec![TaskLog {
-                message: "Revert Revision 任务已加入队列".to_string(),
+                message: "撤销单次提交任务已加入队列".to_string(),
                 created_at: now,
             }],
             error: None,
@@ -4820,18 +4820,18 @@ fn run_revert_revision_task(
         state,
         task_id,
         TaskStatus::Running,
-        "Revert Revision 开始执行",
+        "撤销单次提交开始执行",
         None,
     );
 
     match execute_revert_revision(state, task_id, &payload) {
-        Ok((output, base_revision, source_url)) => {
+        Ok((output, _base_revision, source_url)) => {
             append_task_log(
                 state,
                 task_id,
                 &format!(
-                    "执行 svn merge --ignore-ancestry -r {base_revision}:{}：{source_url}",
-                    payload.target_revision
+                    "执行 svn merge --ignore-ancestry -c -{}：{}",
+                    payload.target_revision, source_url
                 ),
             );
             append_command_output(state, task_id, &output);
@@ -4839,7 +4839,7 @@ fn run_revert_revision_task(
                 state,
                 task_id,
                 TaskStatus::Success,
-                "Revert Revision 已生成本地改动",
+                "单次提交已撤销并生成本地改动",
                 None,
             );
         }
@@ -4849,7 +4849,7 @@ fn run_revert_revision_task(
                 state,
                 task_id,
                 TaskStatus::Failed,
-                "Revert Revision 失败",
+                "撤销单次提交失败",
                 Some(error),
             );
         }
@@ -4882,7 +4882,7 @@ fn execute_revert_revision(
         return Err(NovaError::command(
             "REVERT_REVISION_LOCAL_CHANGES",
             "当前工作副本有本地改动",
-            Some("Revert 到 Revision 前请先提交或撤销现有本地改动。".to_string()),
+            Some("撤销单次提交前请先提交或撤销现有本地改动。".to_string()),
             true,
         ));
     }
@@ -4920,18 +4920,18 @@ fn execute_revert_revision(
 
     let target_number = payload.target_revision.parse::<u64>().map_err(|error| {
         NovaError::command(
-            "REVERT_REVISION_TARGET_INVALID",
-            "目标 Revision 无效",
+            "REVERT_COMMIT_TARGET_INVALID",
+            "目标提交 Revision 无效",
             Some(error.to_string()),
             true,
         )
     })?;
-    if target_number >= base_number {
+    if target_number == 0 || target_number > base_number {
         return Err(NovaError::command(
-            "REVERT_REVISION_TARGET_NOT_OLDER",
-            "目标 Revision 必须早于当前 Revision",
+            "REVERT_COMMIT_TARGET_OUT_OF_RANGE",
+            "目标提交 Revision 不在当前工作副本范围内",
             Some(format!(
-                "当前 Revision：r{base_number}；目标 Revision：r{target_number}"
+                "当前 Revision：r{base_number}；目标提交：r{target_number}"
             )),
             true,
         ));
@@ -4941,15 +4941,15 @@ fn execute_revert_revision(
     let source_url = normalize_repository_url(&source_url)?;
     let mut command = svn::command(&payload.svn_executable);
     command
-        .args(["merge", "--ignore-ancestry", "-r"])
-        .arg(format!("{base_number}:{target_number}"))
+        .args(["merge", "--ignore-ancestry", "-c"])
+        .arg(format!("-{target_number}"))
         .arg(&source_url)
         .arg(&root)
         .current_dir(&root);
     let output = run_task_command(state, task_id, &mut command).map_err(|error| {
         NovaError::command(
             "REVERT_REVISION_COMMAND_FAILED",
-            "无法启动 Revert Revision 命令",
+            "无法启动撤销单次提交命令",
             Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
             true,
         )
@@ -4957,7 +4957,7 @@ fn execute_revert_revision(
     if !output.status.success() {
         return Err(NovaError::command(
             "REVERT_REVISION_FAILED",
-            "Revert Revision 命令执行失败",
+            "撤销单次提交命令执行失败",
             Some(command_error_detail(&payload.svn_executable, &output)),
             true,
         ));
@@ -4984,7 +4984,7 @@ fn read_revert_revision_info_item(
         .map_err(|error| {
             NovaError::command(
                 "REVERT_REVISION_INFO_FAILED",
-                "无法读取 Revert Revision 所需的 SVN 信息",
+                "无法读取撤销单次提交所需的 SVN 信息",
                 Some(format!(
                     "无法执行 `{executable} info --show-item {item}`：{error}"
                 )),
@@ -4994,7 +4994,7 @@ fn read_revert_revision_info_item(
     if !output.status.success() {
         return Err(NovaError::command(
             "REVERT_REVISION_INFO_FAILED",
-            "无法读取 Revert Revision 所需的 SVN 信息",
+            "无法读取撤销单次提交所需的 SVN 信息",
             Some(command_error_detail(executable, &output)),
             true,
         ));
@@ -5003,7 +5003,7 @@ fn read_revert_revision_info_item(
     if value.is_empty() {
         return Err(NovaError::command(
             "REVERT_REVISION_INFO_EMPTY",
-            "Revert Revision 所需的 SVN 信息为空",
+            "撤销单次提交所需的 SVN 信息为空",
             Some(format!("字段：{item}")),
             true,
         ));
@@ -5453,9 +5453,8 @@ fn run_branch_checkout_task(
     }
     command.arg(&payload.branch_url).arg(&payload.local_path);
 
-    match run_task_command(state, task_id, &mut command) {
+    match run_task_command_streaming_output(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
-            append_command_output(state, task_id, &output);
             update_task(
                 state,
                 task_id,
@@ -5465,7 +5464,6 @@ fn run_branch_checkout_task(
             );
         }
         Ok(output) => {
-            append_command_output(state, task_id, &output);
             update_task(
                 state,
                 task_id,
@@ -5529,9 +5527,8 @@ fn run_repository_checkout_task(
         .arg(command_target)
         .arg(&payload.local_path);
 
-    match run_task_command(state, task_id, &mut command) {
+    match run_task_command_streaming_output(state, task_id, &mut command) {
         Ok(output) if output.status.success() => {
-            append_command_output(state, task_id, &output);
             update_task(
                 state,
                 task_id,
@@ -5541,7 +5538,6 @@ fn run_repository_checkout_task(
             );
         }
         Ok(output) => {
-            append_command_output(state, task_id, &output);
             update_task(
                 state,
                 task_id,
@@ -13845,7 +13841,7 @@ mod tests {
     }
 
     #[test]
-    fn reverts_clean_head_working_copy_to_older_revision() {
+    fn reverts_single_commit_in_clean_head_working_copy() {
         if !svn_tools_available() {
             return;
         }
@@ -13882,7 +13878,7 @@ mod tests {
 
         let payload = RevertRevisionTaskPayload {
             working_copy_root: working_copy.display().to_string(),
-            target_revision: "1".to_string(),
+            target_revision: "2".to_string(),
             svn_executable: "svn".to_string(),
         };
         let state = Arc::new(Mutex::new(TaskQueueState::default()));

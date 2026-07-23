@@ -17,6 +17,8 @@
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import {
     LOG_FILE_DIFF_MAX_BYTES,
+    loadAllSvnLogPages,
+    mergeSvnLogPage,
     repositoryPathLogTarget,
     repositoryPathUrlAtRevision,
     revisionBefore,
@@ -181,27 +183,9 @@
     loading = true;
     error = null;
     try {
-      const repositoryTarget = currentRepositoryTarget(path);
-      const page = repositoryTarget
-        ? await getRepositoryFileLog({
-            url: repositoryTarget.url,
-            revision: repositoryTarget.revision,
-            svn_executable: svnExecutable?.trim() || undefined,
-            limit,
-            start_revision: startRevision ?? undefined,
-          })
-        : await getPathSvnLog({
-            path,
-            svn_executable: svnExecutable?.trim() || undefined,
-            limit,
-            start_revision: startRevision ?? undefined,
-          });
+      const page = await loadLogPage(path, startRevision ?? undefined);
       if (generation !== requestGeneration) {
         return;
-      }
-      if (repositoryTarget) {
-        page.repository_root = repositoryTarget.root;
-        page.repository_url = repositoryTarget.url;
       }
       log = append && log ? mergeLogPage(log, page) : page;
     } catch (caught) {
@@ -226,15 +210,7 @@
   }
 
   function mergeLogPage(current: SvnLog, page: SvnLog): SvnLog {
-    const entries = [...current.entries];
-    const revisions = new Set(entries.map((entry) => entry.revision));
-    for (const entry of page.entries) {
-      if (!revisions.has(entry.revision)) {
-        entries.push(entry);
-        revisions.add(entry.revision);
-      }
-    }
-    return { ...page, target: current.target, entries };
+    return mergeSvnLogPage(current, page);
   }
 
   function filterEntries(
@@ -394,7 +370,7 @@
     }
     if (
       !window.confirm(
-        `确定要把工作副本内容恢复到 r${revision} 吗？\n${workingCopyRoot}\n\n这会执行反向 Merge 并生成本地改动，不会自动提交。\n工作副本必须无本地改动且已 Update 到 HEAD。`,
+        `确定要撤销 r${revision} 这次提交吗？\n${workingCopyRoot}\n\n这只会反向应用该次提交并生成本地改动，不会自动提交，也不会把整个工作副本回退到 r${revision}。\n工作副本必须无本地改动且已 Update 到 HEAD。`,
       )
     ) {
       return;
@@ -414,8 +390,64 @@
       );
     } catch (caught) {
       revertTask = null;
-      revertError = normalizeCommandError(caught, `无法 Revert 到 r${revision}`);
+      revertError = normalizeCommandError(caught, `无法撤销提交 r${revision}`);
     }
+  }
+
+  async function loadAllLogs() {
+    const path = targetPath.trim();
+    const initial = log;
+    if (!path || !initial?.has_more || !initial.next_start_revision) {
+      return;
+    }
+
+    const generation = ++requestGeneration;
+    loading = true;
+    error = null;
+    try {
+      await loadAllSvnLogPages(
+        initial,
+        (startRevision) => loadLogPage(path, startRevision),
+        (merged) => {
+          if (generation === requestGeneration) {
+            log = merged;
+          }
+        },
+        () => generation === requestGeneration,
+      );
+    } catch (caught) {
+      if (generation === requestGeneration) {
+        error = caught as CommandError;
+      }
+    } finally {
+      if (generation === requestGeneration) {
+        loading = false;
+      }
+    }
+  }
+
+  function loadLogPage(path: string, startRevision?: string) {
+    const repositoryTarget = currentRepositoryTarget(path);
+    if (repositoryTarget) {
+      return getRepositoryFileLog({
+          url: repositoryTarget.url,
+          revision: repositoryTarget.revision,
+          svn_executable: svnExecutable?.trim() || undefined,
+          limit,
+          start_revision: startRevision,
+        })
+        .then((page) => {
+          page.repository_root = repositoryTarget.root;
+          page.repository_url = repositoryTarget.url;
+          return page;
+        });
+    }
+    return getPathSvnLog({
+      path,
+      svn_executable: svnExecutable?.trim() || undefined,
+      limit,
+      start_revision: startRevision,
+    });
   }
 
   function handleRevertTask(task: Task) {
@@ -427,14 +459,14 @@
 
     clearRevertPollTimer();
     if (task.status === "success") {
-      revertNotice = `已 Revert 到 r${revertTargetRevision ?? "-"}，本地修改已生成`;
+      revertNotice = `已撤销提交 r${revertTargetRevision ?? "-"}，本地修改已生成`;
       revertError = null;
       return;
     }
     revertNotice = null;
     revertError = {
       code: "REVERT_REVISION_FAILED",
-      message: `Revert 到 r${revertTargetRevision ?? "-"} 失败`,
+      message: `撤销提交 r${revertTargetRevision ?? "-"} 失败`,
       detail: task.error ?? `任务状态：${task.status}`,
       recoverable: true,
     };
@@ -692,6 +724,13 @@
       >
         加载更多
       </button>
+      <button
+        type="button"
+        disabled={loading || !log?.has_more}
+        on:click={loadAllLogs}
+      >
+        加载全部
+      </button>
     </div>
   </header>
 
@@ -724,7 +763,7 @@
     <ErrorNotice error={error ?? launchWindowError ?? revertError} />
     {#if revertRunning}
       <p class="revert-status" role="status">
-        正在 Revert 到 r{revertTargetRevision ?? "-"}...
+        正在撤销提交 r{revertTargetRevision ?? "-"}...
       </p>
     {:else if revertNotice}
       <p class="revert-status success" role="status">{revertNotice}</p>
@@ -752,8 +791,8 @@
       {formatDate}
       revertDisabled={() => !log?.working_copy_root || loading || revertRunning}
       revertTitle={(entry) => log?.working_copy_root
-        ? `Revert 工作副本到 r${entry.revision}`
-        : "仅本地工作副本日志支持 Revert"}
+        ? `撤销提交 r${entry.revision}`
+        : "仅本地工作副本日志支持撤销提交"}
       onTogglePaths={togglePaths}
       onToggleMerge={toggleMergeRevision}
       onOpenDiff={openChangedPathDiff}

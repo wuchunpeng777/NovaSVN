@@ -39,6 +39,7 @@ import type {
   GetRepositoryFileLogRequest,
   GetRepositoryFilePropertiesRequest,
   GetRepositoryFileBlameRequest,
+  GetSvnInfoRequest,
   GetRevisionFileContentDiffRequest,
   GetSvnBlameRequest,
   GetSvnLogRequest,
@@ -80,6 +81,7 @@ import type {
   SvnAuthenticationStatus,
   SvnCertificateTrustStatus,
   SvnBlame,
+  SvnInfo,
   SvnLog,
   SvnProperties,
   StartupIntent,
@@ -406,6 +408,10 @@ export function inspectUpdateTarget(
   request: InspectUpdateTargetRequest,
 ): Promise<UpdateTargetSummary> {
   return callBackend<UpdateTargetSummary>("inspect_update_target", { request });
+}
+
+export function getSvnInfo(request: GetSvnInfoRequest): Promise<SvnInfo> {
+  return callBackend<SvnInfo>("get_svn_info", { request });
 }
 
 export function getRecentWorkspace(): Promise<RecentWorkspace> {

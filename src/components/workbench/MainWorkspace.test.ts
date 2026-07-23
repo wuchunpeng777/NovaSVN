@@ -49,6 +49,7 @@ describe("MainWorkspace", () => {
     });
 
     const toolbar = screen.getByLabelText("工作副本工具栏");
+    expect(toolbar.querySelector(".toolbar-context")).not.toBeInTheDocument();
     const refreshButton = within(toolbar).getByRole("button", { name: "刷新工作副本状态" });
     const updateButton = within(toolbar).getByRole("button", { name: "更新工作副本" });
     const patchButton = within(toolbar).getByRole("button", { name: "应用 Patch" });
@@ -223,7 +224,7 @@ describe("MainWorkspace", () => {
     const commitTab = within(tablist).getByRole("tab", { name: "Commit" });
     await fireEvent.keyDown(commitTab, { key: "End" });
     expect(within(tablist).getByRole("tab", { name: "Tasks" })).toHaveFocus();
-    expect(screen.getByRole("tabpanel", { name: "Tasks" })).toHaveTextContent("后台任务就绪");
+    expect(screen.getByRole("tabpanel", { name: "Tasks" })).toHaveTextContent("暂无后台任务");
   });
 
   it("persists sidebar and inspector visibility through app settings", async () => {
@@ -498,16 +499,22 @@ describe("MainWorkspace", () => {
     expect(within(projects).getByText("主项目")).toBeInTheDocument();
     const firstRow = within(projects).getByRole("group", { name: "项目 主项目" });
     const secondRow = within(projects).getByRole("group", { name: "项目 feature" });
-    expect(firstRow).toHaveAttribute("draggable", "true");
-    expect(within(projects).queryByRole("button", { name: "拖动排序 主项目" }))
-      .not.toBeInTheDocument();
+    const firstHandle = within(projects).getByRole("button", { name: "拖动排序 主项目" });
+    const firstProjectButton = firstRow.querySelector(".project-source-button");
+    expect(firstHandle).toHaveAttribute("draggable", "true");
+    expect(firstHandle).not.toBeDisabled();
+    expect(firstProjectButton).toHaveAttribute("draggable", "true");
     Object.defineProperty(secondRow, "getBoundingClientRect", {
       configurable: true,
       value: () => ({ top: 100, height: 40, bottom: 140, left: 0, right: 200, width: 200 }),
     });
-    await fireEvent.dragStart(firstRow);
+    await fireEvent.dragStart(firstHandle);
     await fireEvent.dragOver(secondRow, { clientY: 135 });
     await fireEvent.drop(secondRow, { clientY: 135 });
+    expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
+
+    onReorderBranchPoolEntries.mockClear();
+    await fireEvent.keyDown(firstHandle, { key: "ArrowDown" });
     expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
 
     await fireEvent.click(
@@ -947,9 +954,9 @@ Certificate information:
     });
 
     const revertRevision = screen.getByRole("button", {
-      name: "Revert 工作副本到 r12",
+      name: "撤销提交 r12",
     });
-    expect(revertRevision).toHaveAttribute("title", "Revert 工作副本到 r12");
+    expect(revertRevision).toHaveAttribute("title", "撤销提交 r12");
     await fireEvent.click(revertRevision);
     expect(onRevertToRevision).toHaveBeenCalledWith("12");
     expect(screen.queryByLabelText("Revision 比较")).not.toBeInTheDocument();
@@ -957,6 +964,32 @@ Certificate information:
     expect(
       screen.queryByRole("button", { name: "比较工作副本文件与 r12" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps Timeline Merge actions visible after selecting a revision", async () => {
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.history,
+        workspace: makeWorkspace(),
+        svnLog: {
+          target: "https://svn.example.test/repo/trunk",
+          has_more: false,
+          next_start_revision: null,
+          entries: [
+            makeLogEntry("12", "2026-07-11T12:00:00", "alice", "latest"),
+            makeLogEntry("11", "2026-07-10T12:00:00", "bob", "previous"),
+          ],
+        },
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r12 用于 Merge" }));
+
+    const contentPane = screen.getByRole("main", { name: "日志" });
+    const toolbar = screen.getByRole("toolbar", { name: "Revision Merge 操作" });
+    expect(contentPane).toHaveClass("timeline-merge-active");
+    expect(toolbar.parentElement).toBe(contentPane);
+    expect(within(toolbar).getByRole("button", { name: "Merge 到..." })).toBeVisible();
   });
 
   it("browses repository URLs at an explicit revision and keeps it while navigating", async () => {
@@ -1422,6 +1455,7 @@ Certificate information:
     const onSvnLogFileOnlyInput = vi.fn();
     const onSvnLogLimitInput = vi.fn();
     const onLoadMoreSvnLog = vi.fn();
+    const onLoadAllSvnLog = vi.fn();
     render(MainWorkspace, {
       props: {
         view: workbenchViews.history,
@@ -1448,6 +1482,7 @@ Certificate information:
         onSvnLogFileOnlyInput,
         onSvnLogLimitInput,
         onLoadMoreSvnLog,
+        onLoadAllSvnLog,
       },
     });
 
@@ -1474,6 +1509,8 @@ Certificate information:
     expect(onSvnLogLimitInput).toHaveBeenCalledWith(50);
     await fireEvent.click(screen.getByRole("button", { name: "加载更多 Revision" }));
     expect(onLoadMoreSvnLog).toHaveBeenCalledOnce();
+    await fireEvent.click(screen.getByRole("button", { name: "加载全部 Revision" }));
+    expect(onLoadAllSvnLog).toHaveBeenCalledOnce();
   });
 
   it("uses current commit targets and excludes unversioned files", async () => {
@@ -1735,6 +1772,7 @@ Certificate information:
     await fireEvent.click(screen.getByRole("button", { name: "关闭冲突解决器" }));
 
     const filters = screen.getByRole("region", { name: "改动过滤" });
+    expect(within(filters).queryByRole("button", { name: "清除过滤条件" })).not.toBeInTheDocument();
     await fireEvent.click(within(filters).getByRole("button", { name: "远端更新" }));
     expect(screen.queryByText("local.txt", { exact: true })).not.toBeInTheDocument();
     expect(screen.getByText("remote.txt", { exact: true })).toBeInTheDocument();

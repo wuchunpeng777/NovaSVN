@@ -31,6 +31,7 @@ pub fn surface_name(action: Option<&str>) -> &'static str {
         Some("blame") => "blame",
         Some("checkout") => "checkout",
         Some("commit") => "commit",
+        Some("info") => "info",
         Some("log") => "log",
         Some("update") => "update",
         Some("resolve") => "resolve",
@@ -183,6 +184,7 @@ mod tests {
         assert_eq!(surface_name(None), "main");
         assert_eq!(surface_name(Some("checkout")), "checkout");
         assert_eq!(surface_name(Some("commit")), "commit");
+        assert_eq!(surface_name(Some("info")), "info");
         assert_eq!(surface_name(Some("log")), "log");
         assert_eq!(surface_name(Some("unknown")), "main");
     }

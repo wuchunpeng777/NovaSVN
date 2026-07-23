@@ -650,14 +650,18 @@
     if (event.key !== "Escape") {
       return;
     }
-    if (deleteCandidate) {
+    if (outOfDateDialogOpen) {
+      outOfDateDialogOpen = false;
+    } else if (deleteCandidate) {
       cancelDelete();
     } else if (revertCandidate) {
       cancelRevert();
     } else if (historyPickerOpen) {
       closeHistoryPicker();
-    } else {
+    } else if (fileContextMenu) {
       closeFileContextMenu();
+    } else if (!authenticationFailure && !operationRunning) {
+      void getCurrentWindow().close();
     }
   }
 

@@ -25,6 +25,7 @@
     X,
   } from "@lucide/svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
+  import InlineUpdatePanel from "../InlineUpdatePanel.svelte";
   import LogMergeDialog from "../LogMergeDialog.svelte";
   import SvnLogRevisionList from "../SvnLogRevisionList.svelte";
   import ConflictResolver from "./ConflictResolver.svelte";
@@ -318,6 +319,9 @@
   export let selectedTask: Task | null = null;
   export let runningTaskId: string | null = null;
   export let pendingSvnOperationKind: PendingSvnOperationKind | null = null;
+  export let inlineUpdateRoot: string | null = null;
+  export let inlineUpdateTask: Task | null = null;
+  export let inlineUpdateMinimized = false;
   export let svnOperationFeedback: SvnOperationFeedback | null = null;
   export let taskError: CommandError | null = null;
   export let commandError: CommandError | null = null;
@@ -368,6 +372,8 @@
   export let onUpdateWorkspace: () => void = () => {};
   export let onUpdatePath: (path: string) => void = () => {};
   export let onCleanupWorkspace: () => void = () => {};
+  export let onToggleInlineUpdate: () => void = () => {};
+  export let onStopInlineUpdate: () => void = () => {};
   export let onDismissSvnOperationFeedback: () => void = () => {};
   export let onChooseApplyPatch: () => void = () => {};
   export let onRunApplyPatch: (dryRun: boolean) => void = () => {};
@@ -375,7 +381,6 @@
   export let onLoadMoreStatus: () => void = () => {};
   export let onWorkspacePathInput: (value: string) => void = () => {};
   export let onSearchTextInput: (value: string) => void = () => {};
-  export let onClearFilters: () => void = () => {};
   export let onRefreshSvnBlame: () => void = () => {};
   export let onSelectFile: (path: string) => void = () => {};
   export let onSelectWorkspacePath: (path: string) => void = () => {};
@@ -509,6 +514,7 @@
   export let onSvnLogFileOnlyInput: (value: boolean) => void = () => {};
   export let onSvnLogLimitInput: (value: number) => void = () => {};
   export let onLoadMoreSvnLog: () => void = () => {};
+  export let onLoadAllSvnLog: () => void = () => {};
   export let onRevertToRevision: (revision: string) => void = () => {};
 
   export let onCommitMessageInput: (value: string) => void = () => {};
@@ -2107,6 +2113,10 @@
   let branchPoolDisplayNameDraft = "";
 
   function startBranchPoolDrag(event: DragEvent, entryId: string) {
+    if (branchPoolLoading || editingBranchPoolEntryId === entryId) {
+      event.preventDefault();
+      return;
+    }
     draggedBranchPoolEntryId = entryId;
     branchPoolDropTarget = null;
     event.dataTransfer?.setData("text/plain", entryId);
@@ -2144,6 +2154,23 @@
   function finishBranchPoolDrag() {
     draggedBranchPoolEntryId = null;
     branchPoolDropTarget = null;
+  }
+
+  function moveBranchPoolEntry(entryId: string, offset: -1 | 1) {
+    if (branchPoolLoading) return;
+    const ids = branchPool.entries.map((entry) => entry.id);
+    const sourceIndex = ids.indexOf(entryId);
+    const targetIndex = sourceIndex + offset;
+    if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= ids.length) return;
+    [ids[sourceIndex], ids[targetIndex]] = [ids[targetIndex], ids[sourceIndex]];
+    onReorderBranchPoolEntries(ids);
+  }
+
+  function handleBranchPoolDragKeydown(event: KeyboardEvent, entryId: string) {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    event.stopPropagation();
+    moveBranchPoolEntry(entryId, event.key === "ArrowUp" ? -1 : 1);
   }
 
   function editBranchPoolEntry(entry: BranchPoolEntry) {
@@ -2260,12 +2287,6 @@
       message: error instanceof Error ? error.message : "文件 Diff 读取失败",
       recoverable: true,
     };
-  }
-
-  function clearWorkingCopyFilters() {
-    workingCopyTreeFilter = "all";
-    openRowMenuPath = null;
-    onClearFilters();
   }
 
   function selectWorkingCopyTreeFilter(filter: WorkingCopyTreeFilter) {
@@ -2678,6 +2699,7 @@
 
 <section
   class="versions-workbench"
+  class:has-inline-update={inlineUpdateRoot !== null}
   class:resizing-layout={resizingSourceList || resizingInspector || resizingTimelineDiff || resizingFileColumn !== null}
   data-theme={resolvedTheme}
   data-theme-mode={appSettings.themeMode}
@@ -2777,11 +2799,6 @@
         </button>
       </div>
 
-      <div class="toolbar-context">
-        <strong>{workspace ? basename(workspace.working_copy_root) : view.title}</strong>
-        <span>{workspace ? view.title : "未打开工作副本"}</span>
-      </div>
-
       <div class="toolbar-actions toolbar-trailing">
         <button
           type="button"
@@ -2872,6 +2889,17 @@
     </button>
   </div>
 
+  {#if inlineUpdateRoot}
+    <InlineUpdatePanel
+      workingCopyRoot={inlineUpdateRoot}
+      task={inlineUpdateTask}
+      minimized={inlineUpdateMinimized}
+      theme={resolvedTheme}
+      onToggleMinimized={onToggleInlineUpdate}
+      onStop={onStopInlineUpdate}
+    />
+  {/if}
+
   <div
     class="versions-layout"
     class:source-list-hidden={!appSettings.showSourceList}
@@ -2915,16 +2943,26 @@
             class="project-source-row"
             role="group"
             aria-label={`项目 ${workspaceEntryName(entry)}`}
-            draggable={!branchPoolLoading && editingBranchPoolEntryId !== entry.id}
             class:editing={editingBranchPoolEntryId === entry.id}
             class:dragging={draggedBranchPoolEntryId === entry.id}
             class:drop-before={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "before"}
             class:drop-after={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "after"}
-            on:dragstart={(event) => startBranchPoolDrag(event, entry.id)}
             on:dragend={finishBranchPoolDrag}
             on:dragover={(event) => updateBranchPoolDropTarget(event, entry.id)}
             on:drop={(event) => dropBranchPoolEntry(event, entry.id)}
           >
+            <button
+              type="button"
+              class="project-drag-handle"
+              aria-label={`拖动排序 ${workspaceEntryName(entry)}`}
+              title="拖动排序；也可使用上下方向键"
+              draggable={!branchPoolLoading && editingBranchPoolEntryId !== entry.id}
+              disabled={branchPoolLoading || editingBranchPoolEntryId === entry.id}
+              on:dragstart={(event) => startBranchPoolDrag(event, entry.id)}
+              on:keydown={(event) => handleBranchPoolDragKeydown(event, entry.id)}
+            >
+              <GripVertical size={15} strokeWidth={2} aria-hidden="true" />
+            </button>
             {#if editingBranchPoolEntryId === entry.id}
               <div
                 class="source-item workspace-source-item project-name-editor"
@@ -2960,6 +2998,8 @@
                 type="button"
                 class="source-item workspace-source-item project-source-button"
                 class:active={sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")}
+                draggable={!branchPoolLoading}
+                on:dragstart={(event) => startBranchPoolDrag(event, entry.id)}
                 on:click={() => openWorkspaceEntry(entry)}
               >
                 <span class="source-icon" aria-hidden="true">
@@ -3060,7 +3100,11 @@
       ></div>
     {/if}
 
-    <main class="content-pane" aria-label={view.title}>
+    <main
+      class="content-pane"
+      class:timeline-merge-active={view.id === "history" && selectedTimelineMergeRevisions.length > 0}
+      aria-label={view.title}
+    >
       <ErrorNotice error={workspaceError} />
       <ErrorNotice error={statusError} />
       <ErrorNotice error={commandError} />
@@ -3082,6 +3126,14 @@
               disabled={!workspace || svnLogLoading || !svnLog?.has_more}
             >
               更多
+            </button>
+            <button
+              type="button"
+              aria-label="加载全部 Revision"
+              on:click={onLoadAllSvnLog}
+              disabled={!workspace || svnLogLoading || !svnLog?.has_more}
+            >
+              加载全部
             </button>
           </div>
         </section>
@@ -3172,7 +3224,9 @@
             <span class="timeline-filter-error" role="status">开始日期不能晚于结束日期</span>
           {/if}
         </section>
-        <ErrorNotice error={svnLogError} />
+        <div class="timeline-error">
+          <ErrorNotice error={svnLogError} />
+        </div>
 
         <div class="timeline-layout" class:file-diff-open={selectedRevisionFileDiff !== null}>
           <SvnLogRevisionList
@@ -4901,14 +4955,6 @@
               未管理文件
             </button>
           </div>
-          <button
-            type="button"
-            class="filter-clear-button"
-            aria-label="清除过滤条件"
-            on:click={clearWorkingCopyFilters}
-          >
-            <X size={15} strokeWidth={1.9} aria-hidden="true" />
-          </button>
           {#if selectedRowPaths.size > 0}
             <div class="batch-action-bar" role="toolbar" aria-label="所选路径批量操作">
             <strong>{selectedRowPaths.size} 个已选</strong>

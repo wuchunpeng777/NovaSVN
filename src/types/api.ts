@@ -535,6 +535,11 @@ export interface InspectUpdateTargetRequest {
   svn_executable?: string;
 }
 
+export interface GetSvnInfoRequest {
+  path: string;
+  svn_executable?: string;
+}
+
 export interface UpdateTargetSummary {
   target_path: string;
   working_copy_root: string;
@@ -543,6 +548,20 @@ export interface UpdateTargetSummary {
   repository_root: string;
   revision: string;
   kind: "file" | "dir" | string;
+}
+
+export interface SvnInfo {
+  target_path: string;
+  working_copy_root: string;
+  relative_path: string | null;
+  kind: "file" | "dir" | string;
+  repository_url: string;
+  repository_root: string;
+  repository_uuid: string | null;
+  revision: string;
+  last_changed_revision: string | null;
+  last_changed_author: string | null;
+  last_changed_date: string | null;
 }
 
 export interface RecentWorkspace {

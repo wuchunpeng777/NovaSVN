@@ -91,6 +91,7 @@ fn normalize_action(action: String) -> Option<String> {
         value,
         "open"
             | "checkout"
+            | "info"
             | "commit"
             | "update"
             | "resolve"
@@ -344,6 +345,15 @@ mod tests {
 
         assert_eq!(intent.action.as_deref(), Some("checkout"));
         assert_eq!(intent.path.as_deref(), Some("C:\\checkouts\\project"));
+    }
+
+    #[test]
+    fn accepts_info_action() {
+        let intent =
+            startup_intent_from_args(["--novasvn-action", "info", "--novasvn-path", "C:\\wc\\src"]);
+
+        assert_eq!(intent.action.as_deref(), Some("info"));
+        assert_eq!(intent.path.as_deref(), Some("C:\\wc\\src"));
     }
 
     #[test]

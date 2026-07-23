@@ -9,6 +9,7 @@
   import StandaloneCheckoutWindow from "./components/StandaloneCheckoutWindow.svelte";
   import StandaloneCommitWindow from "./components/StandaloneCommitWindow.svelte";
   import StandaloneConflictWindow from "./components/StandaloneConflictWindow.svelte";
+  import StandaloneInfoWindow from "./components/StandaloneInfoWindow.svelte";
   import StandaloneLogWindow from "./components/StandaloneLogWindow.svelte";
   import StandaloneUpdateWindow from "./components/StandaloneUpdateWindow.svelte";
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
@@ -20,7 +21,6 @@
     configureSvnCertificateTrust,
     getStartupIntent,
     launchExternalTool,
-    launchUpdateWindow,
     openFileLocation,
     openLocalPathLocation,
     openRepositoryTempFile,
@@ -30,6 +30,7 @@
   import {
     consumePendingSvnOperationCompletion,
     createSvnOperationCreationCoordinator,
+    isSameWorkingCopyRoot,
   } from "./lib/svn-operation-completion";
   import { buildAppMenuState, dispatchAppMenuPathCommand } from "./lib/app-menu";
   import { createPendingTaskCompletionCoordinator } from "./lib/pending-task-completion";
@@ -67,7 +68,7 @@
 
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
-  let startupSurface: "loading" | "main" | "blame" | "checkout" | "commit" | "log" | "update" | "resolve" =
+  let startupSurface: "loading" | "main" | "blame" | "checkout" | "commit" | "log" | "update" | "resolve" | "info" =
     hasTauriRuntime() ? "loading" : "main";
   let standaloneBlamePath = "";
   let standaloneBlameReady = false;
@@ -84,6 +85,8 @@
   let standaloneUpdateReturnAction: string | null = null;
   let standaloneConflictPath = "";
   let standaloneConflictReady = false;
+  let standaloneInfoPath = "";
+  let standaloneInfoReady = false;
   let unlistenAppMenu: UnlistenFn | null = null;
   let unlistenDragDrop: UnlistenFn | null = null;
   let repositoryImportDropActive = false;
@@ -109,6 +112,12 @@
   let conflictResolutionError: CommandError | null = null;
   let svnOperationFeedback: SvnOperationFeedback | null = null;
   let svnOperationFeedbackTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let inlineUpdateRoot: string | null = null;
+  let inlineUpdateTaskId: string | null = null;
+  let inlineUpdateTask: Task | null = null;
+  let inlineUpdateMinimized = false;
+  let inlineUpdateRefreshSignature = "";
+  let inlineUpdateRefreshGeneration = 0;
   const repositoryLayoutTaskChecks = new Set<string>();
   const applyPatchTaskChecks = new Set<string>();
   const missingSvnOperationTaskChecks = new Set<string>();
@@ -141,6 +150,41 @@
           "external",
         ].includes(file.status),
     ).length ?? 0;
+  $: inlineUpdateVisible =
+    inlineUpdateRoot !== null &&
+    $workspaceStore.current !== null &&
+    isSameWorkingCopyRoot(
+      inlineUpdateRoot,
+      $workspaceStore.current.working_copy_root,
+    );
+  $: currentPendingSvnOperationKind =
+    $workspaceStore.pendingSvnOperationKind !== null &&
+    $workspaceStore.pendingSvnOperationWorkingCopyRoot !== null &&
+    $workspaceStore.current !== null &&
+    isSameWorkingCopyRoot(
+      $workspaceStore.pendingSvnOperationWorkingCopyRoot,
+      $workspaceStore.current.working_copy_root,
+    )
+      ? $workspaceStore.pendingSvnOperationKind
+      : null;
+  $: if (inlineUpdateTaskId) {
+    const summary = $taskStore.snapshot.tasks.find(
+      (task) => task.task_id === inlineUpdateTaskId,
+    );
+    const selectedTask =
+      $taskStore.selectedTask?.task_id === inlineUpdateTaskId
+        ? $taskStore.selectedTask
+        : null;
+    const signature = `${inlineUpdateTaskId}:${summary?.updated_at ?? "missing"}:${selectedTask?.updated_at ?? "unselected"}`;
+    if (signature !== inlineUpdateRefreshSignature) {
+      inlineUpdateRefreshSignature = signature;
+      if (selectedTask && (!summary || selectedTask.updated_at >= summary.updated_at)) {
+        inlineUpdateTask = selectedTask;
+      } else {
+        void refreshInlineUpdateTask(inlineUpdateTaskId);
+      }
+    }
+  }
   $: selectedHunkIds =
     selectedFile === null
       ? []
@@ -222,8 +266,8 @@
 
   function tracksOperationFeedback(
     kind: PendingSvnOperationKind | null,
-  ): kind is "update" | "update_path" | "cleanup" {
-    return kind === "update" || kind === "update_path" || kind === "cleanup";
+  ): kind is "update_path" | "cleanup" {
+    return kind === "update_path" || kind === "cleanup";
   }
 
   function showSvnOperationFeedback(feedback: SvnOperationFeedback) {
@@ -325,7 +369,7 @@
 
   function queueAppMenuStateSync(
     state: AppMenuState,
-    surface: "loading" | "main" | "blame" | "commit" | "log" | "update" | "resolve",
+    surface: "loading" | "main" | "blame" | "commit" | "log" | "update" | "resolve" | "info",
   ) {
     if (!hasTauriRuntime() || surface !== "main") {
       return;
@@ -628,20 +672,20 @@
     kind: SvnOperationKind,
     filePath?: string,
     targetPath?: string,
-  ) {
+  ): Promise<Task | null> {
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
     if (
       !workingCopyRoot ||
       svnOperationCreationCoordinator.isCreating() ||
       $workspaceStore.pendingSvnOperationTaskId !== null
     ) {
-      return;
+      return null;
     }
 
     if (kind === "revert_file") {
       const confirmed = window.confirm(`确定要撤销文件改动吗？\n${filePath ?? ""}`);
       if (!confirmed) {
-        return;
+        return null;
       }
     }
 
@@ -652,7 +696,7 @@
           `此路径同时包含本地改动和远端更新，Update 可能产生合并或冲突。是否继续？\n${filePath ?? ""}`,
         );
         if (!confirmed) {
-          return;
+          return null;
         }
       }
     }
@@ -662,14 +706,14 @@
         `确定要从工作副本删除此路径吗？\n${filePath ?? ""}\n\n这会删除本地内容并安排 SVN 删除。\n未提交改动和目录内未版本控制内容可能丢失。`,
       );
       if (!confirmed) {
-        return;
+        return null;
       }
     }
 
     if (kind.startsWith("resolve_")) {
       const confirmed = window.confirm(`确定要标记或选择冲突解决结果吗？\n${filePath ?? ""}`);
       if (!confirmed) {
-        return;
+        return null;
       }
     }
 
@@ -685,6 +729,7 @@
       });
     }
 
+    let createdTask: Task | null = null;
     const created = await svnOperationCreationCoordinator.create(
       () => $workspaceStore.pendingSvnOperationTaskId !== null,
       () =>
@@ -695,7 +740,10 @@
           targetPath,
           svnExecutable: currentSvnExecutable(),
         }),
-      (task) => workspaceStore.markSvnOperationTask(task.task_id, kind, workingCopyRoot),
+      (task) => {
+        createdTask = task;
+        workspaceStore.markSvnOperationTask(task.task_id, kind, workingCopyRoot);
+      },
     );
     if (!created && tracksOperationFeedback(kind) && $workspaceStore.pendingSvnOperationTaskId === null) {
       showSvnOperationFeedback({
@@ -705,6 +753,7 @@
         detail: $taskStore.error?.message ?? "任务创建失败，请重试",
       });
     }
+    return createdTask;
   }
 
   async function loadRepositoryUrl(url?: string) {
@@ -1361,11 +1410,50 @@
     if (!workingCopyRoot) {
       return;
     }
-    try {
-      await launchUpdateWindow({ target_path: workingCopyRoot });
-    } catch (error) {
-      commandError = error as CommandError;
+
+    if (
+      inlineUpdateRoot &&
+      inlineUpdateTaskId &&
+      isSameWorkingCopyRoot(inlineUpdateRoot, workingCopyRoot)
+    ) {
+      inlineUpdateMinimized = false;
+      return;
     }
+
+    const task = await runSvnOperation("update");
+    if (!task) {
+      commandError = $taskStore.error;
+      return;
+    }
+
+    inlineUpdateRoot = workingCopyRoot;
+    inlineUpdateTaskId = task.task_id;
+    inlineUpdateTask = task;
+    inlineUpdateMinimized = false;
+    inlineUpdateRefreshSignature = "";
+  }
+
+  async function refreshInlineUpdateTask(taskId: string) {
+    const generation = ++inlineUpdateRefreshGeneration;
+    const task = await taskStore.getTaskById(taskId);
+    if (
+      generation === inlineUpdateRefreshGeneration &&
+      inlineUpdateTaskId === taskId &&
+      task
+    ) {
+      inlineUpdateTask = task;
+    }
+  }
+
+  async function stopInlineUpdate() {
+    if (!inlineUpdateTaskId || !inlineUpdateTask) {
+      return;
+    }
+    if (inlineUpdateTask.status !== "pending" && inlineUpdateTask.status !== "running") {
+      return;
+    }
+    await taskStore.cancel(inlineUpdateTaskId);
+    await refreshInlineUpdateTask(inlineUpdateTaskId);
   }
 
   async function runMerge() {
@@ -1633,7 +1721,7 @@
     }
 
     const confirmed = window.confirm(
-      `确定要把工作副本内容恢复到 r${revision} 吗？\n${workingCopyRoot}\n\n这会执行反向 Merge 并生成本地改动，不会自动提交。\n工作副本必须无本地改动且已 Update 到 HEAD。`,
+      `确定要撤销 r${revision} 这次提交吗？\n${workingCopyRoot}\n\n这只会反向应用该次提交并生成本地改动，不会自动提交，也不会把整个工作副本回退到 r${revision}。\n工作副本必须无本地改动且已 Update 到 HEAD。`,
     );
     if (!confirmed) {
       return;
@@ -2322,6 +2410,16 @@
       return;
     }
 
+    if (intent.action === "info") {
+      standaloneInfoPath = intent.path?.trim() ?? "";
+      startupSurface = "info";
+      if ($svnStore.executableInput.trim()) {
+        void svnStore.detectWithInputFallback();
+      }
+      standaloneInfoReady = true;
+      return;
+    }
+
     if (intent.action === "checkout") {
       standaloneCheckoutPath = intent.path?.trim() ?? "";
       startupSurface = "checkout";
@@ -2421,7 +2519,8 @@
   (startupSurface === "commit" && !standaloneCommitReady) ||
   (startupSurface === "log" && !standaloneLogReady) ||
   (startupSurface === "update" && !standaloneUpdateReady) ||
-  (startupSurface === "resolve" && !standaloneConflictReady)}
+  (startupSurface === "resolve" && !standaloneConflictReady) ||
+  (startupSurface === "info" && !standaloneInfoReady)}
   <main class="startup-loading" aria-label="NovaSVN 启动中" role="status">
     <span></span>
     <p>
@@ -2437,6 +2536,8 @@
           ? "正在准备 SVN Update..."
         : startupSurface === "resolve"
           ? "正在准备冲突处理..."
+        : startupSurface === "info"
+          ? "正在准备 SVN Info..."
         : "正在启动 NovaSVN..."}
     </p>
   </main>
@@ -2507,6 +2608,17 @@
     targetPath={standaloneConflictPath}
     svnExecutable={currentSvnExecutable()}
     externalMergeTool={$appSettingsStore.externalMergeTool}
+    svnAuthenticationUsername={$appSettingsStore.svnUsername}
+    svnRememberPassword={$appSettingsStore.svnRememberPassword}
+    {svnAuthenticationLoading}
+    {svnAuthenticationError}
+    onSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
+  />
+{:else if startupSurface === "info"}
+  <StandaloneInfoWindow
+    targetPath={standaloneInfoPath}
+    svnExecutable={currentSvnExecutable()}
+    themeMode={$appSettingsStore.themeMode}
     svnAuthenticationUsername={$appSettingsStore.svnUsername}
     svnRememberPassword={$appSettingsStore.svnRememberPassword}
     {svnAuthenticationLoading}
@@ -2660,7 +2772,10 @@
   tasks={$taskStore.snapshot.tasks}
   selectedTask={$taskStore.selectedTask}
   runningTaskId={$taskStore.snapshot.running_task_id}
-  pendingSvnOperationKind={$workspaceStore.pendingSvnOperationKind}
+  pendingSvnOperationKind={currentPendingSvnOperationKind}
+  inlineUpdateRoot={inlineUpdateVisible ? inlineUpdateRoot : null}
+  inlineUpdateTask={inlineUpdateVisible ? inlineUpdateTask : null}
+  {inlineUpdateMinimized}
   {svnOperationFeedback}
   taskError={$taskStore.error}
   commandError={commandError}
@@ -2691,6 +2806,8 @@
   onUpdateWorkspace={openWorkspaceUpdatePage}
   onUpdatePath={(path) => runSvnOperation("update_path", path)}
   onCleanupWorkspace={() => runSvnOperation("cleanup")}
+  onToggleInlineUpdate={() => (inlineUpdateMinimized = !inlineUpdateMinimized)}
+  onStopInlineUpdate={stopInlineUpdate}
   onDismissSvnOperationFeedback={dismissSvnOperationFeedback}
   onChooseApplyPatch={chooseAndPreflightPatch}
   onRunApplyPatch={runApplyPatch}
@@ -2698,7 +2815,6 @@
   onLoadMoreStatus={() => workspaceStore.loadMoreStatus(currentSvnExecutable())}
   onWorkspacePathInput={workspaceStore.setPathInput}
   onSearchTextInput={workspaceStore.setSearchText}
-  onClearFilters={workspaceStore.clearFilters}
   onRefreshSvnBlame={() => workspaceStore.refreshSvnBlame(currentSvnExecutable())}
   onSelectFile={(path) => workspaceStore.selectFile(path, currentSvnExecutable())}
   onSelectWorkspacePath={workspaceStore.selectPathOnly}
@@ -2784,6 +2900,7 @@
   onSvnLogFileOnlyInput={setSvnLogFileOnlyAndRefresh}
   onSvnLogLimitInput={workspaceStore.setSvnLogLimit}
   onLoadMoreSvnLog={() => workspaceStore.loadMoreSvnLog(currentSvnExecutable())}
+  onLoadAllSvnLog={() => workspaceStore.loadAllSvnLog(currentSvnExecutable())}
   onRevertToRevision={revertWorkspaceToRevision}
   onCommitMessageInput={workspaceStore.setCommitMessage}
   onCommitTemplateInput={workspaceStore.setCommitTemplate}
