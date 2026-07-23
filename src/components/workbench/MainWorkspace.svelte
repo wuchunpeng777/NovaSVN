@@ -25,7 +25,7 @@
     X,
   } from "@lucide/svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
-  import InlineUpdatePanel from "../InlineUpdatePanel.svelte";
+  import StandaloneUpdateWindow from "../StandaloneUpdateWindow.svelte";
   import LogMergeDialog from "../LogMergeDialog.svelte";
   import SvnLogRevisionList from "../SvnLogRevisionList.svelte";
   import ConflictResolver from "./ConflictResolver.svelte";
@@ -72,6 +72,7 @@
     WorkspaceFileTree,
     WorkingCopyStatus,
     WorkspaceSummary,
+    UpdateTargetSummary,
   } from "../../types/api";
   import type {
     AppSettingsState,
@@ -322,6 +323,8 @@
   export let inlineUpdateRoot: string | null = null;
   export let inlineUpdateTask: Task | null = null;
   export let inlineUpdateMinimized = false;
+  export let inlineUpdateSvnExecutable: string | undefined = undefined;
+  export let inlineUpdateTarget: UpdateTargetSummary | null = null;
   export let svnOperationFeedback: SvnOperationFeedback | null = null;
   export let taskError: CommandError | null = null;
   export let commandError: CommandError | null = null;
@@ -334,6 +337,11 @@
   export let svnAuthenticationStatus: SvnAuthenticationStatus | null = null;
   export let svnAuthenticationError: CommandError | null = null;
   export let svnAuthenticationLoading = false;
+  export let onInlineSvnAuthenticationSubmit: (
+    username: string,
+    password: string,
+    rememberPassword: boolean,
+  ) => Promise<boolean> = async () => false;
   export let svnCertificateTrustStatus: SvnCertificateTrustStatus | null = null;
   export let svnCertificateTrustError: CommandError | null = null;
   export let svnCertificateTrustLoading = false;
@@ -373,7 +381,6 @@
   export let onUpdatePath: (path: string) => void = () => {};
   export let onCleanupWorkspace: () => void = () => {};
   export let onToggleInlineUpdate: () => void = () => {};
-  export let onStopInlineUpdate: () => void = () => {};
   export let onDismissSvnOperationFeedback: () => void = () => {};
   export let onChooseApplyPatch: () => void = () => {};
   export let onRunApplyPatch: (dryRun: boolean) => void = () => {};
@@ -516,6 +523,7 @@
   export let onLoadMoreSvnLog: () => void = () => {};
   export let onLoadAllSvnLog: () => void = () => {};
   export let onRevertToRevision: (revision: string) => void = () => {};
+  export let onRevertWorkspaceToRevision: (revision: string) => void = () => {};
 
   export let onCommitMessageInput: (value: string) => void = () => {};
   export let onCommitTemplateInput: (value: string) => void = () => {};
@@ -1183,6 +1191,10 @@
   }
 
   function timelineRevertDisabled() {
+    return !workspace || toolbarLocked;
+  }
+
+  function timelineWorkspaceRevertDisabled() {
     return !workspace || toolbarLocked;
   }
 
@@ -2889,17 +2901,6 @@
     </button>
   </div>
 
-  {#if inlineUpdateRoot}
-    <InlineUpdatePanel
-      workingCopyRoot={inlineUpdateRoot}
-      task={inlineUpdateTask}
-      minimized={inlineUpdateMinimized}
-      theme={resolvedTheme}
-      onToggleMinimized={onToggleInlineUpdate}
-      onStop={onStopInlineUpdate}
-    />
-  {/if}
-
   <div
     class="versions-layout"
     class:source-list-hidden={!appSettings.showSourceList}
@@ -2947,6 +2948,8 @@
             class:dragging={draggedBranchPoolEntryId === entry.id}
             class:drop-before={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "before"}
             class:drop-after={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "after"}
+            draggable={editingBranchPoolEntryId !== entry.id}
+            on:dragstart={(event) => startBranchPoolDrag(event, entry.id)}
             on:dragend={finishBranchPoolDrag}
             on:dragover={(event) => updateBranchPoolDropTarget(event, entry.id)}
             on:drop={(event) => dropBranchPoolEntry(event, entry.id)}
@@ -2956,9 +2959,8 @@
               class="project-drag-handle"
               aria-label={`拖动排序 ${workspaceEntryName(entry)}`}
               title="拖动排序；也可使用上下方向键"
-              draggable={!branchPoolLoading && editingBranchPoolEntryId !== entry.id}
-              disabled={branchPoolLoading || editingBranchPoolEntryId === entry.id}
-              on:dragstart={(event) => startBranchPoolDrag(event, entry.id)}
+              draggable={editingBranchPoolEntryId !== entry.id}
+              aria-disabled={branchPoolLoading || editingBranchPoolEntryId === entry.id}
               on:keydown={(event) => handleBranchPoolDragKeydown(event, entry.id)}
             >
               <GripVertical size={15} strokeWidth={2} aria-hidden="true" />
@@ -2998,8 +3000,7 @@
                 type="button"
                 class="source-item workspace-source-item project-source-button"
                 class:active={sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")}
-                draggable={!branchPoolLoading}
-                on:dragstart={(event) => startBranchPoolDrag(event, entry.id)}
+                draggable={editingBranchPoolEntryId !== entry.id}
                 on:click={() => openWorkspaceEntry(entry)}
               >
                 <span class="source-icon" aria-hidden="true">
@@ -3109,7 +3110,24 @@
       <ErrorNotice error={statusError} />
       <ErrorNotice error={commandError} />
 
-      {#if view.id === "history"}
+      {#if inlineUpdateRoot}
+        <StandaloneUpdateWindow
+          targetPath={inlineUpdateRoot}
+          svnExecutable={inlineUpdateSvnExecutable}
+          themeMode={appSettings.themeMode}
+          svnAuthenticationUsername={appSettings.svnUsername}
+          svnRememberPassword={appSettings.svnRememberPassword}
+          {svnAuthenticationLoading}
+          svnAuthenticationError={svnAuthenticationError}
+          onSvnAuthenticationSubmit={onInlineSvnAuthenticationSubmit}
+          embedded={true}
+          autoStart={false}
+          initialTask={inlineUpdateTask}
+          initialTarget={inlineUpdateTarget}
+          minimized={inlineUpdateMinimized}
+          onToggleMinimized={onToggleInlineUpdate}
+        />
+      {:else if view.id === "history"}
         <section class="pane-header">
           <div>
             <h1>时间线</h1>
@@ -3243,10 +3261,14 @@
             loadingText="正在读取日志"
             formatDate={formatTimelineDate}
             revertDisabled={timelineRevertDisabled}
+            workspaceRevertDisabled={timelineWorkspaceRevertDisabled}
+            workspaceRevertTitle={(entry) =>
+              workspace ? `回退整个工作区到 r${entry.revision}` : "请先打开 SVN 工作副本"}
             onTogglePaths={toggleTimelineEntryPaths}
             onToggleMerge={toggleTimelineMerge}
             onOpenDiff={openTimelineEntryDiff}
             onRevert={revertTimelineEntry}
+            onRevertWorkspace={(entry) => onRevertWorkspaceToRevision(entry.revision)}
           />
 
           {#if selectedRevisionFileDiff}

@@ -884,6 +884,7 @@ function createTaskStore() {
     workingCopyRoot: string;
     targetRevision: string;
     svnExecutable?: string | null;
+    wholeWorkspace?: boolean;
   }) {
     update((state) => ({ ...state, loading: true, error: null }));
 
@@ -891,6 +892,7 @@ function createTaskStore() {
       const task = await createRevertRevisionTask({
         working_copy_root: request.workingCopyRoot,
         target_revision: request.targetRevision,
+        whole_workspace: request.wholeWorkspace || undefined,
         svn_executable: request.svnExecutable || undefined,
       });
       selectedTaskId = task.task_id;

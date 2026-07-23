@@ -53,12 +53,6 @@ button {
   -webkit-user-select: none;
 }
 
-.versions-workbench.has-inline-update {
-  grid-template-rows:
-    var(--titlebar-height) var(--locationbar-height) auto
-    minmax(0, 1fr);
-}
-
 .versions-workbench.resizing-layout {
   cursor: col-resize;
 }

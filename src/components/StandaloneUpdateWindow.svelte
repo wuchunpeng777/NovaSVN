@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { ArrowLeft, CircleCheck, FilePenLine, History, RefreshCw, RotateCw, Square, X } from "@lucide/svelte";
+  import { ArrowLeft, ChevronDown, ChevronUp, CircleCheck, FilePenLine, History, RefreshCw, RotateCw, Square, X } from "@lucide/svelte";
   import {
     cancelTask,
     createSvnOperationTask,
@@ -40,6 +40,12 @@
   export let showReturnToMain = false;
   export let onReturnToMain: () => void = () => {};
   export let returnToCommit = false;
+  export let embedded = false;
+  export let initialTask: Task | null = null;
+  export let initialTarget: UpdateTargetSummary | null = null;
+  export let autoStart = true;
+  export let minimized = false;
+  export let onToggleMinimized: () => void = () => {};
   export let onSvnAuthenticationSubmit: (
     username: string,
     password: string,
@@ -147,7 +153,7 @@
     window.addEventListener("resize", closeFileContextMenu);
     window.addEventListener("keydown", handleWindowKeydown);
     window.addEventListener("focus", handleWindowFocus);
-    void startUpdate();
+    void (autoStart ? startUpdate() : initializeExistingUpdate());
   });
 
   onDestroy(() => {
@@ -340,6 +346,67 @@
         if (showScanning) {
           scanning = false;
         }
+      }
+    }
+  }
+
+  async function initializeExistingUpdate() {
+    const currentGeneration = ++generation;
+    clearPollTimer();
+    initializing = true;
+    error = null;
+    statusError = null;
+    actionError = null;
+    status = null;
+    conflicts = [];
+    conflictScanCompleted = false;
+    updateTask = initialTask;
+    resolutionTask = null;
+    resolutionHistory = [];
+    resolutionPath = null;
+    resolutionKind = null;
+    resolvedUpdateActions = new Map();
+    resolvedConflictPaths = new Set();
+    updatedFileSizes = new Map();
+    autoFollowOutput = true;
+    expectedAutoScrollTop = null;
+    closeFileContextMenu();
+    closeFileLog();
+
+    try {
+      const path = targetPath.trim();
+      if (!path) {
+        throw {
+          code: "UPDATE_TARGET_MISSING",
+          message: "没有可更新的目标",
+          detail: "请先打开 SVN 工作副本。",
+          recoverable: false,
+        } satisfies CommandError;
+      }
+      target = initialTarget ?? await inspectUpdateTarget({
+          path,
+          svn_executable: svnExecutable?.trim() || undefined,
+        });
+      if (currentGeneration !== generation) {
+        return;
+      }
+      if (updateTask) {
+        schedulePoll(updateTask.task_id, "update", currentGeneration, 0);
+      } else {
+        throw {
+          code: "UPDATE_TASK_MISSING",
+          message: "Update 任务不存在",
+          detail: "无法恢复内嵌 Update 任务，请重新执行 Update。",
+          recoverable: true,
+        } satisfies CommandError;
+      }
+    } catch (caught) {
+      if (currentGeneration === generation) {
+        error = caught as CommandError;
+      }
+    } finally {
+      if (currentGeneration === generation) {
+        initializing = false;
       }
     }
   }
@@ -666,7 +733,13 @@
   }
 </script>
 
-<main class="standalone-update" data-theme={resolvedTheme} aria-label="NovaSVN Update">
+<main
+  class="standalone-update"
+  class:embedded
+  class:minimized={embedded && minimized}
+  data-theme={resolvedTheme}
+  aria-label={embedded ? "主界面 Update" : "NovaSVN Update"}
+>
   <header class="update-titlebar">
     <div class="update-heading">
       {#if showReturnToMain}
@@ -706,8 +779,28 @@
           </button>
         {/if}
       {/if}
+      {#if embedded}
+        <button
+          type="button"
+          class="icon-button update-minimize"
+          aria-label={minimized ? "展开 Update 详情" : "最小化 Update"}
+          title={minimized ? "展开 Update 详情" : "最小化 Update"}
+          on:click={onToggleMinimized}
+        >
+          {#if minimized}<ChevronDown size={16} aria-hidden="true" />{:else}<ChevronUp size={16} aria-hidden="true" />{/if}
+        </button>
+      {/if}
     </div>
   </header>
+
+  {#if embedded && minimized}
+    <section class="update-minimized-summary" aria-label="Update 简要信息">
+      <span>{taskStatusLabel(updateTask)}</span>
+      <strong>{updatedFiles.length} 个文件</strong>
+      <OperationMetrics task={updateTask} totalBytes={updatedBytes} label="总更新量" active={updateRunning} />
+      <span class:has-conflicts={conflictCount > 0}>{conflictCount} 个冲突</span>
+    </section>
+  {/if}
 
   <section class="update-summary" aria-label="更新摘要">
     <span>目标 <strong>{target?.relative_path ?? "工作副本根目录"}</strong></span>
@@ -733,6 +826,7 @@
 
   <section
     class="update-notices"
+    aria-hidden={embedded && minimized ? "true" : undefined}
     class:has-notices={Boolean(error || statusError || updateTask?.error || actionError)}
     aria-label="Update 错误"
   >
@@ -746,7 +840,7 @@
     {/if}
   </section>
 
-  <div class="update-layout">
+  <div class="update-layout" aria-hidden={embedded && minimized ? "true" : undefined}>
     <div class="update-left-pane">
       <section class="update-output" aria-label="更新内容" aria-busy={updateRunning}>
         <header>
@@ -982,6 +1076,46 @@
     --control: #353538;
     --accent: #55a7ef;
     color-scheme: dark;
+  }
+
+  .standalone-update.embedded {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    border: 0;
+  }
+
+  .standalone-update.embedded.minimized {
+    grid-template-rows: auto auto;
+  }
+
+  .standalone-update.embedded.minimized .update-summary,
+  .standalone-update.embedded.minimized .update-notices,
+  .standalone-update.embedded.minimized .update-layout {
+    display: none;
+  }
+
+  .update-minimized-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    min-height: 38px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel-subtle);
+    color: var(--secondary);
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .update-minimized-summary strong,
+  .update-minimized-summary .has-conflicts {
+    color: var(--text);
+  }
+
+  .update-minimized-summary .has-conflicts {
+    color: #bc3f39;
   }
 
   .update-titlebar,

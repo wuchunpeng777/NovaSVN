@@ -736,6 +736,12 @@
     font-weight: 700;
   }
 
+  .primary:hover:not(:disabled) {
+    border-color: #18578e;
+    background: #1f639f;
+    color: #ffffff;
+  }
+
   .output-lines {
     min-height: 0;
     overflow: auto;

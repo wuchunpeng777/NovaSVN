@@ -1172,8 +1172,15 @@ pub fn run() {
                 } else {
                     window_state::restore_and_track(&window, &app_data_dir, window_surface);
                 }
+                let _ = window.unminimize();
                 let _ = window.show();
+                // A maximized child window can be shown behind the previously active
+                // Explorer window on Windows. Temporarily making it topmost gives the
+                // restored window a reliable foreground activation without changing its
+                // persistent z-order.
+                let _ = window.set_always_on_top(true);
                 let _ = window.set_focus();
+                let _ = window.set_always_on_top(false);
             }
             Ok(())
         })

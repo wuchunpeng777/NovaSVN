@@ -346,6 +346,8 @@ pub struct CreateRevertRevisionTaskRequest {
     pub working_copy_root: String,
     pub target_revision: String,
     pub svn_executable: Option<String>,
+    #[serde(default)]
+    pub whole_workspace: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -681,6 +683,7 @@ struct RevertRevisionTaskPayload {
     working_copy_root: String,
     target_revision: String,
     svn_executable: String,
+    whole_workspace: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1954,10 +1957,18 @@ impl TaskQueue {
         let now = timestamp_millis();
         let task = Task {
             task_id: task_id.clone(),
-            title: format!("撤销提交 r{target_revision}"),
+            title: if request.whole_workspace {
+                format!("回退工作区到 r{target_revision}")
+            } else {
+                format!("撤销提交 r{target_revision}")
+            },
             status: TaskStatus::Pending,
             logs: vec![TaskLog {
-                message: "撤销单次提交任务已加入队列".to_string(),
+                message: if request.whole_workspace {
+                    "回退工作区任务已加入队列".to_string()
+                } else {
+                    "撤销单次提交任务已加入队列".to_string()
+                },
                 created_at: now,
             }],
             error: None,
@@ -1968,6 +1979,7 @@ impl TaskQueue {
                 working_copy_root: working_copy_root.display().to_string(),
                 target_revision,
                 svn_executable,
+                whole_workspace: request.whole_workspace,
             }),
         };
 
@@ -4820,7 +4832,11 @@ fn run_revert_revision_task(
         state,
         task_id,
         TaskStatus::Running,
-        "撤销单次提交开始执行",
+        if payload.whole_workspace {
+            "回退工作区开始执行"
+        } else {
+            "撤销单次提交开始执行"
+        },
         None,
     );
 
@@ -4830,8 +4846,19 @@ fn run_revert_revision_task(
                 state,
                 task_id,
                 &format!(
-                    "执行 svn merge --ignore-ancestry -c -{}：{}",
-                    payload.target_revision, source_url
+                    "执行 {}：{}",
+                    if payload.whole_workspace {
+                        format!(
+                            "svn merge --ignore-ancestry -r HEAD:{}",
+                            payload.target_revision
+                        )
+                    } else {
+                        format!(
+                            "svn merge --ignore-ancestry -c -{}",
+                            payload.target_revision
+                        )
+                    },
+                    source_url,
                 ),
             );
             append_command_output(state, task_id, &output);
@@ -4839,7 +4866,11 @@ fn run_revert_revision_task(
                 state,
                 task_id,
                 TaskStatus::Success,
-                "单次提交已撤销并生成本地改动",
+                if payload.whole_workspace {
+                    "工作区已回退并生成本地改动"
+                } else {
+                    "单次提交已撤销并生成本地改动"
+                },
                 None,
             );
         }
@@ -4882,7 +4913,14 @@ fn execute_revert_revision(
         return Err(NovaError::command(
             "REVERT_REVISION_LOCAL_CHANGES",
             "当前工作副本有本地改动",
-            Some("撤销单次提交前请先提交或撤销现有本地改动。".to_string()),
+            Some(
+                if payload.whole_workspace {
+                    "回退工作区前请先提交或撤销现有本地改动。"
+                } else {
+                    "撤销单次提交前请先提交或撤销现有本地改动。"
+                }
+                .to_string(),
+            ),
             true,
         ));
     }
@@ -4926,7 +4964,7 @@ fn execute_revert_revision(
             true,
         )
     })?;
-    if target_number == 0 || target_number > base_number {
+    if (!payload.whole_workspace && target_number == 0) || target_number > base_number {
         return Err(NovaError::command(
             "REVERT_COMMIT_TARGET_OUT_OF_RANGE",
             "目标提交 Revision 不在当前工作副本范围内",
@@ -4940,16 +4978,31 @@ fn execute_revert_revision(
     let source_url = read_revert_revision_info_item(&payload.svn_executable, &root, "url", false)?;
     let source_url = normalize_repository_url(&source_url)?;
     let mut command = svn::command(&payload.svn_executable);
-    command
-        .args(["merge", "--ignore-ancestry", "-c"])
-        .arg(format!("-{target_number}"))
-        .arg(&source_url)
-        .arg(&root)
-        .current_dir(&root);
+    command.arg("merge").arg("--ignore-ancestry");
+    if payload.whole_workspace {
+        if target_number == base_number {
+            return Err(NovaError::command(
+                "REVERT_WORKSPACE_TARGET_UNCHANGED",
+                "目标 Revision 与当前工作副本相同",
+                Some(format!("当前 Revision：r{base_number}")),
+                true,
+            ));
+        }
+        command
+            .arg("-r")
+            .arg(format!("{base_number}:{target_number}"));
+    } else {
+        command.arg("-c").arg(format!("-{target_number}"));
+    }
+    command.arg(&source_url).arg(&root).current_dir(&root);
     let output = run_task_command(state, task_id, &mut command).map_err(|error| {
         NovaError::command(
             "REVERT_REVISION_COMMAND_FAILED",
-            "无法启动撤销单次提交命令",
+            if payload.whole_workspace {
+                "无法启动回退工作区命令"
+            } else {
+                "无法启动撤销单次提交命令"
+            },
             Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
             true,
         )
@@ -4957,7 +5010,11 @@ fn execute_revert_revision(
     if !output.status.success() {
         return Err(NovaError::command(
             "REVERT_REVISION_FAILED",
-            "撤销单次提交命令执行失败",
+            if payload.whole_workspace {
+                "回退工作区命令执行失败"
+            } else {
+                "撤销单次提交命令执行失败"
+            },
             Some(command_error_detail(&payload.svn_executable, &output)),
             true,
         ));
@@ -13841,7 +13898,7 @@ mod tests {
     }
 
     #[test]
-    fn reverts_single_commit_in_clean_head_working_copy() {
+    fn reverts_single_commit_and_whole_workspace_in_clean_head_working_copy() {
         if !svn_tools_available() {
             return;
         }
@@ -13880,6 +13937,7 @@ mod tests {
             working_copy_root: working_copy.display().to_string(),
             target_revision: "2".to_string(),
             svn_executable: "svn".to_string(),
+            whole_workspace: false,
         };
         let state = Arc::new(Mutex::new(TaskQueueState::default()));
         let (output, base_revision, source_url) =
@@ -13901,6 +13959,33 @@ mod tests {
                 .arg(&working_copy),
         );
         assert!(String::from_utf8_lossy(&status.stdout).contains("item=\"modified\""));
+
+        fs::write(&file, "revision three\n").expect("write revision three");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "revision three"]),
+        );
+        run_test_command(Command::new("svn").arg("update").arg(&working_copy));
+
+        let payload = RevertRevisionTaskPayload {
+            working_copy_root: working_copy.display().to_string(),
+            target_revision: "1".to_string(),
+            svn_executable: "svn".to_string(),
+            whole_workspace: true,
+        };
+        let state = Arc::new(Mutex::new(TaskQueueState::default()));
+        let (output, base_revision, _) =
+            execute_revert_revision(&state, "revert-workspace-test", &payload)
+                .expect("whole workspace reverse merge should succeed");
+
+        assert!(output.status.success());
+        assert_eq!(base_revision, "3");
+        assert_eq!(
+            fs::read_to_string(&file).expect("read workspace reverted file"),
+            "revision one\n"
+        );
 
         fs::remove_dir_all(root).ok();
     }

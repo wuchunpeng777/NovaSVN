@@ -19,6 +19,9 @@
   export let revertDisabled: (entry: SvnLogEntry) => boolean = () => true;
   export let revertTitle: (entry: SvnLogEntry) => string = (entry) =>
     `撤销提交 r${entry.revision}`;
+  export let workspaceRevertDisabled: (entry: SvnLogEntry) => boolean = () => true;
+  export let workspaceRevertTitle: (entry: SvnLogEntry) => string = (entry) =>
+    `回退工作区到 r${entry.revision}`;
   export let onTogglePaths: (revision: string) => void = () => {};
   export let onToggleMerge: (event: MouseEvent, revision: string) => void = () => {};
   export let onOpenDiff: (entry: SvnLogEntry, path: SvnChangedPath) => void = () => {};
@@ -28,6 +31,7 @@
     path: SvnChangedPath,
   ) => void = () => {};
   export let onRevert: (entry: SvnLogEntry) => void = () => {};
+  export let onRevertWorkspace: (entry: SvnLogEntry) => void = () => {};
 </script>
 
 <section
@@ -102,6 +106,16 @@
               on:click={() => onRevert(entry)}
             >
               <RotateCcw size={15} strokeWidth={2} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              class="svn-log-revert svn-log-revert-workspace"
+              aria-label={`回退工作区到 r${entry.revision}`}
+              title={workspaceRevertTitle(entry)}
+              disabled={workspaceRevertDisabled(entry)}
+              on:click={() => onRevertWorkspace(entry)}
+            >
+              <RotateCcw size={15} strokeWidth={2.4} aria-hidden="true" />
             </button>
           </div>
         </header>
@@ -368,6 +382,10 @@
     min-height: 28px;
     padding: 0;
     place-items: center;
+  }
+
+  .svn-log-revert-workspace {
+    color: #8a5b00;
   }
 
   .svn-log-empty {

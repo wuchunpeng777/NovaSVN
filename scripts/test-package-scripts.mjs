@@ -322,34 +322,40 @@ const windowsExplorerMenus = [
   {
     root: "Software\\Classes\\Directory\\shell",
     placeholder: "%1",
-    actions: [
+    submenu: [
       ["01.Checkout", "Checkout", "checkout"],
-      ["02.Commit", "Commit", "commit"],
-      ["03.Update", "Update", "update"],
-      ["04.Info", "SVN Info", "info"],
-      ["05.Log", "Log", "log"],
+      ["02.Info", "SVN Info", "info"],
+    ],
+    direct: [
+      ["Commit", "Commit", "commit"],
+      ["Update", "Update", "update"],
+      ["Log", "Log", "log"],
     ],
   },
   {
     root: "Software\\Classes\\Directory\\Background\\shell",
     placeholder: "%V",
-    actions: [
+    submenu: [
       ["01.Checkout", "Checkout", "checkout"],
-      ["02.Commit", "Commit", "commit"],
-      ["03.Update", "Update", "update"],
-      ["04.Info", "SVN Info", "info"],
-      ["05.Log", "Log", "log"],
+      ["02.Info", "SVN Info", "info"],
+    ],
+    direct: [
+      ["Commit", "Commit", "commit"],
+      ["Update", "Update", "update"],
+      ["Log", "Log", "log"],
     ],
   },
   {
     root: "Software\\Classes\\*\\shell",
     placeholder: "%1",
-    actions: [
-      ["02.Commit", "Commit", "commit"],
-      ["03.Update", "Update", "update"],
-      ["04.Info", "SVN Info", "info"],
-      ["05.Log", "Log", "log"],
-      ["06.Blame", "Blame", "blame"],
+    submenu: [
+      ["01.Info", "SVN Info", "info"],
+    ],
+    direct: [
+      ["Commit", "Commit", "commit"],
+      ["Update", "Update", "update"],
+      ["Log", "Log", "log"],
+      ["Blame", "Blame", "blame"],
     ],
   },
 ];
@@ -363,11 +369,19 @@ for (const menu of windowsExplorerMenus) {
     console.error(`Windows 安装/卸载缺少 NovaSVN Explorer 级联菜单：${menu.root}`);
     failed = true;
   }
-  for (const [key, label, action] of menu.actions) {
+  for (const [key, label, action] of menu.submenu) {
     const registration =
       `!insertmacro NOVASVN_REGISTER_ACTION "${menu.root}" "${key}" "${label}" "${action}" "${menu.placeholder}"`;
     if (!nsisHooks.includes(registration)) {
       console.error(`Windows Explorer 级联菜单缺少 ${label}：${menu.root}`);
+      failed = true;
+    }
+  }
+  for (const [key, label, action] of menu.direct) {
+    const registration =
+      `!insertmacro NOVASVN_REGISTER_DIRECT_ACTION "${menu.root}" "${key}" "${label}" "${action}" "${menu.placeholder}"`;
+    if (!nsisHooks.includes(registration)) {
+      console.error(`Windows Explorer 一级菜单缺少 ${label}：${menu.root}`);
       failed = true;
     }
   }

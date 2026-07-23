@@ -262,8 +262,19 @@
   .icon-button:hover:not(:disabled), .copy-button:hover { background: var(--panel-subtle); color: var(--accent); }
   button:disabled { cursor: default; opacity: .55; }
   .info-notice { min-height: 0; }
-  .info-content { min-height: 0; overflow: auto; padding: 20px; }
-  .info-grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 1px; max-width: 1100px; margin: 0 auto; border: 1px solid var(--border); background: var(--border); }
+  .info-content { min-height: 0; overflow: auto; padding: 12px; }
+  .info-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(280px, 1fr));
+    gap: 1px;
+    width: 100%;
+    min-width: 100%;
+    min-height: 100%;
+    border: 1px solid var(--border);
+    background: var(--border);
+    resize: both;
+    overflow: auto;
+  }
   .info-grid > div { display: grid; grid-template-columns: minmax(150px, .35fr) minmax(0, 1fr); gap: 16px; min-width: 0; background: var(--panel); padding: 12px 14px; }
   dt { color: var(--secondary); font-size: 12px; }
   dd { min-width: 0; overflow: hidden; margin: 0; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }

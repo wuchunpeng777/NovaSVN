@@ -1445,17 +1445,6 @@
     }
   }
 
-  async function stopInlineUpdate() {
-    if (!inlineUpdateTaskId || !inlineUpdateTask) {
-      return;
-    }
-    if (inlineUpdateTask.status !== "pending" && inlineUpdateTask.status !== "running") {
-      return;
-    }
-    await taskStore.cancel(inlineUpdateTaskId);
-    await refreshInlineUpdateTask(inlineUpdateTaskId);
-  }
-
   async function runMerge() {
     if (!$workspaceStore.current) {
       workspaceStore.failMergeTask("请先打开 SVN 工作副本");
@@ -1710,7 +1699,7 @@
     );
   }
 
-  async function revertWorkspaceToRevision(revision: string) {
+  async function revertWorkspaceToRevision(revision: string, wholeWorkspace = false) {
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
     if (
       !workingCopyRoot ||
@@ -1721,7 +1710,9 @@
     }
 
     const confirmed = window.confirm(
-      `确定要撤销 r${revision} 这次提交吗？\n${workingCopyRoot}\n\n这只会反向应用该次提交并生成本地改动，不会自动提交，也不会把整个工作副本回退到 r${revision}。\n工作副本必须无本地改动且已 Update 到 HEAD。`,
+      wholeWorkspace
+        ? `确定要把整个工作区回退到 r${revision} 吗？\n${workingCopyRoot}\n\n这会反向应用 r${revision} 之后的全部提交并生成本地改动，不会自动提交。\n工作副本必须无本地改动且已 Update 到 HEAD。`
+        : `确定要撤销 r${revision} 这次提交吗？\n${workingCopyRoot}\n\n这只会反向应用该次提交并生成本地改动，不会自动提交，也不会把整个工作副本回退到 r${revision}。\n工作副本必须无本地改动且已 Update 到 HEAD。`,
     );
     if (!confirmed) {
       return;
@@ -1733,6 +1724,7 @@
         taskStore.createRevertRevision({
           workingCopyRoot,
           targetRevision: revision,
+          wholeWorkspace,
           svnExecutable: currentSvnExecutable(),
         }),
       (task) =>
@@ -1742,6 +1734,10 @@
           workingCopyRoot,
         ),
     );
+  }
+
+  function revertWholeWorkspaceToRevision(revision: string) {
+    return revertWorkspaceToRevision(revision, true);
   }
 
   async function runSvnBatchOperation(
@@ -2759,6 +2755,7 @@
     committableChangeCount === 0 ||
     $taskStore.snapshot.running_task_id !== null
   }
+
   commitDisabled={
     $workspaceStore.commitFiles.length === 0 ||
     commitSafetyBlocked ||
@@ -2775,6 +2772,18 @@
   pendingSvnOperationKind={currentPendingSvnOperationKind}
   inlineUpdateRoot={inlineUpdateVisible ? inlineUpdateRoot : null}
   inlineUpdateTask={inlineUpdateVisible ? inlineUpdateTask : null}
+  inlineUpdateSvnExecutable={currentSvnExecutable()}
+  inlineUpdateTarget={inlineUpdateVisible && $workspaceStore.current
+    ? {
+        target_path: $workspaceStore.current.working_copy_root,
+        working_copy_root: $workspaceStore.current.working_copy_root,
+        relative_path: null,
+        repository_url: $workspaceStore.current.repository_url,
+        repository_root: $workspaceStore.current.repository_root,
+        revision: $workspaceStore.current.revision,
+        kind: "dir",
+      }
+    : null}
   {inlineUpdateMinimized}
   {svnOperationFeedback}
   taskError={$taskStore.error}
@@ -2787,6 +2796,7 @@
   {svnAuthenticationStatus}
   {svnAuthenticationError}
   {svnAuthenticationLoading}
+  onInlineSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
   {svnCertificateTrustStatus}
   {svnCertificateTrustError}
   {svnCertificateTrustLoading}
@@ -2807,7 +2817,6 @@
   onUpdatePath={(path) => runSvnOperation("update_path", path)}
   onCleanupWorkspace={() => runSvnOperation("cleanup")}
   onToggleInlineUpdate={() => (inlineUpdateMinimized = !inlineUpdateMinimized)}
-  onStopInlineUpdate={stopInlineUpdate}
   onDismissSvnOperationFeedback={dismissSvnOperationFeedback}
   onChooseApplyPatch={chooseAndPreflightPatch}
   onRunApplyPatch={runApplyPatch}
@@ -2902,6 +2911,7 @@
   onLoadMoreSvnLog={() => workspaceStore.loadMoreSvnLog(currentSvnExecutable())}
   onLoadAllSvnLog={() => workspaceStore.loadAllSvnLog(currentSvnExecutable())}
   onRevertToRevision={revertWorkspaceToRevision}
+  onRevertWorkspaceToRevision={revertWholeWorkspaceToRevision}
   onCommitMessageInput={workspaceStore.setCommitMessage}
   onCommitTemplateInput={workspaceStore.setCommitTemplate}
   onUseCommitHistoryMessage={workspaceStore.useCommitHistoryMessage}

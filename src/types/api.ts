@@ -809,6 +809,7 @@ export interface CreateRevertRevisionTaskRequest {
   working_copy_root: string;
   target_revision: string;
   svn_executable?: string;
+  whole_workspace?: boolean;
 }
 
 export interface IgnoreWorkspacePathRequest {
