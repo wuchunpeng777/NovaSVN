@@ -647,6 +647,7 @@ textarea {
 
 .batch-action-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 5px;
   min-width: 0;
@@ -735,6 +736,22 @@ textarea {
 .work-copy-grid.file-columns-resizing {
   cursor: col-resize;
   user-select: none;
+}
+
+.changelist-filter {
+  display: inline-flex;
+  flex: 0 1 220px;
+  min-width: 150px;
+  align-items: center;
+  gap: 6px;
+  color: #626269;
+  font-size: 11px;
+}
+
+.changelist-filter select {
+  min-width: 0;
+  height: 28px;
+  flex: 1 1 auto;
 }
 
 .work-copy-grid.inspector-hidden {
@@ -1399,6 +1416,13 @@ textarea {
 
 .blame-row > span + span {
   border-left: 1px solid #edf0f3;
+}
+
+.status-stack .changelist-status {
+  max-width: 118px;
+  background: #dcefeb;
+  color: #1f655b;
+  font-weight: 650;
 }
 
 .blame-revision-cell {
@@ -3202,6 +3226,11 @@ textarea {
   color: var(--mac-text);
   font-size: 13px;
   font-weight: 650;
+}
+
+.versions-workbench[data-theme="dark"] .status-stack .changelist-status {
+  background: #20443f;
+  color: #91ded1;
 }
 
 .window-identity span {

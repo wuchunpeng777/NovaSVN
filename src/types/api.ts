@@ -598,6 +598,7 @@ export interface WorkspacePathSize {
 export interface ChangedFile {
   path: string;
   status: string;
+  changelist?: string | null;
   revision: string | null;
   property_status: string | null;
   property_changed: boolean;
@@ -650,6 +651,7 @@ export interface WorkspaceFileNode {
   name: string;
   kind: "dir" | "file" | string;
   status: string;
+  changelist?: string | null;
   remote_status: string | null;
   remote_property_status: string | null;
   change_scope: ChangeScope;
@@ -662,6 +664,18 @@ export interface WorkspaceFileNode {
   changed: boolean;
   versioned: boolean;
   children: WorkspaceFileNode[];
+}
+
+export interface SetWorkspaceChangelistRequest {
+  working_copy_root: string;
+  file_paths: string[];
+  changelist?: string;
+  svn_executable?: string;
+}
+
+export interface WorkspaceChangelistResult {
+  changelist: string | null;
+  file_paths: string[];
 }
 
 export interface CreateRepositoryCheckoutTaskRequest {

@@ -559,12 +559,18 @@ describe("MainWorkspace", () => {
     expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
 
     onReorderBranchPoolEntries.mockClear();
+    const setPointerCapture = vi.fn();
+    Object.defineProperty(firstRow, "setPointerCapture", {
+      configurable: true,
+      value: setPointerCapture,
+    });
     await fireEvent.pointerDown(firstRow, {
       button: 0,
       clientX: 10,
       clientY: 10,
       pointerId: 1,
     });
+    expect(setPointerCapture).not.toHaveBeenCalled();
     await fireEvent.pointerMove(secondRow, { clientX: 20, clientY: 135, pointerId: 1 });
     await fireEvent.pointerUp(secondRow, { clientX: 20, clientY: 135, pointerId: 1 });
     expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
@@ -953,7 +959,7 @@ Certificate information:
         .getByText("r12")
         .closest(".svn-log-revision")
         ?.textContent?.replace(/\s/g, ""),
-    ).toBe("r12本地M5");
+    ).toBe("r12当前版本M5");
     expect(newestEntry).not.toHaveTextContent("/trunk/file-12-1.txt");
     await fireEvent.click(
       within(newestEntry).getByRole("button", { name: "展开 r12 日志" }),
@@ -1871,7 +1877,9 @@ Certificate information:
     expect(onSelectCommitFile).toHaveBeenCalledWith("local.txt");
     expect(onUpdatePath).toHaveBeenCalledWith("remote.txt");
     expect(onSelectFile).toHaveBeenCalledWith("conflict.txt");
-    expect(screen.getByRole("dialog", { name: "解决文本冲突" })).toBeInTheDocument();
+    const conflictDialog = screen.getByRole("dialog", { name: "解决文本冲突" });
+    expect(conflictDialog).toBeInTheDocument();
+    expect(conflictDialog.closest("[inert]")).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "关闭冲突解决器" }));
 
     const filters = screen.getByRole("region", { name: "改动过滤" });
@@ -1900,7 +1908,7 @@ Certificate information:
 
   it("selects multiple visible paths and exposes real batch actions", async () => {
     const alpha = makeFile("alpha.txt", "modified", "alpha-digest");
-    const beta = makeFile("beta.txt", "modified", "beta-digest");
+    const beta = { ...makeFile("beta.txt", "modified", "beta-digest"), changelist: "release" };
     const tree: WorkspaceFileTree = {
       working_copy_root: "C:/repo/wc",
       total_files: 2,
@@ -1908,7 +1916,7 @@ Certificate information:
       truncated: false,
       nodes: [
         makeScopedNode("alpha.txt", "modified", "local"),
-        makeScopedNode("beta.txt", "modified", "local"),
+        { ...makeScopedNode("beta.txt", "modified", "local"), changelist: "release" },
       ],
     };
     const onSelectCommitFiles = vi.fn();
@@ -1916,6 +1924,8 @@ Certificate information:
     const onRevertPaths = vi.fn();
     const onMovePaths = vi.fn();
     const onDeletePaths = vi.fn();
+    const onAssignChangelist = vi.fn();
+    const onRemoveChangelist = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
@@ -1927,8 +1937,17 @@ Certificate information:
         onRevertPaths,
         onMovePaths,
         onDeletePaths,
+        onAssignChangelist,
+        onRemoveChangelist,
       },
     });
+
+    expect(screen.getByTitle("Changelist: release")).toHaveTextContent("release");
+    const changelistFilter = screen.getByRole("combobox", { name: "Changelist 过滤" });
+    await fireEvent.change(changelistFilter, { target: { value: "release" } });
+    expect(screen.queryByText("alpha.txt", { exact: true })).not.toBeInTheDocument();
+    expect(screen.getByText("beta.txt", { exact: true })).toBeInTheDocument();
+    await fireEvent.change(changelistFilter, { target: { value: "all" } });
 
     const selectVisible = screen.getByRole("checkbox", { name: "选择当前可见路径" });
     await fireEvent.click(screen.getByRole("checkbox", { name: "选择文件 alpha.txt" }));
@@ -1943,11 +1962,15 @@ Certificate information:
     expect(selectVisible).toBeChecked();
     await fireEvent.click(within(batchToolbar).getByRole("button", { name: "加入 Commit" }));
     await fireEvent.click(within(batchToolbar).getByRole("button", { name: "Revert" }));
+    await fireEvent.click(within(batchToolbar).getByRole("button", { name: "加入 Changelist" }));
+    await fireEvent.click(within(batchToolbar).getByRole("button", { name: "移出 Changelist" }));
     await fireEvent.click(within(batchToolbar).getByRole("button", { name: "Move" }));
     await fireEvent.click(within(batchToolbar).getByRole("button", { name: "Delete" }));
 
     expect(onSelectCommitFiles).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
     expect(onRevertPaths).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
+    expect(onAssignChangelist).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
+    expect(onRemoveChangelist).toHaveBeenCalledWith(["beta.txt"]);
     expect(onMovePaths).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
     expect(onDeletePaths).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
 

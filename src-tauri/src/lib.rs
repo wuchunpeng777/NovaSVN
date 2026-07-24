@@ -58,8 +58,9 @@ use workspace::{
     GetSvnPropertiesRequest, GetWorkspacePathSizesRequest, IgnoreWorkspacePathRequest,
     InspectUpdateTargetRequest, ListWorkspaceFilesRequest, OpenWorkspaceRequest, RecentWorkspace,
     ResolveTextConflictRequest, ResolveTextConflictResult, ScanWorkspaceStatusRequest,
-    SetSvnPropertyRequest, SvnBlame, SvnInfo, SvnLog, SvnProperties, UpdateTargetSummary,
-    WorkingCopyStatus, WorkspaceFileTree, WorkspacePathSize, WorkspaceSummary,
+    SetSvnPropertyRequest, SetWorkspaceChangelistRequest, SvnBlame, SvnInfo, SvnLog, SvnProperties,
+    UpdateTargetSummary, WorkingCopyStatus, WorkspaceChangelistResult, WorkspaceFileTree,
+    WorkspacePathSize, WorkspaceSummary,
 };
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -960,6 +961,18 @@ async fn scan_workspace_status(
 }
 
 #[tauri::command]
+async fn set_workspace_changelist(
+    request: SetWorkspaceChangelistRequest,
+) -> CommandResult<WorkspaceChangelistResult> {
+    println!("[NovaSVN] set_workspace_changelist command received");
+    let result = run_blocking_command("更新 Changelist", move || {
+        workspace::set_workspace_changelist(request)
+    })
+    .await?;
+    Ok(CommandResponse::success(result))
+}
+
+#[tauri::command]
 async fn list_workspace_files(
     request: ListWorkspaceFilesRequest,
 ) -> CommandResult<WorkspaceFileTree> {
@@ -1244,6 +1257,7 @@ pub fn run() {
             get_svn_info,
             get_recent_workspace,
             scan_workspace_status,
+            set_workspace_changelist,
             list_workspace_files,
             get_workspace_path_sizes,
             get_file_diff,

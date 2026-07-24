@@ -17,6 +17,7 @@
 
   export let targetPath: string;
   export let svnExecutable: string | undefined = undefined;
+  export let themeMode: "system" | "light" | "dark" = "system";
   export let externalMergeTool = "";
   export let svnAuthenticationUsername = "";
   export let svnRememberPassword = true;
@@ -36,9 +37,14 @@
   let task: Task | null = null;
   let pollTimer: number | null = null;
   let generation = 0;
+  let systemPrefersDark = false;
+  let themeMediaQuery: MediaQueryList | null = null;
   const terminalStatuses: TaskStatus[] = ["success", "failed", "cancelled", "interrupted"];
 
   $: taskRunning = !!task && !terminalStatuses.includes(task.status);
+  $: resolvedTheme = themeMode === "system"
+    ? systemPrefersDark ? "dark" : "light"
+    : themeMode;
   $: authenticationFailure = detectSvnAuthenticationFailure(
     [
       error ? [error.code, error.message, error.detail].filter(Boolean).join("\n") : null,
@@ -49,13 +55,23 @@
   );
 
   onMount(() => {
+    if (typeof window.matchMedia === "function") {
+      themeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      systemPrefersDark = themeMediaQuery.matches;
+      themeMediaQuery.addEventListener("change", handleThemeChange);
+    }
     void loadConflict();
   });
 
   onDestroy(() => {
     generation += 1;
     clearPollTimer();
+    themeMediaQuery?.removeEventListener("change", handleThemeChange);
   });
+
+  function handleThemeChange(event: MediaQueryListEvent) {
+    systemPrefersDark = event.matches;
+  }
 
   async function loadConflict() {
     const currentGeneration = ++generation;
@@ -166,6 +182,7 @@
   {/if}
   <ConflictResolver
     open={true}
+    theme={resolvedTheme}
     filePath={target?.relative_path ?? targetPath}
     {contentDiff}
     {loading}

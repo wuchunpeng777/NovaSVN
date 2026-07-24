@@ -78,7 +78,7 @@
             <span class="svn-log-revision">
               <strong>r{entry.revision}</strong>
               {#if isCurrentRevision(entry.revision)}
-                <span class="svn-log-current-revision" aria-label={`本地版本 r${entry.revision}`}>本地</span>
+                <span class="svn-log-current-revision" aria-label={`当前工作副本版本 r${entry.revision}`}>当前版本</span>
               {/if}
               <span class="svn-log-change-counts">
                 {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
@@ -182,6 +182,8 @@
     --log-text: #17202a;
     --log-secondary: #6b7784;
     --log-accent: #245f91;
+    --log-current-panel: #dceeff;
+    --log-current-border: #1473bd;
     min-height: 0;
     overflow: auto;
     background: var(--log-panel);
@@ -196,6 +198,8 @@
     --log-text: #f2f2f4;
     --log-secondary: #a9a9ae;
     --log-accent: #55a7ef;
+    --log-current-panel: #183b57;
+    --log-current-border: #67b8ff;
   }
 
   .svn-log-entry {
@@ -205,16 +209,16 @@
   }
 
   .svn-log-entry.current-revision {
-    border-left-color: var(--log-accent);
-    background: color-mix(in srgb, var(--log-accent) 18%, var(--log-panel));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--log-accent) 34%, transparent);
+    border-left-color: var(--log-current-border);
+    background: var(--log-current-panel);
+    box-shadow: inset 0 0 0 2px var(--log-current-border);
   }
 
   .svn-log-entry.current-revision .svn-log-revision > strong {
     border-radius: 4px;
-    background: color-mix(in srgb, var(--log-accent) 24%, var(--log-panel));
+    background: var(--log-current-border);
     padding: 2px 5px;
-    color: var(--log-accent);
+    color: #ffffff;
   }
 
   .svn-log-entry-header {
@@ -299,12 +303,12 @@
 
   .svn-log-current-revision {
     flex: 0 0 auto;
-    border: 1px solid var(--log-accent);
+    border: 1px solid var(--log-current-border);
     border-radius: 4px;
-    background: var(--log-accent);
+    background: var(--log-current-border);
     padding: 1px 5px;
     color: #ffffff;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     line-height: 1.25;
   }

@@ -76,6 +76,7 @@ import type {
   ScanWorkspaceStatusRequest,
   SaveBranchPoolEntryRequest,
   SaveTaskWorkspaceRequest,
+  SetWorkspaceChangelistRequest,
   SetSvnPropertyRequest,
   SvnDetection,
   SvnAuthenticationStatus,
@@ -94,6 +95,7 @@ import type {
   UpdateTargetSummary,
   WorkingCopyStatus,
   WorkspaceFileTree,
+  WorkspaceChangelistResult,
   WorkspacePathSize,
   WorkspaceSummary,
 } from "../types/api";
@@ -422,6 +424,12 @@ export function scanWorkspaceStatus(
   request: ScanWorkspaceStatusRequest,
 ): Promise<WorkingCopyStatus> {
   return callBackend<WorkingCopyStatus>("scan_workspace_status", { request });
+}
+
+export function setWorkspaceChangelist(
+  request: SetWorkspaceChangelistRequest,
+): Promise<WorkspaceChangelistResult> {
+  return callBackend<WorkspaceChangelistResult>("set_workspace_changelist", { request });
 }
 
 export function listWorkspaceFiles(

@@ -10,6 +10,7 @@
   import type { CommandError, FileContentDiff } from "../../types/api";
 
   export let open = false;
+  export let theme: "light" | "dark" = "light";
   export let filePath = "";
   export let contentDiff: FileContentDiff | null = null;
   export let loading = false;
@@ -90,6 +91,7 @@
 {#if open}
   <div
     class="conflict-resolver-backdrop"
+    data-theme={theme}
     role="presentation"
     on:click={(event) => event.target === event.currentTarget && closeResolver()}
   >
@@ -283,18 +285,17 @@
     inset: 0;
     display: grid;
     background: #252a2f;
-    padding: 28px;
     place-items: center;
   }
 
   .conflict-resolver {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
-    width: min(1180px, 100%);
-    height: min(780px, 100%);
+    width: 100%;
+    height: 100%;
     overflow: hidden;
-    border: 1px solid #8995a0;
-    border-radius: 8px;
+    border: 0;
+    border-radius: 0;
     background: #f4f6f8;
     color: #24313c;
   }
@@ -603,72 +604,72 @@
     gap: 18px;
   }
 
-  :global(.versions-workbench[data-theme="dark"]) .conflict-resolver-backdrop {
+  .conflict-resolver-backdrop[data-theme="dark"] {
     background: #111417;
   }
 
-  :global(.versions-workbench[data-theme="dark"]) .conflict-resolver {
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-resolver {
     border-color: #515b65;
     background: #20252a;
     color: #e1e6ea;
   }
 
-  :global(.versions-workbench[data-theme="dark"]) .conflict-resolver-header,
-  :global(.versions-workbench[data-theme="dark"]) .conflict-resolver-footer {
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-resolver-header,
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-resolver-footer {
     border-color: #454e56;
     background: #282e34;
   }
 
-  :global(.versions-workbench[data-theme="dark"]) .conflict-block-nav {
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-block-nav {
     border-color: #454e56;
     background: #252a30;
   }
 
-  :global(.versions-workbench[data-theme="dark"]) .conflict-block-nav-summary,
-  :global(.versions-workbench[data-theme="dark"]) .conflict-full-actions.vertical {
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-block-nav-summary,
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-full-actions.vertical {
     border-color: #454e56;
   }
 
-  :global(.versions-workbench[data-theme="dark"]) .conflict-block-list button {
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-block-list button {
     border-color: #505b64;
     background: #30363c;
     color: #d6dde3;
   }
 
-  :global(.versions-workbench[data-theme="dark"]) .conflict-block-list button.active {
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-block-list button.active {
     border-color: #5794c7;
     background: #263f54;
     color: #d7ebfb;
   }
 
-  :global(.versions-workbench[data-theme="dark"]) .conflict-version,
-  :global(.versions-workbench[data-theme="dark"]) .conflict-result,
-  :global(.versions-workbench[data-theme="dark"]) .conflict-base-version {
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-version,
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-result,
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-base-version {
     border-color: #535d66;
     background: #1d2226;
   }
 
-  :global(.versions-workbench[data-theme="dark"]) .conflict-version > header,
-  :global(.versions-workbench[data-theme="dark"]) .conflict-result > header {
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-version > header,
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-result > header {
     border-color: #4a535c;
     background: #2b3137;
   }
 
-  :global(.versions-workbench[data-theme="dark"]) .conflict-version.mine > header {
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-version.mine > header {
     background: #25372b;
   }
 
-  :global(.versions-workbench[data-theme="dark"]) .conflict-version.theirs > header {
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-version.theirs > header {
     background: #253647;
   }
 
-  :global(.versions-workbench[data-theme="dark"]) .conflict-base-version {
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-base-version {
     background: #39321f;
   }
 
-  :global(.versions-workbench[data-theme="dark"]) .conflict-version pre,
-  :global(.versions-workbench[data-theme="dark"]) .conflict-base-version pre,
-  :global(.versions-workbench[data-theme="dark"]) .conflict-result textarea {
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-version pre,
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-base-version pre,
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-result textarea {
     background: #1d2226;
     color: #dce3e8;
   }

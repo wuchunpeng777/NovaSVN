@@ -56,6 +56,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     openWorkspace: vi.fn(),
     scanWorkspaceStatus: vi.fn(),
     saveBranchPoolEntry: vi.fn(),
+    setWorkspaceChangelist: vi.fn(),
   };
 });
 
@@ -99,6 +100,7 @@ import {
   openWorkspace,
   scanWorkspaceStatus,
   saveBranchPoolEntry,
+  setWorkspaceChangelist,
 } from "./lib/api";
 import {
   appSettingsStore,
@@ -155,6 +157,7 @@ const openWorkspaceFileMock = vi.mocked(openWorkspaceFile);
 const openWorkspaceMock = vi.mocked(openWorkspace);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 const saveBranchPoolEntryMock = vi.mocked(saveBranchPoolEntry);
+const setWorkspaceChangelistMock = vi.mocked(setWorkspaceChangelist);
 const startDragMock = vi.mocked(startDrag);
 
 beforeEach(async () => {
@@ -195,6 +198,7 @@ beforeEach(async () => {
   openWorkspaceMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
   saveBranchPoolEntryMock.mockReset();
+  setWorkspaceChangelistMock.mockReset();
   startDragMock.mockReset();
   startDragMock.mockResolvedValue(undefined);
   getWorkspacePathSizesMock.mockResolvedValue([]);
@@ -226,6 +230,26 @@ afterEach(() => {
 });
 
 describe("App SVN operation completion", () => {
+  it("blocks the browser find shortcut without consuming plain typing", () => {
+    render(App);
+    const findShortcut = new KeyboardEvent("keydown", {
+      key: "f",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(findShortcut);
+    expect(findShortcut.defaultPrevented).toBe(true);
+
+    const plainTyping = new KeyboardEvent("keydown", {
+      key: "f",
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(plainTyping);
+    expect(plainTyping.defaultPrevented).toBe(false);
+  });
+
   it("applies password authentication and clears the frontend password", async () => {
     configureSvnAuthenticationMock.mockResolvedValue({
       mode: "password",
@@ -692,6 +716,34 @@ Certificate information:
         target_path: "archive",
         svn_executable: undefined,
       });
+    });
+  });
+
+  it("把所选版本文件加入 Changelist 并刷新状态", async () => {
+    await showBatchOperationSource();
+    setWorkspaceChangelistMock.mockResolvedValue({
+      changelist: "release",
+      file_paths: ["alpha.txt", "beta.txt"],
+    });
+    vi.spyOn(window, "prompt").mockReturnValue("release");
+    scanWorkspaceStatusMock.mockClear();
+    listWorkspaceFilesMock.mockClear();
+    render(App);
+
+    await selectBatchOperationFiles();
+    await fireEvent.click(screen.getByRole("button", { name: "加入 Changelist" }));
+
+    await waitFor(() => {
+      expect(setWorkspaceChangelistMock).toHaveBeenCalledWith({
+        working_copy_root: "C:/repo/wc",
+        file_paths: ["alpha.txt", "beta.txt"],
+        changelist: "release",
+        svn_executable: undefined,
+      });
+    });
+    await waitFor(() => {
+      expect(scanWorkspaceStatusMock).toHaveBeenCalledOnce();
+      expect(listWorkspaceFilesMock).toHaveBeenCalledOnce();
     });
   });
 

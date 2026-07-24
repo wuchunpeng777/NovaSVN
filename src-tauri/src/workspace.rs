@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
@@ -144,6 +144,7 @@ pub struct WorkingCopyStatus {
 pub struct ChangedFile {
     pub path: String,
     pub status: String,
+    pub changelist: Option<String>,
     pub revision: Option<String>,
     pub property_status: Option<String>,
     pub property_changed: bool,
@@ -174,6 +175,7 @@ pub struct WorkspaceFileNode {
     pub name: String,
     pub kind: String,
     pub status: String,
+    pub changelist: Option<String>,
     pub remote_status: Option<String>,
     pub remote_property_status: Option<String>,
     pub change_scope: ChangeScope,
@@ -319,6 +321,20 @@ pub struct IgnoreWorkspacePathRequest {
     pub working_copy_root: String,
     pub file_path: String,
     pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SetWorkspaceChangelistRequest {
+    pub working_copy_root: String,
+    pub file_paths: Vec<String>,
+    pub changelist: Option<String>,
+    pub svn_executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceChangelistResult {
+    pub changelist: Option<String>,
+    pub file_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1607,6 +1623,90 @@ pub fn scan_workspace_status(
     )
 }
 
+pub fn set_workspace_changelist(
+    request: SetWorkspaceChangelistRequest,
+) -> Result<WorkspaceChangelistResult, NovaError> {
+    const MAX_PATHS: usize = 5000;
+    const MAX_NAME_CHARS: usize = 128;
+
+    let root = normalize_workspace_path(&request.working_copy_root)?;
+    if request.file_paths.is_empty() || request.file_paths.len() > MAX_PATHS {
+        return Err(NovaError::command(
+            "SVN_CHANGELIST_PATHS_INVALID",
+            "请选择要加入 Changelist 的文件",
+            Some(format!("每次必须选择 1 到 {MAX_PATHS} 个文件。")),
+            true,
+        ));
+    }
+
+    let changelist = request
+        .changelist
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToString::to_string);
+    if request.changelist.is_some() && changelist.is_none() {
+        return Err(NovaError::command(
+            "SVN_CHANGELIST_NAME_EMPTY",
+            "Changelist 名称不能为空",
+            None,
+            true,
+        ));
+    }
+    if changelist.as_ref().is_some_and(|name| {
+        name.chars().count() > MAX_NAME_CHARS || name.chars().any(char::is_control)
+    }) {
+        return Err(NovaError::command(
+            "SVN_CHANGELIST_NAME_INVALID",
+            "Changelist 名称无效",
+            Some(format!(
+                "名称不能包含控制字符，且不能超过 {MAX_NAME_CHARS} 个字符。"
+            )),
+            true,
+        ));
+    }
+
+    let mut seen = HashSet::new();
+    let mut file_paths = Vec::with_capacity(request.file_paths.len());
+    for path in &request.file_paths {
+        let normalized = normalize_relative_file_path(path)?;
+        if seen.insert(normalized.clone()) {
+            file_paths.push(normalized);
+        }
+    }
+
+    let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let mut command = svn::command(&executable);
+    command.arg("changelist");
+    if let Some(name) = &changelist {
+        command.arg("--").arg(name);
+    } else {
+        command.args(["--remove", "--"]);
+    }
+    command.args(&file_paths).current_dir(&root);
+    let output = command.output().map_err(|error| {
+        NovaError::command(
+            "SVN_CHANGELIST_FAILED",
+            "无法更新 Changelist",
+            Some(format!("执行 `{executable} changelist` 失败：{error}")),
+            true,
+        )
+    })?;
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "SVN_CHANGELIST_COMMAND_FAILED",
+            "Changelist 更新失败",
+            Some(command_error_detail(&executable, "changelist", &output)),
+            true,
+        ));
+    }
+
+    Ok(WorkspaceChangelistResult {
+        changelist,
+        file_paths,
+    })
+}
+
 pub fn list_workspace_files(
     request: ListWorkspaceFilesRequest,
 ) -> Result<WorkspaceFileTree, NovaError> {
@@ -2862,6 +2962,11 @@ fn parse_svn_status_xml(
 
         let item = wc_status.attribute("item").unwrap_or("normal").to_string();
         let props = wc_status.attribute("props").map(ToString::to_string);
+        let changelist = entry
+            .ancestors()
+            .find(|node| node.has_tag_name("changelist"))
+            .and_then(|node| node.attribute("name"))
+            .map(ToString::to_string);
         let repos_status = entry
             .children()
             .find(|node| node.has_tag_name("repos-status"));
@@ -2895,6 +3000,7 @@ fn parse_svn_status_xml(
             && lock_owner.is_none()
             && lock_comment.is_none()
             && conflict_kind.is_none()
+            && changelist.is_none()
         {
             continue;
         }
@@ -2905,6 +3011,7 @@ fn parse_svn_status_xml(
         files.push(ChangedFile {
             path: display_path,
             status: normalize_status(&item, wc_status),
+            changelist,
             revision: wc_status.attribute("revision").map(ToString::to_string),
             property_status: props,
             property_changed,
@@ -3151,6 +3258,7 @@ fn read_workspace_children(
                         "normal".to_string()
                     }
                 }),
+                changelist: None,
                 remote_status: status_match.remote_status,
                 remote_property_status: status_match.remote_property_status,
                 change_scope,
@@ -3200,6 +3308,7 @@ fn workspace_file_node(
         name,
         kind: "file".to_string(),
         status: status_match.status.unwrap_or_else(|| "normal".to_string()),
+        changelist: status_match.changelist,
         remote_status: status_match.remote_status,
         remote_property_status: status_match.remote_property_status,
         change_scope: status_match.change_scope,
@@ -3218,6 +3327,7 @@ fn workspace_file_node(
 #[derive(Debug, Clone)]
 struct WorkspaceTreeStatusMatch {
     status: Option<String>,
+    changelist: Option<String>,
     remote_status: Option<String>,
     remote_property_status: Option<String>,
     change_scope: ChangeScope,
@@ -3234,6 +3344,7 @@ fn workspace_tree_status_for_path(
     if let Some(file) = status_by_path.get(&normalized_path) {
         return WorkspaceTreeStatusMatch {
             status: Some(file.status.clone()),
+            changelist: file.changelist.clone(),
             remote_status: file.remote_status.clone(),
             remote_property_status: file.remote_property_status.clone(),
             change_scope: file.change_scope,
@@ -3260,6 +3371,7 @@ fn workspace_tree_status_for_path(
 
     WorkspaceTreeStatusMatch {
         status: inside_unversioned_dir.then(|| "unversioned".to_string()),
+        changelist: None,
         remote_status: None,
         remote_property_status: None,
         change_scope: if inside_unversioned_dir {
@@ -3326,6 +3438,7 @@ fn insert_status_node_segments(
             name: (*segment).to_string(),
             kind: "file".to_string(),
             status: file.status.clone(),
+            changelist: file.changelist.clone(),
             remote_status: file.remote_status.clone(),
             remote_property_status: file.remote_property_status.clone(),
             change_scope: file.change_scope,
@@ -3357,6 +3470,7 @@ fn insert_status_node_segments(
                 name: (*segment).to_string(),
                 kind: "dir".to_string(),
                 status: "changed".to_string(),
+                changelist: None,
                 remote_status: None,
                 remote_property_status: None,
                 change_scope: file.change_scope,
@@ -4318,6 +4432,130 @@ mod tests {
                 .arg("--quiet")
                 .output()
                 .is_ok()
+    }
+
+    #[test]
+    fn parses_changelist_names_from_status_xml() {
+        let root = PathBuf::from("C:/workspace");
+        let xml = r#"
+<status>
+  <target path="C:/workspace">
+    <changelist name="release-ready">
+      <entry path="C:/workspace/src/main.rs">
+        <wc-status item="modified" props="none" revision="42" />
+      </entry>
+    </changelist>
+  </target>
+</status>
+"#;
+
+        let status = parse_svn_status_xml(xml, &root, 0, 100, parse_svnversion_output("42"), false)
+            .expect("changelist status parses");
+
+        assert_eq!(status.files.len(), 1);
+        assert_eq!(status.files[0].path, "src/main.rs");
+        assert_eq!(status.files[0].changelist.as_deref(), Some("release-ready"));
+    }
+
+    #[test]
+    fn assigns_and_removes_workspace_changelists() {
+        if !svn_test_tools_available() {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-changelist-integration-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(&import_dir).expect("create changelist import directory");
+        fs::write(import_dir.join("alpha.txt"), "base").expect("write alpha baseline");
+        fs::write(import_dir.join("beta.txt"), "base").expect("write beta baseline");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("alpha.txt"), "alpha changed").expect("change alpha");
+        fs::write(working_copy.join("beta.txt"), "beta changed").expect("change beta");
+
+        let assigned = set_workspace_changelist(SetWorkspaceChangelistRequest {
+            working_copy_root: working_copy.display().to_string(),
+            file_paths: vec!["alpha.txt".to_string(), "beta.txt".to_string()],
+            changelist: Some("release ready".to_string()),
+            svn_executable: None,
+        })
+        .expect("assign changelist");
+        assert_eq!(assigned.changelist.as_deref(), Some("release ready"));
+
+        let assigned_status = scan_workspace_status(ScanWorkspaceStatusRequest {
+            working_copy_root: working_copy.display().to_string(),
+            scope_path: None,
+            include_content_digests: Some(false),
+            svn_executable: None,
+            offset: Some(0),
+            limit: Some(100),
+            check_remote_updates: Some(false),
+        })
+        .expect("read assigned changelist");
+        assert!(assigned_status
+            .files
+            .iter()
+            .filter(|file| ["alpha.txt", "beta.txt"].contains(&file.path.as_str()))
+            .all(|file| file.changelist.as_deref() == Some("release ready")));
+
+        set_workspace_changelist(SetWorkspaceChangelistRequest {
+            working_copy_root: working_copy.display().to_string(),
+            file_paths: vec!["alpha.txt".to_string()],
+            changelist: None,
+            svn_executable: None,
+        })
+        .expect("remove changelist");
+        let removed_status = scan_workspace_status(ScanWorkspaceStatusRequest {
+            working_copy_root: working_copy.display().to_string(),
+            scope_path: None,
+            include_content_digests: Some(false),
+            svn_executable: None,
+            offset: Some(0),
+            limit: Some(100),
+            check_remote_updates: Some(false),
+        })
+        .expect("read removed changelist");
+        assert_eq!(
+            removed_status
+                .files
+                .iter()
+                .find(|file| file.path == "alpha.txt")
+                .and_then(|file| file.changelist.as_deref()),
+            None
+        );
+        assert_eq!(
+            removed_status
+                .files
+                .iter()
+                .find(|file| file.path == "beta.txt")
+                .and_then(|file| file.changelist.as_deref()),
+            Some("release ready")
+        );
+
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

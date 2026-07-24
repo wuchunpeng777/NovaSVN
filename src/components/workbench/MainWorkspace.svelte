@@ -100,6 +100,7 @@
   export let reviewedFiles: ReviewedFileState[] = [];
   export let statusLoading = false;
   export let statusError: CommandError | null = null;
+  export let changelistRunning = false;
 
   export let repositoryUrlInput = "";
   export let repositoryRevisionInput = "";
@@ -410,6 +411,8 @@
   export let onRevertPaths: (paths: string[]) => void = () => {};
   export let onDeletePaths: (paths: string[]) => void = () => {};
   export let onMovePaths: (paths: string[]) => void = () => {};
+  export let onAssignChangelist: (paths: string[]) => void = () => {};
+  export let onRemoveChangelist: (paths: string[]) => void = () => {};
   export let onLockFile: (path: string) => void = () => {};
   export let onUnlockFile: (path: string) => void = () => {};
   export let onForceUnlockFile: (path: string) => void = () => {};
@@ -1411,6 +1414,19 @@
     return paths;
   }
 
+  function collectChangelistNames(
+    nodes: WorkspaceFileNode[],
+    names = new Set<string>(),
+  ) {
+    for (const node of nodes) {
+      if (node.changelist) {
+        names.add(node.changelist);
+      }
+      collectChangelistNames(node.children, names);
+    }
+    return names;
+  }
+
   function reconcileRowSelection(
     workingCopyRoot: string | null,
     fileTree: WorkspaceFileTree | null,
@@ -1983,10 +1999,11 @@
     nodes: WorkspaceFileNode[],
     filter: WorkingCopyTreeFilter,
     queryText: string,
+    selectedChangelist: string,
   ): WorkspaceFileNode[] {
     const query = queryText.trim().toLowerCase();
     return nodes.flatMap((node) => {
-      const children = filterTreeNodes(node.children, filter, queryText);
+      const children = filterTreeNodes(node.children, filter, queryText, selectedChangelist);
       const selfMatchesSearch = !query || node.path.toLowerCase().includes(query);
       const selfMatchesMode =
         filter === "all" ||
@@ -1995,8 +2012,14 @@
           node.status !== "unversioned") ||
         (filter === "remote" && ["remote", "both"].includes(node.change_scope)) ||
         (filter === "unversioned" && node.status === "unversioned");
+      const selfMatchesChangelist =
+        selectedChangelist === "all" ||
+        (node.kind === "file" &&
+          (selectedChangelist === "unassigned"
+            ? !node.changelist
+            : node.changelist === selectedChangelist));
       const keepNode =
-        children.length > 0 || (selfMatchesSearch && selfMatchesMode);
+        children.length > 0 || (selfMatchesSearch && selfMatchesMode && selfMatchesChangelist);
 
       if (!keepNode) {
         return [];
@@ -2183,6 +2206,7 @@
   let projectContextMenuY = 0;
   let editingBranchPoolEntryId: string | null = null;
   let branchPoolDisplayNameDraft = "";
+  let changelistFilter = "all";
 
   $: projectContextMenuEntry =
     branchPool.entries.find((entry) => entry.id === projectContextMenuEntryId) ?? null;
@@ -2211,7 +2235,6 @@
       startY: event.clientY,
       active: false,
     };
-    (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
     window.addEventListener("pointermove", updateBranchPoolPointerDrag);
     window.addEventListener("pointerup", finishBranchPoolPointerDrag);
     window.addEventListener("pointercancel", cancelBranchPoolPointerDrag);
@@ -2461,6 +2484,10 @@
   function comparableWorkspacePath(value: string) {
     const normalized = value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
     return /^[a-z]:\//i.test(normalized) ? normalized.toLowerCase() : normalized;
+  }
+
+  function canUseChangelist(node: WorkspaceFileNode) {
+    return node.kind === "file" && node.versioned && !["unversioned", "external"].includes(node.status);
   }
 
   function clearRevisionFileDiff() {
@@ -2836,6 +2863,7 @@
     workspaceFileTree?.nodes ?? [],
     workingCopyTreeFilter,
     searchText,
+    changelistFilter,
   );
   $: treeRows = flattenTreeNodes(filteredTreeNodes, 0, collapsedTreePaths);
   $: if (virtualizedFileTreeSource !== workspaceFileTree) {
@@ -2892,6 +2920,21 @@
   $: selectedDeletablePaths = collapseSelectedOperationPaths(
     selectedRowNodes.filter((node) => canDeletePath(node)).map((node) => node.path),
   );
+  $: selectedChangelistPaths = selectedRowNodes
+    .filter(canUseChangelist)
+    .map((node) => node.path);
+  $: selectedAssignedChangelistPaths = selectedRowNodes
+    .filter((node) => canUseChangelist(node) && Boolean(node.changelist))
+    .map((node) => node.path);
+  $: availableChangelists = [...collectChangelistNames(workspaceFileTree?.nodes ?? [])]
+    .sort((left, right) => left.localeCompare(right));
+  $: if (
+    changelistFilter !== "all" &&
+    changelistFilter !== "unassigned" &&
+    !availableChangelists.includes(changelistFilter)
+  ) {
+    changelistFilter = "all";
+  }
   $: visibleSelectedRowCount = treeRows.filter((row) => selectedRowPaths.has(row.path)).length;
   $: allVisibleRowsSelected = treeRows.length > 0 && visibleSelectedRowCount === treeRows.length;
   $: someVisibleRowsSelected = visibleSelectedRowCount > 0 && !allVisibleRowsSelected;
@@ -2941,7 +2984,10 @@
   $: updateRunning = pendingSvnOperationKind === "update" || pendingSvnOperationKind === "update_path";
   $: cleanupRunning = pendingSvnOperationKind === "cleanup";
   $: toolbarLocked =
-    runningTaskId !== null || pendingSvnOperationKind !== null || applyPatchRunning;
+    runningTaskId !== null ||
+    pendingSvnOperationKind !== null ||
+    applyPatchRunning ||
+    changelistRunning;
 </script>
 
 <section
@@ -3478,7 +3524,9 @@
             mergeRevisions={timelineMergeRevisions}
             diffLoading={revisionFileDiffLoading}
             compact={selectedRevisionFileDiff !== null || selectedTimelineMergeRevisions.length > 0}
-            currentRevision={workspace?.revision ?? null}
+            currentRevision={workingCopyStatus?.mixed_revision
+              ? workspace?.revision ?? null
+              : workingCopyStatus?.revision_range ?? workspace?.revision ?? null}
             theme={resolvedTheme}
             emptyText="点击“读取日志”查看修订历史"
             loadingText="正在读取日志"
@@ -5227,6 +5275,16 @@
               未管理文件
             </button>
           </div>
+          <label class="changelist-filter">
+            <span>Changelist</span>
+            <select aria-label="Changelist 过滤" bind:value={changelistFilter}>
+              <option value="all">全部</option>
+              <option value="unassigned">未分组</option>
+              {#each availableChangelists as changelist (changelist)}
+                <option value={changelist}>{changelist}</option>
+              {/each}
+            </select>
+          </label>
           {#if selectedRowPaths.size > 0}
             <div class="batch-action-bar" role="toolbar" aria-label="所选路径批量操作">
             <strong>{selectedRowPaths.size} 个已选</strong>
@@ -5243,6 +5301,20 @@
               on:click={() => onRevertPaths(selectedRevertablePaths)}
             >
               Revert
+            </button>
+            <button
+              type="button"
+              disabled={selectedChangelistPaths.length === 0 || statusLoading || toolbarLocked}
+              on:click={() => onAssignChangelist(selectedChangelistPaths)}
+            >
+              加入 Changelist
+            </button>
+            <button
+              type="button"
+              disabled={selectedAssignedChangelistPaths.length === 0 || statusLoading || toolbarLocked}
+              on:click={() => onRemoveChangelist(selectedAssignedChangelistPaths)}
+            >
+              移出 Changelist
             </button>
             <button
               type="button"
@@ -5389,6 +5461,11 @@
                     {node.last_changed_author ?? "-"}
                   </span>
                   <span class="status-stack" role="gridcell">
+                    {#if node.changelist}
+                      <span class="status-pill changelist-status" title={`Changelist: ${node.changelist}`}>
+                        {node.changelist}
+                      </span>
+                    {/if}
                     {#if node.change_scope === "local" || node.change_scope === "both"}
                       <span class="status-pill local-status {statusClass(node.status)}">
                         {localStatusText(node)}
@@ -5507,6 +5584,26 @@
                           >
                             撤销
                           </button>
+                        {/if}
+                        {#if canUseChangelist(node)}
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={statusLoading || toolbarLocked}
+                            on:click={() => runRowAction(() => onAssignChangelist([node.path]))}
+                          >
+                            加入 Changelist...
+                          </button>
+                          {#if node.changelist}
+                            <button
+                              type="button"
+                              role="menuitem"
+                              disabled={statusLoading || toolbarLocked}
+                              on:click={() => runRowAction(() => onRemoveChangelist([node.path]))}
+                            >
+                              移出 Changelist
+                            </button>
+                          {/if}
                         {/if}
                         {#if canMovePath(node)}
                           <button
@@ -6172,6 +6269,26 @@
             {allSelectedCommitTargets ? "移出 Commit" : "加入 Commit"}
           </button>
         {/if}
+        {#if selectedChangelistPaths.length > 0}
+          <button
+            type="button"
+            role="menuitem"
+            disabled={statusLoading || toolbarLocked}
+            on:click={() => runContextMenuAction(() => onAssignChangelist(selectedChangelistPaths))}
+          >
+            加入 Changelist...
+          </button>
+        {/if}
+        {#if selectedAssignedChangelistPaths.length > 0}
+          <button
+            type="button"
+            role="menuitem"
+            disabled={statusLoading || toolbarLocked}
+            on:click={() => runContextMenuAction(() => onRemoveChangelist(selectedAssignedChangelistPaths))}
+          >
+            移出 Changelist
+          </button>
+        {/if}
         {#if contextMenuNode.change_scope === "remote" || contextMenuNode.change_scope === "both"}
           <button
             type="button"
@@ -6508,19 +6625,20 @@
       onClose={() => (blameRevisionLogTarget = null)}
     />
   {/if}
-
-  <ConflictResolver
-    open={conflictResolverOpen}
-    filePath={selectedFilePath ?? ""}
-    contentDiff={selectedFileContentDiff}
-    loading={contentDiffLoading}
-    saving={conflictResolutionSaving}
-    error={conflictResolutionError ?? contentDiffError}
-    onClose={() => (conflictResolverOpen = false)}
-    onSave={onSaveConflictResolution}
-    onUseWorking={onResolveWorking}
-    onUseMineFull={onResolveMineFull}
-    onUseTheirsFull={onResolveTheirsFull}
-    onOpenExternalMerge={(path) => onLaunchExternalTool("merge", path)}
-  />
 </section>
+
+<ConflictResolver
+  open={conflictResolverOpen}
+  theme={resolvedTheme}
+  filePath={selectedFilePath ?? ""}
+  contentDiff={selectedFileContentDiff}
+  loading={contentDiffLoading}
+  saving={conflictResolutionSaving}
+  error={conflictResolutionError ?? contentDiffError}
+  onClose={() => (conflictResolverOpen = false)}
+  onSave={onSaveConflictResolution}
+  onUseWorking={onResolveWorking}
+  onUseMineFull={onResolveMineFull}
+  onUseTheirsFull={onResolveTheirsFull}
+  onOpenExternalMerge={(path) => onLaunchExternalTool("merge", path)}
+/>

@@ -27,6 +27,7 @@
     openRepositoryTempFile,
     openWorkspaceFile,
     resolveTextConflict,
+    setWorkspaceChangelist,
   } from "./lib/api";
   import {
     consumePendingSvnOperationCompletion,
@@ -114,6 +115,7 @@
   let conflictResolutionSaving = false;
   let conflictResolutionError: CommandError | null = null;
   let svnOperationFeedback: SvnOperationFeedback | null = null;
+  let changelistRunning = false;
   let svnOperationFeedbackTimer: ReturnType<typeof window.setTimeout> | null = null;
   let inlineUpdateRoot: string | null = null;
   let inlineUpdateTaskId: string | null = null;
@@ -368,6 +370,13 @@
 
   function preventNativeContextMenu(event: MouseEvent) {
     event.preventDefault();
+  }
+
+  function preventBrowserFindShortcut(event: KeyboardEvent) {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
   }
 
   function queueAppMenuStateSync(
@@ -1895,6 +1904,57 @@
     await refreshStatusAndSyncBranchPool(workingCopyRoot);
   }
 
+  async function applyWorkspaceChangelist(paths: string[], changelist: string | null) {
+    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+    if (!workingCopyRoot || changelistRunning || paths.length === 0) {
+      return;
+    }
+
+    changelistRunning = true;
+    commandError = null;
+    try {
+      await setWorkspaceChangelist({
+        working_copy_root: workingCopyRoot,
+        file_paths: paths,
+        changelist: changelist ?? undefined,
+        svn_executable: currentSvnExecutable(),
+      });
+      await refreshStatusAndSyncBranchPool(workingCopyRoot);
+    } catch (error) {
+      commandError = error as CommandError;
+    } finally {
+      changelistRunning = false;
+    }
+  }
+
+  function assignWorkspaceChangelist(paths: string[]) {
+    const currentNames = new Set(
+      paths.flatMap((path) => {
+        const name = $workspaceStore.status?.files.find((file) => file.path === path)?.changelist;
+        return name ? [name] : [];
+      }),
+    );
+    const defaultName = currentNames.size === 1 ? [...currentNames][0] : "";
+    const name = window.prompt("请输入 Changelist 名称", defaultName);
+    if (name === null) {
+      return;
+    }
+    if (!name.trim()) {
+      commandError = {
+        code: "SVN_CHANGELIST_NAME_EMPTY",
+        message: "Changelist 名称不能为空",
+        detail: null,
+        recoverable: true,
+      };
+      return;
+    }
+    void applyWorkspaceChangelist(paths, name.trim());
+  }
+
+  function removeWorkspaceChangelist(paths: string[]) {
+    void applyWorkspaceChangelist(paths, null);
+  }
+
   $: consumePendingTask($workspaceStore.pendingCommitTaskId, $taskStore.snapshot, (task) => {
     if (task.status === "success") {
       const committedPaths = $workspaceStore.pendingCommitFiles;
@@ -2524,6 +2584,7 @@
   }
 
   onMount(() => {
+    window.addEventListener("keydown", preventBrowserFindShortcut, true);
     appSettingsStore.load();
     if (hasTauriRuntime()) {
       void initializeTauriApp();
@@ -2533,6 +2594,7 @@
   });
 
   onDestroy(() => {
+    window.removeEventListener("keydown", preventBrowserFindShortcut, true);
     window.removeEventListener("contextmenu", preventNativeContextMenu, true);
     unlistenAppMenu?.();
     unlistenDragDrop?.();
@@ -2651,6 +2713,7 @@
   <StandaloneConflictWindow
     targetPath={standaloneConflictPath}
     svnExecutable={currentSvnExecutable()}
+    themeMode={$appSettingsStore.themeMode}
     externalMergeTool={$appSettingsStore.externalMergeTool}
     svnAuthenticationUsername={$appSettingsStore.svnUsername}
     svnRememberPassword={$appSettingsStore.svnRememberPassword}
@@ -2686,6 +2749,7 @@
   reviewedFiles={$workspaceStore.reviewedFiles}
   statusLoading={$workspaceStore.statusLoading}
   statusError={$workspaceStore.statusError}
+  {changelistRunning}
   repositoryUrlInput={$workspaceStore.repositoryUrlInput}
   repositoryRevisionInput={$workspaceStore.repositoryRevisionInput}
   repositoryList={$workspaceStore.repositoryList}
@@ -2892,6 +2956,8 @@
   onRevertPaths={revertWorkspacePaths}
   onDeletePaths={deleteWorkspacePaths}
   onMovePaths={moveWorkspacePaths}
+  onAssignChangelist={assignWorkspaceChangelist}
+  onRemoveChangelist={removeWorkspaceChangelist}
   onLockFile={(path) => runSvnOperation("lock_file", path)}
   onUnlockFile={(path) => runSvnOperation("unlock_file", path)}
   onForceUnlockFile={(path) => runSvnOperation("force_unlock_file", path)}

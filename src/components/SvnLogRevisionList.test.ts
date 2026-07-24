@@ -66,7 +66,7 @@ describe("SvnLogRevisionList", () => {
     const entry = screen.getByText("Local revision").closest(".svn-log-entry");
     expect(entry).toHaveClass("current-revision");
     expect(entry).toHaveAttribute("aria-current", "true");
-    expect(screen.getByLabelText("本地版本 r42")).toBeInTheDocument();
+    expect(screen.getByLabelText("当前工作副本版本 r42")).toHaveTextContent("当前版本");
     const revert = screen.getByRole("button", { name: "撤销提交 r42" });
     const workspaceRevert = screen.getByRole("button", { name: "回退工作区到 r42" });
     expect(revert.querySelector(".lucide-undo-2")).toBeInTheDocument();
