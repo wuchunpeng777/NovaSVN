@@ -2,12 +2,15 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::{error::NovaError, path_utils};
+
+static BRANCH_POOL_MUTATION_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BranchPoolEntry {
@@ -84,6 +87,9 @@ pub fn save_branch_pool_entry(
     let branch_url = normalize_branch_url(&request.branch_url)?;
     let local_path = normalize_local_path(&request.local_path)?;
     let revision = normalize_revision(request.revision.as_deref())?;
+    let _mutation_guard = BRANCH_POOL_MUTATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let mut pool = read_branch_pool(app)?;
     let now = timestamp_millis();
@@ -117,6 +123,9 @@ pub fn reorder_branch_pool_entries(
     app: &AppHandle,
     request: ReorderBranchPoolEntriesRequest,
 ) -> Result<BranchPool, NovaError> {
+    let _mutation_guard = BRANCH_POOL_MUTATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut pool = read_branch_pool(app)?;
     apply_branch_pool_order(&mut pool, &request.entry_ids)?;
     write_branch_pool(app, &pool)?;
@@ -128,6 +137,9 @@ pub fn rename_branch_pool_entry(
     request: RenameBranchPoolEntryRequest,
 ) -> Result<BranchPool, NovaError> {
     let display_name = normalize_display_name(&request.display_name)?;
+    let _mutation_guard = BRANCH_POOL_MUTATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut pool = read_branch_pool(app)?;
     let Some(entry) = pool.entries.iter_mut().find(|entry| entry.id == request.id) else {
         return Err(NovaError::command(
@@ -179,6 +191,9 @@ pub fn remove_branch_pool_entry(
     app: &AppHandle,
     request: RemoveBranchPoolEntryRequest,
 ) -> Result<BranchPool, NovaError> {
+    let _mutation_guard = BRANCH_POOL_MUTATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut pool = read_branch_pool(app)?;
     let Some(index) = pool.entries.iter().position(|entry| entry.id == request.id) else {
         return Ok(pool);

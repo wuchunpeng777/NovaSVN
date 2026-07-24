@@ -13,6 +13,7 @@
     inspectUpdateTarget,
     launchUpdateWindow,
     scanWorkspaceStatus,
+    setWorkspaceChangelist,
   } from "../lib/api";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import {
@@ -72,6 +73,8 @@
   let deleteCandidate: ChangedFile | null = null;
   let revertCandidatePaths: string[] = [];
   let revertCandidateIsBatch = false;
+  let changelistRunning = false;
+  let changelistNotice: string | null = null;
   let fileContextMenu: { file: ChangedFile; x: number; y: number } | null = null;
   let fileContextMenuElement: HTMLDivElement | null = null;
   let deleteDialogElement: HTMLDivElement | null = null;
@@ -119,9 +122,16 @@
     (file) => isCommittable(file) && isPathInCommitTarget(file.path),
   );
   $: unversionedFiles = visibleFiles.filter((file) => file.status === "unversioned");
+  $: fileGroups = groupFilesByChangelist(visibleFiles);
   $: selectedCount = committableFiles.filter((file) => selectedPaths.has(file.path)).length;
   $: selectedRevertableFiles = committableFiles.filter(
     (file) => selectedPaths.has(file.path) && isRevertableFile(file),
+  );
+  $: selectedChangelistFiles = committableFiles.filter(
+    (file) => selectedPaths.has(file.path) && canUseChangelist(file),
+  );
+  $: selectedAssignedChangelistFiles = selectedChangelistFiles.filter((file) =>
+    Boolean(file.changelist?.trim()),
   );
   $: selectedBytes = committableFiles
     .filter((file) => selectedPaths.has(file.path))
@@ -138,7 +148,8 @@
     deleteRunning ||
     deletingPath !== null ||
     revertRunning ||
-    revertingPaths.length > 0;
+    revertingPaths.length > 0 ||
+    changelistRunning;
   $: taskStatus = commitTask
     ? taskStatusLabel(commitTask, initializing)
     : deleteTask
@@ -153,6 +164,8 @@
               ? addAction === "unadd" ? "正在准备 Unadd" : "正在准备 Add"
               : revertingPaths.length > 0
                 ? "正在准备 Revert"
+                : changelistRunning
+                  ? "正在更新 Changelist"
                 : taskStatusLabel(null, initializing);
   $: allSelected = committableFiles.length > 0 && selectedCount === committableFiles.length;
   $: commitDisabled =
@@ -272,6 +285,8 @@
     deleteCandidate = null;
     revertCandidatePaths = [];
     revertCandidateIsBatch = false;
+    changelistRunning = false;
+    changelistNotice = null;
     closeFileContextMenu();
     selectedPaths = new Set();
     clearFilePreview();
@@ -373,6 +388,113 @@
 
   function clearSelection() {
     selectedPaths = new Set();
+  }
+
+  function groupFilesByChangelist(files: ChangedFile[]) {
+    const grouped = new Map<string, ChangedFile[]>();
+    for (const file of files) {
+      const name = file.changelist?.trim() || "";
+      const group = grouped.get(name);
+      if (group) {
+        group.push(file);
+      } else {
+        grouped.set(name, [file]);
+      }
+    }
+    return [...grouped.entries()]
+      .sort(([left], [right]) => {
+        if (!left) return 1;
+        if (!right) return -1;
+        return left.localeCompare(right);
+      })
+      .map(([name, groupFiles]) => ({
+        name,
+        label: name || "未分组",
+        files: groupFiles,
+      }));
+  }
+
+  function groupCommittableFiles(files: ChangedFile[]) {
+    return files.filter(isCommittable);
+  }
+
+  function groupSelectedCount(files: ChangedFile[]) {
+    return groupCommittableFiles(files).filter((file) => selectedPaths.has(file.path)).length;
+  }
+
+  function toggleGroupSelection(files: ChangedFile[]) {
+    const candidates = groupCommittableFiles(files);
+    if (candidates.length === 0) return;
+    const next = new Set(selectedPaths);
+    const allGroupSelected = candidates.every((file) => next.has(file.path));
+    for (const file of candidates) {
+      if (allGroupSelected) {
+        next.delete(file.path);
+      } else {
+        next.add(file.path);
+      }
+    }
+    selectedPaths = next;
+  }
+
+  async function applyChangelist(files: ChangedFile[], changelist: string | null) {
+    if (!target || changelistRunning || files.length === 0) return;
+    changelistRunning = true;
+    changelistNotice = null;
+    error = null;
+    statusError = null;
+    try {
+      await setWorkspaceChangelist({
+        working_copy_root: target.working_copy_root,
+        file_paths: files.map((file) => file.path),
+        changelist: changelist ?? undefined,
+        svn_executable: svnExecutable?.trim() || undefined,
+      });
+      changelistNotice = changelist
+        ? `已将 ${files.length} 个文件加入 Changelist “${changelist}”`
+        : `已将 ${files.length} 个文件移出 Changelist`;
+      await refreshStatus(generation, true);
+    } catch (caught) {
+      error = caught as CommandError;
+    } finally {
+      changelistRunning = false;
+    }
+  }
+
+  function assignChangelist(files: ChangedFile[]) {
+    const eligibleFiles = files.filter(canUseChangelist);
+    if (eligibleFiles.length === 0) return;
+    const currentNames = new Set(
+      eligibleFiles.flatMap((file) => file.changelist?.trim() ? [file.changelist.trim()] : []),
+    );
+    const defaultName = currentNames.size === 1 ? [...currentNames][0] : "";
+    const name = window.prompt("请输入 Changelist 名称", defaultName);
+    if (name === null) return;
+    if (!name.trim()) {
+      error = {
+        code: "SVN_CHANGELIST_NAME_EMPTY",
+        message: "Changelist 名称不能为空",
+        detail: null,
+        recoverable: true,
+      };
+      return;
+    }
+    void applyChangelist(eligibleFiles, name.trim());
+  }
+
+  function removeChangelist(files: ChangedFile[]) {
+    const assignedFiles = files.filter(
+      (file) => canUseChangelist(file) && Boolean(file.changelist?.trim()),
+    );
+    void applyChangelist(assignedFiles, null);
+  }
+
+  function assignSelectedChangelist() {
+    assignChangelist(selectedChangelistFiles);
+  }
+
+  function removeSelectedChangelist() {
+    removeChangelist(selectedAssignedChangelistFiles);
   }
 
   function clearFilePreview() {
@@ -515,8 +637,8 @@
     revertCandidateIsBatch = false;
     fileContextMenu = {
       file,
-      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 172)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 96)),
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 198)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 180)),
     };
     await tick();
     fileContextMenuElement?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
@@ -575,6 +697,18 @@
     if (file) {
       await addFile(file);
     }
+  }
+
+  function requestContextAssignChangelist() {
+    const file = fileContextMenu?.file ?? null;
+    closeFileContextMenu();
+    if (file) assignChangelist([file]);
+  }
+
+  function requestContextRemoveChangelist() {
+    const file = fileContextMenu?.file ?? null;
+    closeFileContextMenu();
+    if (file) removeChangelist([file]);
   }
 
   async function requestContextFileDelete() {
@@ -1015,6 +1149,10 @@
     return isCommittable(file);
   }
 
+  function canUseChangelist(file: ChangedFile) {
+    return !["unversioned", "external"].includes(file.status);
+  }
+
   function revertCompletionNotice(paths: string[]) {
     if (paths.length === 1) {
       return `已 Revert ${paths[0]}`;
@@ -1119,7 +1257,7 @@
 
   <section
     class="commit-notices"
-    class:has-notices={Boolean(error || statusError || commitTask?.error || addTask?.error || deleteTask?.error || revertTask?.error || addNotice || deleteNotice || revertNotice)}
+    class:has-notices={Boolean(error || statusError || commitTask?.error || addTask?.error || deleteTask?.error || revertTask?.error || addNotice || deleteNotice || revertNotice || changelistNotice)}
     aria-label="Commit 错误"
   >
     <ErrorNotice {error} />
@@ -1145,6 +1283,9 @@
     {#if deleteNotice}
       <div class="revert-notice" role="status">{deleteNotice}</div>
     {/if}
+    {#if changelistNotice}
+      <div class="revert-notice" role="status">{changelistNotice}</div>
+    {/if}
   </section>
 
   <div
@@ -1167,6 +1308,20 @@
           <div class="selection-actions">
             <button
               type="button"
+              on:click={assignSelectedChangelist}
+              disabled={operationRunning || scanning || initializing || selectedChangelistFiles.length === 0}
+            >
+              <Plus size={15} aria-hidden="true" /> 加入 Changelist...
+            </button>
+            <button
+              type="button"
+              on:click={removeSelectedChangelist}
+              disabled={operationRunning || scanning || initializing || selectedAssignedChangelistFiles.length === 0}
+            >
+              <Minus size={15} aria-hidden="true" /> 移出 Changelist
+            </button>
+            <button
+              type="button"
               class="selection-revert-action"
               on:click={requestSelectedRevert}
               disabled={operationRunning || scanning || initializing || selectedRevertableFiles.length === 0}
@@ -1182,62 +1337,80 @@
           </div>
         </header>
         <div class="file-list">
-          {#each visibleFiles as file (file.path)}
-            <div
-              class="file-item"
-              class:active={activeFilePath === file.path}
-              class:unversioned={file.status === "unversioned"}
-              class:reverting={revertingPaths.includes(file.path)}
-              class:adding={addingPath === file.path}
-              class:deleting={deletingPath === file.path}
-              role="group"
-              aria-label={`提交文件 ${file.path}`}
-              on:contextmenu={(event) => openFileContextMenu(event, file)}
-            >
-              {#if isCommittable(file)}
+          {#each fileGroups as group (group.name)}
+            {@const selectableFiles = groupCommittableFiles(group.files)}
+            {@const groupSelectionCount = groupSelectedCount(group.files)}
+            <section class="file-group" aria-label={`Changelist ${group.label}`}>
+              <header class="file-group-header">
                 <input
                   type="checkbox"
-                  aria-label={file.path}
-                  checked={selectedPaths.has(file.path)}
-                  on:change={() => toggleFile(file.path)}
-                  disabled={operationRunning || scanning || initializing}
+                  aria-label={`选择 Changelist ${group.label}`}
+                  checked={selectableFiles.length > 0 && groupSelectionCount === selectableFiles.length}
+                  indeterminate={groupSelectionCount > 0 && groupSelectionCount < selectableFiles.length}
+                  disabled={operationRunning || scanning || initializing || selectableFiles.length === 0}
+                  on:change={() => toggleGroupSelection(group.files)}
                 />
-              {:else}
-                <span class="file-selection-placeholder" aria-hidden="true"></span>
-              {/if}
-              <button
-                type="button"
-                class="file-preview-trigger"
-                class:active={activeFilePath === file.path}
-                aria-label={`查看修改 ${file.path}`}
-                aria-pressed={activeFilePath === file.path}
-                on:click={() => showFilePreview(file)}
-              >
-                <span class="file-status">{statusLabel(file)}</span>
-                <span class="file-path" title={file.path}>{file.path}</span>
-              </button>
-              {#if file.status === "unversioned"}
-                <button
-                  type="button"
-                  class="file-add-action"
-                  aria-label={`Add ${file.path}`}
-                  disabled={operationRunning || scanning || initializing}
-                  on:click={() => addFile(file)}
+                <strong title={group.name || undefined}>{group.label}</strong>
+                <span>{groupSelectionCount} / {selectableFiles.length} 个可提交</span>
+              </header>
+              {#each group.files as file (file.path)}
+                <div
+                  class="file-item"
+                  class:active={activeFilePath === file.path}
+                  class:unversioned={file.status === "unversioned"}
+                  class:reverting={revertingPaths.includes(file.path)}
+                  class:adding={addingPath === file.path}
+                  class:deleting={deletingPath === file.path}
+                  role="group"
+                  aria-label={`提交文件 ${file.path}`}
+                  on:contextmenu={(event) => openFileContextMenu(event, file)}
                 >
-                  <Plus size={14} aria-hidden="true" /> Add
-                </button>
-              {:else if file.status === "added"}
-                <button
-                  type="button"
-                  class="file-add-action"
-                  aria-label={`Unadd ${file.path}`}
-                  disabled={operationRunning || scanning || initializing}
-                  on:click={() => unaddFile(file)}
-                >
-                  <Minus size={14} aria-hidden="true" /> Unadd
-                </button>
-              {/if}
-            </div>
+                  {#if isCommittable(file)}
+                    <input
+                      type="checkbox"
+                      aria-label={file.path}
+                      checked={selectedPaths.has(file.path)}
+                      on:change={() => toggleFile(file.path)}
+                      disabled={operationRunning || scanning || initializing}
+                    />
+                  {:else}
+                    <span class="file-selection-placeholder" aria-hidden="true"></span>
+                  {/if}
+                  <button
+                    type="button"
+                    class="file-preview-trigger"
+                    class:active={activeFilePath === file.path}
+                    aria-label={`查看修改 ${file.path}`}
+                    aria-pressed={activeFilePath === file.path}
+                    on:click={() => showFilePreview(file)}
+                  >
+                    <span class="file-status">{statusLabel(file)}</span>
+                    <span class="file-path" title={file.path}>{file.path}</span>
+                  </button>
+                  {#if file.status === "unversioned"}
+                    <button
+                      type="button"
+                      class="file-add-action"
+                      aria-label={`Add ${file.path}`}
+                      disabled={operationRunning || scanning || initializing}
+                      on:click={() => addFile(file)}
+                    >
+                      <Plus size={14} aria-hidden="true" /> Add
+                    </button>
+                  {:else if file.status === "added"}
+                    <button
+                      type="button"
+                      class="file-add-action"
+                      aria-label={`Unadd ${file.path}`}
+                      disabled={operationRunning || scanning || initializing}
+                      on:click={() => unaddFile(file)}
+                    >
+                      <Minus size={14} aria-hidden="true" /> Unadd
+                    </button>
+                  {/if}
+                </div>
+              {/each}
+            </section>
           {:else}
             {#if scanning || initializing}
               <div class="empty-files" role="status">正在扫描工作副本...</div>
@@ -1418,6 +1591,16 @@
       <button type="button" role="menuitem" class="danger-action" on:click={requestContextFileRevert}>
         <RotateCcw size={15} aria-hidden="true" /> Revert
       </button>
+    {/if}
+    {#if canUseChangelist(fileContextMenu.file)}
+      <button type="button" role="menuitem" on:click={requestContextAssignChangelist}>
+        <Plus size={15} aria-hidden="true" /> 加入 Changelist...
+      </button>
+      {#if fileContextMenu.file.changelist?.trim()}
+        <button type="button" role="menuitem" on:click={requestContextRemoveChangelist}>
+          <Minus size={15} aria-hidden="true" /> 移出 Changelist
+        </button>
+      {/if}
     {/if}
     <div role="separator"></div>
     <button
@@ -1647,6 +1830,7 @@
   h3 { font-size: 13px; }
   .commit-titlebar p { margin-top: 6px; color: var(--secondary); font-size: 12px; max-width: 68vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .commit-actions, .selection-actions { display: flex; align-items: center; gap: 8px; }
+  .selection-actions { flex-wrap: wrap; justify-content: flex-end; }
   .commit-actions > span { color: var(--secondary); font-size: 12px; white-space: nowrap; }
   .commit-actions > span.running { color: var(--accent); }
   button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; border: 1px solid var(--border); border-radius: 4px; padding: 5px 10px; background: var(--control); color: var(--text); cursor: pointer; font: inherit; font-size: 12px; }
@@ -1684,7 +1868,14 @@
   .diff-pane-resizer:hover::after, .diff-pane-resizer:focus-visible::after, .message-pane-resizer:hover::after, .message-pane-resizer:focus-visible::after { background: var(--accent); }
   button.icon-button { width: 30px; min-width: 30px; min-height: 30px; padding: 0; }
   .file-list { overflow: auto; padding: 6px; }
+  .file-group { margin-bottom: 7px; border: 1px solid color-mix(in srgb, var(--border) 75%, transparent); }
+  .file-group:last-child { margin-bottom: 0; }
+  .file-group-header { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 34px; padding: 0 8px; border-bottom: 1px solid var(--border); background: var(--panel-subtle); font-size: 12px; }
+  .file-group-header input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
+  .file-group-header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-group-header span { color: var(--secondary); font-size: 11px; }
   .file-item { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); font-size: 12px; }
+  .file-item:last-child { border-bottom: 0; }
   .file-item:hover { background: var(--panel-subtle); }
   .file-item.active { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
   .file-item.reverting { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
@@ -1716,7 +1907,7 @@
     position: fixed;
     z-index: 3000;
     display: grid;
-    width: 164px;
+    width: 190px;
     border: 1px solid var(--border);
     border-radius: 4px;
     background: var(--panel);

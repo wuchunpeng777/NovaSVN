@@ -90,6 +90,7 @@ import {
   reorderBranchPoolEntries,
   removeTaskWorkspace,
   scanWorkspaceStatus,
+  saveBranchPoolEntry,
   saveTaskWorkspace,
   setSvnProperty,
 } from "../lib/api";
@@ -160,6 +161,7 @@ const renameBranchPoolEntryMock = vi.mocked(renameBranchPoolEntry);
 const reorderBranchPoolEntriesMock = vi.mocked(reorderBranchPoolEntries);
 const removeTaskWorkspaceMock = vi.mocked(removeTaskWorkspace);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
+const saveBranchPoolEntryMock = vi.mocked(saveBranchPoolEntry);
 const saveTaskWorkspaceMock = vi.mocked(saveTaskWorkspace);
 const setSvnPropertyMock = vi.mocked(setSvnProperty);
 
@@ -204,6 +206,7 @@ beforeEach(() => {
   reorderBranchPoolEntriesMock.mockReset();
   removeTaskWorkspaceMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
+  saveBranchPoolEntryMock.mockReset();
   saveTaskWorkspaceMock.mockReset();
   setSvnPropertyMock.mockReset();
   getBranchPoolMock.mockResolvedValue({ entries: [] });
@@ -383,6 +386,45 @@ describe("branchPoolStore ordering and display names", () => {
       "second",
     ]);
     expect(get(branchPoolStore).error?.code).toBe("BRANCH_POOL_ORDER_INVALID");
+  });
+
+  it("serializes project saves so a later response cannot discard a newly added project", async () => {
+    getBranchPoolMock.mockResolvedValue({ entries: [] });
+    await branchPoolStore.load();
+
+    let resolveFirstSave!: (pool: { entries: BranchPoolEntry[] }) => void;
+    saveBranchPoolEntryMock
+      .mockImplementationOnce(
+        () => new Promise((resolve) => {
+          resolveFirstSave = resolve;
+        }),
+      )
+      .mockResolvedValueOnce({ entries: [first, second] });
+
+    const firstSave = branchPoolStore.saveExisting({
+      branchUrl: first.branch_url,
+      localPath: first.local_path,
+      revision: first.revision,
+      localChanges: first.local_changes,
+    });
+    const secondSave = branchPoolStore.saveExisting({
+      branchUrl: second.branch_url,
+      localPath: second.local_path,
+      revision: second.revision,
+      localChanges: second.local_changes,
+    });
+
+    await Promise.resolve();
+    expect(saveBranchPoolEntryMock).toHaveBeenCalledTimes(1);
+    resolveFirstSave({ entries: [first] });
+    await firstSave;
+    await secondSave;
+
+    expect(saveBranchPoolEntryMock).toHaveBeenCalledTimes(2);
+    expect(get(branchPoolStore).pool.entries.map((entry) => entry.id)).toEqual([
+      "first",
+      "second",
+    ]);
   });
 });
 

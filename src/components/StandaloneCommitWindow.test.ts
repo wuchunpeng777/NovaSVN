@@ -30,6 +30,7 @@ vi.mock("../lib/api", () => ({
   inspectUpdateTarget: vi.fn(),
   launchUpdateWindow: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
+  setWorkspaceChangelist: vi.fn(),
 }));
 
 import {
@@ -42,6 +43,7 @@ import {
   inspectUpdateTarget,
   launchUpdateWindow,
   scanWorkspaceStatus,
+  setWorkspaceChangelist,
 } from "../lib/api";
 import type { ChangedFile, Task, WorkingCopyStatus } from "../types/api";
 import StandaloneCommitWindow from "./StandaloneCommitWindow.svelte";
@@ -55,6 +57,7 @@ const getTaskMock = vi.mocked(getTask);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 const launchUpdateWindowMock = vi.mocked(launchUpdateWindow);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
+const setWorkspaceChangelistMock = vi.mocked(setWorkspaceChangelist);
 
 beforeEach(() => {
   localStorage.clear();
@@ -69,6 +72,7 @@ beforeEach(() => {
   inspectUpdateTargetMock.mockReset();
   launchUpdateWindowMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
+  setWorkspaceChangelistMock.mockReset();
   inspectUpdateTargetMock.mockResolvedValue(makeTarget());
   scanWorkspaceStatusMock.mockResolvedValue(
     makeStatus({
@@ -110,6 +114,7 @@ beforeEach(() => {
     makeTask("pending", [], { task_id: "revert-1", title: "撤销文件 other.ts" }),
   );
   getTaskMock.mockResolvedValue(makeTask("success", ["Committed revision 21."]));
+  setWorkspaceChangelistMock.mockResolvedValue({ changelist: null, file_paths: [] });
 });
 
 describe("StandaloneCommitWindow", () => {
@@ -190,14 +195,81 @@ describe("StandaloneCommitWindow", () => {
     expect(within(pane).queryByText("other.ts")).not.toBeInTheDocument();
     expect(within(pane).getByText("src/ignored.ts")).toBeInTheDocument();
     expect(within(pane).getByRole("button", { name: "Add src/ignored.ts" })).toBeInTheDocument();
-    expect(within(pane).getAllByRole("checkbox")).toHaveLength(2);
-    expect(within(pane).getAllByRole("checkbox").every((input) => (input as HTMLInputElement).checked)).toBe(true);
+    expect(within(pane).getByRole("checkbox", { name: "src/main.ts" })).toBeChecked();
+    expect(within(pane).getByRole("checkbox", { name: "src/nested.ts" })).toBeChecked();
     const metrics = screen.getByLabelText("操作指标");
     expect(metrics).toHaveTextContent("总提交量 200 B");
     expect(metrics).not.toHaveTextContent("项/秒");
 
     await fireEvent.click(within(pane).getByRole("checkbox", { name: "src/main.ts" }));
     expect(metrics).toHaveTextContent("总提交量 100 B");
+  });
+
+  it("按 Changelist 分组文件并支持分组勾选", async () => {
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({
+        files: [
+          makeFile("src/fix-a.ts", "modified", { changelist: "紧急修复" }),
+          makeFile("src/fix-b.ts", "modified", { changelist: "紧急修复" }),
+          makeFile("src/feature.ts", "added", { changelist: "新功能" }),
+          makeFile("README.md", "modified"),
+        ],
+        total: 4,
+        returned: 4,
+        local_changes: 4,
+      }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    const urgentGroup = await screen.findByRole("region", { name: "Changelist 紧急修复" });
+    expect(screen.getByRole("region", { name: "Changelist 新功能" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Changelist 未分组" })).toBeInTheDocument();
+    expect(within(urgentGroup).getByText("2 / 2 个可提交")).toBeInTheDocument();
+
+    await fireEvent.click(within(urgentGroup).getByRole("checkbox", { name: "选择 Changelist 紧急修复" }));
+    expect(within(urgentGroup).getByRole("checkbox", { name: "src/fix-a.ts" })).not.toBeChecked();
+    expect(within(urgentGroup).getByRole("checkbox", { name: "src/fix-b.ts" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "提交 2 个文件" })).toBeInTheDocument();
+  });
+
+  it("为已选文件加入和移出 Changelist 后刷新并保留选择", async () => {
+    const prompt = vi.spyOn(window, "prompt").mockReturnValue("待评审");
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({
+        files: [
+          makeFile("src/main.ts", "modified"),
+          makeFile("src/review.ts", "modified", { changelist: "旧分组" }),
+        ],
+        total: 2,
+        returned: 2,
+        local_changes: 2,
+      }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    await screen.findByText("src/review.ts");
+    await fireEvent.click(screen.getByRole("button", { name: "加入 Changelist..." }));
+    await waitFor(() => {
+      expect(setWorkspaceChangelistMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        file_paths: ["src/main.ts", "src/review.ts"],
+        changelist: "待评审",
+        svn_executable: undefined,
+      });
+    });
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: "提交 2 个文件" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "移出 Changelist" }));
+    await waitFor(() => {
+      expect(setWorkspaceChangelistMock).toHaveBeenLastCalledWith({
+        working_copy_root: "C:\\repo",
+        file_paths: ["src/review.ts"],
+        changelist: undefined,
+        svn_executable: undefined,
+      });
+    });
+    prompt.mockRestore();
   });
 
   it("显示未版本控制文件并可 Add 后刷新列表", async () => {
@@ -513,6 +585,7 @@ describe("StandaloneCommitWindow", () => {
     menu = screen.getByRole("menu", { name: "文件菜单 src/ignored.ts" });
     expect(within(menu).getByRole("menuitem", { name: "Add" })).toBeInTheDocument();
     expect(within(menu).queryByRole("menuitem", { name: "Revert" })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole("menuitem", { name: "加入 Changelist..." })).not.toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
   });
 
@@ -665,7 +738,7 @@ function makeStatus(overrides: Partial<WorkingCopyStatus> = {}): WorkingCopyStat
   };
 }
 
-function makeFile(path: string, status: string): ChangedFile {
+function makeFile(path: string, status: string, overrides: Partial<ChangedFile> = {}): ChangedFile {
   return {
     path,
     status,
@@ -682,5 +755,6 @@ function makeFile(path: string, status: string): ChangedFile {
     conflict_kind: null,
     file_size: 100,
     content_digest: `${path}-digest`,
+    ...overrides,
   };
 }

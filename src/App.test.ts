@@ -482,6 +482,7 @@ Certificate information:
     await fireEvent.click(timelineButton);
 
     await waitFor(() => expect(getSvnLogMock).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: "读取日志" })).not.toBeInTheDocument();
     expect(getSvnLogMock).toHaveBeenLastCalledWith({
       working_copy_root: "C:/repo/wc",
       file_path: undefined,

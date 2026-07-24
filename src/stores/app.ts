@@ -1163,8 +1163,18 @@ const initialBranchPoolState: BranchPoolStoreState = {
 
 function createBranchPoolStore() {
   const { subscribe, update } = writable<BranchPoolStoreState>(initialBranchPoolState);
+  let operationQueue: Promise<void> = Promise.resolve();
 
-  async function load() {
+  function enqueue<T>(operation: () => Promise<T>) {
+    const result = operationQueue.then(operation, operation);
+    operationQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  async function loadNow() {
     update((state) => ({ ...state, loading: true, error: null }));
 
     try {
@@ -1245,7 +1255,7 @@ function createBranchPoolStore() {
     });
   }
 
-  async function saveExisting(entry: {
+  async function saveExistingNow(entry: {
     branchUrl: string;
     localPath: string;
     revision?: string | null;
@@ -1291,7 +1301,7 @@ function createBranchPoolStore() {
     }
   }
 
-  async function remove(entry: BranchPoolEntry, deleteLocalCopy = false) {
+  async function removeNow(entry: BranchPoolEntry, deleteLocalCopy = false) {
     update((state) => ({ ...state, loading: true, error: null }));
 
     try {
@@ -1314,7 +1324,7 @@ function createBranchPoolStore() {
     }
   }
 
-  async function reorder(entryIds: string[]) {
+  async function reorderNow(entryIds: string[]) {
     const previousPool = get({ subscribe }).pool;
     if (
       entryIds.length !== previousPool.entries.length ||
@@ -1353,7 +1363,7 @@ function createBranchPoolStore() {
     }
   }
 
-  async function rename(entryId: string, displayName: string) {
+  async function renameNow(entryId: string, displayName: string) {
     const previousPool = get({ subscribe }).pool;
     const normalizedName = displayName.trim();
     update((state) => ({
@@ -1414,7 +1424,7 @@ function createBranchPoolStore() {
     return !localPathError;
   }
 
-  async function completeCheckoutTask() {
+  async function completeCheckoutTaskNow() {
     const entry = get({ subscribe }).pendingCheckoutEntry;
     if (!entry) {
       markCheckoutTask(null);
@@ -1459,6 +1469,30 @@ function createBranchPoolStore() {
       pendingCheckoutEntry: null,
       checkoutError: message ?? "分支 checkout 失败",
     }));
+  }
+
+  function load() {
+    return enqueue(loadNow);
+  }
+
+  function saveExisting(entry: Parameters<typeof saveExistingNow>[0]) {
+    return enqueue(() => saveExistingNow(entry));
+  }
+
+  function remove(entry: BranchPoolEntry, deleteLocalCopy = false) {
+    return enqueue(() => removeNow(entry, deleteLocalCopy));
+  }
+
+  function reorder(entryIds: string[]) {
+    return enqueue(() => reorderNow(entryIds));
+  }
+
+  function rename(entryId: string, displayName: string) {
+    return enqueue(() => renameNow(entryId, displayName));
+  }
+
+  function completeCheckoutTask() {
+    return enqueue(completeCheckoutTaskNow);
   }
 
   return {

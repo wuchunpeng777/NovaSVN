@@ -3389,9 +3389,6 @@
             <p>{svnLog?.target ?? workspace?.repository_url ?? "读取工作副本历史"}</p>
           </div>
           <div class="pane-actions">
-            <button type="button" on:click={onRefreshSvnLog} disabled={!workspace || svnLogLoading}>
-              {svnLogLoading ? "读取中" : "读取日志"}
-            </button>
             <button
               type="button"
               aria-label="加载更多 Revision"
@@ -3524,7 +3521,7 @@
                 : workingCopyStatus?.revision_range ?? workspace?.revision ?? null),
             )}
             theme={resolvedTheme}
-            emptyText="点击“读取日志”查看修订历史"
+            emptyText="暂无修订历史"
             loadingText="正在读取日志"
             formatDate={formatTimelineDate}
             revertDisabled={timelineRevertDisabled}
