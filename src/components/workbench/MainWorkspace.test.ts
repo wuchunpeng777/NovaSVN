@@ -606,7 +606,9 @@ describe("MainWorkspace", () => {
     await fireEvent.contextMenu(firstRow, { clientX: 140, clientY: 80 });
     let projectMenu = screen.getByRole("menu", { name: "项目菜单 主项目" });
     expect(projectMenu).toHaveStyle({ top: "90px" });
-    await fireEvent.click(within(projectMenu).getByRole("menuitem", { name: "修改备注" }));
+    const editProjectItem = within(projectMenu).getByRole("menuitem", { name: "修改备注" });
+    expect(editProjectItem.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    await fireEvent.click(editProjectItem);
     const input = within(projects).getByRole("textbox", { name: "项目备注名 主项目" });
     await fireEvent.input(input, { target: { value: "客户生产库" } });
     await fireEvent.keyDown(input, { key: "Enter" });
@@ -614,9 +616,11 @@ describe("MainWorkspace", () => {
 
     await fireEvent.contextMenu(secondRow, { clientX: 140, clientY: 120 });
     projectMenu = screen.getByRole("menu", { name: "项目菜单 feature" });
-    await fireEvent.click(
-      within(projectMenu).getByRole("menuitem", { name: "从项目列表移除" }),
-    );
+    const removeProjectItem = within(projectMenu).getByRole("menuitem", {
+      name: "从项目列表移除",
+    });
+    expect(removeProjectItem.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    await fireEvent.click(removeProjectItem);
     expect(onRemoveBranchPoolEntry).toHaveBeenCalledWith("second", false);
   });
 
@@ -1714,7 +1718,9 @@ Certificate information:
 
     await fireEvent.click(screen.getByRole("button", { name: "Add notes/new.txt" }));
     await fireEvent.click(screen.getByRole("button", { name: "更多操作 文件 notes/new.txt" }));
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Ignore 文件 notes/new.txt" }));
+    const ignoreMenuItem = screen.getByRole("menuitem", { name: "Ignore 文件 notes/new.txt" });
+    expect(ignoreMenuItem.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    await fireEvent.click(ignoreMenuItem);
     expect(onAddFile).toHaveBeenCalledWith("notes/new.txt");
     expect(onIgnorePath).toHaveBeenCalledWith("notes/new.txt");
     await fireEvent.click(screen.getByRole("tab", { name: "Properties" }));
@@ -2293,10 +2299,13 @@ Certificate information:
 
     const batchMenu = screen.getByRole("menu", { name: "路径菜单 alpha.txt" });
     expect(screen.getByRole("checkbox", { name: "选择文件 beta.txt" })).toBeChecked();
-    expect(within(batchMenu).getByRole("menuitem", { name: "Revert 2 项" })).toBeInTheDocument();
-    expect(within(batchMenu).getByRole("menuitem", { name: "Move 2 项" })).toBeInTheDocument();
-    expect(within(batchMenu).getByRole("menuitem", { name: "Delete 2 项" })).toBeInTheDocument();
-    await fireEvent.click(within(batchMenu).getByRole("menuitem", { name: "Revert 2 项" }));
+    const revertMenuItem = within(batchMenu).getByRole("menuitem", { name: "Revert 2 项" });
+    const moveMenuItem = within(batchMenu).getByRole("menuitem", { name: "Move 2 项" });
+    const deleteMenuItem = within(batchMenu).getByRole("menuitem", { name: "Delete 2 项" });
+    expect(revertMenuItem.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(moveMenuItem.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(deleteMenuItem.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    await fireEvent.click(revertMenuItem);
     expect(onRevertPaths).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
     expect(screen.queryByRole("menu", { name: "路径菜单 alpha.txt" })).not.toBeInTheDocument();
 

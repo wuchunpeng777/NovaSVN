@@ -2,9 +2,13 @@
   import { onDestroy, onMount } from "svelte";
   import {
     CircleCheck,
+    CircleMinus,
     CircleX,
+    Copy,
     Download,
     Ellipsis,
+    ExternalLink,
+    EyeOff,
     FileUp,
     GitMerge,
     GitBranch,
@@ -13,13 +17,19 @@
     GripVertical,
     History,
     ListChecks,
+    ListMinus,
+    ListPlus,
     LoaderCircle,
+    MoveRight,
     PanelLeftClose,
     PanelLeftOpen,
     PanelRightClose,
     PanelRightOpen,
+    Pencil,
     Plus,
     RefreshCw,
+    Trash2,
+    Undo2,
     Wrench,
     X,
   } from "@lucide/svelte";
@@ -5585,6 +5595,7 @@
                             disabled={statusLoading || toolbarLocked}
                             on:click={() => runRowAction(() => onIgnorePath(node.path))}
                           >
+                            <EyeOff size={15} aria-hidden="true" />
                             Ignore
                           </button>
                         {/if}
@@ -5596,6 +5607,7 @@
                             disabled={statusLoading || toolbarLocked}
                             on:click={() => runRowAction(() => onRevertFile(node.path))}
                           >
+                            <Undo2 size={15} aria-hidden="true" />
                             撤销
                           </button>
                         {/if}
@@ -5606,6 +5618,7 @@
                             disabled={statusLoading || toolbarLocked}
                             on:click={() => runRowAction(() => onAssignChangelist([node.path]))}
                           >
+                            <ListPlus size={15} aria-hidden="true" />
                             加入 Changelist...
                           </button>
                           {#if node.changelist}
@@ -5615,6 +5628,7 @@
                               disabled={statusLoading || toolbarLocked}
                               on:click={() => runRowAction(() => onRemoveChangelist([node.path]))}
                             >
+                              <ListMinus size={15} aria-hidden="true" />
                               移出 Changelist
                             </button>
                           {/if}
@@ -5627,6 +5641,7 @@
                             disabled={statusLoading || toolbarLocked}
                             on:click={() => runRowAction(() => onMovePath(node.path))}
                           >
+                            <MoveRight size={15} aria-hidden="true" />
                             移动
                           </button>
                           <button
@@ -5636,6 +5651,7 @@
                             disabled={statusLoading || toolbarLocked}
                             on:click={() => runRowAction(() => onCopyPath(node.path))}
                           >
+                            <Copy size={15} aria-hidden="true" />
                             复制
                           </button>
                           <button
@@ -5645,6 +5661,7 @@
                             disabled={statusLoading || toolbarLocked}
                             on:click={() => runRowAction(() => onDeletePath(node.path))}
                           >
+                            <Trash2 size={15} aria-hidden="true" />
                             删除
                           </button>
                         {/if}
@@ -6202,6 +6219,7 @@
         disabled={branchPoolLoading}
         on:click={editProjectContextMenuEntry}
       >
+        <Pencil size={15} aria-hidden="true" />
         修改备注
       </button>
       <span role="separator"></span>
@@ -6212,6 +6230,7 @@
         disabled={branchPoolLoading}
         on:click={removeProjectContextMenuEntry}
       >
+        <ListMinus size={15} aria-hidden="true" />
         从项目列表移除
       </button>
     </div>
@@ -6239,6 +6258,7 @@
           role="menuitem"
           on:click={() => runContextMenuAction(() => onOpenWorkspaceFile(contextMenuNode.path))}
         >
+          <ExternalLink size={15} aria-hidden="true" />
           打开
         </button>
         <button
@@ -6246,6 +6266,7 @@
           role="menuitem"
           on:click={() => runContextMenuAction(() => onOpenFileLocation(contextMenuNode.path))}
         >
+          <FolderOpen size={15} aria-hidden="true" />
           显示位置
         </button>
         <span role="separator"></span>
@@ -6257,6 +6278,7 @@
           disabled={statusLoading || toolbarLocked}
           on:click={() => runContextMenuAction(() => onAddFile(contextMenuNode.path))}
         >
+          <Plus size={15} aria-hidden="true" />
           Add
         </button>
         <button
@@ -6265,6 +6287,7 @@
           disabled={statusLoading || toolbarLocked}
           on:click={() => runContextMenuAction(() => onIgnorePath(contextMenuNode.path))}
         >
+          <EyeOff size={15} aria-hidden="true" />
           Ignore
         </button>
       {:else}
@@ -6274,6 +6297,7 @@
             role="menuitem"
             on:click={() => runContextMenuAction(() => openConflictResolver(contextMenuNode.path))}
           >
+            <GitMerge size={15} aria-hidden="true" />
             可视化解决
           </button>
         {/if}
@@ -6284,6 +6308,11 @@
             disabled={statusLoading}
             on:click={() => runContextMenuAction(toggleSelectedCommitPaths)}
           >
+            {#if allSelectedCommitTargets}
+              <CircleMinus size={15} aria-hidden="true" />
+            {:else}
+              <CircleCheck size={15} aria-hidden="true" />
+            {/if}
             {allSelectedCommitTargets ? "移出 Commit" : "加入 Commit"}
           </button>
         {/if}
@@ -6294,6 +6323,7 @@
             disabled={statusLoading || toolbarLocked}
             on:click={() => runContextMenuAction(() => onAssignChangelist(selectedChangelistPaths))}
           >
+            <ListPlus size={15} aria-hidden="true" />
             加入 Changelist...
           </button>
         {/if}
@@ -6304,6 +6334,7 @@
             disabled={statusLoading || toolbarLocked}
             on:click={() => runContextMenuAction(() => onRemoveChangelist(selectedAssignedChangelistPaths))}
           >
+            <ListMinus size={15} aria-hidden="true" />
             移出 Changelist
           </button>
         {/if}
@@ -6314,6 +6345,7 @@
             disabled={statusLoading || toolbarLocked}
             on:click={() => runContextMenuAction(() => onUpdatePath(contextMenuNode.path))}
           >
+            <RefreshCw size={15} aria-hidden="true" />
             Update
           </button>
         {/if}
@@ -6328,6 +6360,7 @@
           disabled={statusLoading || toolbarLocked}
           on:click={() => runContextMenuAction(runContextRevert)}
         >
+          <Undo2 size={15} aria-hidden="true" />
           Revert{selectedRevertablePaths.length > 1 ? ` ${selectedRevertablePaths.length} 项` : ""}
         </button>
       {/if}
@@ -6338,6 +6371,7 @@
           disabled={statusLoading || toolbarLocked}
           on:click={() => runContextMenuAction(runContextMove)}
         >
+          <MoveRight size={15} aria-hidden="true" />
           Move{selectedMovablePaths.length > 1 ? ` ${selectedMovablePaths.length} 项` : ""}
         </button>
       {/if}
@@ -6348,6 +6382,7 @@
           disabled={statusLoading || toolbarLocked}
           on:click={() => runContextMenuAction(() => onCopyPath(contextMenuNode.path))}
         >
+          <Copy size={15} aria-hidden="true" />
           Copy
         </button>
       {/if}
@@ -6359,6 +6394,7 @@
           disabled={statusLoading || toolbarLocked}
           on:click={() => runContextMenuAction(runContextDelete)}
         >
+          <Trash2 size={15} aria-hidden="true" />
           Delete{selectedDeletablePaths.length > 1 ? ` ${selectedDeletablePaths.length} 项` : ""}
         </button>
       {/if}

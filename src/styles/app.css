@@ -1184,6 +1184,9 @@ textarea {
 }
 
 .row-action-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-height: 25px;
   border: 0;
   border-radius: 3px;
@@ -1212,6 +1215,9 @@ textarea {
 }
 
 .workspace-context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-height: 27px;
   border: 0;
   border-radius: 3px;
@@ -1219,6 +1225,11 @@ textarea {
   padding: 3px 9px;
   color: #2d3945;
   text-align: left;
+}
+
+.row-action-menu button > svg,
+.workspace-context-menu button > svg {
+  flex: 0 0 15px;
 }
 
 .workspace-context-menu button:hover,
