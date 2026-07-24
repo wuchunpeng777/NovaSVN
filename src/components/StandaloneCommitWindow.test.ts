@@ -176,6 +176,8 @@ describe("StandaloneCommitWindow", () => {
     await waitFor(() => {
       expect(scanWorkspaceStatusMock).toHaveBeenCalledWith({
         working_copy_root: "C:\\repo",
+        scope_path: "src",
+        include_content_digests: false,
         svn_executable: undefined,
         offset: 0,
         limit: 5000,
