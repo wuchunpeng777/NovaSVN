@@ -36,7 +36,7 @@
 - Timeline 可将干净且已 Update 到 HEAD 的工作副本恢复到指定旧 Revision，通过反向 Merge 生成可审查、可提交的本地改动。
 - Revision Diff 可导出完整 Patch；预览截断时显示完整文件名和路径，完整文件写入失败会使任务失败。
 - Apply Patch 显示成功偏移的 hunk 数；命令输出预览限制为 256 KiB，任务日志限制为 64 KiB/500 行并明确标记截断。
-- Merge 支持单源 URL、revision 范围、dry-run 结构化预览，以及 Record only、Ignore ancestry 和 Force 常用参数。
+- Merge 支持单源 URL、revision 范围、dry-run 结构化预览，以及 Record only、Ignore ancestry 和 Force 常用参数；Log 可将选中 Revision 直接合并到包含本地改动的目标，并在执行后审阅目标 status 与逐文件 diff。
 - Repository 可浏览任意 SVN URL 的 HEAD 或指定数字 Revision，目录导航保持当前历史快照。
 - Repository 目录表明确显示条目类型、Last Revision、作者和日期，并为完整元数据提供 tooltip。
 - Repository 文件可按当前历史 Revision 通过真实 `svn cat` 下载二进制安全的临时副本，并使用系统默认应用打开。

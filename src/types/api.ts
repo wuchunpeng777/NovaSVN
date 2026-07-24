@@ -314,6 +314,7 @@ export interface CreateMergeTaskRequest {
   end_revision?: string;
   revisions?: string[];
   dry_run: boolean;
+  allow_local_changes?: boolean;
   record_only: boolean;
   ignore_ancestry: boolean;
   force: boolean;

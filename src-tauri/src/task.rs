@@ -361,6 +361,8 @@ pub struct CreateMergeTaskRequest {
     pub end_revision: Option<String>,
     pub revisions: Option<Vec<String>>,
     pub dry_run: bool,
+    #[serde(default)]
+    pub allow_local_changes: bool,
     pub record_only: bool,
     pub ignore_ancestry: bool,
     pub force: bool,
@@ -704,6 +706,7 @@ struct MergeTaskPayload {
     end_revision: Option<String>,
     revisions: Vec<String>,
     dry_run: bool,
+    allow_local_changes: bool,
     record_only: bool,
     ignore_ancestry: bool,
     force: bool,
@@ -2043,6 +2046,7 @@ impl TaskQueue {
         validate_merge_tracking_options(request.record_only, request.ignore_ancestry)?;
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         if !request.dry_run
+            && !request.allow_local_changes
             && merge_workspace_has_local_changes(&svn_executable, &working_copy_root)?
         {
             return Err(NovaError::command(
@@ -2079,6 +2083,7 @@ impl TaskQueue {
                 end_revision,
                 revisions,
                 dry_run: request.dry_run,
+                allow_local_changes: request.allow_local_changes,
                 record_only: request.record_only,
                 ignore_ancestry: request.ignore_ancestry,
                 force: request.force,
@@ -2129,6 +2134,7 @@ impl TaskQueue {
                 end_revision: session.end_revision,
                 revisions: session.revisions,
                 dry_run: false,
+                allow_local_changes: false,
                 record_only: session.record_only,
                 ignore_ancestry: session.ignore_ancestry,
                 force: session.force,
@@ -5206,13 +5212,17 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
     }
 
     let root = PathBuf::from(&payload.working_copy_root);
-    let target_check = if payload.dry_run {
+    let target_check = if payload.dry_run || payload.allow_local_changes {
         merge_workspace_has_local_changes(&payload.svn_executable, &root).map(|dirty| {
             if dirty {
                 append_task_log(
                     state,
                     task_id,
-                    "当前工作副本存在本地改动，dry-run 将继续生成预览",
+                    if payload.dry_run {
+                        "当前工作副本存在本地改动，dry-run 将继续生成预览"
+                    } else {
+                        "当前工作副本存在本地改动，Merge 将与现有改动叠加"
+                    },
                 );
             }
             true
@@ -15074,6 +15084,7 @@ mod tests {
                 end_revision: Some("12".to_string()),
                 revisions: None,
                 dry_run: false,
+                allow_local_changes: false,
                 record_only: false,
                 ignore_ancestry: false,
                 force: false,
@@ -15086,6 +15097,39 @@ mod tests {
                 assert_eq!(code, "SVN_MERGE_LOCAL_CHANGES");
             }
         }
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn allows_non_dry_run_merge_with_local_changes_when_requested() {
+        let queue = TaskQueue::new();
+        let dir = test_temp_dir("merge-dirty-allowed");
+        let svn = write_svn_status_stub(
+            &dir,
+            r#"<status><target path="wc"><entry path="a.txt"><wc-status item="modified" /></entry></target></status>"#,
+        );
+
+        let task = queue
+            .create_merge_task(CreateMergeTaskRequest {
+                working_copy_root: dir.display().to_string(),
+                source_url: "https://example.com/svn/branches/feature".to_string(),
+                start_revision: Some("10".to_string()),
+                end_revision: Some("12".to_string()),
+                revisions: None,
+                dry_run: false,
+                allow_local_changes: true,
+                record_only: false,
+                ignore_ancestry: false,
+                force: false,
+                svn_executable: Some(svn.display().to_string()),
+            })
+            .expect("explicit dirty merge should be queued");
+
+        assert!(matches!(
+            task.payload,
+            TaskPayload::Merge(payload) if payload.allow_local_changes && !payload.dry_run
+        ));
 
         fs::remove_dir_all(dir).ok();
     }
@@ -15107,6 +15151,7 @@ mod tests {
                 end_revision: Some("12".to_string()),
                 revisions: None,
                 dry_run: true,
+                allow_local_changes: false,
                 record_only: true,
                 ignore_ancestry: false,
                 force: true,
@@ -15138,6 +15183,7 @@ mod tests {
             end_revision: Some("12".to_string()),
             revisions: Vec::new(),
             dry_run: false,
+            allow_local_changes: false,
             record_only: false,
             ignore_ancestry: false,
             force: false,
@@ -15156,6 +15202,26 @@ mod tests {
             .as_deref()
             .is_some_and(|error| error.contains("任务等待期间出现了本地改动")));
         assert!(!task
+            .logs
+            .iter()
+            .any(|log| log.message.starts_with("执行 svn merge")));
+
+        let dirty_allowed_state = repository_file_test_state("merge-dirty-execution-allowed");
+        run_merge_task(
+            &dirty_allowed_state,
+            "merge-dirty-execution-allowed",
+            MergeTaskPayload {
+                allow_local_changes: true,
+                ..payload.clone()
+            },
+        );
+        let dirty_allowed_task = dirty_allowed_state.lock().unwrap().tasks[0].clone();
+        assert!(matches!(dirty_allowed_task.status, TaskStatus::Success));
+        assert!(dirty_allowed_task
+            .logs
+            .iter()
+            .any(|log| log.message.contains("Merge 将与现有改动叠加")));
+        assert!(dirty_allowed_task
             .logs
             .iter()
             .any(|log| log.message.starts_with("执行 svn merge")));
@@ -15254,6 +15320,7 @@ mod tests {
                 end_revision: Some("4".to_string()),
                 revisions: None,
                 dry_run: true,
+                allow_local_changes: false,
                 record_only: false,
                 ignore_ancestry: false,
                 force: false,
@@ -15285,6 +15352,7 @@ mod tests {
                 end_revision: Some("4".to_string()),
                 revisions: None,
                 dry_run: false,
+                allow_local_changes: false,
                 record_only: false,
                 ignore_ancestry: false,
                 force: true,
@@ -15320,6 +15388,7 @@ mod tests {
                 end_revision: Some("4".to_string()),
                 revisions: None,
                 dry_run: false,
+                allow_local_changes: false,
                 record_only: true,
                 ignore_ancestry: false,
                 force: false,
@@ -15427,6 +15496,7 @@ mod tests {
                 end_revision: Some("4".to_string()),
                 revisions: None,
                 dry_run: true,
+                allow_local_changes: false,
                 record_only: false,
                 ignore_ancestry: false,
                 force: false,
@@ -15452,6 +15522,7 @@ mod tests {
                 end_revision: Some("4".to_string()),
                 revisions: None,
                 dry_run: false,
+                allow_local_changes: false,
                 record_only: false,
                 ignore_ancestry: false,
                 force: false,
@@ -15537,6 +15608,7 @@ mod tests {
                 end_revision: None,
                 revisions: Some(vec!["5".to_string(), "3".to_string()]),
                 dry_run: false,
+                allow_local_changes: false,
                 record_only: false,
                 ignore_ancestry: false,
                 force: false,

@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
   cancelTask: vi.fn(),
   chooseWorkspaceDirectory: vi.fn(),
   createMergeTask: vi.fn(),
+  getFileDiff: vi.fn(),
   getTask: vi.fn(),
   inspectUpdateTarget: vi.fn(),
   launchMergePreviewWindow: vi.fn(),
@@ -14,6 +15,7 @@ vi.mock("../lib/api", () => ({
 import {
   cancelTask,
   createMergeTask,
+  getFileDiff,
   getTask,
   inspectUpdateTarget,
   launchMergePreviewWindow,
@@ -28,6 +30,7 @@ import type {
 import LogMergeDialog from "./LogMergeDialog.svelte";
 
 const createMergeTaskMock = vi.mocked(createMergeTask);
+const getFileDiffMock = vi.mocked(getFileDiff);
 const cancelTaskMock = vi.mocked(cancelTask);
 const getTaskMock = vi.mocked(getTask);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
@@ -37,6 +40,7 @@ const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 beforeEach(() => {
   cancelTaskMock.mockReset();
   createMergeTaskMock.mockReset();
+  getFileDiffMock.mockReset();
   getTaskMock.mockReset();
   inspectUpdateTargetMock.mockReset();
   launchMergePreviewWindowMock.mockReset();
@@ -44,9 +48,20 @@ beforeEach(() => {
   inspectUpdateTargetMock.mockResolvedValue(makeTarget());
   scanWorkspaceStatusMock.mockResolvedValue(makeStatus());
   createMergeTaskMock.mockResolvedValue(makeTask("pending"));
+  getFileDiffMock.mockResolvedValue({
+    path: "src/main.ts",
+    node_kind: "file",
+    text: "Index: src/main.ts\n+merged",
+    binary: false,
+    empty: false,
+  });
   cancelTaskMock.mockResolvedValue(makeTask("cancelled"));
   getTaskMock.mockResolvedValue(makeTask("success", makeMergeResult(true)));
   launchMergePreviewWindowMock.mockResolvedValue({ preview_id: "a".repeat(64) });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("LogMergeDialog", () => {
@@ -75,6 +90,7 @@ describe("LogMergeDialog", () => {
       source_url: "https://example.com/svn/branches/feature",
       revisions: ["101", "105"],
       dry_run: true,
+      allow_local_changes: false,
       record_only: false,
       ignore_ancestry: false,
       force: false,
@@ -182,6 +198,54 @@ describe("LogMergeDialog", () => {
     await waitFor(() => expect(launchMergePreviewWindowMock).toHaveBeenCalledOnce());
   });
 
+  it("允许脏工作副本直接 Merge，并展示合并后的状态和 Diff", async () => {
+    const onMerged = vi.fn();
+    const initialStatus = makeStatus({ total: 2, local_changes: 2, modified: 2 });
+    const postMergeStatus = makeStatus({
+      total: 3,
+      returned: 1,
+      limit: 500,
+      local_changes: 3,
+      modified: 3,
+      files: [makeChangedFile("src/main.ts")],
+    });
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce(initialStatus)
+      .mockResolvedValueOnce(postMergeStatus);
+    createMergeTaskMock.mockResolvedValueOnce(makeTask("pending", null, "merge-apply"));
+    getTaskMock.mockResolvedValueOnce(makeTask("success", makeMergeResult(false), "merge-apply"));
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderDialog({ onMerged });
+    await inspectPath("C:\\target");
+
+    await fireEvent.click(screen.getByRole("button", { name: "直接应用" }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("目标当前已有 2 项本地改动"));
+    await waitFor(() => expect(createMergeTaskMock).toHaveBeenCalledWith({
+      working_copy_root: "C:\\target",
+      source_url: "https://example.com/svn/branches/feature",
+      revisions: ["101", "105"],
+      dry_run: false,
+      allow_local_changes: true,
+      record_only: false,
+      ignore_ancestry: false,
+      force: false,
+      svn_executable: "C:\\Tools\\svn.exe",
+    }));
+    const review = await screen.findByLabelText("Merge 后检查");
+    expect(within(review).getByText("包含 Merge 前已有的本地改动")).toBeInTheDocument();
+    expect(within(review).getByRole("button", { name: /src\/main\.ts/ })).toBeInTheDocument();
+    await waitFor(() => expect(getFileDiffMock).toHaveBeenCalledWith({
+      working_copy_root: "C:\\target",
+      file_path: "src/main.ts",
+      svn_executable: "C:\\Tools\\svn.exe",
+    }));
+    expect(onMerged).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(onMerged).toHaveBeenCalledWith("C:\\target");
+  });
+
   it("显示 dry-run 发现的冲突和 SVN 输出", async () => {
     getTaskMock.mockResolvedValueOnce(
       makeTask("success", {
@@ -275,6 +339,27 @@ function makeStatus(overrides: Partial<WorkingCopyStatus> = {}): WorkingCopyStat
     property_changed: 0,
     files: [],
     ...overrides,
+  };
+}
+
+function makeChangedFile(path: string): WorkingCopyStatus["files"][number] {
+  return {
+    path,
+    status: "modified",
+    changelist: null,
+    revision: "100",
+    property_status: "none",
+    property_changed: false,
+    remote_status: null,
+    remote_property_status: null,
+    change_scope: "local",
+    abnormal: false,
+    lock_state: "none",
+    lock_owner: null,
+    lock_comment: null,
+    conflict_kind: null,
+    file_size: 10,
+    content_digest: "digest",
   };
 }
 
