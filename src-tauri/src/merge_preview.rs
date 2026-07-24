@@ -641,8 +641,14 @@ fn is_unsupported_reparse_point(_metadata: &fs::Metadata) -> bool {
 }
 
 fn safe_relative_path(value: &str) -> Result<PathBuf, NovaError> {
-    let path = PathBuf::from(value.replace('/', std::path::MAIN_SEPARATOR_STR));
-    if path.is_absolute()
+    let normalized = value.replace('\\', "/");
+    let bytes = normalized.as_bytes();
+    let has_windows_drive_prefix =
+        bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    let path = PathBuf::from(normalized.replace('/', std::path::MAIN_SEPARATOR_STR));
+    if normalized.is_empty()
+        || has_windows_drive_prefix
+        || path.is_absolute()
         || path
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
@@ -777,8 +783,12 @@ mod tests {
         assert!(validate_preview_id(&"a".repeat(64)).is_ok());
         assert!(validate_preview_id("../preview").is_err());
         assert!(safe_relative_path("src/main.rs").is_ok());
+        assert!(safe_relative_path("").is_err());
         assert!(safe_relative_path("../outside.txt").is_err());
+        assert!(safe_relative_path("..\\outside.txt").is_err());
         assert!(safe_relative_path("C:\\outside.txt").is_err());
+        assert!(safe_relative_path("C:/outside.txt").is_err());
+        assert!(safe_relative_path("\\\\server\\outside.txt").is_err());
     }
 
     #[test]

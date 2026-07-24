@@ -5207,7 +5207,16 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
 
     let root = PathBuf::from(&payload.working_copy_root);
     let target_check = if payload.dry_run {
-        Ok(true)
+        merge_workspace_has_local_changes(&payload.svn_executable, &root).map(|dirty| {
+            if dirty {
+                append_task_log(
+                    state,
+                    task_id,
+                    "当前工作副本存在本地改动，dry-run 将继续生成预览",
+                );
+            }
+            true
+        })
     } else if let Some(expected) = payload.expected_snapshot_digest.as_deref() {
         merge_preview::workspace_snapshot_digest(&payload.svn_executable, &root)
             .map(|current| current == expected)
@@ -11206,12 +11215,10 @@ mod tests {
     #[test]
     fn streams_complete_child_output_lines_into_the_running_task() {
         let task_id = "task-stream-output";
+        let mut task = persisted_test_task(task_id, TaskStatus::Running, timestamp_millis());
+        task.logs.clear();
         let state = Arc::new(Mutex::new(TaskQueueState {
-            tasks: vec![persisted_test_task(
-                task_id,
-                TaskStatus::Running,
-                timestamp_millis(),
-            )],
+            tasks: vec![task],
             ..TaskQueueState::default()
         }));
         let streamer = TaskOutputStreamer {
@@ -12649,6 +12656,7 @@ mod tests {
             fs::read_to_string(working_copy.join("nested/new.txt")).unwrap(),
             "new file\n"
         );
+        fs::remove_file(working_copy.join("unadd.txt")).expect("remove unversioned test file");
         let clean_status = run_test_command(Command::new("svn").arg("status").arg(&working_copy));
         assert!(clean_status.stdout.is_empty());
         fs::remove_dir_all(root).ok();
@@ -13440,9 +13448,13 @@ mod tests {
             "排队后变更的未版本控制文件必须拒绝删除"
         );
         assert!(changing_task
+            .logs
+            .iter()
+            .any(|log| log.message.contains("发生变化")));
+        assert!(changing_task
             .error
             .as_deref()
-            .is_some_and(|error| error.contains("发生变化")));
+            .is_some_and(|error| error.contains("排队时")));
         assert!(changing.exists());
 
         fs::remove_dir_all(root).ok();
