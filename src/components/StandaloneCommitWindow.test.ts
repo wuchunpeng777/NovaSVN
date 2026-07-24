@@ -153,6 +153,40 @@ describe("StandaloneCommitWindow", () => {
     expect(getTaskMock).toHaveBeenCalledWith("commit-1");
   });
 
+  it("持久化自动关闭选项，但没有可提交文件时保持窗口打开", async () => {
+    const first = render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const autoClose = screen.getByRole("checkbox", { name: "提交完成后自动关闭" });
+
+    await fireEvent.click(autoClose);
+
+    expect(autoClose).toBeChecked();
+    expect(localStorage.getItem("novasvn:commit-close-after-completion")).toBe("true");
+    expect(closeWindowMock).not.toHaveBeenCalled();
+    first.unmount();
+
+    scanWorkspaceStatusMock.mockResolvedValue(makeStatus({ files: [] }));
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    expect(
+      screen.getByRole("checkbox", { name: "提交完成后自动关闭" }),
+    ).toBeChecked();
+    expect(await screen.findByRole("button", { name: "提交 0 个文件" })).toBeDisabled();
+    expect(createCommitTaskMock).not.toHaveBeenCalled();
+    expect(closeWindowMock).not.toHaveBeenCalled();
+  });
+
+  it("提交完成后再勾选只保存下次偏好，不追溯关闭当前窗口", async () => {
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    await fireEvent.click(await screen.findByRole("button", { name: "提交 3 个文件" }));
+    expect(await screen.findByText("提交完成")).toBeInTheDocument();
+    const autoClose = screen.getByRole("checkbox", { name: "提交完成后自动关闭" });
+    await fireEvent.click(autoClose);
+
+    expect(localStorage.getItem("novasvn:commit-close-after-completion")).toBe("true");
+    expect(closeWindowMock).not.toHaveBeenCalled();
+  });
+
   it("空闲时按 Escape 关闭 Commit 窗口", async () => {
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
 

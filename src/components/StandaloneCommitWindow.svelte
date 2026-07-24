@@ -55,6 +55,7 @@
     rememberPassword: boolean,
   ) => Promise<boolean> = async () => false;
 
+  const COMMIT_AUTO_CLOSE_SETTING_KEY = "novasvn:commit-close-after-completion";
   const terminalStatuses: TaskStatus[] = ["success", "failed", "cancelled", "interrupted"];
 
   let target: UpdateTargetSummary | null = null;
@@ -110,7 +111,9 @@
   let pendingMessageTimer: number | null = null;
   let outOfDateDialogOpen = false;
   let committedBytes = 0;
-  let closeAfterCompletion = false;
+  let closeAfterCompletion = readCloseAfterCompletionSetting();
+  let closeCurrentCommitAfterCompletion = false;
+  let submittedCommitTaskId: string | null = null;
   let autoCloseTriggered = false;
 
   $: resolvedTheme =
@@ -292,6 +295,8 @@
     clearFilePreview();
     recordedTaskId = null;
     committedBytes = 0;
+    closeCurrentCommitAfterCompletion = false;
+    submittedCommitTaskId = null;
     autoCloseTriggered = false;
 
     try {
@@ -860,6 +865,8 @@
     error = null;
     statusError = null;
     const nextCommittedBytes = selectedBytes;
+    closeCurrentCommitAfterCompletion = closeAfterCompletion;
+    submittedCommitTaskId = null;
     try {
       const task = await createCommitTask({
         working_copy_root: target.working_copy_root,
@@ -870,11 +877,13 @@
         svn_executable: svnExecutable?.trim() || undefined,
       });
       commitTask = task;
+      submittedCommitTaskId = task.task_id;
       committedBytes = nextCommittedBytes;
       recordedTaskId = null;
       autoCloseTriggered = false;
       schedulePoll(task.task_id, "commit", generation, 0);
     } catch (caught) {
+      closeCurrentCommitAfterCompletion = false;
       error = caught as CommandError;
     }
   }
@@ -1092,9 +1101,10 @@
 
   async function maybeCloseCompletedCommit() {
     if (
-      !closeAfterCompletion ||
+      !closeCurrentCommitAfterCompletion ||
       autoCloseTriggered ||
       commitTask?.status !== "success" ||
+      submittedCommitTaskId !== commitTask.task_id ||
       recordedTaskId !== commitTask.task_id ||
       scanning
     ) {
@@ -1111,8 +1121,31 @@
 
   function handleCloseAfterCompletionChange(event: Event) {
     closeAfterCompletion = (event.currentTarget as HTMLInputElement).checked;
-    if (closeAfterCompletion) {
-      void maybeCloseCompletedCommit();
+    writeCloseAfterCompletionSetting(closeAfterCompletion);
+    if (commitTask?.status !== "success") {
+      closeCurrentCommitAfterCompletion = closeAfterCompletion;
+    }
+  }
+
+  function readCloseAfterCompletionSetting() {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    try {
+      return window.localStorage.getItem(COMMIT_AUTO_CLOSE_SETTING_KEY) === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  function writeCloseAfterCompletionSetting(value: boolean) {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.localStorage.setItem(COMMIT_AUTO_CLOSE_SETTING_KEY, String(value));
+    } catch {
+      // Preference persistence must not interfere with Commit.
     }
   }
 
