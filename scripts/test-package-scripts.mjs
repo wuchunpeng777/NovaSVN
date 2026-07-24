@@ -418,6 +418,7 @@ for (const action of windowsExplorerIconActions) {
     failed = true;
     continue;
   }
+  const svg = fs.readFileSync(svgPath, "utf8");
   const ico = fs.readFileSync(icoPath);
   if (
     ico.length < 6 ||
@@ -426,6 +427,31 @@ for (const action of windowsExplorerIconActions) {
     ico.readUInt16LE(4) < 5
   ) {
     console.error(`Windows Explorer 菜单图标不是有效的多尺寸 ICO：${action}`);
+    failed = true;
+    continue;
+  }
+
+  const firstEntryOffset = 6;
+  const width = ico[firstEntryOffset] || 256;
+  const height = ico[firstEntryOffset + 1] || 256;
+  const firstImageOffset = ico.readUInt32LE(firstEntryOffset + 12);
+  const dibHeaderSize = ico.readUInt32LE(firstImageOffset);
+  const bitsPerPixel = ico.readUInt16LE(firstImageOffset + 14);
+  const pixelOffset = firstImageOffset + dibHeaderSize;
+  const pixelBytes = ico.subarray(pixelOffset, pixelOffset + width * height * 4);
+  let hasTransparentPixel = false;
+  let hasVisiblePixel = false;
+  for (let index = 3; index < pixelBytes.length; index += 4) {
+    hasTransparentPixel ||= pixelBytes[index] === 0;
+    hasVisiblePixel ||= pixelBytes[index] > 0;
+  }
+  if (
+    svg.includes("<rect") ||
+    bitsPerPixel !== 32 ||
+    !hasTransparentPixel ||
+    !hasVisiblePixel
+  ) {
+    console.error(`Windows Explorer 菜单图标必须使用透明背景：${action}`);
     failed = true;
   }
 }
