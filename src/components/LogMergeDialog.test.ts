@@ -7,6 +7,7 @@ vi.mock("../lib/api", () => ({
   createMergeTask: vi.fn(),
   getTask: vi.fn(),
   inspectUpdateTarget: vi.fn(),
+  launchMergePreviewWindow: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
 }));
 
@@ -14,6 +15,7 @@ import {
   createMergeTask,
   getTask,
   inspectUpdateTarget,
+  launchMergePreviewWindow,
   scanWorkspaceStatus,
 } from "../lib/api";
 import type {
@@ -27,23 +29,26 @@ import LogMergeDialog from "./LogMergeDialog.svelte";
 const createMergeTaskMock = vi.mocked(createMergeTask);
 const getTaskMock = vi.mocked(getTask);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
+const launchMergePreviewWindowMock = vi.mocked(launchMergePreviewWindow);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(() => {
   createMergeTaskMock.mockReset();
   getTaskMock.mockReset();
   inspectUpdateTargetMock.mockReset();
+  launchMergePreviewWindowMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
   inspectUpdateTargetMock.mockResolvedValue(makeTarget());
   scanWorkspaceStatusMock.mockResolvedValue(makeStatus());
   createMergeTaskMock.mockResolvedValue(makeTask("pending"));
   getTaskMock.mockResolvedValue(makeTask("success", makeMergeResult(true)));
+  launchMergePreviewWindowMock.mockResolvedValue({ preview_id: "a".repeat(64) });
 });
 
 describe("LogMergeDialog", () => {
-  it("验证目标后预览离散 Revision，并在预览成功后执行真实 Merge", async () => {
-    const onMerged = vi.fn();
-    renderDialog({ onMerged });
+  it("验证目标后预览离散 Revision，并在独立窗口打开结果", async () => {
+    const onClose = vi.fn();
+    renderDialog({ onClose });
 
     await inspectPath("C:\\target");
     expect(inspectUpdateTargetMock).toHaveBeenCalledWith({
@@ -70,25 +75,10 @@ describe("LogMergeDialog", () => {
       force: false,
       svn_executable: "C:\\Tools\\svn.exe",
     }));
-    expect(await screen.findByRole("button", { name: "应用 Merge" })).toBeEnabled();
-    expect(screen.getByText("Dry-run 完成")).toBeInTheDocument();
-
-    createMergeTaskMock.mockResolvedValueOnce(makeTask("pending", null, "merge-apply"));
-    getTaskMock.mockResolvedValueOnce(
-      makeTask("success", makeMergeResult(false), "merge-apply"),
-    );
-    await fireEvent.click(screen.getByRole("button", { name: "应用 Merge" }));
-
-    await waitFor(() => expect(createMergeTaskMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        working_copy_root: "C:\\target",
-        revisions: ["101", "105"],
-        dry_run: false,
-      }),
-    ));
-    await waitFor(() => expect(onMerged).toHaveBeenCalledWith("C:\\target"));
-    expect(screen.getByText("Merge 完成")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "应用 Merge" })).not.toBeInTheDocument();
+    await waitFor(() => expect(launchMergePreviewWindowMock).toHaveBeenCalledWith({
+      preview_id: "a".repeat(64),
+    }));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("拒绝不同仓库和来源工作副本本身", async () => {
@@ -112,7 +102,7 @@ describe("LogMergeDialog", () => {
     );
   });
 
-  it("允许脏工作副本做预览，但禁止应用真实 Merge", async () => {
+  it("允许脏工作副本生成独立预览", async () => {
     scanWorkspaceStatusMock.mockResolvedValueOnce(
       makeStatus({ total: 2, local_changes: 2, modified: 2 }),
     );
@@ -121,9 +111,7 @@ describe("LogMergeDialog", () => {
 
     expect(screen.getByText("2 项本地改动")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "预览 Merge" }));
-    const applyButton = await screen.findByRole("button", { name: "应用 Merge" });
-    expect(applyButton).toBeDisabled();
-    expect(createMergeTaskMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(launchMergePreviewWindowMock).toHaveBeenCalledOnce());
   });
 
   it("显示 dry-run 发现的冲突和 SVN 输出", async () => {
@@ -265,5 +253,6 @@ function makeMergeResult(dryRun: boolean): MergeResult {
     deleted: 0,
     updated: 1,
     conflicted: 0,
+    preview_id: dryRun ? "a".repeat(64) : null,
   };
 }

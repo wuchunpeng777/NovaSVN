@@ -22,9 +22,11 @@ describe("RawDiffViewer", () => {
       },
     });
 
-    expect(screen.getByText("2 处差异")).toBeInTheDocument();
+    expect(screen.getByText("1 / 2 处差异")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "下一处差异" }));
+    expect(screen.getByText("2 / 2 处差异")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "上一处差异" }));
+    expect(screen.getByText("1 / 2 处差异")).toBeInTheDocument();
 
     expect(HTMLElement.prototype.scrollTo).toHaveBeenCalledTimes(2);
   });

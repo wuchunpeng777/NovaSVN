@@ -4,6 +4,7 @@ mod diff;
 mod error;
 mod executable;
 mod external_tool;
+mod merge_preview;
 mod path_utils;
 pub mod performance_benchmark;
 mod redaction;
@@ -34,20 +35,21 @@ use svn::{
     SvnAuthenticationStatus, SvnCertificateTrustStatus, SvnClient, SvnDetection,
 };
 use system_integration::{
-    LaunchLogWindowRequest, LaunchPathWindowRequest, LaunchedLogWindow, LaunchedPathWindow,
-    StartupIntent,
+    LaunchLogWindowRequest, LaunchMergePreviewWindowRequest, LaunchPathWindowRequest,
+    LaunchedLogWindow, LaunchedMergePreviewWindow, LaunchedPathWindow, StartupIntent,
 };
 use task::{
-    CreateApplyPatchTaskRequest, CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest,
-    CreateMergeTaskRequest, CreateMockTaskRequest, CreatePartialCommitTaskRequest,
-    CreateRepositoryCheckoutTaskRequest, CreateRepositoryCopyTaskRequest,
-    CreateRepositoryDeleteTaskRequest, CreateRepositoryDragExportTaskRequest,
-    CreateRepositoryExportTaskRequest, CreateRepositoryFileTaskRequest,
-    CreateRepositoryImportTaskRequest, CreateRepositoryListTaskRequest,
-    CreateRepositoryMkdirTaskRequest, CreateRepositoryMoveTaskRequest,
-    CreateRevertRevisionTaskRequest, CreateRevisionDiffTaskRequest,
-    CreateShadowWorkspaceTaskRequest, CreateSvnBatchOperationTaskRequest,
-    CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest, Task, TaskQueue, TaskSnapshot,
+    CreateApplyMergePreviewTaskRequest, CreateApplyPatchTaskRequest,
+    CreateBranchCheckoutTaskRequest, CreateCommitTaskRequest, CreateMergeTaskRequest,
+    CreateMockTaskRequest, CreatePartialCommitTaskRequest, CreateRepositoryCheckoutTaskRequest,
+    CreateRepositoryCopyTaskRequest, CreateRepositoryDeleteTaskRequest,
+    CreateRepositoryDragExportTaskRequest, CreateRepositoryExportTaskRequest,
+    CreateRepositoryFileTaskRequest, CreateRepositoryImportTaskRequest,
+    CreateRepositoryListTaskRequest, CreateRepositoryMkdirTaskRequest,
+    CreateRepositoryMoveTaskRequest, CreateRevertRevisionTaskRequest,
+    CreateRevisionDiffTaskRequest, CreateShadowWorkspaceTaskRequest,
+    CreateSvnBatchOperationTaskRequest, CreateSvnOperationTaskRequest, CreateSvnSwitchTaskRequest,
+    Task, TaskQueue, TaskSnapshot,
 };
 use task_workspace::{RemoveTaskWorkspaceRequest, SaveTaskWorkspaceRequest, TaskWorkspaceList};
 use tauri::{Emitter, Manager};
@@ -450,6 +452,15 @@ fn launch_conflict_window(request: LaunchPathWindowRequest) -> CommandResult<Lau
 }
 
 #[tauri::command]
+fn launch_merge_preview_window(
+    request: LaunchMergePreviewWindowRequest,
+) -> CommandResult<LaunchedMergePreviewWindow> {
+    Ok(CommandResponse::success(
+        system_integration::launch_merge_preview_window(request)?,
+    ))
+}
+
+#[tauri::command]
 fn launch_external_tool(request: LaunchExternalToolRequest) -> CommandResult<ExternalToolLaunch> {
     println!("[NovaSVN] launch_external_tool command received");
     Ok(CommandResponse::success(
@@ -752,11 +763,58 @@ fn create_revert_revision_task(
 
 #[tauri::command]
 fn create_merge_task(
+    app: tauri::AppHandle,
     queue: tauri::State<'_, TaskQueue>,
     request: CreateMergeTaskRequest,
 ) -> CommandResult<Task> {
     println!("[NovaSVN] create_merge_task command received");
-    Ok(CommandResponse::success(queue.create_merge_task(request)?))
+    Ok(CommandResponse::success(
+        queue.create_merge_task_with_app(&app, request)?,
+    ))
+}
+
+#[tauri::command]
+fn create_apply_merge_preview_task(
+    app: tauri::AppHandle,
+    queue: tauri::State<'_, TaskQueue>,
+    request: CreateApplyMergePreviewTaskRequest,
+) -> CommandResult<Task> {
+    println!("[NovaSVN] create_apply_merge_preview_task command received");
+    Ok(CommandResponse::success(
+        queue.create_apply_merge_preview_task(&app, request)?,
+    ))
+}
+
+#[tauri::command]
+fn get_merge_preview(
+    app: tauri::AppHandle,
+    request: merge_preview::MergePreviewIdRequest,
+) -> CommandResult<merge_preview::MergePreviewSession> {
+    Ok(CommandResponse::success(merge_preview::read_session(
+        &app,
+        &request.preview_id,
+    )?))
+}
+
+#[tauri::command]
+fn get_merge_preview_file(
+    app: tauri::AppHandle,
+    request: merge_preview::GetMergePreviewFileRequest,
+) -> CommandResult<merge_preview::MergePreviewFileContent> {
+    Ok(CommandResponse::success(merge_preview::read_preview_file(
+        &app, &request,
+    )?))
+}
+
+#[tauri::command]
+fn release_merge_preview(
+    app: tauri::AppHandle,
+    request: merge_preview::MergePreviewIdRequest,
+) -> CommandResult<merge_preview::ReleasedMergePreview> {
+    Ok(CommandResponse::success(merge_preview::release_session(
+        &app,
+        &request.preview_id,
+    )?))
 }
 
 #[tauri::command]
@@ -1163,6 +1221,7 @@ pub fn run() {
                 Some("info") => Some("NovaSVN Info"),
                 Some("commit") => Some("NovaSVN Commit"),
                 Some("log") => Some("NovaSVN Log"),
+                Some("merge-preview") => Some("NovaSVN Merge Preview"),
                 Some("blame") => Some("NovaSVN Blame"),
                 Some("revert") => Some("NovaSVN Revert"),
                 Some("update") => Some("NovaSVN Update"),
@@ -1174,6 +1233,9 @@ pub fn run() {
                 app_data_dir.join("task-history.json"),
             ));
             diagnostics::install_panic_hook(app_data_dir.clone());
+            if let Err(error) = merge_preview::cleanup_expired_sessions(app.handle()) {
+                eprintln!("[NovaSVN] 清理过期 Merge 预览失败：{error}");
+            }
             if standalone_title.is_some() {
                 let _ = app.remove_menu();
             }
@@ -1209,6 +1271,7 @@ pub fn run() {
             launch_update_window,
             launch_commit_window,
             launch_conflict_window,
+            launch_merge_preview_window,
             launch_external_tool,
             open_file_location,
             open_workspace_file,
@@ -1236,6 +1299,10 @@ pub fn run() {
             create_revision_diff_task,
             create_revert_revision_task,
             create_merge_task,
+            create_apply_merge_preview_task,
+            get_merge_preview,
+            get_merge_preview_file,
+            release_merge_preview,
             create_apply_patch_task,
             get_branch_pool,
             save_branch_pool_entry,

@@ -22,6 +22,7 @@ export interface StartupIntent {
   repository_root: string | null;
   revision: string | null;
   return_action: string | null;
+  preview_id: string | null;
 }
 
 export interface LaunchLogWindowRequest {
@@ -43,6 +44,14 @@ export interface LaunchPathWindowRequest {
 
 export interface LaunchedPathWindow {
   target_path: string;
+}
+
+export interface LaunchMergePreviewWindowRequest {
+  preview_id: string;
+}
+
+export interface LaunchedMergePreviewWindow {
+  preview_id: string;
 }
 
 export interface DiagnosticExport {
@@ -346,6 +355,10 @@ export interface RemoveBranchPoolEntryRequest {
   delete_local_copy?: boolean;
 }
 
+export interface CreateApplyMergePreviewTaskRequest {
+  preview_id: string;
+}
+
 export interface ReorderBranchPoolEntriesRequest {
   entry_ids: string[];
 }
@@ -442,6 +455,50 @@ export interface MergeResult {
   deleted: number;
   updated: number;
   conflicted: number;
+  preview_id?: string | null;
+}
+
+export interface MergePreviewFile {
+  path: string;
+  action: string;
+  conflicted: boolean;
+  property_only: boolean;
+  binary: boolean;
+  too_large: boolean;
+  original_exists: boolean;
+  modified_exists: boolean;
+  original_bytes: number;
+  modified_bytes: number;
+}
+
+export interface MergePreviewSession {
+  preview_id: string;
+  working_copy_root: string;
+  source_url: string;
+  revision_range: string;
+  record_only: boolean;
+  ignore_ancestry: boolean;
+  force: boolean;
+  snapshot_digest: string;
+  created_at: number;
+  expires_at: number;
+  output_text: string;
+  files: MergePreviewFile[];
+}
+
+export interface MergePreviewFileContent {
+  path: string;
+  original_text: string;
+  modified_text: string;
+  language: string;
+  binary: boolean;
+  too_large: boolean;
+  max_bytes: number;
+}
+
+export interface ReleasedMergePreview {
+  preview_id: string;
+  released: boolean;
 }
 
 export interface ApplyPatchResult {

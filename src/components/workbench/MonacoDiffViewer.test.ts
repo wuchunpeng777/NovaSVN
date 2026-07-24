@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => {
     goToDiff: vi.fn(),
     focus: vi.fn(),
     getLineChanges: vi.fn(() => [{ originalStartLineNumber: 1 }, { originalStartLineNumber: 4 }]),
+    onDidChangeCursorPosition: vi.fn(() => ({ dispose: vi.fn() })),
     createModel: vi.fn(() => ({ dispose: vi.fn() })),
     setModel: vi.fn(),
     updateOptions: vi.fn(),
@@ -23,7 +24,10 @@ vi.mock("monaco-editor/esm/vs/editor/editor.api", () => ({
     createDiffEditor: vi.fn(() => ({
       dispose: mocks.disposeEditor,
       getLineChanges: mocks.getLineChanges,
-      getModifiedEditor: () => ({ focus: mocks.focus }),
+      getModifiedEditor: () => ({
+        focus: mocks.focus,
+        onDidChangeCursorPosition: mocks.onDidChangeCursorPosition,
+      }),
       goToDiff: mocks.goToDiff,
       onDidUpdateDiff: (callback: () => void) => {
         mocks.state.onDidUpdateDiff = callback;
@@ -66,13 +70,15 @@ describe("MonacoDiffViewer", () => {
 
     await waitFor(() => expect(mocks.state.onDidUpdateDiff).not.toBeNull());
     mocks.state.onDidUpdateDiff?.();
-    await waitFor(() => expect(screen.getByText("2 处差异")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("1 / 2 处差异")).toBeInTheDocument());
 
-    await fireEvent.click(screen.getByRole("button", { name: "上一处差异" }));
     await fireEvent.click(screen.getByRole("button", { name: "下一处差异" }));
+    expect(screen.getByText("2 / 2 处差异")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "上一处差异" }));
+    expect(screen.getByText("1 / 2 处差异")).toBeInTheDocument();
 
-    expect(mocks.goToDiff).toHaveBeenNthCalledWith(1, "previous");
-    expect(mocks.goToDiff).toHaveBeenNthCalledWith(2, "next");
+    expect(mocks.goToDiff).toHaveBeenNthCalledWith(1, "next");
+    expect(mocks.goToDiff).toHaveBeenNthCalledWith(2, "previous");
     expect(mocks.focus).toHaveBeenCalledTimes(2);
   });
 });

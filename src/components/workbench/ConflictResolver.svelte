@@ -93,7 +93,7 @@
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
-    if (!open) {
+    if (!open || event.defaultPrevented) {
       return;
     }
     if (event.key === "Escape") {
@@ -128,7 +128,7 @@
         </div>
         <div class="conflict-resolver-header-actions">
           <div class="conflict-difference-navigation" role="toolbar" aria-label="冲突差异导航">
-            <span>{parsed.conflicts.length > 0 ? `${activeConflictIndex + 1}/${parsed.conflicts.length}` : "0/0"}</span>
+            <span>{parsed.conflicts.length > 0 ? `${activeConflictIndex + 1} / ${parsed.conflicts.length} 处差异` : "0 / 0 处差异"}</span>
             <button
               type="button"
               class="icon-button"

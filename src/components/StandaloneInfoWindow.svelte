@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { Clipboard, Info, RefreshCw, Check } from "@lucide/svelte";
   import { getSvnInfo } from "../lib/api";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
@@ -40,12 +41,14 @@
       systemPrefersDark = themeMediaQuery.matches;
       themeMediaQuery.addEventListener("change", handleThemeChange);
     }
+    window.addEventListener("keydown", handleWindowKeydown);
     void loadInfo();
   });
 
   onDestroy(() => {
     requestGeneration += 1;
     themeMediaQuery?.removeEventListener("change", handleThemeChange);
+    window.removeEventListener("keydown", handleWindowKeydown);
     if (copiedTimer !== null) {
       window.clearTimeout(copiedTimer);
     }
@@ -53,6 +56,14 @@
 
   function handleThemeChange(event: MediaQueryListEvent) {
     systemPrefersDark = event.matches;
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape" || event.defaultPrevented) {
+      return;
+    }
+    event.preventDefault();
+    void getCurrentWindow().close();
   }
 
   async function loadInfo() {

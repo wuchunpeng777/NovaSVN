@@ -1823,6 +1823,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-drag",
  "thiserror 2.0.18",
+ "uuid",
 ]
 
 [[package]]

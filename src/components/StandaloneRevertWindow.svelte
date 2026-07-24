@@ -290,13 +290,13 @@
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
-    if (event.key !== "Escape") {
+    if (event.key !== "Escape" || event.defaultPrevented) {
       return;
     }
     if (confirmationOpen) {
       event.preventDefault();
       cancelConfirmation();
-    } else if (!authenticationFailure && !operationRunning) {
+    } else if (!operationRunning) {
       event.preventDefault();
       void getCurrentWindow().close();
     }

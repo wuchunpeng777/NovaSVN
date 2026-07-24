@@ -22,6 +22,7 @@
     mergeSvnLogPage,
     repositoryPathLogTarget,
     repositoryPathUrlAtRevision,
+    resolveWorkingCopyLogRevision,
     revisionBefore,
   } from "../lib/svn-log";
   import type {
@@ -131,6 +132,8 @@
   $: selectedMergeRevisions = [...mergeRevisions].sort(
     (left, right) => Number(left) - Number(right),
   );
+  $: workingCopyRevision = log?.working_copy_root ? log.working_copy_revision ?? null : null;
+  $: effectiveRevision = resolveWorkingCopyLogRevision(log?.entries ?? [], workingCopyRevision);
   $: revertRunning = !!revertTask && !terminalTaskStatuses.includes(revertTask.status);
 
   onMount(() => {
@@ -576,7 +579,7 @@
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
-    if (event.key !== "Escape" || mergeDialogOpen || authenticationFailure) {
+    if (event.key !== "Escape" || event.defaultPrevented || mergeDialogOpen) {
       return;
     }
     if (fileContextMenu) {
@@ -816,7 +819,8 @@
       mergeRevisions={mergeRevisions}
       diffLoading={revisionDiffLoading}
       compact={selectedDiff !== null || selectedMergeRevisions.length > 0}
-      currentRevision={log?.working_copy_revision ?? null}
+      currentRevision={workingCopyRevision}
+      {effectiveRevision}
       theme={resolvedTheme}
       {formatDate}
       revertDisabled={() => !log?.working_copy_root || loading || revertRunning}

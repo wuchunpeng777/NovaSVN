@@ -27,6 +27,7 @@ use tauri::{AppHandle, Manager};
 use crate::{
     error::NovaError,
     executable::normalize_executable_setting,
+    merge_preview::{self, MergePreviewSession},
     path_utils,
     redaction::redact_credentials,
     shadow::{self, ShadowWorkspaceRequest},
@@ -53,6 +54,7 @@ const MAX_TASK_COMMAND_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 const MERGE_OUTPUT_PREVIEW_MAX_BYTES: usize = 256 * 1024;
 const MAX_MERGE_COMMAND_OUTPUT_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_MERGE_OUTPUT_LINE_BYTES: usize = 64 * 1024;
+const MAX_MERGE_PREVIEW_FILE_ENTRIES: usize = 100_000;
 const MAX_REVISION_DIFF_PATCH_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_REPOSITORY_LIST_XML_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_REPOSITORY_LIST_ENTRIES: usize = 100_000;
@@ -366,6 +368,11 @@ pub struct CreateMergeTaskRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct CreateApplyMergePreviewTaskRequest {
+    pub preview_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateApplyPatchTaskRequest {
     pub working_copy_root: String,
     pub patch_file_path: String,
@@ -448,6 +455,7 @@ pub struct MergeResult {
     pub deleted: usize,
     pub updated: usize,
     pub conflicted: usize,
+    pub preview_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -689,6 +697,7 @@ struct RevertRevisionTaskPayload {
 
 #[derive(Debug, Clone)]
 struct MergeTaskPayload {
+    app: Option<AppHandle>,
     working_copy_root: String,
     source_url: String,
     start_revision: Option<String>,
@@ -699,6 +708,8 @@ struct MergeTaskPayload {
     ignore_ancestry: bool,
     force: bool,
     svn_executable: String,
+    preview_id: Option<String>,
+    expected_snapshot_digest: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -2000,7 +2011,24 @@ impl TaskQueue {
         Ok(task)
     }
 
+    #[cfg(test)]
     pub fn create_merge_task(&self, request: CreateMergeTaskRequest) -> Result<Task, NovaError> {
+        self.create_merge_task_internal(None, request)
+    }
+
+    pub fn create_merge_task_with_app(
+        &self,
+        app: &AppHandle,
+        request: CreateMergeTaskRequest,
+    ) -> Result<Task, NovaError> {
+        self.create_merge_task_internal(Some(app), request)
+    }
+
+    fn create_merge_task_internal(
+        &self,
+        app: Option<&AppHandle>,
+        request: CreateMergeTaskRequest,
+    ) -> Result<Task, NovaError> {
         let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
         let source_url = normalize_repository_url(&request.source_url)?;
         let MergeRevisionSelection {
@@ -2025,6 +2053,7 @@ impl TaskQueue {
             ));
         }
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let preview_id = request.dry_run.then(new_merge_preview_id);
         let now = timestamp_millis();
         let task = Task {
             task_id: task_id.clone(),
@@ -2043,6 +2072,7 @@ impl TaskQueue {
             created_at: now,
             updated_at: now,
             payload: TaskPayload::Merge(MergeTaskPayload {
+                app: app.cloned(),
                 working_copy_root: working_copy_root.display().to_string(),
                 source_url,
                 start_revision,
@@ -2053,9 +2083,60 @@ impl TaskQueue {
                 ignore_ancestry: request.ignore_ancestry,
                 force: request.force,
                 svn_executable,
+                preview_id,
+                expected_snapshot_digest: None,
             }),
         };
 
+        self.enqueue(task_id, task.clone());
+        Ok(task)
+    }
+
+    pub fn create_apply_merge_preview_task(
+        &self,
+        app: &AppHandle,
+        request: CreateApplyMergePreviewTaskRequest,
+    ) -> Result<Task, NovaError> {
+        let session = merge_preview::read_session(app, &request.preview_id)?;
+        let root = normalize_workspace_root(&session.working_copy_root)?;
+        let current_digest =
+            merge_preview::workspace_snapshot_digest(&session.svn_executable, &root)?;
+        if current_digest != session.snapshot_digest {
+            return Err(merge_preview_stale_error());
+        }
+        let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+        let now = timestamp_millis();
+        let task = Task {
+            task_id: task_id.clone(),
+            title: format!(
+                "应用 Merge 预览 {}",
+                compact_repository_url(&session.source_url)
+            ),
+            status: TaskStatus::Pending,
+            logs: vec![TaskLog {
+                message: "Merge 预览应用任务已加入队列".to_string(),
+                created_at: now,
+            }],
+            error: None,
+            result: None,
+            created_at: now,
+            updated_at: now,
+            payload: TaskPayload::Merge(MergeTaskPayload {
+                app: Some(app.clone()),
+                working_copy_root: root.display().to_string(),
+                source_url: session.source_url,
+                start_revision: session.start_revision,
+                end_revision: session.end_revision,
+                revisions: session.revisions,
+                dry_run: false,
+                record_only: session.record_only,
+                ignore_ancestry: session.ignore_ancestry,
+                force: session.force,
+                svn_executable: session.svn_executable,
+                preview_id: Some(request.preview_id),
+                expected_snapshot_digest: Some(session.snapshot_digest),
+            }),
+        };
         self.enqueue(task_id, task.clone());
         Ok(task)
     }
@@ -4013,7 +4094,7 @@ fn append_merge_analysis_logs(
     task_id: &str,
     analysis: &MergeOutputAnalysis,
 ) {
-    for line in &analysis.log_lines {
+    for line in &analysis.status_lines {
         append_task_log(state, task_id, line);
     }
     if analysis.log_truncated {
@@ -5119,29 +5200,37 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
         None,
     );
 
+    if payload.dry_run && payload.app.is_some() {
+        run_merge_preview_task(state, task_id, payload);
+        return;
+    }
+
     let root = PathBuf::from(&payload.working_copy_root);
-    match merge_workspace_has_local_changes(&payload.svn_executable, &root) {
-        Ok(true) if !payload.dry_run => {
+    let target_check = if payload.dry_run {
+        Ok(true)
+    } else if let Some(expected) = payload.expected_snapshot_digest.as_deref() {
+        merge_preview::workspace_snapshot_digest(&payload.svn_executable, &root)
+            .map(|current| current == expected)
+    } else {
+        merge_workspace_has_local_changes(&payload.svn_executable, &root).map(|dirty| !dirty)
+    };
+    match target_check {
+        Ok(false) => {
             update_task(
                 state,
                 task_id,
                 TaskStatus::Failed,
                 "Merge 执行前检查未通过",
-                Some(
+                Some(if payload.expected_snapshot_digest.is_some() {
+                    "目标工作副本在生成预览后发生变化；请重新生成 Merge 预览。".to_string()
+                } else {
                     "当前工作副本在任务等待期间出现了本地改动；请提交或清理后重新执行 Merge。"
-                        .to_string(),
-                ),
+                        .to_string()
+                }),
             );
             return;
         }
         Ok(true) => {
-            append_task_log(
-                state,
-                task_id,
-                "执行前复检发现本地改动；dry-run 将继续生成预览",
-            );
-        }
-        Ok(false) => {
             append_task_log(state, task_id, "执行前工作副本状态复检通过");
         }
         Err(error) => {
@@ -5235,6 +5324,92 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
                 updated: output.analysis.summary.updated,
                 conflicted: output.analysis.summary.conflicted,
                 output_text: output.analysis.output_text.clone(),
+                preview_id: None,
+            };
+            set_task_result(
+                state,
+                task_id,
+                TaskResult {
+                    repository_list: None,
+                    repository_file: None,
+                    repository_export: None,
+                    revision_diff: None,
+                    merge_result: Some(result),
+                    apply_patch_result: None,
+                },
+            );
+            update_task(state, task_id, TaskStatus::Success, "Merge 执行成功", None);
+        }
+        Ok(output) => {
+            append_merge_analysis_logs(state, task_id, &output.analysis);
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "Merge 执行失败",
+                Some(merge_analysis_error_detail(&output.analysis)),
+            );
+        }
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "SVN merge 启动失败",
+                Some(nova_error_text(&error)),
+            );
+        }
+    }
+}
+
+fn run_merge_preview_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: MergeTaskPayload,
+) {
+    let Some(preview_id) = payload.preview_id.clone() else {
+        update_task(
+            state,
+            task_id,
+            TaskStatus::Failed,
+            "Merge 预览初始化失败",
+            Some("预览任务缺少会话标识。".to_string()),
+        );
+        return;
+    };
+    let root = PathBuf::from(&payload.working_copy_root);
+    let result = build_merge_preview(state, task_id, &payload, &preview_id, &root);
+    match result {
+        Ok((session, analysis)) => {
+            let result = MergeResult {
+                dry_run: true,
+                source_url: payload.source_url.clone(),
+                revision_range: session.revision_range.clone(),
+                record_only: payload.record_only,
+                ignore_ancestry: payload.ignore_ancestry,
+                force: payload.force,
+                output_text: analysis.output_text.clone(),
+                output_truncated: analysis.output_truncated,
+                max_output_bytes: MERGE_OUTPUT_PREVIEW_MAX_BYTES,
+                file_count: session.files.len(),
+                line_count: analysis.line_count,
+                added: session
+                    .files
+                    .iter()
+                    .filter(|file| file.action == "A")
+                    .count(),
+                deleted: session
+                    .files
+                    .iter()
+                    .filter(|file| file.action == "D")
+                    .count(),
+                updated: session
+                    .files
+                    .iter()
+                    .filter(|file| !matches!(file.action.as_str(), "A" | "D" | "C"))
+                    .count(),
+                conflicted: session.files.iter().filter(|file| file.conflicted).count(),
+                preview_id: Some(preview_id),
             };
             set_task_result(
                 state,
@@ -5252,38 +5427,255 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
                 state,
                 task_id,
                 TaskStatus::Success,
-                if payload.dry_run {
-                    "Merge dry-run 完成"
-                } else {
-                    "Merge 执行成功"
-                },
+                "Merge 逐文件预览已生成",
                 None,
             );
         }
-        Ok(output) => {
-            append_merge_analysis_logs(state, task_id, &output.analysis);
-            update_task(
-                state,
-                task_id,
-                TaskStatus::Failed,
-                if payload.dry_run {
-                    "Merge dry-run 失败"
-                } else {
-                    "Merge 执行失败"
-                },
-                Some(merge_analysis_error_detail(&output.analysis)),
-            );
-        }
         Err(error) => {
+            if let Some(app) = payload.app.as_ref() {
+                let _ = merge_preview::release_session(app, &preview_id);
+            }
             update_task(
                 state,
                 task_id,
                 TaskStatus::Failed,
-                "SVN merge 启动失败",
+                "Merge 预览生成失败",
                 Some(nova_error_text(&error)),
             );
         }
     }
+}
+
+fn build_merge_preview(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    payload: &MergeTaskPayload,
+    preview_id: &str,
+    root: &Path,
+) -> Result<(MergePreviewSession, MergeOutputAnalysis), NovaError> {
+    append_task_log(state, task_id, "正在计算目标工作副本快照");
+    let snapshot_digest = merge_preview::workspace_snapshot_digest(&payload.svn_executable, root)?;
+    let app = payload.app.as_ref().ok_or_else(|| {
+        NovaError::command(
+            "MERGE_PREVIEW_APP_MISSING",
+            "Merge 预览初始化失败",
+            Some("缺少应用运行时。".to_string()),
+            false,
+        )
+    })?;
+    let session_directory = merge_preview::prepare_session_dir(app, preview_id, root)?;
+    let work_directory = session_directory.join("work");
+    append_task_log(state, task_id, "正在复制目标工作副本到隔离预览目录");
+    merge_preview::copy_working_copy(root, &work_directory)?;
+    let verified_digest = merge_preview::workspace_snapshot_digest(&payload.svn_executable, root)?;
+    if verified_digest != snapshot_digest {
+        return Err(merge_preview_stale_error());
+    }
+
+    append_task_log(state, task_id, "正在分析 Merge 影响文件");
+    let mut dry_command = build_merge_command(payload, &work_directory, true);
+    let dry_output = run_merge_command(state, task_id, &mut dry_command)?;
+    if !dry_output.status.success() {
+        return Err(NovaError::command(
+            "MERGE_PREVIEW_DRY_RUN_FAILED",
+            "Merge 预检失败",
+            Some(merge_analysis_error_detail(&dry_output.analysis)),
+            true,
+        ));
+    }
+    let dry_paths = merge_output_path_entries(&dry_output.analysis, &work_directory);
+    for path in dry_paths.keys() {
+        let _ = merge_preview::save_original_file(&session_directory, &work_directory, path)?;
+    }
+
+    append_task_log(state, task_id, "正在隔离工作副本中执行 Merge");
+    let mut merge_command = build_merge_command(payload, &work_directory, false);
+    let output = run_merge_command(state, task_id, &mut merge_command)?;
+    append_merge_analysis_logs(state, task_id, &output.analysis);
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "MERGE_PREVIEW_MERGE_FAILED",
+            "隔离工作副本 Merge 失败",
+            Some(merge_analysis_error_detail(&output.analysis)),
+            true,
+        ));
+    }
+
+    let mut paths = dry_paths;
+    for (path, value) in merge_output_path_entries(&output.analysis, &work_directory) {
+        if !paths.contains_key(&path) {
+            let _ = merge_preview::save_original_file(&session_directory, root, &path)?;
+        }
+        paths
+            .entry(path)
+            .and_modify(|current| current.merge(&value))
+            .or_insert(value);
+    }
+    let mut files = paths
+        .into_iter()
+        .map(|(path, status)| {
+            merge_preview::inspect_preview_file(
+                &session_directory,
+                &path,
+                status.action,
+                status.conflicted,
+                status.property_only,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    let final_digest = merge_preview::workspace_snapshot_digest(&payload.svn_executable, root)?;
+    if final_digest != snapshot_digest {
+        return Err(merge_preview_stale_error());
+    }
+    let created_at = timestamp_millis();
+    let session = MergePreviewSession {
+        preview_id: preview_id.to_string(),
+        working_copy_root: payload.working_copy_root.clone(),
+        source_url: payload.source_url.clone(),
+        revision_range: merge_revision_label(
+            &payload.start_revision,
+            &payload.end_revision,
+            &payload.revisions,
+        ),
+        start_revision: payload.start_revision.clone(),
+        end_revision: payload.end_revision.clone(),
+        revisions: payload.revisions.clone(),
+        record_only: payload.record_only,
+        ignore_ancestry: payload.ignore_ancestry,
+        force: payload.force,
+        svn_executable: payload.svn_executable.clone(),
+        snapshot_digest,
+        created_at,
+        expires_at: merge_preview::new_session_expiry(created_at),
+        output_text: output.analysis.output_text.clone(),
+        files,
+    };
+    merge_preview::write_session(app, &session)?;
+    Ok((session, output.analysis))
+}
+
+fn build_merge_command(payload: &MergeTaskPayload, root: &Path, dry_run: bool) -> Command {
+    let mut command = svn::command(&payload.svn_executable);
+    command.arg("merge");
+    for argument in merge_revision_arguments(
+        &payload.start_revision,
+        &payload.end_revision,
+        &payload.revisions,
+    ) {
+        command.arg(argument);
+    }
+    if dry_run {
+        command.arg("--dry-run");
+    }
+    if payload.record_only {
+        command.arg("--record-only");
+    }
+    if payload.ignore_ancestry {
+        command.arg("--ignore-ancestry");
+    }
+    if payload.force {
+        command.arg("--force");
+    }
+    command.arg(&payload.source_url).arg(root).current_dir(root);
+    command
+}
+
+#[derive(Debug, Clone)]
+struct MergePreviewPathStatus {
+    action: String,
+    conflicted: bool,
+    property_only: bool,
+}
+
+impl MergePreviewPathStatus {
+    fn merge(&mut self, other: &Self) {
+        self.conflicted |= other.conflicted;
+        self.property_only &= other.property_only;
+        if other.conflicted || self.action == "M" {
+            self.action = other.action.clone();
+        }
+    }
+}
+
+fn merge_output_path_entries(
+    analysis: &MergeOutputAnalysis,
+    root: &Path,
+) -> HashMap<String, MergePreviewPathStatus> {
+    let mut paths = HashMap::new();
+    for line in &analysis.log_lines {
+        let columns = line.chars().take(4).collect::<Vec<_>>();
+        if columns.len() < 4
+            || !columns
+                .iter()
+                .any(|value| matches!(value, 'A' | 'D' | 'U' | 'C' | 'G' | 'M' | 'R' | 'E'))
+            || !columns.iter().any(|value| value.is_whitespace())
+        {
+            continue;
+        }
+        let raw_path = line
+            .char_indices()
+            .nth(4)
+            .map(|(index, _)| &line[index..])
+            .unwrap_or_default()
+            .trim();
+        if raw_path.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(raw_path);
+        let relative = if path.is_absolute() {
+            path.strip_prefix(root).ok().map(Path::to_path_buf)
+        } else {
+            Some(path)
+        };
+        let Some(relative) = relative else {
+            continue;
+        };
+        if relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            continue;
+        }
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let conflicted = columns.contains(&'C');
+        let action = if conflicted {
+            "C"
+        } else {
+            match columns.first().copied().unwrap_or('M') {
+                'A' => "A",
+                'D' => "D",
+                _ => "M",
+            }
+        };
+        let status = MergePreviewPathStatus {
+            action: action.to_string(),
+            conflicted,
+            property_only: columns.first().is_some_and(|value| value.is_whitespace()),
+        };
+        paths
+            .entry(relative)
+            .and_modify(|current: &mut MergePreviewPathStatus| current.merge(&status))
+            .or_insert(status);
+    }
+    paths
+}
+
+fn new_merge_preview_id() -> String {
+    format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    )
+}
+
+fn merge_preview_stale_error() -> NovaError {
+    NovaError::command(
+        "MERGE_PREVIEW_TARGET_CHANGED",
+        "目标工作副本在预览后发生变化",
+        Some("请返回 Log 窗口重新生成 Merge 预览。".to_string()),
+        true,
+    )
 }
 
 fn run_apply_patch_task(
@@ -5992,6 +6384,7 @@ fn run_task_command_with_limits(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_task_command_inner(
     state: &Arc<Mutex<TaskQueueState>>,
     task_id: &str,
@@ -9342,12 +9735,7 @@ fn summarize_merge_output(output: &str) -> MergeOutputSummary {
 
 fn summarize_merge_output_line(line: &str, summary: &mut MergeOutputSummary) {
     let status_columns: Vec<char> = line.chars().take(4).collect();
-    if status_columns.len() < 2
-        || !status_columns
-            .iter()
-            .any(|status| matches!(status, 'A' | 'D' | 'U' | 'C' | 'G' | 'M' | 'R' | 'E'))
-        || !status_columns.iter().any(|status| status.is_whitespace())
-    {
+    if !is_merge_status_columns(&status_columns) {
         return;
     }
 
@@ -9363,6 +9751,14 @@ fn summarize_merge_output_line(line: &str, summary: &mut MergeOutputSummary) {
     }
 }
 
+fn is_merge_status_columns(status_columns: &[char]) -> bool {
+    status_columns.len() >= 2
+        && status_columns
+            .iter()
+            .any(|status| matches!(status, 'A' | 'D' | 'U' | 'C' | 'G' | 'M' | 'R' | 'E'))
+        && status_columns.iter().any(|status| status.is_whitespace())
+}
+
 #[derive(Debug)]
 struct MergeOutputAnalysis {
     output_text: String,
@@ -9370,6 +9766,7 @@ struct MergeOutputAnalysis {
     line_count: usize,
     summary: MergeOutputSummary,
     log_lines: Vec<String>,
+    status_lines: Vec<String>,
     log_truncated: bool,
 }
 
@@ -9381,6 +9778,7 @@ struct MergeOutputCollector {
     line_count: usize,
     summary: MergeOutputSummary,
     log_lines: Vec<String>,
+    status_lines: Vec<String>,
     log_bytes: usize,
     log_truncated: bool,
 }
@@ -9456,6 +9854,19 @@ impl MergeOutputCollector {
         if !line.trim().is_empty() {
             self.line_count = self.line_count.saturating_add(1);
             summarize_merge_output_line(line, &mut self.summary);
+            if is_merge_status_columns(&line.chars().take(4).collect::<Vec<_>>()) {
+                if self.status_lines.len() >= MAX_MERGE_PREVIEW_FILE_ENTRIES {
+                    return Err(NovaError::command(
+                        "MERGE_PREVIEW_FILE_LIMIT_EXCEEDED",
+                        "Merge 影响文件数量过多",
+                        Some(format!(
+                            "影响文件状态行超过 {MAX_MERGE_PREVIEW_FILE_ENTRIES} 项"
+                        )),
+                        true,
+                    ));
+                }
+                self.status_lines.push(line.to_string());
+            }
             let log_line = line.trim();
             if self.log_lines.len() >= MAX_RUNTIME_TASK_LOGS
                 || self.log_bytes >= MAX_RUNTIME_TASK_LOG_BYTES
@@ -9492,6 +9903,7 @@ impl MergeOutputCollector {
             line_count: self.line_count,
             summary: self.summary,
             log_lines: self.log_lines,
+            status_lines: self.status_lines,
             log_truncated: self.log_truncated,
         }
     }
@@ -14550,6 +14962,7 @@ mod tests {
             r#"<status><target path="wc"><entry path="queued-change.txt"><wc-status item="modified" /></entry></target></status>"#,
         );
         let payload = MergeTaskPayload {
+            app: None,
             working_copy_root: dir.display().to_string(),
             source_url: "https://example.com/svn/branches/feature".to_string(),
             start_revision: Some("10".to_string()),
@@ -14560,6 +14973,8 @@ mod tests {
             ignore_ancestry: false,
             force: false,
             svn_executable: svn.display().to_string(),
+            preview_id: None,
+            expected_snapshot_digest: None,
         };
         let state = repository_file_test_state("merge-execution-guard");
 

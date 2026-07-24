@@ -8,6 +8,7 @@ import type {
   BranchPool,
   CreateApplyPatchTaskRequest,
   CreateMergeTaskRequest,
+  CreateApplyMergePreviewTaskRequest,
   CreateCommitTaskRequest,
   CreateBranchCheckoutTaskRequest,
   CreateMockTaskRequest,
@@ -50,6 +51,8 @@ import type {
   ExternalToolLaunch,
   LaunchExternalToolRequest,
   LaunchLogWindowRequest,
+  LaunchMergePreviewWindowRequest,
+  LaunchedMergePreviewWindow,
   LaunchedLogWindow,
   LaunchPathWindowRequest,
   LaunchedPathWindow,
@@ -94,6 +97,9 @@ import type {
   TaskWorkspaceList,
   UpdateTargetSummary,
   WorkingCopyStatus,
+  MergePreviewSession,
+  MergePreviewFileContent,
+  ReleasedMergePreview,
   WorkspaceFileTree,
   WorkspaceChangelistResult,
   WorkspacePathSize,
@@ -162,6 +168,12 @@ export function launchConflictWindow(
   request: LaunchPathWindowRequest,
 ): Promise<LaunchedPathWindow> {
   return callBackend<LaunchedPathWindow>("launch_conflict_window", { request });
+}
+
+export function launchMergePreviewWindow(
+  request: LaunchMergePreviewWindowRequest,
+): Promise<LaunchedMergePreviewWindow> {
+  return callBackend<LaunchedMergePreviewWindow>("launch_merge_preview_window", { request });
 }
 
 export function launchExternalTool(
@@ -338,6 +350,33 @@ export function removeBranchPoolEntry(
   request: RemoveBranchPoolEntryRequest,
 ): Promise<BranchPool> {
   return callBackend<BranchPool>("remove_branch_pool_entry", { request });
+}
+
+export function createApplyMergePreviewTask(
+  request: CreateApplyMergePreviewTaskRequest,
+): Promise<Task> {
+  return callBackend<Task>("create_apply_merge_preview_task", { request });
+}
+
+export function getMergePreview(previewId: string): Promise<MergePreviewSession> {
+  return callBackend<MergePreviewSession>("get_merge_preview", {
+    request: { preview_id: previewId },
+  });
+}
+
+export function getMergePreviewFile(
+  previewId: string,
+  path: string,
+): Promise<MergePreviewFileContent> {
+  return callBackend<MergePreviewFileContent>("get_merge_preview_file", {
+    request: { preview_id: previewId, path },
+  });
+}
+
+export function releaseMergePreview(previewId: string): Promise<ReleasedMergePreview> {
+  return callBackend<ReleasedMergePreview>("release_merge_preview", {
+    request: { preview_id: previewId },
+  });
 }
 
 export function reorderBranchPoolEntries(

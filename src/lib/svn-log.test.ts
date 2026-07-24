@@ -3,9 +3,33 @@ import {
   loadAllSvnLogPages,
   mergeSvnLogPage,
   repositoryPathLogTarget,
+  resolveWorkingCopyLogRevision,
   repositoryPathUrlAtRevision,
   summarizeSvnChangeActions,
 } from "./svn-log";
+
+describe("resolveWorkingCopyLogRevision", () => {
+  it("maps a working-copy baseline to the newest loaded path revision", () => {
+    expect(resolveWorkingCopyLogRevision([
+      { revision: "80", author: "a", date: "", message: "", changed_paths: [] },
+      { revision: "65", author: "b", date: "", message: "", changed_paths: [] },
+    ], "r100M")).toBe("80");
+  });
+
+  it("ignores revisions newer than the working-copy baseline", () => {
+    expect(resolveWorkingCopyLogRevision([
+      { revision: "105", author: "a", date: "", message: "", changed_paths: [] },
+      { revision: "99", author: "b", date: "", message: "", changed_paths: [] },
+    ], "100")).toBe("99");
+  });
+
+  it("returns null when no applicable revision is loaded", () => {
+    expect(resolveWorkingCopyLogRevision([], "100")).toBeNull();
+    expect(resolveWorkingCopyLogRevision([
+      { revision: "101", author: "a", date: "", message: "", changed_paths: [] },
+    ], "100")).toBeNull();
+  });
+});
 import type { SvnLog } from "../types/api";
 
 describe("svn log helpers", () => {

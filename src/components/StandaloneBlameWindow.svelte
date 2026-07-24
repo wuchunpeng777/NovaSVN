@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { RefreshCw, X } from "@lucide/svelte";
   import { getSvnBlame, inspectUpdateTarget } from "../lib/api";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
@@ -105,6 +106,7 @@
       });
       resizeObserver.observe(tableElement);
     }
+    window.addEventListener("keydown", handleWindowKeydown);
     void loadBlame();
   });
 
@@ -112,6 +114,7 @@
     requestGeneration += 1;
     stopColumnResize();
     resizeObserver?.disconnect();
+    window.removeEventListener("keydown", handleWindowKeydown);
     themeMediaQuery?.removeEventListener("change", handleThemeChange);
   });
 
@@ -194,6 +197,18 @@
   function clearFilter() {
     filterText = "";
     resetTableScroll();
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape" || event.defaultPrevented) {
+      return;
+    }
+    if (selectedLogRevision) {
+      selectedLogRevision = null;
+    } else {
+      void getCurrentWindow().close();
+    }
+    event.preventDefault();
   }
 
   function openRevisionLog(revision: string) {

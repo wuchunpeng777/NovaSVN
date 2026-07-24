@@ -11,6 +11,7 @@
   import StandaloneConflictWindow from "./components/StandaloneConflictWindow.svelte";
   import StandaloneInfoWindow from "./components/StandaloneInfoWindow.svelte";
   import StandaloneLogWindow from "./components/StandaloneLogWindow.svelte";
+  import StandaloneMergePreviewWindow from "./components/StandaloneMergePreviewWindow.svelte";
   import StandaloneRevertWindow from "./components/StandaloneRevertWindow.svelte";
   import StandaloneUpdateWindow from "./components/StandaloneUpdateWindow.svelte";
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
@@ -70,7 +71,7 @@
 
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
-  let startupSurface: "loading" | "main" | "blame" | "checkout" | "commit" | "log" | "revert" | "update" | "resolve" | "info" =
+  let startupSurface: "loading" | "main" | "blame" | "checkout" | "commit" | "log" | "merge-preview" | "revert" | "update" | "resolve" | "info" =
     hasTauriRuntime() ? "loading" : "main";
   let standaloneBlamePath = "";
   let standaloneBlameReady = false;
@@ -82,6 +83,8 @@
   let standaloneLogRepositoryRoot: string | undefined = undefined;
   let standaloneLogRevision: string | undefined = undefined;
   let standaloneLogReady = false;
+  let standaloneMergePreviewId = "";
+  let standaloneMergePreviewReady = false;
   let standaloneRevertPath = "";
   let standaloneRevertReady = false;
   let standaloneUpdatePath = "";
@@ -2453,6 +2456,7 @@
         repository_root: null,
         revision: null,
         return_action: null,
+        preview_id: null,
       };
     }
 
@@ -2487,6 +2491,13 @@
         void svnStore.detectWithInputFallback();
       }
       standaloneCommitReady = true;
+      return;
+    }
+
+    if (intent.action === "merge-preview") {
+      standaloneMergePreviewId = intent.preview_id?.trim() ?? "";
+      startupSurface = "merge-preview";
+      standaloneMergePreviewReady = true;
       return;
     }
 
@@ -2583,8 +2594,30 @@
     }
   }
 
+  function startupSurfaceIsLoading() {
+    return startupSurface === "loading" ||
+      (startupSurface === "blame" && !standaloneBlameReady) ||
+      (startupSurface === "checkout" && !standaloneCheckoutReady) ||
+      (startupSurface === "commit" && !standaloneCommitReady) ||
+      (startupSurface === "log" && !standaloneLogReady) ||
+      (startupSurface === "merge-preview" && !standaloneMergePreviewReady) ||
+      (startupSurface === "revert" && !standaloneRevertReady) ||
+      (startupSurface === "update" && !standaloneUpdateReady) ||
+      (startupSurface === "resolve" && !standaloneConflictReady) ||
+      (startupSurface === "info" && !standaloneInfoReady);
+  }
+
+  function handleStartupEscape(event: KeyboardEvent) {
+    if (event.key !== "Escape" || event.defaultPrevented || !startupSurfaceIsLoading()) {
+      return;
+    }
+    event.preventDefault();
+    void getCurrentWindow().close();
+  }
+
   onMount(() => {
     window.addEventListener("keydown", preventBrowserFindShortcut, true);
+    window.addEventListener("keydown", handleStartupEscape);
     appSettingsStore.load();
     if (hasTauriRuntime()) {
       void initializeTauriApp();
@@ -2595,6 +2628,7 @@
 
   onDestroy(() => {
     window.removeEventListener("keydown", preventBrowserFindShortcut, true);
+    window.removeEventListener("keydown", handleStartupEscape);
     window.removeEventListener("contextmenu", preventNativeContextMenu, true);
     unlistenAppMenu?.();
     unlistenDragDrop?.();
@@ -2610,6 +2644,7 @@
   (startupSurface === "checkout" && !standaloneCheckoutReady) ||
   (startupSurface === "commit" && !standaloneCommitReady) ||
   (startupSurface === "log" && !standaloneLogReady) ||
+  (startupSurface === "merge-preview" && !standaloneMergePreviewReady) ||
   (startupSurface === "revert" && !standaloneRevertReady) ||
   (startupSurface === "update" && !standaloneUpdateReady) ||
   (startupSurface === "resolve" && !standaloneConflictReady) ||
@@ -2625,6 +2660,8 @@
         ? "正在准备 SVN Commit..."
         : startupSurface === "log"
         ? "正在准备 SVN Log..."
+        : startupSurface === "merge-preview"
+        ? "正在准备 Merge Preview..."
         : startupSurface === "revert"
         ? "正在准备 SVN Revert..."
         : startupSurface === "update"
@@ -2685,6 +2722,13 @@
     {svnAuthenticationLoading}
     {svnAuthenticationError}
     onSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
+  />
+{:else if startupSurface === "merge-preview"}
+  <StandaloneMergePreviewWindow
+    previewId={standaloneMergePreviewId}
+    themeMode={$appSettingsStore.themeMode}
+    diffMode={$appSettingsStore.diffMode}
+    showWhitespace={$appSettingsStore.showWhitespace}
   />
 {:else if startupSurface === "revert"}
   <StandaloneRevertWindow

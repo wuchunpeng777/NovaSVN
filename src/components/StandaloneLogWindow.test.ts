@@ -268,8 +268,8 @@ describe("StandaloneLogWindow", () => {
     expect(screen.getByLabelText("M 2")).toBeInTheDocument();
     expect(screen.getByLabelText("D 1")).toBeInTheDocument();
     const revision = screen.getByText("r20").closest(".svn-log-revision");
-    expect(screen.getByLabelText("本地 Revision r20")).toBeInTheDocument();
-    expect(revision?.textContent?.replace(/\s/g, "")).toBe("r20本地RevisionA1M2D1");
+    expect(screen.getByLabelText("工作副本基准 r20，当前路径版本 r20")).toBeInTheDocument();
+    expect(revision?.textContent?.replace(/\s/g, "")).toBe("r20当前路径版本A1M2D1");
     await fireEvent.click(screen.getByRole("button", { name: "查看路径" }));
     const changedPaths = screen.getByLabelText("r20 改变路径");
     expect(changedPaths.querySelector('[data-action="A"]')).toHaveTextContent("A");

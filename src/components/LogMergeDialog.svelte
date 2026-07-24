@@ -7,6 +7,7 @@
     createMergeTask,
     getTask,
     inspectUpdateTarget,
+    launchMergePreviewWindow,
     scanWorkspaceStatus,
   } from "../lib/api";
   import type {
@@ -271,6 +272,18 @@
       }
       if (operation === "preview") {
         previewComplete = true;
+        const previewId = nextTask.result?.merge_result?.preview_id;
+        if (!previewId) {
+          error = commandError(
+            "LOG_MERGE_PREVIEW_ID_MISSING",
+            "Merge 预览没有返回会话标识",
+          );
+          return;
+        }
+        await launchMergePreviewWindow({ preview_id: previewId });
+        if (currentGeneration === generation) {
+          onClose();
+        }
       } else if (target) {
         onMerged(target.working_copy_root);
       }
@@ -444,16 +457,6 @@
             >
               {previewComplete ? "重新预览" : "预览 Merge"}
             </button>
-            {#if previewComplete}
-              <button
-                type="button"
-                class="primary"
-                disabled={!target || targetDirty}
-                on:click={() => startMerge(false)}
-              >
-                应用 Merge
-              </button>
-            {/if}
           </div>
         {/if}
       {/if}
@@ -683,12 +686,6 @@
     align-items: center;
     justify-content: center;
     gap: 5px;
-  }
-
-  .merge-dialog button.primary {
-    border-color: var(--accent);
-    background: var(--accent);
-    color: #ffffff;
   }
 
   .merge-dialog button.danger {

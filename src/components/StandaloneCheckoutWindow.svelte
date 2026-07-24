@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { CircleCheck, Download, FolderOpen, RotateCw, Square } from "@lucide/svelte";
   import {
     cancelTask,
@@ -60,17 +61,27 @@
       systemPrefersDark = themeMediaQuery.matches;
       themeMediaQuery.addEventListener("change", handleThemeChange);
     }
+    window.addEventListener("keydown", handleWindowKeydown);
     repositoryUrlElement?.focus();
   });
 
   onDestroy(() => {
     generation += 1;
     clearPollTimer();
+    window.removeEventListener("keydown", handleWindowKeydown);
     themeMediaQuery?.removeEventListener("change", handleThemeChange);
   });
 
   function handleThemeChange(event: MediaQueryListEvent) {
     systemPrefersDark = event.matches;
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape" || event.defaultPrevented || checkoutRunning) {
+      return;
+    }
+    event.preventDefault();
+    void getCurrentWindow().close();
   }
 
   async function startCheckout() {

@@ -33,6 +33,7 @@ pub fn surface_name(action: Option<&str>) -> &'static str {
         Some("commit") => "commit",
         Some("info") => "info",
         Some("log") => "log",
+        Some("merge-preview") => "merge-preview",
         Some("revert") => "revert",
         Some("update") => "update",
         Some("resolve") => "resolve",

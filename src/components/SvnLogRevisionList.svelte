@@ -12,6 +12,7 @@
   export let diffLoading = false;
   export let compact = false;
   export let currentRevision: string | null = null;
+  export let effectiveRevision: string | null = null;
   export let theme: "light" | "dark" = "light";
   export let emptyText = "没有可显示的日志记录";
   export let loadingText = "正在读取日志...";
@@ -34,9 +35,10 @@
   export let onRevert: (entry: SvnLogEntry) => void = () => {};
   export let onRevertWorkspace: (entry: SvnLogEntry) => void = () => {};
 
-  $: normalizedCurrentRevision = normalizeRevision(currentRevision);
-  $: hasCurrentRevisionEntry = entries.some(
-    (entry) => normalizeRevision(entry.revision) === normalizedCurrentRevision,
+  $: normalizedBaselineRevision = normalizeRevision(currentRevision);
+  $: normalizedEffectiveRevision = normalizeRevision(effectiveRevision ?? currentRevision);
+  $: hasBaselineRevisionEntry = entries.some(
+    (entry) => normalizeRevision(entry.revision) === normalizedBaselineRevision,
   );
 
   function normalizeRevision(value: string | null) {
@@ -47,16 +49,16 @@
 
   function isCurrentRevision(revision: string) {
     return (
-      normalizedCurrentRevision.length > 0 &&
-      normalizeRevision(revision) === normalizedCurrentRevision
+      normalizedEffectiveRevision.length > 0 &&
+      normalizeRevision(revision) === normalizedEffectiveRevision
     );
   }
 
   function showsCurrentRevisionBoundary(index: number) {
-    if (hasCurrentRevisionEntry || !normalizedCurrentRevision) {
+    if (hasBaselineRevisionEntry || !normalizedBaselineRevision) {
       return false;
     }
-    const current = Number(normalizedCurrentRevision);
+    const current = Number(normalizedBaselineRevision);
     const entry = Number(normalizeRevision(entries[index]?.revision ?? null));
     const previous = Number(normalizeRevision(entries[index - 1]?.revision ?? null));
     if (!Number.isFinite(current) || !Number.isFinite(entry)) {
@@ -73,13 +75,16 @@
   aria-label="Revision 列表"
   aria-busy={loading}
 >
-  {#if normalizedCurrentRevision}
+  {#if normalizedBaselineRevision}
     <div
       class="svn-log-local-revision-summary"
-      aria-label={`本地 Revision r${normalizedCurrentRevision}`}
+      aria-label={`工作副本基准 r${normalizedBaselineRevision}${normalizedEffectiveRevision ? `，当前路径版本 r${normalizedEffectiveRevision}` : ""}`}
     >
       <span aria-hidden="true"></span>
-      <strong>本地 Revision r{normalizedCurrentRevision}</strong>
+      <span class="svn-log-baseline-revision">工作副本基准 r{normalizedBaselineRevision}</span>
+      {#if normalizedEffectiveRevision}
+        <strong>当前路径版本 r{normalizedEffectiveRevision}</strong>
+      {/if}
     </div>
   {/if}
   {#if entries.length > 0}
@@ -87,10 +92,10 @@
       {#if showsCurrentRevisionBoundary(index)}
         <div
           class="svn-log-local-revision-boundary"
-          aria-label={`本地 Revision r${normalizedCurrentRevision} 的历史位置`}
+          aria-label={`工作副本基准 r${normalizedBaselineRevision} 的历史位置`}
         >
-          <span>本地 Revision</span>
-          <strong>r{normalizedCurrentRevision}</strong>
+          <span>工作副本基准</span>
+          <strong>r{normalizedBaselineRevision}</strong>
         </div>
       {/if}
       <article
@@ -123,8 +128,8 @@
               {#if isCurrentRevision(entry.revision)}
                 <span
                   class="svn-log-current-revision"
-                  aria-label={`本地工作副本 Revision r${entry.revision}`}
-                >本地 Revision</span>
+                  aria-label={`当前路径版本 r${entry.revision}`}
+                >当前路径版本</span>
               {/if}
               <span class="svn-log-change-counts">
                 {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
@@ -278,6 +283,11 @@
     color: #ffffff;
     font-size: 11px;
     font-weight: 700;
+  }
+
+  .svn-log-baseline-revision {
+    color: var(--log-secondary);
+    font-weight: 600;
   }
 
   .svn-log-local-revision-boundary {

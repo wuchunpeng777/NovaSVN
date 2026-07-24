@@ -12,6 +12,32 @@ export interface RepositoryPathLogTarget {
   revision: string;
 }
 
+export function resolveWorkingCopyLogRevision(
+  entries: SvnLog["entries"],
+  workingCopyRevision: string | null | undefined,
+) {
+  const baseline = normalizeRevisionNumber(workingCopyRevision);
+  if (baseline === null) {
+    return null;
+  }
+  let effective: bigint | null = null;
+  let effectiveText: string | null = null;
+  for (const entry of entries) {
+    const revision = normalizeRevisionNumber(entry.revision);
+    if (revision !== null && revision <= baseline && (effective === null || revision > effective)) {
+      effective = revision;
+      effectiveText = revision.toString();
+    }
+  }
+  return effectiveText;
+}
+
+function normalizeRevisionNumber(value: string | null | undefined) {
+  const revisions = value?.trim().replace(/^r/i, "").match(/\d+/g);
+  const revision = revisions?.at(-1);
+  return revision ? BigInt(revision) : null;
+}
+
 export function mergeSvnLogPage(current: SvnLog, next: SvnLog): SvnLog {
   const revisions = new Set(current.entries.map((entry) => entry.revision));
   const appendedEntries = next.entries.filter((entry) => {

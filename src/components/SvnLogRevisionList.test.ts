@@ -55,7 +55,8 @@ describe("SvnLogRevisionList", () => {
           },
         ],
         totalEntries: 1,
-        currentRevision: "r42M",
+        currentRevision: "r100M",
+        effectiveRevision: "42",
         revertDisabled: () => false,
         workspaceRevertDisabled: () => false,
         onRevert,
@@ -66,9 +67,9 @@ describe("SvnLogRevisionList", () => {
     const entry = screen.getByText("Local revision").closest(".svn-log-entry");
     expect(entry).toHaveClass("current-revision");
     expect(entry).toHaveAttribute("aria-current", "true");
-    expect(screen.getByLabelText("本地 Revision r42")).toBeInTheDocument();
-    expect(screen.getByLabelText("本地工作副本 Revision r42")).toHaveTextContent(
-      "本地 Revision",
+    expect(screen.getByLabelText("工作副本基准 r100，当前路径版本 r42")).toBeInTheDocument();
+    expect(screen.getByLabelText("当前路径版本 r42")).toHaveTextContent(
+      "当前路径版本",
     );
     const revert = screen.getByRole("button", { name: "撤销提交 r42" });
     const workspaceRevert = screen.getByRole("button", { name: "回退工作区到 r42" });
@@ -106,9 +107,9 @@ describe("SvnLogRevisionList", () => {
       },
     });
 
-    expect(screen.getByLabelText("本地 Revision r43")).toBeInTheDocument();
-    const boundary = screen.getByLabelText("本地 Revision r43 的历史位置");
-    expect(boundary).toHaveTextContent("本地 Revision r43");
+    expect(screen.getByLabelText("工作副本基准 r43，当前路径版本 r43")).toBeInTheDocument();
+    const boundary = screen.getByLabelText("工作副本基准 r43 的历史位置");
+    expect(boundary).toHaveTextContent("工作副本基准 r43");
     expect(boundary.nextElementSibling).toHaveTextContent("r42");
   });
 });

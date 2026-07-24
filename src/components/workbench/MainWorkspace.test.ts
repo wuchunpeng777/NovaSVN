@@ -978,7 +978,7 @@ Certificate information:
         .getByText("r12")
         .closest(".svn-log-revision")
         ?.textContent?.replace(/\s/g, ""),
-    ).toBe("r12本地RevisionM5");
+    ).toBe("r12当前路径版本M5");
     expect(newestEntry).not.toHaveTextContent("/trunk/file-12-1.txt");
     await fireEvent.click(
       within(newestEntry).getByRole("button", { name: "展开 r12 日志" }),

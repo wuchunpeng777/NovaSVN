@@ -696,7 +696,7 @@
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
-    if (event.key !== "Escape") {
+    if (event.key !== "Escape" || event.defaultPrevented) {
       return;
     }
     if (outOfDateDialogOpen) {
@@ -709,9 +709,14 @@
       closeHistoryPicker();
     } else if (fileContextMenu) {
       closeFileContextMenu();
-    } else if (!authenticationFailure && !operationRunning) {
+    } else if (diffPaneOpen) {
+      clearFilePreview();
+    } else if (!operationRunning) {
       void getCurrentWindow().close();
+    } else {
+      return;
     }
+    event.preventDefault();
   }
 
   async function submitCommit() {

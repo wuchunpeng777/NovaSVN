@@ -11,6 +11,7 @@ pub struct StartupIntent {
     pub repository_root: Option<String>,
     pub revision: Option<String>,
     pub return_action: Option<String>,
+    pub preview_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -38,6 +39,16 @@ pub struct LaunchedLogWindow {
     pub revision: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct LaunchMergePreviewWindowRequest {
+    pub preview_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LaunchedMergePreviewWindow {
+    pub preview_id: String,
+}
+
 pub fn startup_intent() -> StartupIntent {
     startup_intent_from_args(std::env::args().skip(1))
 }
@@ -52,6 +63,7 @@ where
     let mut repository_root = None;
     let mut revision = None;
     let mut return_action = None;
+    let mut preview_id = None;
     let mut args = args.into_iter().map(Into::into);
 
     while let Some(arg) = args.next() {
@@ -67,6 +79,7 @@ where
             "--novasvn-return-action" => {
                 return_action = args.next().and_then(normalize_return_action)
             }
+            "--novasvn-preview-id" => preview_id = args.next().and_then(normalize_preview_id),
             _ if path.is_none() => path = normalize_startup_path(arg),
             _ => {}
         }
@@ -78,6 +91,7 @@ where
         repository_root,
         revision,
         return_action,
+        preview_id,
     }
 }
 
@@ -103,11 +117,18 @@ fn normalize_action(action: String) -> Option<String> {
             | "ignore"
             | "cleanup"
             | "branch-workspace"
+            | "merge-preview"
     ) {
         Some(value.to_string())
     } else {
         None
     }
+}
+
+fn normalize_preview_id(value: String) -> Option<String> {
+    let value = value.trim();
+    (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
 }
 
 fn normalize_startup_path(path: String) -> Option<String> {
@@ -202,6 +223,44 @@ pub fn launch_conflict_window(
     request: LaunchPathWindowRequest,
 ) -> Result<LaunchedPathWindow, NovaError> {
     launch_path_window(request, "resolve", "CONFLICT_WINDOW")
+}
+
+pub fn launch_merge_preview_window(
+    request: LaunchMergePreviewWindowRequest,
+) -> Result<LaunchedMergePreviewWindow, NovaError> {
+    let preview_id = normalize_preview_id(request.preview_id).ok_or_else(|| {
+        NovaError::command(
+            "MERGE_PREVIEW_WINDOW_ID_INVALID",
+            "无法启动 Merge 预览窗口",
+            Some("预览标识无效。".to_string()),
+            false,
+        )
+    })?;
+    let executable = std::env::current_exe().map_err(|error| {
+        NovaError::command(
+            "MERGE_PREVIEW_WINDOW_EXECUTABLE_MISSING",
+            "无法启动 Merge 预览窗口",
+            Some(error.to_string()),
+            true,
+        )
+    })?;
+    Command::new(&executable)
+        .args([
+            "--novasvn-action",
+            "merge-preview",
+            "--novasvn-preview-id",
+            preview_id.as_str(),
+        ])
+        .spawn()
+        .map_err(|error| {
+            NovaError::command(
+                "MERGE_PREVIEW_WINDOW_LAUNCH_FAILED",
+                "无法启动 Merge 预览窗口",
+                Some(format!("执行 `{}` 失败：{error}", executable.display())),
+                true,
+            )
+        })?;
+    Ok(LaunchedMergePreviewWindow { preview_id })
 }
 
 fn launch_path_window(
@@ -371,6 +430,27 @@ mod tests {
 
         assert_eq!(intent.action.as_deref(), Some("info"));
         assert_eq!(intent.path.as_deref(), Some("C:\\wc\\src"));
+    }
+
+    #[test]
+    fn parses_merge_preview_action_and_validates_id() {
+        let preview_id = "a".repeat(64);
+        let intent = startup_intent_from_args([
+            "--novasvn-action".to_string(),
+            "merge-preview".to_string(),
+            "--novasvn-preview-id".to_string(),
+            preview_id.clone(),
+        ]);
+        assert_eq!(intent.action.as_deref(), Some("merge-preview"));
+        assert_eq!(intent.preview_id.as_deref(), Some(preview_id.as_str()));
+
+        let invalid = startup_intent_from_args([
+            "--novasvn-action",
+            "merge-preview",
+            "--novasvn-preview-id",
+            "../invalid",
+        ]);
+        assert_eq!(invalid.preview_id, None);
     }
 
     #[test]

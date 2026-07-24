@@ -42,6 +42,7 @@
   import {
     LOG_FILE_DIFF_MAX_BYTES,
     repositoryPathUrlAtRevision,
+    resolveWorkingCopyLogRevision,
     revisionBefore,
   } from "../../lib/svn-log";
   import type {
@@ -3516,6 +3517,12 @@
             currentRevision={svnLog?.working_copy_revision ?? (workingCopyStatus?.mixed_revision
               ? workspace?.revision ?? null
               : workingCopyStatus?.revision_range ?? workspace?.revision ?? null)}
+            effectiveRevision={resolveWorkingCopyLogRevision(
+              svnLog?.entries ?? [],
+              svnLog?.working_copy_revision ?? (workingCopyStatus?.mixed_revision
+                ? workspace?.revision ?? null
+                : workingCopyStatus?.revision_range ?? workspace?.revision ?? null),
+            )}
             theme={resolvedTheme}
             emptyText="点击“读取日志”查看修订历史"
             loadingText="正在读取日志"

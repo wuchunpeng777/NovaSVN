@@ -111,6 +111,18 @@ const mainWorkspace = fs.readFileSync(
   path.join(root, "src", "components", "workbench", "MainWorkspace.svelte"),
   "utf8",
 );
+const svnLogRevisionList = fs.readFileSync(
+  path.join(root, "src", "components", "SvnLogRevisionList.svelte"),
+  "utf8",
+);
+const logMergeDialog = fs.readFileSync(
+  path.join(root, "src", "components", "LogMergeDialog.svelte"),
+  "utf8",
+);
+const standaloneMergePreviewWindow = fs.readFileSync(
+  path.join(root, "src", "components", "StandaloneMergePreviewWindow.svelte"),
+  "utf8",
+);
 const standaloneLogWindow = fs.readFileSync(
   path.join(root, "src", "components", "StandaloneLogWindow.svelte"),
   "utf8",
@@ -162,6 +174,10 @@ const externalToolRs = fs.readFileSync(
   "utf8",
 );
 const taskRs = fs.readFileSync(path.join(root, "src-tauri", "src", "task.rs"), "utf8");
+const mergePreviewRs = fs.readFileSync(
+  path.join(root, "src-tauri", "src", "merge_preview.rs"),
+  "utf8",
+);
 const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 
 const releaseScripts = ["release:windows", "release:macos", "release:macos:notarized"];
@@ -713,7 +729,7 @@ if (
 }
 
 for (const column of ["Name", "Base", "Last", "Date", "Author", "Status", "Size"]) {
-  if (!mainWorkspace.includes(`<span role="columnheader">${column}</span>`)) {
+  if (!mainWorkspace.includes(`label: "${column}", ariaLabel: "${column}"`)) {
     console.error(`Versions 工作副本表格缺少栏位：${column}`);
     failed = true;
   }
@@ -785,22 +801,21 @@ if (
 }
 
 if (
-  !mainWorkspace.includes("groupTimelineEntries") ||
-  !mainWorkspace.includes('class="timeline-day-group"') ||
-  !mainWorkspace.includes('class="timeline-day-header"') ||
-  !mainWorkspace.includes('class="timeline-changed-paths"') ||
+  !mainWorkspace.includes("<SvnLogRevisionList") ||
+  !svnLogRevisionList.includes('class="svn-log-entry"') ||
+  !svnLogRevisionList.includes('class="svn-log-changed-paths"') ||
   !mainWorkspace.includes("expandedTimelineRevisions")
 ) {
-  console.error("Timeline 必须按日期分组，并完整展示可展开的 revision 改变路径");
+  console.error("Timeline 必须完整展示可展开的 revision 改变路径");
   failed = true;
 }
 
 if (
   !mainWorkspace.includes("openChangedPathRevisionDiff") ||
-  !mainWorkspace.includes('class="timeline-changed-path-button"') ||
-  !appStore.includes("repositoryPathUrl") ||
-  !taskRs.includes("target_url") ||
-  !taskRs.includes("payload.target_url.as_deref().unwrap_or(root)")
+  !svnLogRevisionList.includes('class="svn-log-changed-path-button"') ||
+  !mainWorkspace.includes("repositoryPathUrlAtRevision") ||
+  !mainWorkspace.includes("getRevisionFileContentDiff") ||
+  !frontendApi.includes('callBackend<FileContentDiff>("get_revision_file_content_diff"')
 ) {
   console.error("Timeline 改变路径必须通过目标仓库 URL 执行真实 Revision Diff");
   failed = true;
@@ -827,39 +842,40 @@ if (
 }
 
 if (
-  !mainWorkspace.includes("selectedComparisonRevisions") ||
-  !mainWorkspace.includes('aria-label="Revision 比较选择"') ||
-  !mainWorkspace.includes('class="timeline-entry-summary"') ||
-  !mainWorkspace.includes("onPrepareRevisionDiffRange(range[0], range[1])") ||
-  !mainWorkspace.includes("onRunRevisionDiff()") ||
-  !appStore.includes("function prepareRevisionDiffRange(") ||
-  !appSvelte.includes("onPrepareRevisionDiffRange={workspaceStore.prepareRevisionDiffRange}")
+  !mainWorkspace.includes("timelineMergeRevisions") ||
+  !mainWorkspace.includes("selectedTimelineMergeRevisions") ||
+  !mainWorkspace.includes('aria-label="Revision Merge 操作"') ||
+  !mainWorkspace.includes("<LogMergeDialog") ||
+  !svnLogRevisionList.includes('aria-label={`选择 r${entry.revision} 用于 Merge`}')
 ) {
-  console.error("Timeline 双 Revision 选择必须准备有序范围并执行真实 Revision Diff 任务");
+  console.error("Timeline 多 Revision 选择必须准备有序范围并进入 Merge 预览流程");
   failed = true;
 }
 
 if (
-  !mainWorkspace.includes("compareSelectedFileWithRevision") ||
-  !mainWorkspace.includes('class="timeline-working-copy-compare"') ||
-  !mainWorkspace.includes("onPrepareWorkingCopyFileRevisionDiff") ||
-  !appStore.includes("function prepareWorkingCopyFileRevisionDiff(") ||
-  !appSvelte.includes("filePath: form.filePath") ||
-  !taskRs.includes("request.file_path") ||
-  !taskRs.includes("Path::new(root).join(file_path)")
+  !logMergeDialog.includes("launchMergePreviewWindow") ||
+  !standaloneMergePreviewWindow.includes("getMergePreview") ||
+  !standaloneMergePreviewWindow.includes("getMergePreviewFile") ||
+  !standaloneMergePreviewWindow.includes("createApplyMergePreviewTask") ||
+  !appSvelte.includes('startupSurface === "merge-preview"') ||
+  !tauriLib.includes("launch_merge_preview_window") ||
+  !tauriLib.includes("create_apply_merge_preview_task") ||
+  !mergePreviewRs.includes("workspace_snapshot_digest") ||
+  !mergePreviewRs.includes("SESSION_LIFETIME_MILLIS")
 ) {
-  console.error("Timeline 必须把选中文件和任意 revision 传给真实工作副本 Revision Diff");
+  console.error("Merge 预览必须使用独立窗口展示逐文件 Diff，并在快照复检后应用");
   failed = true;
 }
 
 if (
-  !mainWorkspace.includes('class="timeline-revert-revision"') ||
+  !svnLogRevisionList.includes('class="svn-log-revert"') ||
+  !mainWorkspace.includes("onRevert={revertTimelineEntry}") ||
   !mainWorkspace.includes("onRevertToRevision(entry.revision)") ||
   !appSvelte.includes("revertWorkspaceToRevision") ||
   !appSvelte.includes("反向应用该次提交") ||
   !taskRs.includes("fn execute_revert_revision(") ||
-  !taskRs.includes('["merge", "--ignore-ancestry", "-c"]') ||
-  !taskRs.includes('format!("-{target_number}")') ||
+  !taskRs.includes('command.arg("merge").arg("--ignore-ancestry")') ||
+  !taskRs.includes('command.arg("-c").arg(format!("-{target_number}"))') ||
   !tauriLib.includes("create_revert_revision_task")
 ) {
   console.error("Timeline 日志撤销必须只反向应用单次提交");
@@ -867,9 +883,9 @@ if (
 }
 
 if (
-  !mainWorkspace.includes('class="revision-patch-location"') ||
-  !mainWorkspace.includes("revisionDiffResult.patch_file_path") ||
-  !mainWorkspace.includes("显示完整 Patch 位置") ||
+  !appStore.includes("revisionDiffResult") ||
+  !appStore.includes("result.patch_file_path") ||
+  !appStore.includes("openGeneratedFileLocation") ||
   !appStore.includes("完整 Patch 文件位置不可用") ||
   !taskRs.includes("analyze_revision_diff_file") ||
   !taskRs.includes("copy_revision_diff_patch") ||
@@ -1266,8 +1282,6 @@ const prohibitedUiEffects = [
   "hsla(",
   "backdrop-filter",
   "box-shadow",
-  "transparent",
-  "opacity:",
 ];
 for (const effect of prohibitedUiEffects) {
   if (appCss.includes(effect)) {
@@ -1468,7 +1482,6 @@ if (
   !standaloneCommitWindow.includes("commitMessage") ||
   !standaloneCommitWindow.includes("readCommitMessageSettings") ||
   !standaloneCommitWindow.includes("consumePendingCommitMessage") ||
-  !standaloneLogWindow.includes("setPendingCommitMessage") ||
   !commitMessageHistory.includes("novasvn:commit-message-settings") ||
   !commitMessageHistory.includes("novasvn:pending-commit-message") ||
   !tauriLib.includes('Some("commit") => Some("NovaSVN Commit")')

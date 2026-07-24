@@ -2,13 +2,14 @@
   import { ArrowDown, ArrowUp } from "@lucide/svelte";
 
   export let differenceCount = 0;
+  export let currentDifference = 0;
   export let theme: "light" | "dark" = "light";
   export let onPrevious: () => void = () => {};
   export let onNext: () => void = () => {};
 </script>
 
 <div class="diff-navigation" data-theme={theme} role="toolbar" aria-label="Diff 差异导航">
-  <span aria-live="polite">{differenceCount} 处差异</span>
+  <span aria-live="polite">{currentDifference} / {differenceCount} 处差异</span>
   <button
     type="button"
     aria-label="上一处差异"

@@ -16,7 +16,9 @@
   let originalModel: import("monaco-editor").editor.ITextModel | null = null;
   let modifiedModel: import("monaco-editor").editor.ITextModel | null = null;
   let diffUpdateDisposable: import("monaco-editor").IDisposable | null = null;
+  let cursorUpdateDisposable: import("monaco-editor").IDisposable | null = null;
   let differenceCount = 0;
+  let currentDifference = 0;
 
   onMount(async () => {
     window.MonacoEnvironment = {
@@ -48,6 +50,7 @@
 
   onDestroy(() => {
     diffUpdateDisposable?.dispose();
+    cursorUpdateDisposable?.dispose();
     disposeModels();
     editor?.dispose();
   });
@@ -89,6 +92,9 @@
       overviewRulerLanes: 0,
     });
     diffUpdateDisposable = editor.onDidUpdateDiff(updateDifferenceCount);
+    cursorUpdateDisposable = editor
+      .getModifiedEditor()
+      .onDidChangeCursorPosition(({ position }) => syncDifferenceFromLine(position.lineNumber));
     monacoEditor.setTheme(theme === "dark" ? "vs-dark" : "vs");
     updateModels();
   }
@@ -99,6 +105,7 @@
     }
 
     differenceCount = 0;
+    currentDifference = 0;
     disposeModels();
     originalModel = monacoEditor.createModel(
       contentDiff.original_text,
@@ -115,13 +122,30 @@
   }
 
   function updateDifferenceCount() {
-    differenceCount = editor?.getLineChanges()?.length ?? 0;
+    const nextCount = editor?.getLineChanges()?.length ?? 0;
+    differenceCount = nextCount;
+    currentDifference = nextCount === 0 ? 0 : Math.min(Math.max(currentDifference, 1), nextCount);
+  }
+
+  function syncDifferenceFromLine(lineNumber: number) {
+    const changes = editor?.getLineChanges() ?? [];
+    const index = changes.findIndex((change) => {
+      const start = change.modifiedStartLineNumber;
+      const end = Math.max(start, change.modifiedEndLineNumber);
+      return lineNumber >= start && lineNumber <= end;
+    });
+    if (index >= 0) {
+      currentDifference = index + 1;
+    }
   }
 
   function goToDifference(target: "next" | "previous") {
     if (!editor || differenceCount === 0) {
       return;
     }
+    currentDifference = target === "next"
+      ? (currentDifference % differenceCount) + 1
+      : ((currentDifference - 2 + differenceCount) % differenceCount) + 1;
     editor.goToDiff(target);
     editor.getModifiedEditor().focus();
   }
@@ -137,6 +161,7 @@
 <div class="monaco-diff-viewer" data-theme={theme}>
   <DiffNavigation
     {differenceCount}
+    {currentDifference}
     {theme}
     onPrevious={() => goToDifference("previous")}
     onNext={() => goToDifference("next")}

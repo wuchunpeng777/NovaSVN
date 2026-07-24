@@ -15,7 +15,7 @@
       .split(/\r?\n/)
       .map((line, index) => (line.startsWith("@@") ? index : -1))
       .filter((index) => index >= 0);
-    activeHunkIndex = -1;
+    activeHunkIndex = hunkLineIndexes.length > 0 ? 0 : -1;
   }
 
   function goToHunk(offset: -1 | 1) {
@@ -37,16 +37,34 @@
       behavior: "smooth",
     });
   }
+
+  function syncHunkFromScroll() {
+    if (!contentElement || hunkLineIndexes.length === 0) {
+      return;
+    }
+    const computedLineHeight = Number.parseFloat(getComputedStyle(contentElement).lineHeight);
+    const lineHeight = Number.isFinite(computedLineHeight) ? computedLineHeight : 16;
+    const visibleLine = Math.max(0, Math.round((contentElement.scrollTop + 12) / lineHeight));
+    let closestIndex = 0;
+    for (let index = 1; index < hunkLineIndexes.length; index += 1) {
+      if (hunkLineIndexes[index] > visibleLine) {
+        break;
+      }
+      closestIndex = index;
+    }
+    activeHunkIndex = closestIndex;
+  }
 </script>
 
 <div class="raw-diff-viewer" data-theme={theme}>
   <DiffNavigation
     differenceCount={hunkLineIndexes.length}
+    currentDifference={activeHunkIndex >= 0 ? activeHunkIndex + 1 : 0}
     {theme}
     onPrevious={() => goToHunk(-1)}
     onNext={() => goToHunk(1)}
   />
-  <pre class="raw-diff-content" bind:this={contentElement}>{text}</pre>
+  <pre class="raw-diff-content" bind:this={contentElement} on:scroll={syncHunkFromScroll}>{text}</pre>
 </div>
 
 <style>

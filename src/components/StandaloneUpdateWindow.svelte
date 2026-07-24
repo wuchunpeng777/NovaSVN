@@ -456,12 +456,19 @@
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      closeFileContextMenu();
-      if (fileLog) {
-        closeFileLog();
-      }
+    if (event.key !== "Escape" || event.defaultPrevented) {
+      return;
     }
+    if (fileContextMenu) {
+      closeFileContextMenu();
+    } else if (fileLogPath) {
+      closeFileLog();
+    } else if (!embedded && !initializing && !updateRunning && !resolutionRunning && !returningToCommit) {
+      void getCurrentWindow().close();
+    } else {
+      return;
+    }
+    event.preventDefault();
   }
 
   async function showFileLog(path: string) {
