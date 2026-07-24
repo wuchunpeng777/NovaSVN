@@ -2134,6 +2134,7 @@ function createWorkspaceStore() {
   let statusRefreshGeneration = 0;
   let fileTreeRefreshGeneration = 0;
   let fileSelectionGeneration = 0;
+  let svnLogRefreshGeneration = 0;
   let repositoryFileLogGeneration = 0;
   let repositoryFileBlameGeneration = 0;
   let repositoryFilePropertiesGeneration = 0;
@@ -2271,16 +2272,40 @@ function createWorkspaceStore() {
   async function openPath(
     svnExecutable?: string | null,
     explicitPath?: string | null,
+    content: "status" | "log" | "none" = "status",
   ): Promise<WorkspaceSummary | null> {
     const requestGeneration = ++openPathGeneration;
     statusRefreshGeneration += 1;
     fileTreeRefreshGeneration += 1;
     fileSelectionGeneration += 1;
+    svnLogRefreshGeneration += 1;
     update((state) => ({
       ...state,
       loading: true,
       error: null,
+      status: null,
+      fileTree: null,
+      selectedFilePath: null,
+      selectedFileDiff: null,
+      selectedFileContentDiff: null,
+      selectedFileParsedDiff: null,
+      ...clearSvnBlameState(),
+      commitFiles: [],
       statusLoading: false,
+      statusError: null,
+      diffLoading: false,
+      contentDiffLoading: false,
+      selectedPatchLoading: false,
+      diffError: null,
+      contentDiffError: null,
+      parsedDiffError: null,
+      selectedPatchError: null,
+      svnLog: null,
+      svnLogLoading: false,
+      svnLogError: null,
+      revisionDiffLoading: false,
+      revisionDiffError: null,
+      revisionDiffResult: null,
     }));
 
     let path = explicitPath?.trim() ?? "";
@@ -2396,6 +2421,13 @@ function createWorkspaceStore() {
         svnSwitchError: null,
         repositoryLoading: false,
         repositoryError: null,
+        svnLog: null,
+        svnLogLoading: false,
+        svnLogError: null,
+        svnLogFileOnly: false,
+        revisionDiffLoading: false,
+        revisionDiffError: null,
+        revisionDiffResult: null,
         shadowStatus: null,
         shadowError: null,
         ...clearSvnPropertiesState(),
@@ -2403,7 +2435,11 @@ function createWorkspaceStore() {
         loading: false,
         error: null,
       }));
-      await refreshStatus(svnExecutable, current.working_copy_root);
+      if (content === "status") {
+        await refreshStatus(svnExecutable, current.working_copy_root);
+      } else if (content === "log") {
+        await refreshSvnLog(svnExecutable);
+      }
       return requestGeneration === openPathGeneration ? current : null;
     } catch (error) {
       if (requestGeneration !== openPathGeneration) {
@@ -5063,10 +5099,12 @@ function createWorkspaceStore() {
     const workingCopyRoot = state.current.working_copy_root;
     const fileOnly = state.svnLogFileOnly;
     const selectedFilePath = state.selectedFilePath;
+    const requestGeneration = ++svnLogRefreshGeneration;
     const requestIsCurrent = () => {
       const current = get({ subscribe });
       return Boolean(
-        current.current &&
+        requestGeneration === svnLogRefreshGeneration &&
+          current.current &&
           isSameWorkingCopyRoot(current.current.working_copy_root, workingCopyRoot) &&
           current.svnLogFileOnly === fileOnly &&
           (!fileOnly || current.selectedFilePath === selectedFilePath),
@@ -5153,6 +5191,21 @@ function createWorkspaceStore() {
       return;
     }
 
+    const requestGeneration = ++svnLogRefreshGeneration;
+    const workingCopyRoot = state.current.working_copy_root;
+    const fileOnly = state.svnLogFileOnly;
+    const selectedFilePath = state.selectedFilePath;
+    const requestIsCurrent = () => {
+      const current = get({ subscribe });
+      return Boolean(
+        requestGeneration === svnLogRefreshGeneration &&
+          current.current &&
+          isSameWorkingCopyRoot(current.current.working_copy_root, workingCopyRoot) &&
+          current.svnLogFileOnly === fileOnly &&
+          (!fileOnly || current.selectedFilePath === selectedFilePath),
+      );
+    };
+
     update((current) => ({
       ...current,
       svnLogLoading: true,
@@ -5161,12 +5214,15 @@ function createWorkspaceStore() {
 
     try {
       const svnLog = await getSvnLog({
-        working_copy_root: state.current.working_copy_root,
-        file_path: state.svnLogFileOnly ? state.selectedFilePath || undefined : undefined,
+        working_copy_root: workingCopyRoot,
+        file_path: fileOnly ? selectedFilePath || undefined : undefined,
         svn_executable: svnExecutable || undefined,
         limit: state.svnLogLimit,
         start_revision: nextStartRevision || undefined,
       });
+      if (!requestIsCurrent()) {
+        return;
+      }
       update((current) => ({
         ...current,
         svnLog: append && current.svnLog ? mergeSvnLogPage(current.svnLog, svnLog) : svnLog,
@@ -5174,6 +5230,9 @@ function createWorkspaceStore() {
         svnLogError: null,
       }));
     } catch (error) {
+      if (!requestIsCurrent()) {
+        return;
+      }
       update((current) => ({
         ...current,
         svnLog: append ? current.svnLog : null,
@@ -5198,6 +5257,7 @@ function createWorkspaceStore() {
   }
 
   function setSvnLogFileOnly(value: boolean) {
+    svnLogRefreshGeneration += 1;
     update((state) => ({
       ...state,
       svnLogFileOnly: value,

@@ -435,6 +435,7 @@ describe("MainWorkspace", () => {
     const onAddWorkspace = vi.fn();
     const onOpenBranchPoolEntry = vi.fn();
     const onSelectView = vi.fn();
+    const onRefreshStatus = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
@@ -465,6 +466,7 @@ describe("MainWorkspace", () => {
         onAddWorkspace,
         onOpenBranchPoolEntry,
         onSelectView,
+        onRefreshStatus,
       },
     });
 
@@ -499,7 +501,8 @@ describe("MainWorkspace", () => {
     );
 
     await fireEvent.click(within(projects).getByText("feature").closest("button")!);
-    expect(onSelectView).toHaveBeenCalledWith("changes");
+    expect(onRefreshStatus).toHaveBeenCalledOnce();
+    expect(onSelectView).not.toHaveBeenCalled();
     expect(onOpenBranchPoolEntry).toHaveBeenCalledTimes(1);
   });
 
@@ -942,7 +945,7 @@ Certificate information:
       too_large: false,
       max_bytes: 20 * 1024 * 1024,
     });
-    render(MainWorkspace, {
+    const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.history,
         workspace: makeWorkspace(),
@@ -1023,9 +1026,17 @@ Certificate information:
     expect(screen.queryByLabelText("文件 Diff 预览")).not.toBeInTheDocument();
     expect(timelineLayout).not.toHaveClass("file-diff-open");
     expect(timelineLayout.children).toHaveLength(1);
-
     expect(within(timeline).getByText("r10")).toBeInTheDocument();
     expect(within(timeline).getByText("r9")).toBeInTheDocument();
+
+    await fireEvent.click(
+      within(newestEntry).getByRole("button", {
+        name: "查看 r12 的 /trunk/file-12-4.txt diff",
+      }),
+    );
+    expect(await screen.findByLabelText("文件 Diff")).toBeInTheDocument();
+    await rerender({ workspaceLoading: true, svnLog: null });
+    expect(screen.queryByLabelText("文件 Diff")).not.toBeInTheDocument();
   });
 
   it("reverts the working copy from a Timeline revision without comparison controls", async () => {

@@ -1432,9 +1432,15 @@
   function reconcileRowSelection(
     workingCopyRoot: string | null,
     fileTree: WorkspaceFileTree | null,
+    resetWorkspaceDisplay: boolean,
   ) {
-    if (selectionWorkspaceRoot !== workingCopyRoot) {
+    if (selectionWorkspaceRoot !== workingCopyRoot || resetWorkspaceDisplay) {
       selectionWorkspaceRoot = workingCopyRoot;
+      clearRevisionFileDiff();
+      expandedTimelineRevisions = new Set();
+      timelineMergeRevisions = new Set();
+      timelineMergeSelectionAnchor = null;
+      timelineMergeDialogOpen = false;
       selectedRowPaths = new Set();
       rowSelectionAnchorPath = null;
       activeRowPath = null;
@@ -2447,7 +2453,11 @@
 
   function openWorkspaceEntry(entry: BranchPoolEntry) {
     if (sameWorkspacePath(entry.local_path, workspace?.local_path ?? "")) {
-      onSelectView("changes");
+      if (view.id === "changes") {
+        onRefreshStatus();
+      } else if (view.id === "history") {
+        onRefreshSvnLog();
+      }
       return;
     }
     onOpenBranchPoolEntry(entry.local_path);
@@ -2889,7 +2899,11 @@
     blameRowHeight,
     blameRowHeight,
   );
-  $: reconcileRowSelection(workspace?.working_copy_root ?? null, workspaceFileTree);
+  $: reconcileRowSelection(
+    workspace?.working_copy_root ?? null,
+    workspaceFileTree,
+    workspaceLoading,
+  );
   $: reconcileActiveRow(treeRows, selectedFilePath);
   $: reportActiveWorkspacePath(activeRowPath);
   $: selectedRowNodes = [...selectedRowPaths]

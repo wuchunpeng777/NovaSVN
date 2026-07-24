@@ -254,6 +254,12 @@
   }
 
   async function selectView(view: AppView) {
+    const shouldRefreshStatus =
+      view === "changes" &&
+      $currentView !== "changes" &&
+      $workspaceStore.current !== null &&
+      $workspaceStore.status === null &&
+      !$workspaceStore.statusLoading;
     const shouldRefreshLog =
       view === "history" &&
       $currentView !== "history" &&
@@ -261,7 +267,9 @@
       !$workspaceStore.svnLogLoading;
 
     setCurrentView(view);
-    if (shouldRefreshLog) {
+    if (shouldRefreshStatus) {
+      await refreshStatusAndSyncBranchPool();
+    } else if (shouldRefreshLog) {
       await workspaceStore.refreshSvnLog(currentSvnExecutable());
     }
   }
@@ -1321,9 +1329,20 @@
   }
 
   async function openBranchPoolEntry(localPath: string) {
-    await workspaceStore.openPath(currentSvnExecutable(), localPath);
-    await syncCurrentBranchPoolEntry();
-    setCurrentView("changes");
+    const content =
+      $currentView === "changes"
+        ? "status"
+        : $currentView === "history"
+          ? "log"
+          : "none";
+    const workspace = await workspaceStore.openPath(
+      currentSvnExecutable(),
+      localPath,
+      content,
+    );
+    if (workspace && content === "status") {
+      await syncCurrentBranchPoolEntry();
+    }
   }
 
   async function addWorkspaceCopy() {

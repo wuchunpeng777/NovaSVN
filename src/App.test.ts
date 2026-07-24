@@ -116,6 +116,7 @@ import type {
   Task,
   TaskSnapshot,
   TaskSummary,
+  SvnLog,
   WorkingCopyStatus,
   WorkspaceFileTree,
   WorkspaceSummary,
@@ -552,6 +553,105 @@ Certificate information:
     expect(within(projects).getByText("project-a")).toBeInTheDocument();
     expect(within(projects).getByText("project-b")).toBeInTheDocument();
     expect(get(workspaceStore).current?.local_path).toBe(previousWorkspace.local_path);
+  });
+
+  it("在工作副本页切换项目时先清空旧内容且只刷新工作副本", async () => {
+    const nextWorkspace: WorkspaceSummary = {
+      ...makeWorkspace(),
+      local_path: "D:/repo/other",
+      working_copy_root: "D:/repo/other",
+      repository_url: "https://example.com/svn/branches/other",
+      revision: "18",
+    };
+    getBranchPoolMock.mockResolvedValueOnce({
+      entries: [{
+        id: "other",
+        branch_url: nextWorkspace.repository_url,
+        local_path: nextWorkspace.local_path,
+        revision: "18",
+        local_changes: 0,
+        created_at: 1,
+        updated_at: 1,
+      }],
+    });
+    await branchPoolStore.load();
+
+    const pendingWorkspace = deferred<WorkspaceSummary>();
+    openWorkspaceMock.mockReturnValueOnce(pendingWorkspace.promise);
+    scanWorkspaceStatusMock.mockClear();
+    scanWorkspaceStatusMock.mockResolvedValueOnce({
+      ...makeStatus(),
+      working_copy_root: nextWorkspace.working_copy_root,
+      revision_range: "18",
+    });
+    listWorkspaceFilesMock.mockResolvedValueOnce({
+      ...makeFileTree(),
+      working_copy_root: nextWorkspace.working_copy_root,
+    });
+    getSvnLogMock.mockClear();
+    render(App);
+
+    const projects = screen.getByLabelText("项目列表");
+    await fireEvent.click(within(projects).getByText("other").closest("button")!);
+
+    expect(get(workspaceStore).status).toBeNull();
+    expect(get(workspaceStore).fileTree).toBeNull();
+    expect(get(workspaceStore).svnLog).toBeNull();
+    pendingWorkspace.resolve(nextWorkspace);
+
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledOnce());
+    expect(scanWorkspaceStatusMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      working_copy_root: nextWorkspace.working_copy_root,
+    }));
+    expect(getSvnLogMock).not.toHaveBeenCalled();
+    expect(get(currentView)).toBe("changes");
+  });
+
+  it("在时间线页切换项目时先清空旧内容且只刷新日志", async () => {
+    getSvnLogMock.mockResolvedValueOnce(makeSvnLog("C:/repo/wc"));
+    await workspaceStore.refreshSvnLog();
+
+    const nextWorkspace: WorkspaceSummary = {
+      ...makeWorkspace(),
+      local_path: "D:/repo/other",
+      working_copy_root: "D:/repo/other",
+      repository_url: "https://example.com/svn/branches/other",
+      revision: "18",
+    };
+    getBranchPoolMock.mockResolvedValueOnce({
+      entries: [{
+        id: "other",
+        branch_url: nextWorkspace.repository_url,
+        local_path: nextWorkspace.local_path,
+        revision: "18",
+        local_changes: 1,
+        created_at: 1,
+        updated_at: 1,
+      }],
+    });
+    await branchPoolStore.load();
+
+    const pendingWorkspace = deferred<WorkspaceSummary>();
+    openWorkspaceMock.mockReturnValueOnce(pendingWorkspace.promise);
+    scanWorkspaceStatusMock.mockClear();
+    getSvnLogMock.mockClear();
+    getSvnLogMock.mockResolvedValueOnce(makeSvnLog(nextWorkspace.working_copy_root));
+    setCurrentView("history");
+    render(App);
+
+    const projects = screen.getByLabelText("项目列表");
+    await fireEvent.click(within(projects).getByText("other").closest("button")!);
+
+    expect(get(workspaceStore).status).toBeNull();
+    expect(get(workspaceStore).svnLog).toBeNull();
+    pendingWorkspace.resolve(nextWorkspace);
+
+    await waitFor(() => expect(getSvnLogMock).toHaveBeenCalledOnce());
+    expect(getSvnLogMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      working_copy_root: nextWorkspace.working_copy_root,
+    }));
+    expect(scanWorkspaceStatusMock).not.toHaveBeenCalled();
+    expect(get(currentView)).toBe("history");
   });
 
   it("进入时间线时自动获取日志且当前界面不重复请求", async () => {
@@ -2347,6 +2447,18 @@ function makeFileTree(): WorkspaceFileTree {
     returned_files: 0,
     truncated: false,
     nodes: [],
+  };
+}
+
+function makeSvnLog(workingCopyRoot: string): SvnLog {
+  return {
+    target: "https://example.com/svn/trunk",
+    working_copy_root: workingCopyRoot,
+    repository_root: "https://example.com/svn",
+    repository_url: "https://example.com/svn/trunk",
+    entries: [],
+    has_more: false,
+    next_start_revision: null,
   };
 }
 

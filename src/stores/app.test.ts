@@ -1235,6 +1235,43 @@ describe("workspaceStore svn log", () => {
     expect(get(workspaceStore).svnLogError).toBeNull();
   });
 
+  it("切换工作副本后丢弃尚未完成的旧日志请求", async () => {
+    const originalWorkspace = makeWorkspace({
+      local_path: "C:/repo/original",
+      working_copy_root: "C:/repo/original",
+    });
+    const nextWorkspace = makeWorkspace({
+      local_path: "C:/repo/next",
+      working_copy_root: "C:/repo/next",
+    });
+    openWorkspaceMock
+      .mockResolvedValueOnce(originalWorkspace)
+      .mockResolvedValueOnce(nextWorkspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(
+      makeStatus([], { working_copy_root: originalWorkspace.working_copy_root }),
+    );
+    listWorkspaceFilesMock.mockResolvedValueOnce(
+      makeFileTree(originalWorkspace.working_copy_root),
+    );
+    await workspaceStore.openPath(undefined, originalWorkspace.local_path);
+
+    const pendingLog = deferred<SvnLog>();
+    getSvnLogMock.mockReturnValueOnce(pendingLog.promise);
+    const staleRefresh = workspaceStore.refreshSvnLog();
+    await vi.waitFor(() => expect(getSvnLogMock).toHaveBeenCalledOnce());
+
+    await workspaceStore.openPath(undefined, nextWorkspace.local_path, "none");
+    expect(get(workspaceStore).svnLog).toBeNull();
+
+    pendingLog.resolve(makeSvnLog([makeSvnLogEntry({ revision: "12" })], {
+      working_copy_root: originalWorkspace.working_copy_root,
+    }));
+    await staleRefresh;
+
+    expect(get(workspaceStore).current).toBe(nextWorkspace);
+    expect(get(workspaceStore).svnLog).toBeNull();
+  });
+
   it("merges additional log pages without duplicating revisions", async () => {
     const workspace = makeWorkspace();
 
