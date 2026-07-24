@@ -3,6 +3,7 @@
   import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
   import type * as Monaco from "monaco-editor";
   import type { FileContentDiff } from "../../types/api";
+  import DiffNavigation from "./DiffNavigation.svelte";
 
   export let contentDiff: FileContentDiff | null = null;
   export let inlineMode = false;
@@ -10,10 +11,12 @@
   export let theme: "light" | "dark" = "light";
 
   let container: HTMLDivElement;
-  let monacoModule: typeof Monaco | null = null;
+  let monacoEditor: typeof Monaco.editor | null = null;
   let editor: import("monaco-editor").editor.IStandaloneDiffEditor | null = null;
   let originalModel: import("monaco-editor").editor.ITextModel | null = null;
   let modifiedModel: import("monaco-editor").editor.ITextModel | null = null;
+  let diffUpdateDisposable: import("monaco-editor").IDisposable | null = null;
+  let differenceCount = 0;
 
   onMount(async () => {
     window.MonacoEnvironment = {
@@ -33,7 +36,8 @@
       import("monaco-editor/esm/vs/basic-languages/xml/xml.contribution"),
       import("monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution"),
     ]);
-    monacoModule = await import("monaco-editor/esm/vs/editor/editor.api");
+    const editorModule = await import("monaco-editor/esm/vs/editor/editor.api");
+    monacoEditor = editorModule.editor;
     await tick();
     if (!container || !contentDiff) {
       return;
@@ -43,6 +47,7 @@
   });
 
   onDestroy(() => {
+    diffUpdateDisposable?.dispose();
     disposeModels();
     editor?.dispose();
   });
@@ -58,16 +63,16 @@
     });
   }
 
-  $: if (monacoModule) {
-    monacoModule.editor.setTheme(theme === "dark" ? "vs-dark" : "vs");
+  $: if (monacoEditor) {
+    monacoEditor.setTheme(theme === "dark" ? "vs-dark" : "vs");
   }
 
   function createEditor() {
-    if (!monacoModule || editor || !contentDiff) {
+    if (!monacoEditor || editor || !contentDiff) {
       return;
     }
 
-    editor = monacoModule.editor.createDiffEditor(container, {
+    editor = monacoEditor.createDiffEditor(container, {
       automaticLayout: true,
       readOnly: true,
       minimap: { enabled: false },
@@ -83,21 +88,23 @@
       lineNumbersMinChars: 3,
       overviewRulerLanes: 0,
     });
-    monacoModule.editor.setTheme(theme === "dark" ? "vs-dark" : "vs");
+    diffUpdateDisposable = editor.onDidUpdateDiff(updateDifferenceCount);
+    monacoEditor.setTheme(theme === "dark" ? "vs-dark" : "vs");
     updateModels();
   }
 
   function updateModels() {
-    if (!monacoModule || !editor || !contentDiff) {
+    if (!monacoEditor || !editor || !contentDiff) {
       return;
     }
 
+    differenceCount = 0;
     disposeModels();
-    originalModel = monacoModule.editor.createModel(
+    originalModel = monacoEditor.createModel(
       contentDiff.original_text,
       contentDiff.language,
     );
-    modifiedModel = monacoModule.editor.createModel(
+    modifiedModel = monacoEditor.createModel(
       contentDiff.modified_text,
       contentDiff.language,
     );
@@ -105,6 +112,18 @@
       original: originalModel,
       modified: modifiedModel,
     });
+  }
+
+  function updateDifferenceCount() {
+    differenceCount = editor?.getLineChanges()?.length ?? 0;
+  }
+
+  function goToDifference(target: "next" | "previous") {
+    if (!editor || differenceCount === 0) {
+      return;
+    }
+    editor.goToDiff(target);
+    editor.getModifiedEditor().focus();
   }
 
   function disposeModels() {
@@ -115,4 +134,29 @@
   }
 </script>
 
-<div class="monaco-diff-viewer" bind:this={container}></div>
+<div class="monaco-diff-viewer" data-theme={theme}>
+  <DiffNavigation
+    {differenceCount}
+    {theme}
+    onPrevious={() => goToDifference("previous")}
+    onNext={() => goToDifference("next")}
+  />
+  <div class="monaco-diff-editor" bind:this={container}></div>
+</div>
+
+<style>
+  .monaco-diff-viewer {
+    display: grid;
+    grid-template-rows: 34px minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .monaco-diff-editor {
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+</style>

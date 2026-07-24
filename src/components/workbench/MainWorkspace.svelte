@@ -31,6 +31,7 @@
   import SvnRevisionLogDialog from "../SvnRevisionLogDialog.svelte";
   import ConflictResolver from "./ConflictResolver.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
+  import RawDiffViewer from "./RawDiffViewer.svelte";
   import SyntaxHighlightedCode from "../SyntaxHighlightedCode.svelte";
   import { getRevisionFileContentDiff } from "../../lib/api";
   import { detectSvnAuthenticationFailure } from "../../lib/svn-authentication";
@@ -2195,6 +2196,8 @@
   let branchPoolDropTarget: { id: string; position: "before" | "after" } | null = null;
   let branchPoolPointerDrag: {
     entryId: string;
+    pointerId: number;
+    captureElement: HTMLElement;
     startX: number;
     startY: number;
     active: boolean;
@@ -2211,38 +2214,35 @@
   $: projectContextMenuEntry =
     branchPool.entries.find((entry) => entry.id === projectContextMenuEntryId) ?? null;
 
-  function startBranchPoolDrag(event: DragEvent, entryId: string) {
-    if (branchPoolLoading || editingBranchPoolEntryId === entryId) {
-      event.preventDefault();
-      return;
-    }
-    closeProjectContextMenu();
-    draggedBranchPoolEntryId = entryId;
-    branchPoolDropTarget = null;
-    event.dataTransfer?.setData("application/x-novasvn-project", entryId);
-    event.dataTransfer?.setData("text/plain", entryId);
-    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-  }
-
   function startBranchPoolPointerDrag(event: PointerEvent, entryId: string) {
     if (event.button !== 0 || branchPoolLoading || editingBranchPoolEntryId === entryId) {
       return;
     }
+    finishBranchPoolDrag();
     closeProjectContextMenu();
+    const captureElement = event.currentTarget as HTMLElement;
     branchPoolPointerDrag = {
       entryId,
+      pointerId: event.pointerId,
+      captureElement,
       startX: event.clientX,
       startY: event.clientY,
       active: false,
     };
+    try {
+      captureElement.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Window listeners still provide a fallback on WebViews without pointer capture.
+    }
     window.addEventListener("pointermove", updateBranchPoolPointerDrag);
     window.addEventListener("pointerup", finishBranchPoolPointerDrag);
     window.addEventListener("pointercancel", cancelBranchPoolPointerDrag);
+    event.preventDefault();
   }
 
   function updateBranchPoolPointerDrag(event: PointerEvent) {
     const pointerDrag = branchPoolPointerDrag;
-    if (!pointerDrag) return;
+    if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
     if (
       !pointerDrag.active &&
       Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY) < 4
@@ -2266,24 +2266,19 @@
     event.preventDefault();
   }
 
-  function finishBranchPoolPointerDrag() {
+  function finishBranchPoolPointerDrag(event: PointerEvent) {
     const pointerDrag = branchPoolPointerDrag;
+    if (!pointerDrag || event.pointerId !== pointerDrag.pointerId) return;
     const dropTarget = branchPoolDropTarget;
-    if (pointerDrag?.active && dropTarget) {
+    if (pointerDrag.active && dropTarget) {
       reorderBranchPoolDrop(pointerDrag.entryId, dropTarget.id, dropTarget.position);
     }
     finishBranchPoolDrag();
   }
 
-  function cancelBranchPoolPointerDrag() {
+  function cancelBranchPoolPointerDrag(event: PointerEvent) {
+    if (branchPoolPointerDrag && event.pointerId !== branchPoolPointerDrag.pointerId) return;
     finishBranchPoolDrag();
-  }
-
-  function updateBranchPoolDropTarget(event: DragEvent, entryId: string) {
-    if (!draggedBranchPoolEntryId || draggedBranchPoolEntryId === entryId) return;
-    event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-    updateBranchPoolDropPosition(event.currentTarget as HTMLDivElement, entryId, event.clientY);
   }
 
   function updateBranchPoolDropPosition(
@@ -2296,23 +2291,6 @@
       ? "before"
       : "after";
     branchPoolDropTarget = { id: entryId, position };
-  }
-
-  function dropBranchPoolEntry(event: DragEvent, targetId: string) {
-    event.preventDefault();
-    const sourceId =
-      draggedBranchPoolEntryId ||
-      event.dataTransfer?.getData("application/x-novasvn-project") ||
-      event.dataTransfer?.getData("text/plain");
-    const position = branchPoolDropTarget?.id === targetId
-      ? branchPoolDropTarget.position
-      : "before";
-    if (!sourceId || sourceId === targetId) {
-      finishBranchPoolDrag();
-      return;
-    }
-    reorderBranchPoolDrop(sourceId, targetId, position);
-    finishBranchPoolDrag();
   }
 
   function reorderBranchPoolDrop(
@@ -2329,6 +2307,14 @@
 
   function finishBranchPoolDrag() {
     const suppressedEntryId = suppressProjectOpenEntryId;
+    const pointerDrag = branchPoolPointerDrag;
+    if (pointerDrag) {
+      try {
+        pointerDrag.captureElement.releasePointerCapture?.(pointerDrag.pointerId);
+      } catch {
+        // The WebView may have already released capture after pointercancel.
+      }
+    }
     branchPoolPointerDrag = null;
     draggedBranchPoolEntryId = null;
     branchPoolDropTarget = null;
@@ -3225,19 +3211,12 @@
             class="project-source-row"
             role="group"
             aria-label={`项目 ${workspaceEntryName(entry)}`}
-            title={editingBranchPoolEntryId === entry.id ? undefined : "拖动项目条目可调整顺序"}
             class:editing={editingBranchPoolEntryId === entry.id}
             class:dragging={draggedBranchPoolEntryId === entry.id}
             class:drop-before={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "before"}
             class:drop-after={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "after"}
             data-project-entry-id={entry.id}
-            draggable={!branchPoolLoading && editingBranchPoolEntryId !== entry.id}
             on:contextmenu={(event) => openProjectContextMenu(event, entry)}
-            on:dragstart={(event) => startBranchPoolDrag(event, entry.id)}
-            on:dragend={finishBranchPoolDrag}
-            on:pointerdown={(event) => startBranchPoolPointerDrag(event, entry.id)}
-            on:dragover={(event) => updateBranchPoolDropTarget(event, entry.id)}
-            on:drop={(event) => dropBranchPoolEntry(event, entry.id)}
           >
             {#if editingBranchPoolEntryId === entry.id}
               <div
@@ -3270,6 +3249,16 @@
                 <em>{entry.local_changes}</em>
               </div>
             {:else}
+              <button
+                type="button"
+                class="project-drag-handle"
+                aria-label={`拖动排序 ${workspaceEntryName(entry)}`}
+                title="拖动调整项目顺序"
+                disabled={branchPoolLoading}
+                on:pointerdown={(event) => startBranchPoolPointerDrag(event, entry.id)}
+              >
+                <GripVertical size={15} strokeWidth={2} aria-hidden="true" />
+              </button>
               <button
                 type="button"
                 class="source-item workspace-source-item project-source-button"
@@ -3524,9 +3513,9 @@
             mergeRevisions={timelineMergeRevisions}
             diffLoading={revisionFileDiffLoading}
             compact={selectedRevisionFileDiff !== null || selectedTimelineMergeRevisions.length > 0}
-            currentRevision={workingCopyStatus?.mixed_revision
+            currentRevision={svnLog?.working_copy_revision ?? (workingCopyStatus?.mixed_revision
               ? workspace?.revision ?? null
-              : workingCopyStatus?.revision_range ?? workspace?.revision ?? null}
+              : workingCopyStatus?.revision_range ?? workspace?.revision ?? null)}
             theme={resolvedTheme}
             emptyText="点击“读取日志”查看修订历史"
             loadingText="正在读取日志"
@@ -5963,7 +5952,11 @@
                   theme={resolvedTheme}
                 />
               {:else if selectedFileDiff}
-                <pre class="text-diff">{selectedFileDiff.text || "没有文本 diff"}</pre>
+                {#if selectedFileDiff.text}
+                  <RawDiffViewer text={selectedFileDiff.text} theme={resolvedTheme} />
+                {:else}
+                  <p class="muted">没有文本 diff</p>
+                {/if}
               {:else}
                 <p class="muted">选择改动文件后显示 diff。</p>
               {/if}

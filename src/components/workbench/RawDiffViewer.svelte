@@ -1,0 +1,86 @@
+<script lang="ts">
+  import DiffNavigation from "./DiffNavigation.svelte";
+
+  export let text = "";
+  export let theme: "light" | "dark" = "light";
+
+  let contentElement: HTMLPreElement;
+  let sourceText = "";
+  let hunkLineIndexes: number[] = [];
+  let activeHunkIndex = -1;
+
+  $: if (text !== sourceText) {
+    sourceText = text;
+    hunkLineIndexes = text
+      .split(/\r?\n/)
+      .map((line, index) => (line.startsWith("@@") ? index : -1))
+      .filter((index) => index >= 0);
+    activeHunkIndex = -1;
+  }
+
+  function goToHunk(offset: -1 | 1) {
+    if (!contentElement || hunkLineIndexes.length === 0) {
+      return;
+    }
+
+    if (activeHunkIndex < 0) {
+      activeHunkIndex = offset > 0 ? 0 : hunkLineIndexes.length - 1;
+    } else {
+      activeHunkIndex =
+        (activeHunkIndex + offset + hunkLineIndexes.length) % hunkLineIndexes.length;
+    }
+
+    const computedLineHeight = Number.parseFloat(getComputedStyle(contentElement).lineHeight);
+    const lineHeight = Number.isFinite(computedLineHeight) ? computedLineHeight : 16;
+    contentElement.scrollTo({
+      top: Math.max(0, hunkLineIndexes[activeHunkIndex] * lineHeight - 12),
+      behavior: "smooth",
+    });
+  }
+</script>
+
+<div class="raw-diff-viewer" data-theme={theme}>
+  <DiffNavigation
+    differenceCount={hunkLineIndexes.length}
+    {theme}
+    onPrevious={() => goToHunk(-1)}
+    onNext={() => goToHunk(1)}
+  />
+  <pre class="raw-diff-content" bind:this={contentElement}>{text}</pre>
+</div>
+
+<style>
+  .raw-diff-viewer {
+    display: grid;
+    grid-template-rows: 34px minmax(0, 1fr);
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .raw-diff-content {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: auto;
+    box-sizing: border-box;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: var(--panel-subtle, #f7f8f9);
+    padding: 10px 12px;
+    color: var(--text, #27313a);
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.45;
+    outline: 0;
+    user-select: text;
+    white-space: pre;
+    -webkit-user-select: text;
+  }
+
+  .raw-diff-viewer[data-theme="dark"] .raw-diff-content {
+    background: var(--panel-subtle, #181c21);
+  }
+</style>

@@ -22,6 +22,41 @@ const contentDiff: FileContentDiff = {
 };
 
 describe("ConflictResolver", () => {
+  it("jumps between conflict differences from the header", async () => {
+    const secondConflict = contentDiff.modified_text
+      .replace("const value = 'mine';", "const second = 'mine';")
+      .replace("const value = 'base';", "const second = 'base';")
+      .replace("const value = 'theirs';", "const second = 'theirs';");
+    render(ConflictResolver, {
+      props: {
+        open: true,
+        filePath: contentDiff.path,
+        contentDiff: {
+          ...contentDiff,
+          modified_text: `${contentDiff.modified_text}unchanged\n${secondConflict}`,
+        },
+      },
+    });
+
+    const dialog = screen.getByRole("dialog", { name: "解决文本冲突" });
+    expect(within(dialog).getByRole("button", { name: "1 冲突块 1" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "下一处差异" }));
+    expect(within(dialog).getByRole("button", { name: "2 冲突块 2" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "上一处差异" }));
+    expect(within(dialog).getByRole("button", { name: "1 冲突块 1" })).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+  });
+
   it("resolves a conflict block, permits editing, and saves the result", async () => {
     const onClose = vi.fn();
     const onSave = vi.fn().mockResolvedValue(true);
@@ -43,7 +78,7 @@ describe("ConflictResolver", () => {
     await fireEvent.click(
       within(within(dialog).getByLabelText("我的版本")).getByRole("button", { name: "采用" }),
     );
-    expect(within(dialog).getByText("1/1")).toBeInTheDocument();
+    expect(within(within(dialog).getByLabelText("冲突块")).getByText("1/1")).toBeInTheDocument();
     expect(saveButton).toBeEnabled();
 
     const result = within(dialog).getByLabelText("可编辑的合并结果");

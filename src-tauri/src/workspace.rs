@@ -584,6 +584,7 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
         .map(|path| root.join(path))
         .unwrap_or_else(|| root.clone());
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
+    let workspace = read_workspace_summary(&target, &executable)?;
     let limit = request.limit.unwrap_or(50).clamp(1, 200);
     let start_revision = request
         .start_revision
@@ -591,14 +592,19 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
         .map(normalize_log_revision_value)
         .transpose()?;
     let display_target = display_status_path(&target.display().to_string(), &root);
-    run_svn_log(
+    let mut log = run_svn_log(
         &executable,
         &target,
         &root,
         &display_target,
         limit,
         start_revision.as_deref(),
-    )
+    )?;
+    log.working_copy_root = Some(workspace.working_copy_root);
+    log.working_copy_revision = Some(workspace.revision);
+    log.repository_root = Some(workspace.repository_root);
+    log.repository_url = Some(workspace.repository_url);
+    Ok(log)
 }
 
 pub fn get_path_svn_log(request: GetPathSvnLogRequest) -> Result<SvnLog, NovaError> {
@@ -4728,6 +4734,7 @@ mod tests {
         .expect("workspace log reads repository HEAD");
         assert_eq!(workspace_log.entries[0].revision, "2");
         assert_eq!(workspace_log.entries[0].message, "remote change");
+        assert_eq!(workspace_log.working_copy_revision.as_deref(), Some("1"));
 
         let standalone_log = get_path_svn_log(GetPathSvnLogRequest {
             path: local_working_copy.display().to_string(),

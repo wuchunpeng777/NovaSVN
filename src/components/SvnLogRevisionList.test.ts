@@ -55,7 +55,7 @@ describe("SvnLogRevisionList", () => {
           },
         ],
         totalEntries: 1,
-        currentRevision: "42",
+        currentRevision: "r42M",
         revertDisabled: () => false,
         workspaceRevertDisabled: () => false,
         onRevert,
@@ -66,7 +66,10 @@ describe("SvnLogRevisionList", () => {
     const entry = screen.getByText("Local revision").closest(".svn-log-entry");
     expect(entry).toHaveClass("current-revision");
     expect(entry).toHaveAttribute("aria-current", "true");
-    expect(screen.getByLabelText("当前工作副本版本 r42")).toHaveTextContent("当前版本");
+    expect(screen.getByLabelText("本地 Revision r42")).toBeInTheDocument();
+    expect(screen.getByLabelText("本地工作副本 Revision r42")).toHaveTextContent(
+      "本地 Revision",
+    );
     const revert = screen.getByRole("button", { name: "撤销提交 r42" });
     const workspaceRevert = screen.getByRole("button", { name: "回退工作区到 r42" });
     expect(revert.querySelector(".lucide-undo-2")).toBeInTheDocument();
@@ -77,5 +80,35 @@ describe("SvnLogRevisionList", () => {
     await fireEvent.click(workspaceRevert);
     expect(onRevert).toHaveBeenCalledOnce();
     expect(onRevertWorkspace).toHaveBeenCalledOnce();
+  });
+
+  it("shows the local revision boundary when the exact revision is absent", () => {
+    render(SvnLogRevisionList, {
+      props: {
+        entries: [
+          {
+            revision: "44",
+            author: "alice",
+            date: "2026-07-23T10:30:00Z",
+            message: "Remote revision",
+            changed_paths: [],
+          },
+          {
+            revision: "42",
+            author: "bob",
+            date: "2026-07-21T10:30:00Z",
+            message: "Older revision",
+            changed_paths: [],
+          },
+        ],
+        totalEntries: 2,
+        currentRevision: "43M",
+      },
+    });
+
+    expect(screen.getByLabelText("本地 Revision r43")).toBeInTheDocument();
+    const boundary = screen.getByLabelText("本地 Revision r43 的历史位置");
+    expect(boundary).toHaveTextContent("本地 Revision r43");
+    expect(boundary.nextElementSibling).toHaveTextContent("r42");
   });
 });

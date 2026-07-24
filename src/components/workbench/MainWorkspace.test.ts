@@ -503,10 +503,11 @@ describe("MainWorkspace", () => {
     expect(onOpenBranchPoolEntry).toHaveBeenCalledTimes(1);
   });
 
-  it("reorders projects by dragging the project row and edits the display name inline", async () => {
+  it("reorders projects from the drag handle and edits the display name inline", async () => {
     const onReorderBranchPoolEntries = vi.fn();
     const onRenameBranchPoolEntry = vi.fn();
     const onRemoveBranchPoolEntry = vi.fn();
+    const onOpenBranchPoolEntry = vi.fn();
     render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
@@ -538,6 +539,7 @@ describe("MainWorkspace", () => {
         onReorderBranchPoolEntries,
         onRenameBranchPoolEntry,
         onRemoveBranchPoolEntry,
+        onOpenBranchPoolEntry,
       },
     });
 
@@ -545,38 +547,55 @@ describe("MainWorkspace", () => {
     expect(within(projects).getByText("主项目")).toBeInTheDocument();
     const firstRow = within(projects).getByRole("group", { name: "项目 主项目" });
     const secondRow = within(projects).getByRole("group", { name: "项目 feature" });
-    const firstProjectButton = firstRow.querySelector(".project-source-button");
-    expect(firstRow).toHaveAttribute("draggable", "true");
-    expect(within(projects).queryByRole("button", { name: "拖动排序 主项目" }))
-      .not.toBeInTheDocument();
+    const firstProjectButton = firstRow.querySelector(".project-source-button")!;
+    const secondProjectButton = secondRow.querySelector(".project-source-button")!;
+    const firstDragHandle = within(projects).getByRole("button", { name: "拖动排序 主项目" });
+    expect(firstRow).not.toHaveAttribute("draggable");
     Object.defineProperty(secondRow, "getBoundingClientRect", {
       configurable: true,
       value: () => ({ top: 100, height: 40, bottom: 140, left: 0, right: 200, width: 200 }),
     });
-    await fireEvent.dragStart(firstRow);
-    await fireEvent.dragOver(secondRow, { clientY: 135 });
-    await fireEvent.drop(secondRow, { clientY: 135 });
-    expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
-
-    onReorderBranchPoolEntries.mockClear();
     const setPointerCapture = vi.fn();
-    Object.defineProperty(firstRow, "setPointerCapture", {
-      configurable: true,
-      value: setPointerCapture,
+    const releasePointerCapture = vi.fn();
+    Object.defineProperties(firstDragHandle, {
+      setPointerCapture: {
+        configurable: true,
+        value: setPointerCapture,
+      },
+      releasePointerCapture: {
+        configurable: true,
+        value: releasePointerCapture,
+      },
     });
-    await fireEvent.pointerDown(firstRow, {
+    await fireEvent.pointerDown(firstDragHandle, {
       button: 0,
       clientX: 10,
       clientY: 10,
       pointerId: 1,
     });
-    expect(setPointerCapture).not.toHaveBeenCalled();
+    expect(setPointerCapture).toHaveBeenCalledWith(1);
     await fireEvent.pointerMove(secondRow, { clientX: 20, clientY: 135, pointerId: 1 });
     await fireEvent.pointerUp(secondRow, { clientX: 20, clientY: 135, pointerId: 1 });
     expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
+    expect(releasePointerCapture).toHaveBeenCalledWith(1);
 
     onReorderBranchPoolEntries.mockClear();
-    await fireEvent.keyDown(firstProjectButton as HTMLButtonElement, { key: "ArrowDown" });
+    await fireEvent.click(secondProjectButton);
+    expect(onOpenBranchPoolEntry).toHaveBeenCalledWith("D:\\work\\feature");
+    expect(onReorderBranchPoolEntries).not.toHaveBeenCalled();
+
+    await fireEvent.pointerDown(firstDragHandle, {
+      button: 0,
+      clientX: 10,
+      clientY: 10,
+      pointerId: 2,
+    });
+    await fireEvent.pointerMove(secondRow, { clientX: 20, clientY: 135, pointerId: 2 });
+    await fireEvent.pointerCancel(secondRow, { pointerId: 2 });
+    expect(onReorderBranchPoolEntries).not.toHaveBeenCalled();
+    expect(releasePointerCapture).toHaveBeenCalledWith(2);
+
+    await fireEvent.keyDown(firstProjectButton, { key: "ArrowDown" });
     expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
 
     expect(within(projects).queryByRole("button", { name: "修改备注名 主项目" }))
@@ -959,7 +978,7 @@ Certificate information:
         .getByText("r12")
         .closest(".svn-log-revision")
         ?.textContent?.replace(/\s/g, ""),
-    ).toBe("r12当前版本M5");
+    ).toBe("r12本地RevisionM5");
     expect(newestEntry).not.toHaveTextContent("/trunk/file-12-1.txt");
     await fireEvent.click(
       within(newestEntry).getByRole("button", { name: "展开 r12 日志" }),
@@ -1017,6 +1036,7 @@ Certificate information:
         workspace: makeWorkspace(),
         svnLog: {
           target: "https://svn.example.test/repo/trunk",
+          working_copy_revision: "12",
           has_more: false,
           next_start_revision: null,
           entries: [makeLogEntry("12", "2026-07-11T12:00:00", "alice", "latest")],

@@ -1,0 +1,78 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { describe, expect, it, vi } from "vitest";
+import type { FileContentDiff } from "../../types/api";
+
+const mocks = vi.hoisted(() => {
+  const state: { onDidUpdateDiff: (() => void) | null } = { onDidUpdateDiff: null };
+  return {
+    state,
+    goToDiff: vi.fn(),
+    focus: vi.fn(),
+    getLineChanges: vi.fn(() => [{ originalStartLineNumber: 1 }, { originalStartLineNumber: 4 }]),
+    createModel: vi.fn(() => ({ dispose: vi.fn() })),
+    setModel: vi.fn(),
+    updateOptions: vi.fn(),
+    disposeEditor: vi.fn(),
+    disposeDiffListener: vi.fn(),
+  };
+});
+
+vi.mock("monaco-editor/esm/vs/editor/editor.worker?worker", () => ({ default: vi.fn() }));
+vi.mock("monaco-editor/esm/vs/editor/editor.api", () => ({
+  editor: {
+    createDiffEditor: vi.fn(() => ({
+      dispose: mocks.disposeEditor,
+      getLineChanges: mocks.getLineChanges,
+      getModifiedEditor: () => ({ focus: mocks.focus }),
+      goToDiff: mocks.goToDiff,
+      onDidUpdateDiff: (callback: () => void) => {
+        mocks.state.onDidUpdateDiff = callback;
+        return { dispose: mocks.disposeDiffListener };
+      },
+      setModel: mocks.setModel,
+      updateOptions: mocks.updateOptions,
+    })),
+    createModel: mocks.createModel,
+    setTheme: vi.fn(),
+  },
+}));
+
+vi.mock("monaco-editor/esm/vs/basic-languages/css/css.contribution", () => ({}));
+vi.mock("monaco-editor/esm/vs/basic-languages/html/html.contribution", () => ({}));
+vi.mock("monaco-editor/esm/vs/basic-languages/javascript/javascript.contribution", () => ({}));
+vi.mock("monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution", () => ({}));
+vi.mock("monaco-editor/esm/vs/basic-languages/rust/rust.contribution", () => ({}));
+vi.mock("monaco-editor/esm/vs/basic-languages/shell/shell.contribution", () => ({}));
+vi.mock("monaco-editor/esm/vs/basic-languages/sql/sql.contribution", () => ({}));
+vi.mock("monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution", () => ({}));
+vi.mock("monaco-editor/esm/vs/basic-languages/xml/xml.contribution", () => ({}));
+vi.mock("monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution", () => ({}));
+
+import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
+
+const contentDiff: FileContentDiff = {
+  path: "src/main.ts",
+  original_text: "const before = 1;\n",
+  modified_text: "const after = 2;\n",
+  language: "typescript",
+  binary: false,
+  too_large: false,
+  max_bytes: 512 * 1024,
+};
+
+describe("MonacoDiffViewer", () => {
+  it("navigates to the previous and next computed differences", async () => {
+    render(MonacoDiffViewer, { props: { contentDiff } });
+
+    await waitFor(() => expect(mocks.state.onDidUpdateDiff).not.toBeNull());
+    mocks.state.onDidUpdateDiff?.();
+    await waitFor(() => expect(screen.getByText("2 处差异")).toBeInTheDocument());
+
+    await fireEvent.click(screen.getByRole("button", { name: "上一处差异" }));
+    await fireEvent.click(screen.getByRole("button", { name: "下一处差异" }));
+
+    expect(mocks.goToDiff).toHaveBeenNthCalledWith(1, "previous");
+    expect(mocks.goToDiff).toHaveBeenNthCalledWith(2, "next");
+    expect(mocks.focus).toHaveBeenCalledTimes(2);
+  });
+});

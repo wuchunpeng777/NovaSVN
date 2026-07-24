@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { Check, Columns2, Combine, GitMergeConflict, Save, X } from "@lucide/svelte";
+  import {
+    ArrowDown,
+    ArrowUp,
+    Check,
+    Columns2,
+    Combine,
+    GitMergeConflict,
+    Save,
+    X,
+  } from "@lucide/svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
   import {
     buildResolvedConflictText,
@@ -50,6 +59,14 @@
     }
     choices = { ...choices, [activeConflict.id]: choice };
     resolvedText = buildResolvedConflictText(parsed, choices);
+  }
+
+  function goToConflict(offset: -1 | 1) {
+    if (parsed.conflicts.length === 0) {
+      return;
+    }
+    activeConflictIndex =
+      (activeConflictIndex + offset + parsed.conflicts.length) % parsed.conflicts.length;
   }
 
   function closeResolver() {
@@ -110,6 +127,29 @@
           <p title={filePath}>{filePath}</p>
         </div>
         <div class="conflict-resolver-header-actions">
+          <div class="conflict-difference-navigation" role="toolbar" aria-label="冲突差异导航">
+            <span>{parsed.conflicts.length > 0 ? `${activeConflictIndex + 1}/${parsed.conflicts.length}` : "0/0"}</span>
+            <button
+              type="button"
+              class="icon-button"
+              aria-label="上一处差异"
+              title="上一处差异"
+              disabled={saving || parsed.conflicts.length === 0}
+              on:click={() => goToConflict(-1)}
+            >
+              <ArrowUp size={17} strokeWidth={1.9} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              class="icon-button"
+              aria-label="下一处差异"
+              title="下一处差异"
+              disabled={saving || parsed.conflicts.length === 0}
+              on:click={() => goToConflict(1)}
+            >
+              <ArrowDown size={17} strokeWidth={1.9} aria-hidden="true" />
+            </button>
+          </div>
           <button
             type="button"
             class="icon-button"
@@ -347,6 +387,31 @@
     display: flex;
     align-items: center;
     gap: 7px;
+  }
+
+  .conflict-difference-navigation {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    margin-right: 3px;
+    border-right: 1px solid #d3d8dd;
+    padding-right: 9px;
+  }
+
+  .conflict-difference-navigation > span {
+    min-width: 34px;
+    color: #67737e;
+    font-size: 11px;
+    text-align: center;
+  }
+
+  .conflict-difference-navigation .icon-button {
+    display: grid;
+    width: 30px;
+    min-width: 30px;
+    height: 30px;
+    padding: 0;
+    place-items: center;
   }
 
   .conflict-resolver-body {
@@ -618,6 +683,14 @@
   .conflict-resolver-backdrop[data-theme="dark"] .conflict-resolver-footer {
     border-color: #454e56;
     background: #282e34;
+  }
+
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-difference-navigation {
+    border-color: #454e56;
+  }
+
+  .conflict-resolver-backdrop[data-theme="dark"] .conflict-difference-navigation > span {
+    color: #aab4bd;
   }
 
   .conflict-resolver-backdrop[data-theme="dark"] .conflict-block-nav {

@@ -34,10 +34,35 @@
   export let onRevert: (entry: SvnLogEntry) => void = () => {};
   export let onRevertWorkspace: (entry: SvnLogEntry) => void = () => {};
 
+  $: normalizedCurrentRevision = normalizeRevision(currentRevision);
+  $: hasCurrentRevisionEntry = entries.some(
+    (entry) => normalizeRevision(entry.revision) === normalizedCurrentRevision,
+  );
+
+  function normalizeRevision(value: string | null) {
+    const normalized = value?.trim().replace(/^r/i, "") ?? "";
+    const revisions = normalized.match(/\d+/g);
+    return revisions?.at(-1) ?? "";
+  }
+
   function isCurrentRevision(revision: string) {
-    const normalize = (value: string | null) => value?.trim().replace(/^r/i, "") ?? "";
-    const normalizedCurrent = normalize(currentRevision);
-    return normalizedCurrent.length > 0 && normalize(revision) === normalizedCurrent;
+    return (
+      normalizedCurrentRevision.length > 0 &&
+      normalizeRevision(revision) === normalizedCurrentRevision
+    );
+  }
+
+  function showsCurrentRevisionBoundary(index: number) {
+    if (hasCurrentRevisionEntry || !normalizedCurrentRevision) {
+      return false;
+    }
+    const current = Number(normalizedCurrentRevision);
+    const entry = Number(normalizeRevision(entries[index]?.revision ?? null));
+    const previous = Number(normalizeRevision(entries[index - 1]?.revision ?? null));
+    if (!Number.isFinite(current) || !Number.isFinite(entry)) {
+      return false;
+    }
+    return current > entry && (index === 0 || (Number.isFinite(previous) && current < previous));
   }
 </script>
 
@@ -48,8 +73,26 @@
   aria-label="Revision 列表"
   aria-busy={loading}
 >
+  {#if normalizedCurrentRevision}
+    <div
+      class="svn-log-local-revision-summary"
+      aria-label={`本地 Revision r${normalizedCurrentRevision}`}
+    >
+      <span aria-hidden="true"></span>
+      <strong>本地 Revision r{normalizedCurrentRevision}</strong>
+    </div>
+  {/if}
   {#if entries.length > 0}
-    {#each entries as entry (entry.revision)}
+    {#each entries as entry, index (entry.revision)}
+      {#if showsCurrentRevisionBoundary(index)}
+        <div
+          class="svn-log-local-revision-boundary"
+          aria-label={`本地 Revision r${normalizedCurrentRevision} 的历史位置`}
+        >
+          <span>本地 Revision</span>
+          <strong>r{normalizedCurrentRevision}</strong>
+        </div>
+      {/if}
       <article
         class="svn-log-entry"
         class:current-revision={isCurrentRevision(entry.revision)}
@@ -78,7 +121,10 @@
             <span class="svn-log-revision">
               <strong>r{entry.revision}</strong>
               {#if isCurrentRevision(entry.revision)}
-                <span class="svn-log-current-revision" aria-label={`当前工作副本版本 r${entry.revision}`}>当前版本</span>
+                <span
+                  class="svn-log-current-revision"
+                  aria-label={`本地工作副本 Revision r${entry.revision}`}
+                >本地 Revision</span>
               {/if}
               <span class="svn-log-change-counts">
                 {#each summarizeSvnChangeActions(entry.changed_paths) as summary (summary.action)}
@@ -182,8 +228,8 @@
     --log-text: #17202a;
     --log-secondary: #6b7784;
     --log-accent: #245f91;
-    --log-current-panel: #dceeff;
-    --log-current-border: #1473bd;
+    --log-current-panel: #e1f5e9;
+    --log-current-border: #16834f;
     min-height: 0;
     overflow: auto;
     background: var(--log-panel);
@@ -198,8 +244,58 @@
     --log-text: #f2f2f4;
     --log-secondary: #a9a9ae;
     --log-accent: #55a7ef;
-    --log-current-panel: #183b57;
-    --log-current-border: #67b8ff;
+    --log-current-panel: #153b2a;
+    --log-current-border: #55cf8a;
+  }
+
+  .svn-log-local-revision-summary {
+    position: sticky;
+    z-index: 3;
+    top: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 34px;
+    border-bottom: 1px solid var(--log-current-border);
+    background: color-mix(in srgb, var(--log-current-panel) 88%, var(--log-panel));
+    padding: 0 8px;
+    color: var(--log-text);
+    font-size: 11px;
+  }
+
+  .svn-log-local-revision-summary > span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--log-current-border);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--log-current-border) 18%, transparent);
+  }
+
+  .svn-log-local-revision-summary strong {
+    border-radius: 4px;
+    background: var(--log-current-border);
+    padding: 2px 7px;
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .svn-log-local-revision-boundary {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 28px;
+    border-top: 2px solid var(--log-current-border);
+    border-bottom: 1px solid color-mix(in srgb, var(--log-current-border) 40%, var(--log-border));
+    background: color-mix(in srgb, var(--log-current-panel) 72%, var(--log-panel));
+    padding: 0 10px;
+    color: var(--log-current-border);
+    font-size: 10px;
+  }
+
+  .svn-log-local-revision-boundary strong {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 11px;
   }
 
   .svn-log-entry {
@@ -211,7 +307,10 @@
   .svn-log-entry.current-revision {
     border-left-color: var(--log-current-border);
     background: var(--log-current-panel);
-    box-shadow: inset 0 0 0 2px var(--log-current-border);
+    box-shadow:
+      inset 0 1px 0 var(--log-current-border),
+      inset 0 -1px 0 var(--log-current-border),
+      inset -1px 0 0 var(--log-current-border);
   }
 
   .svn-log-entry.current-revision .svn-log-revision > strong {

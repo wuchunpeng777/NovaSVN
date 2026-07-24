@@ -37,6 +37,7 @@
   import OperationMetrics from "./OperationMetrics.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
   import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
+  import RawDiffViewer from "./workbench/RawDiffViewer.svelte";
 
   export let targetPath: string;
   export let svnExecutable: string | undefined = undefined;
@@ -1302,7 +1303,7 @@
                 theme={resolvedTheme}
               />
             {:else if selectedFileDiff?.text}
-              <pre class="raw-diff">{selectedFileDiff.text}</pre>
+              <RawDiffViewer text={selectedFileDiff.text} theme={resolvedTheme} />
             {:else}
               <div class="empty-diff">没有可显示的文本修改</div>
             {/if}
@@ -1691,8 +1692,7 @@
   .file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .file-add-action { min-height: 27px; padding: 3px 8px; }
   .diff-content { min-width: 0; min-height: 0; overflow: hidden; }
-  .diff-content :global(.monaco-diff-viewer) { width: 100%; height: 100%; border: 0; border-radius: 0; }
-  .raw-diff { width: 100%; height: 100%; overflow: auto; box-sizing: border-box; margin: 0; padding: 10px 12px; background: var(--panel-subtle); color: var(--text); font-size: 11px; line-height: 1.45; user-select: text; -webkit-user-select: text; }
+  .diff-content :global(.monaco-diff-viewer), .diff-content :global(.raw-diff-viewer) { width: 100%; height: 100%; border: 0; border-radius: 0; }
   .empty-files, .empty-diff, .empty-output { padding: 28px 16px; color: var(--secondary); text-align: center; font-size: 12px; }
   select, textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 4px; background: var(--control); color: var(--text); font: inherit; font-size: 13px; }
   select { min-height: 32px; padding: 5px 8px; }
