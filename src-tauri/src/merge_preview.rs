@@ -33,6 +33,8 @@ pub struct MergePreviewFile {
 pub struct MergePreviewSession {
     pub preview_id: String,
     pub working_copy_root: String,
+    #[serde(default)]
+    pub target_relative_path: String,
     pub source_url: String,
     pub revision_range: String,
     pub start_revision: Option<String>,
@@ -257,13 +259,14 @@ pub fn read_preview_file(
     }
     let directory = session_dir(app, &request.preview_id)?;
     let relative = safe_relative_path(&file.path)?;
+    let modified_root = session_working_target_dir(&directory, &session.target_relative_path)?;
     let original = if file.original_exists {
         read_utf8_file(&directory.join("original").join(&relative))?
     } else {
         String::new()
     };
     let modified = if file.modified_exists {
-        read_utf8_file(&directory.join("work").join(&relative))?
+        read_utf8_file(&modified_root.join(&relative))?
     } else {
         String::new()
     };
@@ -358,6 +361,7 @@ pub fn save_original_file(
 
 pub fn inspect_preview_file(
     session_directory: &Path,
+    modified_root: &Path,
     relative_path: &str,
     action: String,
     conflicted: bool,
@@ -365,7 +369,7 @@ pub fn inspect_preview_file(
 ) -> Result<MergePreviewFile, NovaError> {
     let relative = safe_relative_path(relative_path)?;
     let original = session_directory.join("original").join(&relative);
-    let modified = session_directory.join("work").join(&relative);
+    let modified = modified_root.join(&relative);
     let original_exists = original.is_file();
     let modified_exists = modified.is_file();
     let original_bytes = file_size(&original);
@@ -663,6 +667,17 @@ fn safe_relative_path(value: &str) -> Result<PathBuf, NovaError> {
     Ok(path)
 }
 
+fn session_working_target_dir(
+    session_directory: &Path,
+    target_relative_path: &str,
+) -> Result<PathBuf, NovaError> {
+    let work_directory = session_directory.join("work");
+    if target_relative_path.is_empty() {
+        return Ok(work_directory);
+    }
+    Ok(work_directory.join(safe_relative_path(target_relative_path)?))
+}
+
 fn read_utf8_file(path: &Path) -> Result<String, NovaError> {
     let bytes = fs::read(path).map_err(|error| {
         io_error(
@@ -806,10 +821,24 @@ mod tests {
         fs::write(session.join("work/src/main.txt"), "after\n").unwrap();
         save_original_file(&session, &session.join("work"), "src/data.bin").unwrap();
 
-        let text =
-            inspect_preview_file(&session, "src/main.txt", "M".to_string(), false, false).unwrap();
-        let binary =
-            inspect_preview_file(&session, "src/data.bin", "M".to_string(), false, false).unwrap();
+        let text = inspect_preview_file(
+            &session,
+            &session.join("work"),
+            "src/main.txt",
+            "M".to_string(),
+            false,
+            false,
+        )
+        .unwrap();
+        let binary = inspect_preview_file(
+            &session,
+            &session.join("work"),
+            "src/data.bin",
+            "M".to_string(),
+            false,
+            false,
+        )
+        .unwrap();
         assert!(!text.binary);
         assert!(text.original_exists && text.modified_exists);
         assert!(binary.binary);

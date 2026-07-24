@@ -39,6 +39,9 @@
   let error: CommandError | null = null;
   let pollTimer: number | null = null;
   let generation = 0;
+  let cancelling = false;
+  let closing = false;
+  let cancellationRequestedTaskId: string | null = null;
 
   const terminalStatuses: TaskStatus[] = [
     "success",
@@ -65,12 +68,33 @@
     generation += 1;
     clearPollTimer();
     window.removeEventListener("keydown", handleWindowKeydown);
+    const runningTaskId = taskRunning ? task?.task_id : null;
+    if (runningTaskId && cancellationRequestedTaskId !== runningTaskId) {
+      cancellationRequestedTaskId = runningTaskId;
+      void cancelTask(runningTaskId).catch(() => undefined);
+    }
   });
 
   function handleWindowKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape" && !taskRunning) {
-      onClose();
+    if (event.key === "Escape" && !event.defaultPrevented) {
+      event.preventDefault();
+      requestClose();
     }
+  }
+
+  function requestClose() {
+    if (closing) {
+      return;
+    }
+    closing = true;
+    generation += 1;
+    clearPollTimer();
+    const runningTaskId = taskRunning ? task?.task_id : null;
+    if (runningTaskId && cancellationRequestedTaskId !== runningTaskId) {
+      cancellationRequestedTaskId = runningTaskId;
+      void cancelTask(runningTaskId).catch(() => undefined);
+    }
+    onClose();
   }
 
   function commandError(
@@ -150,16 +174,16 @@
       if (currentGeneration !== generation) {
         return;
       }
-      if (nextTarget.kind !== "dir" || nextTarget.relative_path) {
+      if (nextTarget.kind !== "dir") {
         throw commandError(
-          "LOG_MERGE_TARGET_NOT_ROOT",
-          "目标必须是工作副本根目录",
-          nextTarget.working_copy_root,
+          "LOG_MERGE_TARGET_NOT_DIRECTORY",
+          "Merge 目标必须是目录",
+          nextTarget.target_path,
         );
       }
       if (
         sourceWorkingCopyRoot &&
-        normalizeLocalPath(nextTarget.working_copy_root) === normalizeLocalPath(sourceWorkingCopyRoot)
+        normalizeLocalPath(nextTarget.target_path) === normalizeLocalPath(sourceWorkingCopyRoot)
       ) {
         throw commandError(
           "LOG_MERGE_TARGET_SAME_AS_SOURCE",
@@ -180,6 +204,7 @@
 
       const nextStatus = await scanWorkspaceStatus({
         working_copy_root: nextTarget.working_copy_root,
+        scope_path: nextTarget.relative_path ?? undefined,
         svn_executable: svnExecutable?.trim() || undefined,
         offset: 0,
         limit: 1,
@@ -190,7 +215,7 @@
       }
       target = nextTarget;
       targetStatus = nextStatus;
-      targetPath = nextTarget.working_copy_root;
+      targetPath = nextTarget.target_path;
     } catch (caught) {
       if (currentGeneration === generation) {
         error = normalizeCaughtError(caught, "无法检查目标工作副本");
@@ -225,7 +250,7 @@
     }
     try {
       const created = await createMergeTask({
-        working_copy_root: target.working_copy_root,
+        working_copy_root: target.target_path,
         source_url: sourceUrl,
         revisions,
         dry_run: dryRun,
@@ -235,6 +260,10 @@
         svn_executable: svnExecutable?.trim() || undefined,
       });
       if (currentGeneration !== generation) {
+        if (!terminalStatuses.includes(created.status)) {
+          cancellationRequestedTaskId = created.task_id;
+          void cancelTask(created.task_id).catch(() => undefined);
+        }
         return;
       }
       task = created;
@@ -285,7 +314,7 @@
           onClose();
         }
       } else if (target) {
-        onMerged(target.working_copy_root);
+        onMerged(target.target_path);
       }
     } catch (caught) {
       if (currentGeneration === generation) {
@@ -295,16 +324,21 @@
   }
 
   async function stopMerge() {
-    if (!task || terminalStatuses.includes(task.status)) {
+    if (!task || terminalStatuses.includes(task.status) || cancelling) {
       return;
     }
+    cancelling = true;
+    cancellationRequestedTaskId = task.task_id;
     try {
       task = await cancelTask(task.task_id);
       if (terminalStatuses.includes(task.status)) {
         clearPollTimer();
       }
     } catch (caught) {
+      cancellationRequestedTaskId = null;
       error = normalizeCaughtError(caught, "无法取消 Merge 任务");
+    } finally {
+      cancelling = false;
     }
   }
 
@@ -327,7 +361,7 @@
   class="merge-dialog-backdrop"
   role="presentation"
   tabindex="-1"
-  on:click|self={() => !taskRunning && onClose()}
+  on:click|self={requestClose}
 >
   <div
     bind:this={dialogElement}
@@ -347,8 +381,7 @@
         class="icon-button"
         aria-label="关闭 Merge 窗口"
         title="关闭"
-        disabled={taskRunning}
-        on:click={onClose}
+        on:click={requestClose}
       >
         <X size={17} aria-hidden="true" />
       </button>
@@ -399,7 +432,7 @@
         <div class="target-summary" class:dirty={targetDirty}>
           <div>
             <strong>{target.repository_url}</strong>
-            <span>{target.working_copy_root}</span>
+            <span>{target.target_path}</span>
           </div>
           <div class="target-status">
             <span>r{target.revision}</span>
@@ -427,7 +460,7 @@
         <section class="merge-result" aria-label="Merge 结果">
           <header>
             <strong>{resultTitle(mergeResult)}</strong>
-            <span>{mergeResult.dry_run ? "未修改目标目录" : target?.working_copy_root}</span>
+            <span>{mergeResult.dry_run ? "未修改目标目录" : target?.target_path}</span>
           </header>
           <div class="result-counts">
             <span><strong>{mergeResult.file_count}</strong> 文件</span>
@@ -443,11 +476,11 @@
 
     <footer>
       {#if taskRunning}
-        <button type="button" class="danger" on:click={stopMerge}>
-          <Square size={14} aria-hidden="true" /> 取消任务
+        <button type="button" class="danger" disabled={cancelling} on:click={stopMerge}>
+          <Square size={14} aria-hidden="true" /> {cancelling ? "正在取消" : "取消任务"}
         </button>
       {:else}
-        <button type="button" on:click={onClose}>关闭</button>
+        <button type="button" on:click={requestClose}>关闭</button>
         {#if !mergeApplied}
           <div>
             <button

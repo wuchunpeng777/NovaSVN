@@ -465,6 +465,78 @@ Certificate information:
     expect(within(projects).getByText("wc")).toBeInTheDocument();
   });
 
+  it("同一 SVN 工作副本根下添加和切换项目时保留两个项目", async () => {
+    const previousWorkspace: WorkspaceSummary = {
+      ...makeWorkspace(),
+      local_path: "C:/repo/wc/game/project-a",
+      working_copy_root: "C:/repo/wc",
+      repository_url: "https://example.com/svn/trunk/game/project-a",
+    };
+    const nextWorkspace: WorkspaceSummary = {
+      ...makeWorkspace(),
+      local_path: "C:/repo/wc/game/project-b",
+      working_copy_root: "C:/repo/wc",
+      repository_url: "https://example.com/svn/trunk/game/project-b",
+      revision: "18",
+    };
+    const previousEntry = {
+      id: "project-a",
+      branch_url: previousWorkspace.repository_url,
+      local_path: previousWorkspace.local_path,
+      revision: "12",
+      local_changes: 0,
+      created_at: 1,
+      updated_at: 1,
+    };
+    const nextEntry = {
+      id: "project-b",
+      branch_url: nextWorkspace.repository_url,
+      local_path: nextWorkspace.local_path,
+      revision: "18",
+      local_changes: 2,
+      created_at: 2,
+      updated_at: 2,
+    };
+
+    openWorkspaceMock.mockResolvedValueOnce(previousWorkspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(makeStatus());
+    await workspaceStore.openPath(undefined, previousWorkspace.local_path);
+    chooseWorkspaceDirectoryMock.mockResolvedValueOnce(nextWorkspace.local_path);
+    openWorkspaceMock
+      .mockResolvedValueOnce(nextWorkspace)
+      .mockResolvedValueOnce(previousWorkspace);
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce({
+        ...makeStatus(),
+        total: 2,
+        returned: 2,
+        local_changes: 2,
+        revision_range: "18",
+      })
+      .mockResolvedValueOnce(makeStatus());
+    saveBranchPoolEntryMock
+      .mockResolvedValueOnce({ entries: [previousEntry] })
+      .mockResolvedValueOnce({ entries: [previousEntry, nextEntry] });
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "添加工作副本" }));
+    const projects = screen.getByLabelText("项目列表");
+    await waitFor(() => {
+      expect(within(projects).getByText("project-a")).toBeInTheDocument();
+      expect(within(projects).getByText("project-b")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(within(projects).getByText("project-a").closest("button")!);
+
+    await waitFor(() => expect(openWorkspaceMock).toHaveBeenLastCalledWith({
+      path: previousWorkspace.local_path,
+      svn_executable: undefined,
+    }));
+    expect(within(projects).getByText("project-a")).toBeInTheDocument();
+    expect(within(projects).getByText("project-b")).toBeInTheDocument();
+    expect(get(workspaceStore).current?.local_path).toBe(previousWorkspace.local_path);
+  });
+
   it("进入时间线时自动获取日志且当前界面不重复请求", async () => {
     getSvnLogMock.mockResolvedValue({
       target: "https://example.com/svn/trunk",

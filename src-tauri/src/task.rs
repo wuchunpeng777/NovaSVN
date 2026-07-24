@@ -5464,6 +5464,8 @@ fn build_merge_preview(
 ) -> Result<(MergePreviewSession, MergeOutputAnalysis), NovaError> {
     append_task_log(state, task_id, "正在计算目标工作副本快照");
     let snapshot_digest = merge_preview::workspace_snapshot_digest(&payload.svn_executable, root)?;
+    let (copy_root, target_relative_path) =
+        merge_preview_copy_context(&payload.svn_executable, root)?;
     let app = payload.app.as_ref().ok_or_else(|| {
         NovaError::command(
             "MERGE_PREVIEW_APP_MISSING",
@@ -5472,17 +5474,22 @@ fn build_merge_preview(
             false,
         )
     })?;
-    let session_directory = merge_preview::prepare_session_dir(app, preview_id, root)?;
+    let session_directory = merge_preview::prepare_session_dir(app, preview_id, &copy_root)?;
     let work_directory = session_directory.join("work");
     append_task_log(state, task_id, "正在复制目标工作副本到隔离预览目录");
-    merge_preview::copy_working_copy(root, &work_directory)?;
+    merge_preview::copy_working_copy(&copy_root, &work_directory)?;
+    let preview_target = if target_relative_path.as_os_str().is_empty() {
+        work_directory.clone()
+    } else {
+        work_directory.join(&target_relative_path)
+    };
     let verified_digest = merge_preview::workspace_snapshot_digest(&payload.svn_executable, root)?;
     if verified_digest != snapshot_digest {
         return Err(merge_preview_stale_error());
     }
 
     append_task_log(state, task_id, "正在分析 Merge 影响文件");
-    let mut dry_command = build_merge_command(payload, &work_directory, true);
+    let mut dry_command = build_merge_command(payload, &preview_target, true);
     let dry_output = run_merge_command(state, task_id, &mut dry_command)?;
     if !dry_output.status.success() {
         return Err(NovaError::command(
@@ -5492,13 +5499,13 @@ fn build_merge_preview(
             true,
         ));
     }
-    let dry_paths = merge_output_path_entries(&dry_output.analysis, &work_directory);
+    let dry_paths = merge_output_path_entries(&dry_output.analysis, &preview_target);
     for path in dry_paths.keys() {
-        let _ = merge_preview::save_original_file(&session_directory, &work_directory, path)?;
+        let _ = merge_preview::save_original_file(&session_directory, &preview_target, path)?;
     }
 
     append_task_log(state, task_id, "正在隔离工作副本中执行 Merge");
-    let mut merge_command = build_merge_command(payload, &work_directory, false);
+    let mut merge_command = build_merge_command(payload, &preview_target, false);
     let output = run_merge_command(state, task_id, &mut merge_command)?;
     append_merge_analysis_logs(state, task_id, &output.analysis);
     if !output.status.success() {
@@ -5511,7 +5518,7 @@ fn build_merge_preview(
     }
 
     let mut paths = dry_paths;
-    for (path, value) in merge_output_path_entries(&output.analysis, &work_directory) {
+    for (path, value) in merge_output_path_entries(&output.analysis, &preview_target) {
         if !paths.contains_key(&path) {
             let _ = merge_preview::save_original_file(&session_directory, root, &path)?;
         }
@@ -5525,6 +5532,7 @@ fn build_merge_preview(
         .map(|(path, status)| {
             merge_preview::inspect_preview_file(
                 &session_directory,
+                &preview_target,
                 &path,
                 status.action,
                 status.conflicted,
@@ -5541,6 +5549,7 @@ fn build_merge_preview(
     let session = MergePreviewSession {
         preview_id: preview_id.to_string(),
         working_copy_root: payload.working_copy_root.clone(),
+        target_relative_path: target_relative_path.to_string_lossy().replace('\\', "/"),
         source_url: payload.source_url.clone(),
         revision_range: merge_revision_label(
             &payload.start_revision,
@@ -5562,6 +5571,76 @@ fn build_merge_preview(
     };
     merge_preview::write_session(app, &session)?;
     Ok((session, output.analysis))
+}
+
+fn merge_preview_copy_context(
+    executable: &str,
+    target: &Path,
+) -> Result<(PathBuf, PathBuf), NovaError> {
+    let output = svn::command(executable)
+        .args(["info", "--show-item", "wc-root"])
+        .arg(target)
+        .current_dir(target)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "MERGE_PREVIEW_WORKSPACE_INFO_FAILED",
+                "无法定位 Merge 目标所属的工作副本",
+                Some(format!(
+                    "无法执行 `{executable} info --show-item wc-root`：{error}"
+                )),
+                true,
+            )
+        })?;
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "MERGE_PREVIEW_WORKSPACE_INFO_FAILED",
+            "无法定位 Merge 目标所属的工作副本",
+            Some(command_error_detail(executable, &output)),
+            true,
+        ));
+    }
+    let reported_root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if reported_root.is_empty() {
+        return Err(NovaError::command(
+            "MERGE_PREVIEW_WORKSPACE_INFO_EMPTY",
+            "Merge 目标缺少工作副本根目录",
+            None,
+            true,
+        ));
+    }
+    let copy_root = fs::canonicalize(&reported_root).map_err(|error| {
+        NovaError::command(
+            "MERGE_PREVIEW_WORKSPACE_RESOLVE_FAILED",
+            "无法解析 Merge 目标所属的工作副本",
+            Some(format!("路径：{reported_root}；错误：{error}")),
+            true,
+        )
+    })?;
+    let canonical_target = fs::canonicalize(target).map_err(|error| {
+        NovaError::command(
+            "MERGE_PREVIEW_TARGET_RESOLVE_FAILED",
+            "无法解析 Merge 目标目录",
+            Some(format!("路径：{}；错误：{error}", target.display())),
+            true,
+        )
+    })?;
+    let relative = canonical_target
+        .strip_prefix(&copy_root)
+        .map(Path::to_path_buf)
+        .map_err(|_| {
+            NovaError::command(
+                "MERGE_PREVIEW_TARGET_OUTSIDE_WORKSPACE",
+                "Merge 目标不在所属工作副本内",
+                Some(format!(
+                    "目标：{}；工作副本：{}",
+                    canonical_target.display(),
+                    copy_root.display()
+                )),
+                false,
+            )
+        })?;
+    Ok((copy_root, relative))
 }
 
 fn build_merge_command(payload: &MergeTaskPayload, root: &Path, dry_run: bool) -> Command {
@@ -15191,6 +15270,126 @@ mod tests {
                 .arg(&record_only_target),
         );
         assert!(String::from_utf8_lossy(&record_mergeinfo.stdout).contains("/branches/feature:4"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn merges_into_nested_working_copy_directory() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("merge-nested-target");
+        let repository = root.join("repository");
+        let trunk = root.join("trunk");
+        let branch = root.join("branch");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        let trunk_url = format!("{repository_url}/trunk");
+        let branch_url = format!("{repository_url}/branches/feature");
+        run_test_command(
+            Command::new("svn")
+                .arg("mkdir")
+                .arg(&trunk_url)
+                .arg(format!("{repository_url}/branches"))
+                .args(["-m", "create layout"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&trunk_url)
+                .arg(&trunk),
+        );
+        let target = trunk.join("game/client");
+        fs::create_dir_all(&target).expect("create nested target");
+        fs::write(target.join("tracked.txt"), "trunk\n").expect("write nested trunk file");
+        run_test_command(Command::new("svn").arg("add").arg(trunk.join("game")));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&trunk)
+                .args(["-m", "add nested trunk file"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("copy")
+                .arg(&trunk_url)
+                .arg(&branch_url)
+                .args(["-m", "create feature branch"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&branch_url)
+                .arg(&branch),
+        );
+        fs::write(branch.join("game/client/tracked.txt"), "feature\n")
+            .expect("update nested branch file");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&branch)
+                .args(["-m", "update nested feature file"]),
+        );
+        run_test_command(Command::new("svn").arg("update").arg(&trunk));
+
+        let (copy_root, relative_target) =
+            merge_preview_copy_context("svn", &target).expect("resolve preview copy context");
+        assert_eq!(copy_root, fs::canonicalize(&trunk).unwrap());
+        assert_eq!(relative_target, PathBuf::from("game").join("client"));
+
+        let source_url = format!("{branch_url}/game/client");
+        let queue = TaskQueue::new();
+        let dry_run = queue
+            .create_merge_task(CreateMergeTaskRequest {
+                working_copy_root: target.display().to_string(),
+                source_url: source_url.clone(),
+                start_revision: Some("3".to_string()),
+                end_revision: Some("4".to_string()),
+                revisions: None,
+                dry_run: true,
+                record_only: false,
+                ignore_ancestry: false,
+                force: false,
+                svn_executable: None,
+            })
+            .expect("create nested merge dry-run");
+        let dry_run = wait_for_test_task(&queue, &dry_run.task_id);
+        assert!(
+            matches!(dry_run.status, TaskStatus::Success),
+            "Nested merge dry-run failed: {:?}",
+            dry_run.error
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("tracked.txt")).unwrap(),
+            "trunk\n"
+        );
+
+        let merge = queue
+            .create_merge_task(CreateMergeTaskRequest {
+                working_copy_root: target.display().to_string(),
+                source_url,
+                start_revision: Some("3".to_string()),
+                end_revision: Some("4".to_string()),
+                revisions: None,
+                dry_run: false,
+                record_only: false,
+                ignore_ancestry: false,
+                force: false,
+                svn_executable: None,
+            })
+            .expect("create nested merge");
+        let merge = wait_for_test_task(&queue, &merge.task_id);
+        assert!(
+            matches!(merge.status, TaskStatus::Success),
+            "Nested merge failed: {:?}",
+            merge.error
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("tracked.txt")).unwrap(),
+            "feature\n"
+        );
 
         fs::remove_dir_all(root).ok();
     }

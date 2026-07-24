@@ -1218,6 +1218,7 @@ pub fn run() {
             let window_surface = window_state::surface_name(startup_intent.action.as_deref());
             let standalone_title = match startup_intent.action.as_deref() {
                 Some("checkout") => Some("NovaSVN Checkout"),
+                Some("cleanup") => Some("NovaSVN Clean Up"),
                 Some("info") => Some("NovaSVN Info"),
                 Some("commit") => Some("NovaSVN Commit"),
                 Some("log") => Some("NovaSVN Log"),

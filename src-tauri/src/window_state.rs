@@ -30,6 +30,7 @@ pub fn surface_name(action: Option<&str>) -> &'static str {
     match action {
         Some("blame") => "blame",
         Some("checkout") => "checkout",
+        Some("cleanup") => "cleanup",
         Some("commit") => "commit",
         Some("info") => "info",
         Some("log") => "log",
@@ -185,6 +186,7 @@ mod tests {
     fn keeps_each_startup_surface_in_a_separate_state_slot() {
         assert_eq!(surface_name(None), "main");
         assert_eq!(surface_name(Some("checkout")), "checkout");
+        assert_eq!(surface_name(Some("cleanup")), "cleanup");
         assert_eq!(surface_name(Some("commit")), "commit");
         assert_eq!(surface_name(Some("info")), "info");
         assert_eq!(surface_name(Some("log")), "log");

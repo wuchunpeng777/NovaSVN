@@ -151,6 +151,10 @@ const standaloneCheckoutWindow = fs.readFileSync(
   path.join(root, "src", "components", "StandaloneCheckoutWindow.svelte"),
   "utf8",
 );
+const standaloneCleanupWindow = fs.readFileSync(
+  path.join(root, "src", "components", "StandaloneCleanupWindow.svelte"),
+  "utf8",
+);
 const standaloneInfoWindow = fs.readFileSync(
   path.join(root, "src", "components", "StandaloneInfoWindow.svelte"),
   "utf8",
@@ -209,7 +213,6 @@ const systemIntegrationActions = [
   "branch-workspace",
 ];
 const startupActionViewChecks = [
-  { action: "cleanup", view: "changes", operation: "cleanup" },
   { action: "diff", view: "changes" },
   { action: "branch-workspace", view: "branches" },
 ];
@@ -1569,6 +1572,33 @@ if (
   !tauriLib.includes('Some("checkout") => Some("NovaSVN Checkout")')
 ) {
   console.error("Explorer Checkout 必须打开独立窗口并执行真实仓库 Checkout 任务");
+  failed = true;
+}
+
+const standaloneCleanupStartupStart = appSvelte.indexOf('if (intent.action === "cleanup")');
+const standaloneCleanupStartupEnd = appSvelte.indexOf(
+  'if (intent.action === "merge-preview")',
+  standaloneCleanupStartupStart,
+);
+const standaloneCleanupStartup = appSvelte.slice(
+  standaloneCleanupStartupStart,
+  standaloneCleanupStartupEnd,
+);
+if (
+  standaloneCleanupStartupStart < 0 ||
+  standaloneCleanupStartupEnd < 0 ||
+  !standaloneCleanupStartup.includes('startupSurface = "cleanup"') ||
+  !standaloneCleanupStartup.includes("standaloneCleanupReady = true") ||
+  standaloneCleanupStartup.includes("workspaceStore") ||
+  !appSvelte.includes("<StandaloneCleanupWindow") ||
+  !standaloneCleanupWindow.includes("inspectUpdateTarget") ||
+  !standaloneCleanupWindow.includes("createSvnOperationTask") ||
+  !standaloneCleanupWindow.includes('kind: "cleanup"') ||
+  !standaloneCleanupWindow.includes("getTask") ||
+  !standaloneCleanupWindow.includes("cancelTask") ||
+  !tauriLib.includes('Some("cleanup") => Some("NovaSVN Clean Up")')
+) {
+  console.error("Explorer Clean Up 必须打开可取消的独立任务窗口");
   failed = true;
 }
 

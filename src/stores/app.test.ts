@@ -2359,7 +2359,10 @@ describe("workspaceStore SVN operation state", () => {
   });
 
   it("显式打开绑定根时不读取后来修改的路径输入", async () => {
-    const workspace = makeWorkspace({ working_copy_root: "C:/repo/original" });
+    const workspace = makeWorkspace({
+      local_path: "C:/repo/original",
+      working_copy_root: "C:/repo/original",
+    });
     openWorkspaceMock.mockResolvedValueOnce(workspace);
     scanWorkspaceStatusMock.mockResolvedValueOnce(
       makeStatus([], { working_copy_root: "C:/repo/original" }),
@@ -2374,6 +2377,23 @@ describe("workspaceStore SVN operation state", () => {
     });
     expect(get(workspaceStore).current?.working_copy_root).toBe("C:/repo/original");
     expect(get(workspaceStore).pathInput).toBe("C:/repo/original");
+  });
+
+  it("打开工作副本子目录时保留用户选择的项目路径", async () => {
+    const workspace = makeWorkspace({
+      local_path: "C:/repo/root/game/client",
+      working_copy_root: "C:/repo/root",
+      repository_url: "https://example.com/svn/trunk/game/client",
+    });
+    openWorkspaceMock.mockResolvedValueOnce(workspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(
+      makeStatus([], { working_copy_root: "C:/repo/root" }),
+    );
+
+    await workspaceStore.openPath(undefined, "C:/repo/root/game/client");
+
+    expect(get(workspaceStore).current).toBe(workspace);
+    expect(get(workspaceStore).pathInput).toBe("C:/repo/root/game/client");
   });
 
   it("打开或切换工作副本时保留运行中的 pending 操作", async () => {

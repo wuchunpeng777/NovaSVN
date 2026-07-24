@@ -12,6 +12,7 @@ vi.mock("../lib/api", () => ({
 }));
 
 import {
+  cancelTask,
   createMergeTask,
   getTask,
   inspectUpdateTarget,
@@ -27,12 +28,14 @@ import type {
 import LogMergeDialog from "./LogMergeDialog.svelte";
 
 const createMergeTaskMock = vi.mocked(createMergeTask);
+const cancelTaskMock = vi.mocked(cancelTask);
 const getTaskMock = vi.mocked(getTask);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 const launchMergePreviewWindowMock = vi.mocked(launchMergePreviewWindow);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(() => {
+  cancelTaskMock.mockReset();
   createMergeTaskMock.mockReset();
   getTaskMock.mockReset();
   inspectUpdateTargetMock.mockReset();
@@ -41,6 +44,7 @@ beforeEach(() => {
   inspectUpdateTargetMock.mockResolvedValue(makeTarget());
   scanWorkspaceStatusMock.mockResolvedValue(makeStatus());
   createMergeTaskMock.mockResolvedValue(makeTask("pending"));
+  cancelTaskMock.mockResolvedValue(makeTask("cancelled"));
   getTaskMock.mockResolvedValue(makeTask("success", makeMergeResult(true)));
   launchMergePreviewWindowMock.mockResolvedValue({ preview_id: "a".repeat(64) });
 });
@@ -57,6 +61,7 @@ describe("LogMergeDialog", () => {
     });
     expect(scanWorkspaceStatusMock).toHaveBeenCalledWith({
       working_copy_root: "C:\\target",
+      scope_path: undefined,
       svn_executable: "C:\\Tools\\svn.exe",
       offset: 0,
       limit: 1,
@@ -79,6 +84,45 @@ describe("LogMergeDialog", () => {
       preview_id: "a".repeat(64),
     }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("允许将工作副本子目录作为 Merge 目标", async () => {
+    inspectUpdateTargetMock.mockResolvedValueOnce(makeTarget({
+      target_path: "C:\\target\\game\\client",
+      working_copy_root: "C:\\target",
+      relative_path: "game/client",
+      repository_url: "https://example.com/svn/trunk/game/client",
+    }));
+    renderDialog();
+
+    await inspectPath("C:\\target\\game\\client");
+
+    expect(scanWorkspaceStatusMock).toHaveBeenCalledWith({
+      working_copy_root: "C:\\target",
+      scope_path: "game/client",
+      svn_executable: "C:\\Tools\\svn.exe",
+      offset: 0,
+      limit: 1,
+      check_remote_updates: false,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "预览 Merge" }));
+    await waitFor(() => expect(createMergeTaskMock).toHaveBeenCalledWith(
+      expect.objectContaining({ working_copy_root: "C:\\target\\game\\client" }),
+    ));
+  });
+
+  it("dry-run 运行时可关闭窗口并取消后台任务", async () => {
+    const onClose = vi.fn();
+    getTaskMock.mockImplementation(() => new Promise(() => undefined));
+    renderDialog({ onClose });
+    await inspectPath("C:\\target");
+    await fireEvent.click(screen.getByRole("button", { name: "预览 Merge" }));
+    await waitFor(() => expect(createMergeTaskMock).toHaveBeenCalledOnce());
+
+    await fireEvent.click(screen.getByRole("button", { name: "关闭 Merge 窗口" }));
+
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(cancelTaskMock).toHaveBeenCalledWith("merge-preview");
   });
 
   it("拒绝不同仓库和来源工作副本本身", async () => {

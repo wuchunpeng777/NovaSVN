@@ -2092,6 +2092,7 @@ function createWorkspaceStore() {
     try {
       const recent = await getRecentWorkspace();
       const root = recent.workspace?.working_copy_root;
+      const localPath = recent.workspace?.local_path || root;
       const draft = recent.workspace ? loadWorkspaceDraft(recent.workspace) : emptyWorkspaceDraft();
       const commitSettings = readCommitMessageSettings(root);
       update((state) => ({
@@ -2198,7 +2199,7 @@ function createWorkspaceStore() {
         shadowStatus: null,
         shadowError: null,
         ...clearSvnPropertiesState(),
-        pathInput: state.pathInput || root || "",
+        pathInput: state.pathInput || localPath || "",
         loading: false,
         error: null,
       }));
@@ -2345,7 +2346,7 @@ function createWorkspaceStore() {
         shadowStatus: null,
         shadowError: null,
         ...clearSvnPropertiesState(),
-        pathInput: current.working_copy_root,
+        pathInput: current.local_path || current.working_copy_root,
         loading: false,
         error: null,
       }));

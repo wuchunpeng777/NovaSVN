@@ -474,6 +474,7 @@ export interface MergePreviewFile {
 export interface MergePreviewSession {
   preview_id: string;
   working_copy_root: string;
+  target_relative_path?: string;
   source_url: string;
   revision_range: string;
   record_only: boolean;

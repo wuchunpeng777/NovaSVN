@@ -831,7 +831,7 @@
     { error: svnSwitchError, retry: null },
   ]);
   $: currentWorkspaceListed = branchPool.entries.some((entry) =>
-    sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? ""),
+    sameWorkspacePath(entry.local_path, workspace?.local_path ?? ""),
   );
   $: fileTableColumnStyle = fileColumns
     .map((column) => `--file-${column.key}-width: ${fileColumnWidths[column.key]}px`)
@@ -2446,7 +2446,7 @@
   }
 
   function openWorkspaceEntry(entry: BranchPoolEntry) {
-    if (sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")) {
+    if (sameWorkspacePath(entry.local_path, workspace?.local_path ?? "")) {
       onSelectView("changes");
       return;
     }
@@ -3201,8 +3201,8 @@
               <FolderOpen size={16} strokeWidth={1.8} />
             </span>
             <span>
-              <strong>{workspace ? basename(workspace.working_copy_root) : "打开工作副本"}</strong>
-              <small>{workspace?.working_copy_root ?? "选择或输入本地项目目录"}</small>
+              <strong>{workspace ? basename(workspace.local_path) : "打开工作副本"}</strong>
+              <small>{workspace?.local_path ?? "选择或输入本地项目目录"}</small>
             </span>
             <em>{workingCopyStatus?.total ?? 0}</em>
           </button>
@@ -3222,7 +3222,7 @@
             {#if editingBranchPoolEntryId === entry.id}
               <div
                 class="source-item workspace-source-item project-name-editor"
-                class:active={sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")}
+                class:active={sameWorkspacePath(entry.local_path, workspace?.local_path ?? "")}
               >
                 <span class="source-icon" aria-hidden="true">
                   <FolderOpen size={16} strokeWidth={1.8} />
@@ -3263,7 +3263,7 @@
               <button
                 type="button"
                 class="source-item workspace-source-item project-source-button"
-                class:active={sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")}
+                class:active={sameWorkspacePath(entry.local_path, workspace?.local_path ?? "")}
                 on:keydown={(event) => handleBranchPoolDragKeydown(event, entry.id)}
                 on:click={() => openWorkspaceEntryFromClick(entry)}
               >
@@ -3274,7 +3274,7 @@
                   <strong>{workspaceEntryName(entry)}</strong>
                   <small>{entry.local_path}</small>
                 </span>
-                <em>{sameWorkspacePath(entry.local_path, workspace?.working_copy_root ?? "")
+                <em>{sameWorkspacePath(entry.local_path, workspace?.local_path ?? "")
                     ? workingCopyStatus?.total ?? entry.local_changes
                     : entry.local_changes}</em>
               </button>

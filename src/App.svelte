@@ -7,6 +7,7 @@
   import dragPreviewIcon from "../src-tauri/icons/icon.png?inline";
   import StandaloneBlameWindow from "./components/StandaloneBlameWindow.svelte";
   import StandaloneCheckoutWindow from "./components/StandaloneCheckoutWindow.svelte";
+  import StandaloneCleanupWindow from "./components/StandaloneCleanupWindow.svelte";
   import StandaloneCommitWindow from "./components/StandaloneCommitWindow.svelte";
   import StandaloneConflictWindow from "./components/StandaloneConflictWindow.svelte";
   import StandaloneInfoWindow from "./components/StandaloneInfoWindow.svelte";
@@ -71,12 +72,14 @@
 
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
-  let startupSurface: "loading" | "main" | "blame" | "checkout" | "commit" | "log" | "merge-preview" | "revert" | "update" | "resolve" | "info" =
+  let startupSurface: "loading" | "main" | "blame" | "checkout" | "cleanup" | "commit" | "log" | "merge-preview" | "revert" | "update" | "resolve" | "info" =
     hasTauriRuntime() ? "loading" : "main";
   let standaloneBlamePath = "";
   let standaloneBlameReady = false;
   let standaloneCheckoutPath = "";
   let standaloneCheckoutReady = false;
+  let standaloneCleanupPath = "";
+  let standaloneCleanupReady = false;
   let standaloneCommitPath = "";
   let standaloneCommitReady = false;
   let standaloneLogPath = "";
@@ -384,7 +387,7 @@
 
   function queueAppMenuStateSync(
     state: AppMenuState,
-    surface: "loading" | "main" | "blame" | "commit" | "log" | "update" | "resolve" | "info",
+    surface: typeof startupSurface,
   ) {
     if (!hasTauriRuntime() || surface !== "main") {
       return;
@@ -437,7 +440,7 @@
 
     const branchEntry = $branchPoolStore.pool.entries.find(
       (entry) =>
-        normalizeLocalPath(entry.local_path) === normalizeLocalPath(workspace.working_copy_root),
+        normalizeLocalPath(entry.local_path) === normalizeLocalPath(workspace.local_path),
     );
     if (!branchEntry) {
       return;
@@ -1317,8 +1320,7 @@
   }
 
   async function openBranchPoolEntry(localPath: string) {
-    workspaceStore.setPathInput(localPath);
-    await workspaceStore.openPath(currentSvnExecutable());
+    await workspaceStore.openPath(currentSvnExecutable(), localPath);
     await syncCurrentBranchPoolEntry();
     setCurrentView("changes");
   }
@@ -1334,14 +1336,14 @@
     if (previousWorkspace) {
       await branchPoolStore.saveExisting({
         branchUrl: previousWorkspace.repository_url,
-        localPath: previousWorkspace.working_copy_root,
+        localPath: previousWorkspace.local_path,
         revision: previousStatus?.revision_range ?? previousWorkspace.revision,
         localChanges: previousStatus?.total ?? 0,
       });
     }
     await branchPoolStore.saveExisting({
       branchUrl: workspace.repository_url,
-      localPath: workspace.working_copy_root,
+      localPath: workspace.local_path,
       revision: $workspaceStore.status?.revision_range ?? workspace.revision,
       localChanges: $workspaceStore.status?.total ?? 0,
     });
@@ -2494,6 +2496,16 @@
       return;
     }
 
+    if (intent.action === "cleanup") {
+      standaloneCleanupPath = intent.path?.trim() ?? "";
+      startupSurface = "cleanup";
+      if ($svnStore.executableInput.trim()) {
+        void svnStore.detectWithInputFallback();
+      }
+      standaloneCleanupReady = true;
+      return;
+    }
+
     if (intent.action === "merge-preview") {
       standaloneMergePreviewId = intent.preview_id?.trim() ?? "";
       startupSurface = "merge-preview";
@@ -2598,6 +2610,7 @@
     return startupSurface === "loading" ||
       (startupSurface === "blame" && !standaloneBlameReady) ||
       (startupSurface === "checkout" && !standaloneCheckoutReady) ||
+      (startupSurface === "cleanup" && !standaloneCleanupReady) ||
       (startupSurface === "commit" && !standaloneCommitReady) ||
       (startupSurface === "log" && !standaloneLogReady) ||
       (startupSurface === "merge-preview" && !standaloneMergePreviewReady) ||
@@ -2642,6 +2655,7 @@
 {#if startupSurface === "loading" ||
   (startupSurface === "blame" && !standaloneBlameReady) ||
   (startupSurface === "checkout" && !standaloneCheckoutReady) ||
+  (startupSurface === "cleanup" && !standaloneCleanupReady) ||
   (startupSurface === "commit" && !standaloneCommitReady) ||
   (startupSurface === "log" && !standaloneLogReady) ||
   (startupSurface === "merge-preview" && !standaloneMergePreviewReady) ||
@@ -2658,6 +2672,8 @@
         ? "正在准备 SVN Checkout..."
         : startupSurface === "commit"
         ? "正在准备 SVN Commit..."
+        : startupSurface === "cleanup"
+        ? "正在准备 SVN Clean Up..."
         : startupSurface === "log"
         ? "正在准备 SVN Log..."
         : startupSurface === "merge-preview"
@@ -2687,6 +2703,17 @@
 {:else if startupSurface === "checkout"}
   <StandaloneCheckoutWindow
     targetPath={standaloneCheckoutPath}
+    svnExecutable={currentSvnExecutable()}
+    themeMode={$appSettingsStore.themeMode}
+    svnAuthenticationUsername={$appSettingsStore.svnUsername}
+    svnRememberPassword={$appSettingsStore.svnRememberPassword}
+    {svnAuthenticationLoading}
+    {svnAuthenticationError}
+    onSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
+  />
+{:else if startupSurface === "cleanup"}
+  <StandaloneCleanupWindow
+    targetPath={standaloneCleanupPath}
     svnExecutable={currentSvnExecutable()}
     themeMode={$appSettingsStore.themeMode}
     svnAuthenticationUsername={$appSettingsStore.svnUsername}
