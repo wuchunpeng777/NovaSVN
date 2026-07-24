@@ -24,6 +24,7 @@
 - 工作副本文件表支持 treegrid 键盘导航、目录展开收起、范围选择、活动行自动滚动和明确焦点状态。
 - 双击工作副本文件可使用系统默认应用安全打开；真实路径会限制在工作副本内，Windows 文件名不再经过命令解释器。
 - 工作副本路径提供状态化右键菜单，保留多选批量语义，并支持菜单键、Shift+F10、方向键和 Escape。
+- 应用内右键操作及 Windows Explorer 的 NovaSVN 一级、二级菜单使用对应功能图标，Update、Commit、Log 和各文件操作可直接按图形识别。
 - 工作副本检查器使用 Information、Properties、Diff、Blame、Commit 和 Tasks 标签组织文件详情与操作，并支持完整键盘切换。
 - 应用原生菜单增加当前路径子菜单，按活动文件或目录状态动态提供 Open、Show in Folder、Commit、Update、Add、Resolve、Revert、Move、Copy、Ignore 和 Delete。
 - Timeline 按本地日历日期分组显示 revision，并为未知日期提供稳定分组。

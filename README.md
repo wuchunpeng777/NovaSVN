@@ -104,7 +104,7 @@ Build the notarized macOS release after configuring the required Developer ID id
 npm run release:macos:notarized
 ```
 
-Generated packages are written under `src-tauri/target/release/bundle/`. See [macOS release acceptance](doc/macOS发布验收.md) for signing and notarization requirements.
+Generated packages are written under `src-tauri/target/release/bundle/`. The macOS signing and notarization checks are implemented by the scripts under `scripts/`.
 
 ## Project Structure
 
@@ -113,15 +113,11 @@ src/                 Svelte and TypeScript frontend
 src-tauri/           Rust backend and Tauri desktop configuration
 tests/               Playwright end-to-end tests
 scripts/             release, workflow, and benchmark scripts
-doc/                 design and engineering documentation
 .github/workflows/   continuous integration
 ```
 
 ## Documentation
 
 - [Changelog](CHANGELOG.md)
-- [Design document](doc/设计文档.md) (Chinese)
-- [Performance benchmark](doc/性能基准.md) (Chinese)
-- [Upgrade strategy](doc/升级策略.md) (Chinese)
 
 When reporting an issue, include the operating system, NovaSVN version, SVN client version (`svn --version`), the operation being performed, and the relevant error output. Remove credentials and private repository URLs before posting logs.

@@ -10,12 +10,13 @@
 
 !macro NOVASVN_REGISTER_ACTION ROOT KEY LABEL ACTION PATH_PLACEHOLDER
   WriteRegStr HKCU "${ROOT}\NovaSVN\shell\${KEY}" "MUIVerb" "${LABEL}"
+  WriteRegStr HKCU "${ROOT}\NovaSVN\shell\${KEY}" "Icon" "$INSTDIR\explorer-icons\${ACTION}.ico"
   WriteRegStr HKCU "${ROOT}\NovaSVN\shell\${KEY}\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --novasvn-action $\"${ACTION}$\" --novasvn-path $\"${PATH_PLACEHOLDER}$\""
 !macroend
 
 !macro NOVASVN_REGISTER_DIRECT_ACTION ROOT KEY LABEL ACTION PATH_PLACEHOLDER
   WriteRegStr HKCU "${ROOT}\NovaSVN.${KEY}" "MUIVerb" "${LABEL}"
-  WriteRegStr HKCU "${ROOT}\NovaSVN.${KEY}" "Icon" "$INSTDIR\${MAINBINARYNAME}.exe,0"
+  WriteRegStr HKCU "${ROOT}\NovaSVN.${KEY}" "Icon" "$INSTDIR\explorer-icons\${ACTION}.ico"
   WriteRegStr HKCU "${ROOT}\NovaSVN.${KEY}" "Position" "Bottom"
   WriteRegStr HKCU "${ROOT}\NovaSVN.${KEY}\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --novasvn-action $\"${ACTION}$\" --novasvn-path $\"${PATH_PLACEHOLDER}$\""
 !macroend

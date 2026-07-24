@@ -14,6 +14,8 @@ if ($Mode -eq "Install" -and !(Test-Path -LiteralPath $NovaSvnExe -PathType Leaf
   throw "NovaSVN executable not found: $NovaSvnExe. Build the app first or pass -NovaSvnExe with the installed NovaSVN.exe path."
 }
 
+$explorerIconRoot = Join-Path $PSScriptRoot "..\src-tauri\icons\explorer"
+
 $submenuActions = @(
   @{ Key = "Open"; Label = "Open"; Action = "open" },
   @{ Key = "Checkout"; Label = "Checkout"; Action = "checkout"; DirectoriesOnly = $true },
@@ -31,6 +33,15 @@ $directActions = @(
   @{ Key = "Commit"; Label = "NovaSVN Commit"; Action = "commit" },
   @{ Key = "Log"; Label = "NovaSVN Log"; Action = "log" }
 )
+
+if ($Mode -eq "Install") {
+  foreach ($item in @($submenuActions + $directActions)) {
+    $iconPath = Join-Path $explorerIconRoot "$($item.Action).ico"
+    if (!(Test-Path -LiteralPath $iconPath -PathType Leaf)) {
+      throw "NovaSVN Explorer icon not found: $iconPath"
+    }
+  }
+}
 
 $roots = @(
   @{ Path = "HKCU:\Software\Classes\Directory\shell"; Placeholder = "%1" },
@@ -71,6 +82,8 @@ foreach ($root in $roots) {
     $commandPath = Join-Path $keyPath "command"
     New-Item -Path $commandPath -Force | Out-Null
     New-ItemProperty -Path $keyPath -Name "MUIVerb" -Value $item.Label -PropertyType String -Force | Out-Null
+    $iconPath = Join-Path $explorerIconRoot "$($item.Action).ico"
+    New-ItemProperty -Path $keyPath -Name "Icon" -Value $iconPath -PropertyType String -Force | Out-Null
     $command = "`"$NovaSvnExe`" --novasvn-action `"$($item.Action)`" --novasvn-path `"$($root.Placeholder)`""
     (Get-Item -LiteralPath $commandPath).SetValue("", $command)
   }
@@ -83,7 +96,8 @@ foreach ($root in $roots) {
     $commandPath = Join-Path $keyPath "command"
     New-Item -Path $commandPath -Force | Out-Null
     New-ItemProperty -Path $keyPath -Name "MUIVerb" -Value $item.Label -PropertyType String -Force | Out-Null
-    New-ItemProperty -Path $keyPath -Name "Icon" -Value "$NovaSvnExe,0" -PropertyType String -Force | Out-Null
+    $iconPath = Join-Path $explorerIconRoot "$($item.Action).ico"
+    New-ItemProperty -Path $keyPath -Name "Icon" -Value $iconPath -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $keyPath -Name "Position" -Value "Bottom" -PropertyType String -Force | Out-Null
     $command = "`"$NovaSvnExe`" --novasvn-action `"$($item.Action)`" --novasvn-path `"$($root.Placeholder)`""
     (Get-Item -LiteralPath $commandPath).SetValue("", $command)

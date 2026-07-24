@@ -73,7 +73,6 @@ const performanceBenchmarkRs = fs.readFileSync(
   path.join(root, "src-tauri", "src", "performance_benchmark.rs"),
   "utf8",
 );
-const benchmarkDoc = fs.readFileSync(path.join(root, "doc", "性能基准.md"), "utf8");
 const syncVersionScript = fs.readFileSync(path.join(root, "scripts", "sync-version.mjs"), "utf8");
 const releaseArtifactsScript = fs.readFileSync(
   path.join(root, "scripts", "release-artifacts.mjs"),
@@ -403,6 +402,46 @@ const windowsExplorerMenus = [
   },
 ];
 
+const windowsExplorerIconActions = [
+  ...new Set(
+    windowsExplorerMenus.flatMap((menu) =>
+      [...menu.submenu, ...menu.direct].map(([, , action]) => action),
+    ),
+  ),
+];
+
+for (const action of windowsExplorerIconActions) {
+  const svgPath = path.join(root, "src-tauri", "icons", "explorer", `${action}.svg`);
+  const icoPath = path.join(root, "src-tauri", "icons", "explorer", `${action}.ico`);
+  if (!fs.existsSync(svgPath) || !fs.existsSync(icoPath)) {
+    console.error(`Windows Explorer 菜单缺少 ${action} 图标源或 ICO 文件`);
+    failed = true;
+    continue;
+  }
+  const ico = fs.readFileSync(icoPath);
+  if (
+    ico.length < 6 ||
+    ico.readUInt16LE(0) !== 0 ||
+    ico.readUInt16LE(2) !== 1 ||
+    ico.readUInt16LE(4) < 5
+  ) {
+    console.error(`Windows Explorer 菜单图标不是有效的多尺寸 ICO：${action}`);
+    failed = true;
+  }
+}
+
+const explorerResourceTarget = tauriConfig.bundle?.resources?.["icons/explorer/*.ico"];
+const actionIconRegistration = '"Icon" "$INSTDIR\\explorer-icons\\${ACTION}.ico"';
+if (
+  explorerResourceTarget !== "explorer-icons/" ||
+  nsisHooks.split(actionIconRegistration).length - 1 !== 2 ||
+  !windowsExplorerScript.includes('Join-Path $explorerIconRoot "$($item.Action).ico"') ||
+  !windowsExplorerScript.includes('Name "Icon" -Value $iconPath')
+) {
+  console.error("Windows Explorer 一级和二级菜单必须注册各自的动作图标");
+  failed = true;
+}
+
 for (const menu of windowsExplorerMenus) {
   if (
     !nsisHooks.includes(`!insertmacro NOVASVN_REGISTER_MENU "${menu.root}"`) ||
@@ -670,16 +709,6 @@ for (const token of [
 
 if (!performanceBenchmarkRs.includes('arg("revert")') || !performanceBenchmarkRs.includes('arg("-R")')) {
   console.error("性能基准每次运行前必须还原工作副本，避免累积改动影响对比");
-  failed = true;
-}
-
-if (!benchmarkDoc.includes("benchmark-results.md")) {
-  console.error("性能基准文档必须说明 Markdown 摘要输出");
-  failed = true;
-}
-
-if (!benchmarkDoc.includes("svn revert -R") || !benchmarkDoc.includes("5000 行 Blame")) {
-  console.error("性能基准文档必须说明脚本会在每次运行前还原工作副本");
   failed = true;
 }
 

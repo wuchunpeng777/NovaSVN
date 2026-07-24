@@ -26,6 +26,9 @@
   },
   "bundle": {
     "active": true,
+    "resources": {
+      "icons/explorer/*.ico": "explorer-icons/"
+    },
     "targets": [
       "nsis",
       "dmg"
