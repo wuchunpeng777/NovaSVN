@@ -67,7 +67,13 @@ describe("SvnLogRevisionList", () => {
     const entry = screen.getByText("Local revision").closest(".svn-log-entry");
     expect(entry).toHaveClass("current-revision");
     expect(entry).toHaveAttribute("aria-current", "true");
-    expect(screen.getByLabelText("工作副本基准 r100，当前路径版本 r42")).toBeInTheDocument();
+    const localRevisionSummary = screen.getByLabelText("工作副本基准 r100，当前路径版本 r42");
+    expect(localRevisionSummary).toBeInTheDocument();
+    expect(localRevisionSummary.querySelector(".svn-log-local-revision-marker")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(screen.getByText("工作副本基准 r100")).toHaveClass("svn-log-baseline-revision");
     expect(screen.getByLabelText("当前路径版本 r42")).toHaveTextContent(
       "当前路径版本",
     );

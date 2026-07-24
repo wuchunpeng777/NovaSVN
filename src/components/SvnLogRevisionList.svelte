@@ -80,7 +80,7 @@
       class="svn-log-local-revision-summary"
       aria-label={`工作副本基准 r${normalizedBaselineRevision}${normalizedEffectiveRevision ? `，当前路径版本 r${normalizedEffectiveRevision}` : ""}`}
     >
-      <span aria-hidden="true"></span>
+      <span class="svn-log-local-revision-marker" aria-hidden="true"></span>
       <span class="svn-log-baseline-revision">工作副本基准 r{normalizedBaselineRevision}</span>
       {#if normalizedEffectiveRevision}
         <strong>当前路径版本 r{normalizedEffectiveRevision}</strong>
@@ -268,7 +268,7 @@
     font-size: 11px;
   }
 
-  .svn-log-local-revision-summary > span {
+  .svn-log-local-revision-marker {
     width: 8px;
     height: 8px;
     border-radius: 50%;

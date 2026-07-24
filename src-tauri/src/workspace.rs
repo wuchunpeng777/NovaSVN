@@ -585,6 +585,8 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
         .unwrap_or_else(|| root.clone());
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
     let workspace = read_workspace_summary(&target, &executable)?;
+    let working_copy_revision =
+        read_log_working_copy_revision(&executable, &target, &workspace.revision);
     let limit = request.limit.unwrap_or(50).clamp(1, 200);
     let start_revision = request
         .start_revision
@@ -601,7 +603,7 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
         start_revision.as_deref(),
     )?;
     log.working_copy_root = Some(workspace.working_copy_root);
-    log.working_copy_revision = Some(workspace.revision);
+    log.working_copy_revision = Some(working_copy_revision);
     log.repository_root = Some(workspace.repository_root);
     log.repository_url = Some(workspace.repository_url);
     Ok(log)
@@ -623,6 +625,8 @@ pub fn get_path_svn_log(request: GetPathSvnLogRequest) -> Result<SvnLog, NovaErr
     };
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
     let workspace = read_workspace_summary(&target, &executable)?;
+    let working_copy_revision =
+        read_log_working_copy_revision(&executable, &target, &workspace.revision);
     let limit = request.limit.unwrap_or(50).clamp(1, 200);
     let start_revision = request
         .start_revision
@@ -639,7 +643,7 @@ pub fn get_path_svn_log(request: GetPathSvnLogRequest) -> Result<SvnLog, NovaErr
         start_revision.as_deref(),
     )?;
     log.working_copy_root = Some(workspace.working_copy_root);
-    log.working_copy_revision = Some(workspace.revision);
+    log.working_copy_revision = Some(working_copy_revision);
     log.repository_root = Some(workspace.repository_root);
     log.repository_url = Some(workspace.repository_url);
     Ok(log)
@@ -3616,6 +3620,25 @@ fn read_workspace_revision_summary(executable: &str, working_copy_root: &Path) -
     parse_svnversion_output(&String::from_utf8_lossy(&output.stdout))
 }
 
+fn read_log_working_copy_revision(executable: &str, target: &Path, fallback: &str) -> String {
+    read_workspace_revision_summary(executable, target)
+        .range
+        .as_deref()
+        .and_then(highest_svnversion_revision)
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn highest_svnversion_revision(value: &str) -> Option<String> {
+    let revision = value
+        .trim()
+        .trim_end_matches(['M', 'S', 'P', 'U'])
+        .rsplit(':')
+        .next()?
+        .trim();
+    (!revision.is_empty() && revision.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| revision.to_string())
+}
+
 fn parse_svnversion_output(output: &str) -> RevisionSummary {
     let trimmed = output.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("exported") {
@@ -4464,6 +4487,23 @@ mod tests {
     }
 
     #[test]
+    fn extracts_highest_revision_from_mixed_svnversion_output() {
+        assert_eq!(
+            highest_svnversion_revision("997080:997084"),
+            Some("997084".to_string())
+        );
+        assert_eq!(
+            highest_svnversion_revision("997080:997084MS"),
+            Some("997084".to_string())
+        );
+        assert_eq!(
+            highest_svnversion_revision("997084M"),
+            Some("997084".to_string())
+        );
+        assert_eq!(highest_svnversion_revision("exported"), None);
+    }
+
+    #[test]
     fn assigns_and_removes_workspace_changelists() {
         if !svn_test_tools_available() {
             return;
@@ -4723,6 +4763,11 @@ mod tests {
                 .arg(&remote_working_copy)
                 .args(["-m", "remote change"]),
         );
+        run_test_command(
+            Command::new("svn")
+                .arg("update")
+                .arg(local_working_copy.join("tracked.txt")),
+        );
 
         let workspace_log = get_svn_log(GetSvnLogRequest {
             working_copy_root: local_working_copy.display().to_string(),
@@ -4734,7 +4779,7 @@ mod tests {
         .expect("workspace log reads repository HEAD");
         assert_eq!(workspace_log.entries[0].revision, "2");
         assert_eq!(workspace_log.entries[0].message, "remote change");
-        assert_eq!(workspace_log.working_copy_revision.as_deref(), Some("1"));
+        assert_eq!(workspace_log.working_copy_revision.as_deref(), Some("2"));
 
         let standalone_log = get_path_svn_log(GetPathSvnLogRequest {
             path: local_working_copy.display().to_string(),
@@ -4745,7 +4790,7 @@ mod tests {
         .expect("standalone log reads repository HEAD");
         assert_eq!(standalone_log.entries[0].revision, "2");
         assert_eq!(standalone_log.entries[0].message, "remote change");
-        assert_eq!(standalone_log.working_copy_revision.as_deref(), Some("1"));
+        assert_eq!(standalone_log.working_copy_revision.as_deref(), Some("2"));
 
         let _ = fs::remove_dir_all(root);
     }
