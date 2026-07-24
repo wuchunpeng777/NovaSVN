@@ -372,6 +372,7 @@ pub struct SvnLogEntry {
 #[derive(Debug, Clone, Serialize)]
 pub struct SvnBlame {
     pub target: String,
+    pub language: String,
     pub lines: Vec<SvnBlameLine>,
     pub total_lines: usize,
     pub truncated: bool,
@@ -3937,6 +3938,7 @@ fn parse_svn_blame_xml(
 
     Ok(SvnBlame {
         target: target.to_string(),
+        language: language_for_path(target),
         truncated: lines.len() < total_lines,
         total_lines,
         lines,
@@ -6043,6 +6045,7 @@ line two</property>
             .expect("blame parses");
 
         assert_eq!(blame.target, "src/main.rs");
+        assert_eq!(blame.language, "rust");
         assert_eq!(blame.total_lines, 2);
         assert!(!blame.truncated);
         assert_eq!(blame.lines[0].revision, "7");

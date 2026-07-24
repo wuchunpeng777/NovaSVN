@@ -10,6 +10,7 @@
     UpdateTargetSummary,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import SyntaxHighlightedCode from "./SyntaxHighlightedCode.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
   import SvnRevisionLogDialog from "./SvnRevisionLogDialog.svelte";
 
@@ -420,7 +421,14 @@
           <span role="cell" title={line.author || undefined}>{line.author || "-"}</span>
           <span role="cell"><time datetime={line.date} title={line.date}>{formatDate(line.date)}</time></span>
           <span role="cell" class="line-number">{line.line_number}</span>
-          <span role="cell" class="line-content"><code title={line.content}>{line.content || " "}</code></span>
+          <span role="cell" class="line-content">
+            <SyntaxHighlightedCode
+              content={line.content}
+              language={blame?.language ?? "plaintext"}
+              title={line.content}
+              theme={resolvedTheme}
+            />
+          </span>
         </div>
       {/each}
       {#if afterHeight > 0}
@@ -744,7 +752,7 @@
     text-align: right;
   }
 
-  .line-content code {
+  .line-content :global(.syntax-highlighted-code) {
     display: block;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -859,6 +859,7 @@ export interface SvnLogEntry {
 
 export interface SvnBlame {
   target: string;
+  language?: string;
   lines: SvnBlameLine[];
   total_lines: number;
   truncated: boolean;

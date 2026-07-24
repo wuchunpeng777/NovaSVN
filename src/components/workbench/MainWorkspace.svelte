@@ -31,6 +31,7 @@
   import SvnRevisionLogDialog from "../SvnRevisionLogDialog.svelte";
   import ConflictResolver from "./ConflictResolver.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
+  import SyntaxHighlightedCode from "../SyntaxHighlightedCode.svelte";
   import { getRevisionFileContentDiff } from "../../lib/api";
   import { detectSvnAuthenticationFailure } from "../../lib/svn-authentication";
   import {
@@ -3965,7 +3966,12 @@
                     <span role="cell">{line.author || "-"}</span>
                     <span role="cell" class="blame-line-number">{line.line_number}</span>
                     <span role="cell" class="blame-content">
-                      <code title={line.content}>{line.content || " "}</code>
+                      <SyntaxHighlightedCode
+                        content={line.content}
+                        language={repositoryFileBlame.language ?? "plaintext"}
+                        title={line.content}
+                        theme={resolvedTheme}
+                      />
                     </span>
                   </div>
                 {/each}
@@ -5811,7 +5817,12 @@
                         <span role="cell">{line.author || "-"}</span>
                         <span role="cell" class="blame-line-number">{line.line_number}</span>
                         <span role="cell" class="blame-content">
-                          <code title={line.content}>{line.content || " "}</code>
+                          <SyntaxHighlightedCode
+                            content={line.content}
+                            language={svnBlame.language ?? "plaintext"}
+                            title={line.content}
+                            theme={resolvedTheme}
+                          />
                         </span>
                       </div>
                     {/each}
