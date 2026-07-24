@@ -55,6 +55,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     openWorkspaceFile: vi.fn(),
     openWorkspace: vi.fn(),
     scanWorkspaceStatus: vi.fn(),
+    saveBranchPoolEntries: vi.fn(),
     saveBranchPoolEntry: vi.fn(),
     setWorkspaceChangelist: vi.fn(),
   };
@@ -99,6 +100,7 @@ import {
   openWorkspaceFile,
   openWorkspace,
   scanWorkspaceStatus,
+  saveBranchPoolEntries,
   saveBranchPoolEntry,
   setWorkspaceChangelist,
 } from "./lib/api";
@@ -156,6 +158,7 @@ const openRepositoryTempFileMock = vi.mocked(openRepositoryTempFile);
 const openWorkspaceFileMock = vi.mocked(openWorkspaceFile);
 const openWorkspaceMock = vi.mocked(openWorkspace);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
+const saveBranchPoolEntriesMock = vi.mocked(saveBranchPoolEntries);
 const saveBranchPoolEntryMock = vi.mocked(saveBranchPoolEntry);
 const setWorkspaceChangelistMock = vi.mocked(setWorkspaceChangelist);
 const startDragMock = vi.mocked(startDrag);
@@ -197,6 +200,7 @@ beforeEach(async () => {
   openWorkspaceFileMock.mockReset();
   openWorkspaceMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
+  saveBranchPoolEntriesMock.mockReset();
   saveBranchPoolEntryMock.mockReset();
   setWorkspaceChangelistMock.mockReset();
   startDragMock.mockReset();
@@ -436,9 +440,7 @@ Certificate information:
       local_changes: 2,
       revision_range: "18",
     });
-    saveBranchPoolEntryMock
-      .mockResolvedValueOnce({ entries: [previousEntry] })
-      .mockResolvedValueOnce({ entries: [previousEntry, secondEntry] });
+    saveBranchPoolEntriesMock.mockResolvedValueOnce({ entries: [previousEntry, secondEntry] });
     render(App);
 
     await fireEvent.click(screen.getByRole("button", { name: "添加工作副本" }));
@@ -447,18 +449,22 @@ Certificate information:
       path: "D:\\work\\feature",
       svn_executable: undefined,
     }));
-    await waitFor(() => expect(saveBranchPoolEntryMock).toHaveBeenCalledTimes(2));
-    expect(saveBranchPoolEntryMock).toHaveBeenNthCalledWith(1, {
-      branch_url: "https://example.com/svn/trunk",
-      local_path: "C:/repo/wc",
-      revision: "12",
-      local_changes: 0,
-    });
-    expect(saveBranchPoolEntryMock).toHaveBeenNthCalledWith(2, {
-      branch_url: "https://example.com/svn/branches/feature",
-      local_path: "D:\\work\\feature",
-      revision: "18",
-      local_changes: 2,
+    await waitFor(() => expect(saveBranchPoolEntriesMock).toHaveBeenCalledOnce());
+    expect(saveBranchPoolEntriesMock).toHaveBeenCalledWith({
+      entries: [
+        {
+          branch_url: "https://example.com/svn/trunk",
+          local_path: "C:/repo/wc",
+          revision: "12",
+          local_changes: 0,
+        },
+        {
+          branch_url: "https://example.com/svn/branches/feature",
+          local_path: "D:\\work\\feature",
+          revision: "18",
+          local_changes: 2,
+        },
+      ],
     });
     const projects = screen.getByLabelText("项目列表");
     expect(within(projects).getByText("feature")).toBeInTheDocument();
@@ -514,19 +520,30 @@ Certificate information:
         revision_range: "18",
       })
       .mockResolvedValueOnce(makeStatus());
-    saveBranchPoolEntryMock
-      .mockResolvedValueOnce({ entries: [previousEntry] })
-      .mockResolvedValueOnce({ entries: [previousEntry, nextEntry] });
+    getBranchPoolMock.mockResolvedValue({ entries: [previousEntry] });
+    await branchPoolStore.load();
+    let resolveProjectSave!: (pool: { entries: typeof previousEntry[] }) => void;
+    saveBranchPoolEntriesMock.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveProjectSave = resolve;
+      }),
+    );
     render(App);
 
-    await fireEvent.click(screen.getByRole("button", { name: "添加工作副本" }));
+    screen.getByRole("button", { name: "添加工作副本" }).click();
     const projects = screen.getByLabelText("项目列表");
     await waitFor(() => {
       expect(within(projects).getByText("project-a")).toBeInTheDocument();
       expect(within(projects).getByText("project-b")).toBeInTheDocument();
     });
 
-    await fireEvent.click(within(projects).getByText("project-a").closest("button")!);
+    const previousProjectButton = within(projects).getByText("project-a").closest("button")!;
+    expect(previousProjectButton).toBeDisabled();
+    await waitFor(() => expect(saveBranchPoolEntriesMock).toHaveBeenCalledOnce());
+    resolveProjectSave({ entries: [previousEntry, nextEntry] });
+    await waitFor(() => expect(previousProjectButton).not.toBeDisabled());
+
+    await fireEvent.click(previousProjectButton);
 
     await waitFor(() => expect(openWorkspaceMock).toHaveBeenLastCalledWith({
       path: previousWorkspace.local_path,

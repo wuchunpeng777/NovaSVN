@@ -350,6 +350,10 @@ export interface SaveBranchPoolEntryRequest {
   local_changes?: number;
 }
 
+export interface SaveBranchPoolEntriesRequest {
+  entries: SaveBranchPoolEntryRequest[];
+}
+
 export interface RemoveBranchPoolEntryRequest {
   id: string;
   delete_local_copy?: boolean;

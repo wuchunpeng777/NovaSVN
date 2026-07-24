@@ -78,6 +78,7 @@ import type {
   ResolveTextConflictResult,
   ScanWorkspaceStatusRequest,
   SaveBranchPoolEntryRequest,
+  SaveBranchPoolEntriesRequest,
   SaveTaskWorkspaceRequest,
   SetWorkspaceChangelistRequest,
   SetSvnPropertyRequest,
@@ -344,6 +345,12 @@ export function saveBranchPoolEntry(
   request: SaveBranchPoolEntryRequest,
 ): Promise<BranchPool> {
   return callBackend<BranchPool>("save_branch_pool_entry", { request });
+}
+
+export function saveBranchPoolEntries(
+  request: SaveBranchPoolEntriesRequest,
+): Promise<BranchPool> {
+  return callBackend<BranchPool>("save_branch_pool_entries", { request });
 }
 
 export function removeBranchPoolEntry(

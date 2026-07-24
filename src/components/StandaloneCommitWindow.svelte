@@ -1169,9 +1169,10 @@
   }
 
   function isCommittable(file: ChangedFile) {
-    return !["normal", "missing", "conflicted", "obstructed", "unversioned", "external"].includes(
-      file.status,
-    );
+    if (["missing", "conflicted", "obstructed", "unversioned", "external"].includes(file.status)) {
+      return false;
+    }
+    return file.property_changed || !["normal", "none"].includes(file.status);
   }
 
   function isVisibleFile(file: ChangedFile) {
@@ -1214,7 +1215,13 @@
       property_modified: "属性修改",
       unversioned: "未版本控制",
     };
-    return labels[file.status] ?? file.status;
+    const textStatus = labels[file.status] ?? file.status;
+    if (!file.property_changed) {
+      return textStatus;
+    }
+    return ["normal", "none", "property_modified"].includes(file.status)
+      ? "属性修改"
+      : `${textStatus} + 属性`;
   }
 
   function logKind(message: string) {

@@ -307,14 +307,10 @@
   }
 
   function isRevertableFile(file: ChangedFile) {
-    return ![
-      "normal",
-      "none",
-      "unversioned",
-      "external",
-      "ignored",
-      "obstructed",
-    ].includes(file.status);
+    if (["unversioned", "external", "ignored", "obstructed"].includes(file.status)) {
+      return false;
+    }
+    return file.property_changed || !["normal", "none"].includes(file.status);
   }
 
   function isPathInTarget(path: string) {
@@ -338,7 +334,13 @@
       missing: "缺失",
       conflicted: "冲突",
     };
-    return labels[file.status] ?? file.status;
+    const textStatus = labels[file.status] ?? file.status;
+    if (!file.property_changed) {
+      return textStatus;
+    }
+    return ["normal", "none", "property_modified"].includes(file.status)
+      ? "属性修改"
+      : `${textStatus} + 属性`;
   }
 
   function taskStatusLabel() {

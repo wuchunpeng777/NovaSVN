@@ -125,6 +125,30 @@ describe("LogMergeDialog", () => {
     expect(cancelTaskMock).toHaveBeenCalledWith("merge-preview");
   });
 
+  it("取消 dry-run 后保持取消状态直到后端任务终止", async () => {
+    let pollCount = 0;
+    getTaskMock.mockImplementation(() => {
+      pollCount += 1;
+      return pollCount === 1
+        ? new Promise(() => undefined)
+        : Promise.resolve(makeTask("cancelled"));
+    });
+    cancelTaskMock.mockResolvedValue(makeTask("running"));
+    renderDialog();
+    await inspectPath("C:\\target");
+    await fireEvent.click(screen.getByRole("button", { name: "预览 Merge" }));
+    await waitFor(() => expect(createMergeTaskMock).toHaveBeenCalledOnce());
+    await waitFor(() => expect(getTaskMock).toHaveBeenCalledOnce());
+
+    await fireEvent.click(screen.getByRole("button", { name: "取消任务" }));
+
+    expect(cancelTaskMock).toHaveBeenCalledWith("merge-preview");
+    expect(screen.getByRole("button", { name: "正在取消" })).toBeDisabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "关闭" })).toBeEnabled());
+    expect(screen.getByText("cancelled")).toBeInTheDocument();
+    expect(screen.queryByRole("alert", { name: "命令错误" })).not.toBeInTheDocument();
+  });
+
   it("拒绝不同仓库和来源工作副本本身", async () => {
     inspectUpdateTargetMock.mockResolvedValueOnce(
       makeTarget({ repository_root: "https://other.example.com/svn" }),

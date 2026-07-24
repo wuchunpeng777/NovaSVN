@@ -3190,11 +3190,17 @@
             <Plus size={15} strokeWidth={2} aria-hidden="true" />
           </button>
         </div>
+        {#if branchPoolError}
+          <p class="source-project-error" role="alert" title={branchPoolError.detail ?? branchPoolError.message}>
+            {branchPoolError.message}
+          </p>
+        {/if}
         {#if !workspace || !currentWorkspaceListed}
           <button
             type="button"
             class="source-item workspace-source-item"
             class:active={workspace !== null}
+            disabled={workspaceLoading || branchPoolLoading}
             on:click={() => onSelectView("changes")}
           >
             <span class="source-icon" aria-hidden="true">
@@ -3264,6 +3270,7 @@
                 type="button"
                 class="source-item workspace-source-item project-source-button"
                 class:active={sameWorkspacePath(entry.local_path, workspace?.local_path ?? "")}
+                disabled={workspaceLoading || branchPoolLoading}
                 on:keydown={(event) => handleBranchPoolDragKeydown(event, entry.id)}
                 on:click={() => openWorkspaceEntryFromClick(entry)}
               >

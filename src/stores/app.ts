@@ -58,6 +58,7 @@ import {
   reorderBranchPoolEntries,
   removeTaskWorkspace,
   scanWorkspaceStatus,
+  saveBranchPoolEntries,
   saveBranchPoolEntry,
   setSvnProperty,
   saveTaskWorkspace,
@@ -1324,6 +1325,53 @@ function createBranchPoolStore() {
     }
   }
 
+  async function saveExistingManyNow(
+    entries: Array<Parameters<typeof saveExistingNow>[0]>,
+  ) {
+    for (const entry of entries) {
+      const localPathError = validateAbsoluteOrHomePath(entry.localPath, "本地路径");
+      if (localPathError) {
+        update((state) => ({
+          ...state,
+          formErrors: {
+            ...state.formErrors,
+            localPath: localPathError,
+          },
+          checkoutError: localPathError,
+        }));
+        return null;
+      }
+    }
+
+    update((state) => ({ ...state, loading: true, error: null }));
+
+    try {
+      const pool = await saveBranchPoolEntries({
+        entries: entries.map((entry) => ({
+          branch_url: entry.branchUrl,
+          local_path: entry.localPath,
+          revision: entry.revision || undefined,
+          local_changes: entry.localChanges,
+        })),
+      });
+      update((state) => ({
+        ...state,
+        pool,
+        loading: false,
+        error: null,
+        checkoutError: null,
+      }));
+      return pool;
+    } catch (error) {
+      update((state) => ({
+        ...state,
+        loading: false,
+        error: error as CommandError,
+      }));
+      return null;
+    }
+  }
+
   async function reorderNow(entryIds: string[]) {
     const previousPool = get({ subscribe }).pool;
     if (
@@ -1479,6 +1527,10 @@ function createBranchPoolStore() {
     return enqueue(() => saveExistingNow(entry));
   }
 
+  function saveExistingMany(entries: Array<Parameters<typeof saveExistingNow>[0]>) {
+    return enqueue(() => saveExistingManyNow(entries));
+  }
+
   function remove(entry: BranchPoolEntry, deleteLocalCopy = false) {
     return enqueue(() => removeNow(entry, deleteLocalCopy));
   }
@@ -1502,6 +1554,7 @@ function createBranchPoolStore() {
     useBranchUrl,
     applyBasePath,
     saveExisting,
+    saveExistingMany,
     remove,
     reorder,
     rename,

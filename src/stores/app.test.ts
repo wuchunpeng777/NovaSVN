@@ -42,6 +42,7 @@ vi.mock("../lib/api", () => ({
   reorderBranchPoolEntries: vi.fn(),
   removeTaskWorkspace: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
+  saveBranchPoolEntries: vi.fn(),
   saveBranchPoolEntry: vi.fn(),
   saveTaskWorkspace: vi.fn(),
   setSvnProperty: vi.fn(),
@@ -90,6 +91,7 @@ import {
   reorderBranchPoolEntries,
   removeTaskWorkspace,
   scanWorkspaceStatus,
+  saveBranchPoolEntries,
   saveBranchPoolEntry,
   saveTaskWorkspace,
   setSvnProperty,
@@ -161,6 +163,7 @@ const renameBranchPoolEntryMock = vi.mocked(renameBranchPoolEntry);
 const reorderBranchPoolEntriesMock = vi.mocked(reorderBranchPoolEntries);
 const removeTaskWorkspaceMock = vi.mocked(removeTaskWorkspace);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
+const saveBranchPoolEntriesMock = vi.mocked(saveBranchPoolEntries);
 const saveBranchPoolEntryMock = vi.mocked(saveBranchPoolEntry);
 const saveTaskWorkspaceMock = vi.mocked(saveTaskWorkspace);
 const setSvnPropertyMock = vi.mocked(setSvnProperty);
@@ -206,6 +209,7 @@ beforeEach(() => {
   reorderBranchPoolEntriesMock.mockReset();
   removeTaskWorkspaceMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
+  saveBranchPoolEntriesMock.mockReset();
   saveBranchPoolEntryMock.mockReset();
   saveTaskWorkspaceMock.mockReset();
   setSvnPropertyMock.mockReset();
@@ -425,6 +429,45 @@ describe("branchPoolStore ordering and display names", () => {
       "first",
       "second",
     ]);
+  });
+
+  it("persists multiple projects in one batch", async () => {
+    getBranchPoolMock.mockResolvedValue({ entries: [] });
+    await branchPoolStore.load();
+    saveBranchPoolEntriesMock.mockResolvedValue({ entries: [first, second] });
+
+    const pool = await branchPoolStore.saveExistingMany([
+      {
+        branchUrl: first.branch_url,
+        localPath: first.local_path,
+        revision: first.revision,
+        localChanges: first.local_changes,
+      },
+      {
+        branchUrl: second.branch_url,
+        localPath: second.local_path,
+        revision: second.revision,
+        localChanges: second.local_changes,
+      },
+    ]);
+
+    expect(saveBranchPoolEntriesMock).toHaveBeenCalledWith({
+      entries: [
+        {
+          branch_url: first.branch_url,
+          local_path: first.local_path,
+          revision: first.revision,
+          local_changes: first.local_changes,
+        },
+        {
+          branch_url: second.branch_url,
+          local_path: second.local_path,
+          revision: second.revision,
+          local_changes: second.local_changes,
+        },
+      ],
+    });
+    expect(pool?.entries.map((entry) => entry.id)).toEqual(["first", "second"]);
   });
 });
 

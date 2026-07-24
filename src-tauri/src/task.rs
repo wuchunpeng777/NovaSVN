@@ -5463,9 +5463,10 @@ fn build_merge_preview(
     root: &Path,
 ) -> Result<(MergePreviewSession, MergeOutputAnalysis), NovaError> {
     append_task_log(state, task_id, "正在计算目标工作副本快照");
-    let snapshot_digest = merge_preview::workspace_snapshot_digest(&payload.svn_executable, root)?;
+    let snapshot_digest =
+        merge_preview_snapshot_digest(state, task_id, &payload.svn_executable, root)?;
     let (copy_root, target_relative_path) =
-        merge_preview_copy_context(&payload.svn_executable, root)?;
+        merge_preview_copy_context_for_task(state, task_id, &payload.svn_executable, root)?;
     let app = payload.app.as_ref().ok_or_else(|| {
         NovaError::command(
             "MERGE_PREVIEW_APP_MISSING",
@@ -5477,13 +5478,16 @@ fn build_merge_preview(
     let session_directory = merge_preview::prepare_session_dir(app, preview_id, &copy_root)?;
     let work_directory = session_directory.join("work");
     append_task_log(state, task_id, "正在复制目标工作副本到隔离预览目录");
-    merge_preview::copy_working_copy(&copy_root, &work_directory)?;
+    merge_preview::copy_working_copy_with_cancel(&copy_root, &work_directory, || {
+        task_cancellation_requested(state, task_id)
+    })?;
     let preview_target = if target_relative_path.as_os_str().is_empty() {
         work_directory.clone()
     } else {
         work_directory.join(&target_relative_path)
     };
-    let verified_digest = merge_preview::workspace_snapshot_digest(&payload.svn_executable, root)?;
+    let verified_digest =
+        merge_preview_snapshot_digest(state, task_id, &payload.svn_executable, root)?;
     if verified_digest != snapshot_digest {
         return Err(merge_preview_stale_error());
     }
@@ -5501,7 +5505,12 @@ fn build_merge_preview(
     }
     let dry_paths = merge_output_path_entries(&dry_output.analysis, &preview_target);
     for path in dry_paths.keys() {
-        let _ = merge_preview::save_original_file(&session_directory, &preview_target, path)?;
+        let _ = merge_preview::save_original_file_with_cancel(
+            &session_directory,
+            &preview_target,
+            path,
+            || task_cancellation_requested(state, task_id),
+        )?;
     }
 
     append_task_log(state, task_id, "正在隔离工作副本中执行 Merge");
@@ -5520,7 +5529,12 @@ fn build_merge_preview(
     let mut paths = dry_paths;
     for (path, value) in merge_output_path_entries(&output.analysis, &preview_target) {
         if !paths.contains_key(&path) {
-            let _ = merge_preview::save_original_file(&session_directory, root, &path)?;
+            let _ = merge_preview::save_original_file_with_cancel(
+                &session_directory,
+                root,
+                &path,
+                || task_cancellation_requested(state, task_id),
+            )?;
         }
         paths
             .entry(path)
@@ -5530,6 +5544,14 @@ fn build_merge_preview(
     let mut files = paths
         .into_iter()
         .map(|(path, status)| {
+            if task_cancellation_requested(state, task_id) {
+                return Err(NovaError::command(
+                    "MERGE_PREVIEW_CANCELLED",
+                    "Merge 预览已取消",
+                    None,
+                    true,
+                ));
+            }
             merge_preview::inspect_preview_file(
                 &session_directory,
                 &preview_target,
@@ -5541,7 +5563,8 @@ fn build_merge_preview(
         })
         .collect::<Result<Vec<_>, _>>()?;
     files.sort_by(|left, right| left.path.cmp(&right.path));
-    let final_digest = merge_preview::workspace_snapshot_digest(&payload.svn_executable, root)?;
+    let final_digest =
+        merge_preview_snapshot_digest(state, task_id, &payload.svn_executable, root)?;
     if final_digest != snapshot_digest {
         return Err(merge_preview_stale_error());
     }
@@ -5573,25 +5596,80 @@ fn build_merge_preview(
     Ok((session, output.analysis))
 }
 
+fn merge_preview_snapshot_digest(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    executable: &str,
+    root: &Path,
+) -> Result<String, NovaError> {
+    merge_preview::workspace_snapshot_digest_with(
+        executable,
+        root,
+        |command| run_task_command(state, task_id, command),
+        || task_cancellation_requested(state, task_id),
+    )
+}
+
+fn task_cancellation_requested(state: &Arc<Mutex<TaskQueueState>>, task_id: &str) -> bool {
+    state
+        .lock()
+        .expect("任务队列锁已损坏")
+        .cancellation_requested
+        .contains(task_id)
+}
+
+fn merge_preview_copy_context_for_task(
+    state: &Arc<Mutex<TaskQueueState>>,
+    task_id: &str,
+    executable: &str,
+    target: &Path,
+) -> Result<(PathBuf, PathBuf), NovaError> {
+    let mut command = svn::command(executable);
+    command
+        .args(["info", "--show-item", "wc-root"])
+        .arg(target)
+        .current_dir(target);
+    let output = run_task_command(state, task_id, &mut command).map_err(|error| {
+        NovaError::command(
+            "MERGE_PREVIEW_WORKSPACE_INFO_FAILED",
+            "无法定位 Merge 目标所属的工作副本",
+            Some(format!(
+                "无法执行 `{executable} info --show-item wc-root`：{error}"
+            )),
+            true,
+        )
+    })?;
+    resolve_merge_preview_copy_context(executable, target, output)
+}
+
+#[cfg(test)]
 fn merge_preview_copy_context(
     executable: &str,
     target: &Path,
 ) -> Result<(PathBuf, PathBuf), NovaError> {
-    let output = svn::command(executable)
+    let mut command = svn::command(executable);
+    command
         .args(["info", "--show-item", "wc-root"])
         .arg(target)
-        .current_dir(target)
-        .output()
-        .map_err(|error| {
-            NovaError::command(
-                "MERGE_PREVIEW_WORKSPACE_INFO_FAILED",
-                "无法定位 Merge 目标所属的工作副本",
-                Some(format!(
-                    "无法执行 `{executable} info --show-item wc-root`：{error}"
-                )),
-                true,
-            )
-        })?;
+        .current_dir(target);
+    let output = command.output().map_err(|error| {
+        NovaError::command(
+            "MERGE_PREVIEW_WORKSPACE_INFO_FAILED",
+            "无法定位 Merge 目标所属的工作副本",
+            Some(format!(
+                "无法执行 `{executable} info --show-item wc-root`：{error}"
+            )),
+            true,
+        )
+    })?;
+    resolve_merge_preview_copy_context(executable, target, output)
+}
+
+fn resolve_merge_preview_copy_context(
+    executable: &str,
+    target: &Path,
+    output: Output,
+) -> Result<(PathBuf, PathBuf), NovaError> {
     if !output.status.success() {
         return Err(NovaError::command(
             "MERGE_PREVIEW_WORKSPACE_INFO_FAILED",

@@ -1,7 +1,8 @@
 use std::{
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
+    process::{Command, Output},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -282,15 +283,29 @@ pub fn read_preview_file(
 }
 
 pub fn workspace_snapshot_digest(executable: &str, root: &Path) -> Result<String, NovaError> {
+    workspace_snapshot_digest_with(executable, root, |command| command.output(), || false)
+}
+
+pub fn workspace_snapshot_digest_with<RunCommand, ShouldCancel>(
+    executable: &str,
+    root: &Path,
+    mut run_command: RunCommand,
+    should_cancel: ShouldCancel,
+) -> Result<String, NovaError>
+where
+    RunCommand: FnMut(&mut Command) -> std::io::Result<Output>,
+    ShouldCancel: Fn() -> bool,
+{
     let mut hasher = Sha256::new();
     for arguments in [
         vec!["status", "--xml", "--no-ignore"],
         vec!["info", "--show-item", "url"],
         vec!["info", "--show-item", "revision"],
     ] {
+        ensure_preview_not_cancelled(&should_cancel)?;
         let mut command = svn::command(executable);
         command.args(arguments).arg(root).current_dir(root);
-        let output = command.output().map_err(|error| {
+        let output = run_command(&mut command).map_err(|error| {
             NovaError::command(
                 "MERGE_PREVIEW_SNAPSHOT_FAILED",
                 "无法读取 Merge 目标快照",
@@ -308,11 +323,23 @@ pub fn workspace_snapshot_digest(executable: &str, root: &Path) -> Result<String
         }
         hasher.update(&output.stdout);
     }
-    hash_workspace_tree(root, root, &mut hasher)?;
+    hash_workspace_tree(root, root, &mut hasher, &should_cancel)?;
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+#[cfg(test)]
 pub fn copy_working_copy(source: &Path, destination: &Path) -> Result<(), NovaError> {
+    copy_working_copy_with_cancel(source, destination, || false)
+}
+
+pub fn copy_working_copy_with_cancel<ShouldCancel>(
+    source: &Path,
+    destination: &Path,
+    should_cancel: ShouldCancel,
+) -> Result<(), NovaError>
+where
+    ShouldCancel: Fn() -> bool,
+{
     if destination.exists() {
         return Err(NovaError::command(
             "MERGE_PREVIEW_COPY_TARGET_EXISTS",
@@ -321,14 +348,28 @@ pub fn copy_working_copy(source: &Path, destination: &Path) -> Result<(), NovaEr
             true,
         ));
     }
-    copy_tree(source, destination)
+    copy_tree(source, destination, &should_cancel)
 }
 
+#[cfg(test)]
 pub fn save_original_file(
     session_directory: &Path,
     work_directory: &Path,
     relative_path: &str,
 ) -> Result<(bool, u64), NovaError> {
+    save_original_file_with_cancel(session_directory, work_directory, relative_path, || false)
+}
+
+pub fn save_original_file_with_cancel<ShouldCancel>(
+    session_directory: &Path,
+    work_directory: &Path,
+    relative_path: &str,
+    should_cancel: ShouldCancel,
+) -> Result<(bool, u64), NovaError>
+where
+    ShouldCancel: Fn() -> bool,
+{
+    ensure_preview_not_cancelled(&should_cancel)?;
     let relative = safe_relative_path(relative_path)?;
     let source = work_directory.join(&relative);
     if !source.is_file() {
@@ -345,18 +386,16 @@ pub fn save_original_file(
             )
         })?;
     }
-    fs::copy(&source, &destination).map_err(|error| {
+    let metadata = source.metadata().map_err(|error| {
         io_error(
             "MERGE_PREVIEW_ORIGINAL_COPY_FAILED",
-            "无法保存 Merge 前文件",
+            "无法读取 Merge 前文件",
             &source,
             error,
         )
     })?;
-    Ok((
-        true,
-        source.metadata().map(|value| value.len()).unwrap_or(0),
-    ))
+    copy_file(&source, &destination, &metadata, &should_cancel)?;
+    Ok((true, metadata.len()))
 }
 
 pub fn inspect_preview_file(
@@ -438,11 +477,16 @@ pub fn cleanup_expired_sessions(app: &AppHandle) -> Result<(), NovaError> {
     Ok(())
 }
 
-fn hash_workspace_tree(
+fn hash_workspace_tree<ShouldCancel>(
     root: &Path,
     directory: &Path,
     hasher: &mut Sha256,
-) -> Result<(), NovaError> {
+    should_cancel: &ShouldCancel,
+) -> Result<(), NovaError>
+where
+    ShouldCancel: Fn() -> bool,
+{
+    ensure_preview_not_cancelled(should_cancel)?;
     let mut entries = fs::read_dir(directory)
         .map_err(|error| {
             io_error(
@@ -463,6 +507,7 @@ fn hash_workspace_tree(
         })?;
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
+        ensure_preview_not_cancelled(should_cancel)?;
         if entry.file_name() == ".svn" {
             continue;
         }
@@ -502,7 +547,7 @@ fn hash_workspace_tree(
             );
         } else if metadata.is_dir() {
             hasher.update(b"D");
-            hash_workspace_tree(root, &path, hasher)?;
+            hash_workspace_tree(root, &path, hasher, should_cancel)?;
         } else if metadata.is_file() {
             hasher.update(b"F");
             hasher.update(metadata.len().to_le_bytes());
@@ -516,6 +561,7 @@ fn hash_workspace_tree(
             })?;
             let mut buffer = [0_u8; 64 * 1024];
             loop {
+                ensure_preview_not_cancelled(should_cancel)?;
                 let read = file.read(&mut buffer).map_err(|error| {
                     io_error(
                         "MERGE_PREVIEW_SNAPSHOT_READ_FAILED",
@@ -534,7 +580,15 @@ fn hash_workspace_tree(
     Ok(())
 }
 
-fn copy_tree(source: &Path, destination: &Path) -> Result<(), NovaError> {
+fn copy_tree<ShouldCancel>(
+    source: &Path,
+    destination: &Path,
+    should_cancel: &ShouldCancel,
+) -> Result<(), NovaError>
+where
+    ShouldCancel: Fn() -> bool,
+{
+    ensure_preview_not_cancelled(should_cancel)?;
     let metadata = fs::symlink_metadata(source).map_err(|error| {
         io_error(
             "MERGE_PREVIEW_COPY_FAILED",
@@ -583,19 +637,94 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), NovaError> {
             })?;
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
-            copy_tree(&entry.path(), &destination.join(entry.file_name()))?;
+            copy_tree(
+                &entry.path(),
+                &destination.join(entry.file_name()),
+                should_cancel,
+            )?;
         }
         return Ok(());
     }
     if metadata.is_file() {
-        fs::copy(source, destination).map_err(|error| {
+        copy_file(source, destination, &metadata, should_cancel)?;
+    }
+    Ok(())
+}
+
+fn copy_file<ShouldCancel>(
+    source: &Path,
+    destination: &Path,
+    metadata: &fs::Metadata,
+    should_cancel: &ShouldCancel,
+) -> Result<(), NovaError>
+where
+    ShouldCancel: Fn() -> bool,
+{
+    let mut reader = fs::File::open(source).map_err(|error| {
+        io_error(
+            "MERGE_PREVIEW_COPY_FAILED",
+            "无法读取 Merge 目标文件",
+            source,
+            error,
+        )
+    })?;
+    let mut writer = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(destination)
+        .map_err(|error| {
             io_error(
                 "MERGE_PREVIEW_COPY_FAILED",
-                "无法复制 Merge 目标文件",
+                "无法创建 Merge 预览文件",
+                destination,
+                error,
+            )
+        })?;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        ensure_preview_not_cancelled(should_cancel)?;
+        let read = reader.read(&mut buffer).map_err(|error| {
+            io_error(
+                "MERGE_PREVIEW_COPY_FAILED",
+                "无法读取 Merge 目标文件",
                 source,
                 error,
             )
         })?;
+        if read == 0 {
+            break;
+        }
+        writer.write_all(&buffer[..read]).map_err(|error| {
+            io_error(
+                "MERGE_PREVIEW_COPY_FAILED",
+                "无法写入 Merge 预览文件",
+                destination,
+                error,
+            )
+        })?;
+    }
+    fs::set_permissions(destination, metadata.permissions()).map_err(|error| {
+        io_error(
+            "MERGE_PREVIEW_COPY_FAILED",
+            "无法设置 Merge 预览文件权限",
+            destination,
+            error,
+        )
+    })?;
+    Ok(())
+}
+
+fn ensure_preview_not_cancelled<ShouldCancel>(should_cancel: &ShouldCancel) -> Result<(), NovaError>
+where
+    ShouldCancel: Fn() -> bool,
+{
+    if should_cancel() {
+        return Err(NovaError::command(
+            "MERGE_PREVIEW_CANCELLED",
+            "Merge 预览已取消",
+            None,
+            true,
+        ));
     }
     Ok(())
 }
@@ -782,6 +911,7 @@ fn io_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     fn test_directory(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -843,6 +973,30 @@ mod tests {
         assert!(text.original_exists && text.modified_exists);
         assert!(binary.binary);
 
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn stops_copying_working_copy_when_cancellation_is_requested() {
+        let root = test_directory("cancel-copy");
+        let source = root.join("source");
+        let destination = root.join("destination");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("large.bin"), vec![7_u8; 256 * 1024]).unwrap();
+        let checks = Cell::new(0_u32);
+
+        let error = copy_working_copy_with_cancel(&source, &destination, || {
+            let next = checks.get() + 1;
+            checks.set(next);
+            next >= 3
+        })
+        .expect_err("copy should stop after cancellation");
+
+        assert!(matches!(
+            error,
+            NovaError::Command { ref code, .. } if code == "MERGE_PREVIEW_CANCELLED"
+        ));
+        assert!(checks.get() >= 3);
         fs::remove_dir_all(root).ok();
     }
 }

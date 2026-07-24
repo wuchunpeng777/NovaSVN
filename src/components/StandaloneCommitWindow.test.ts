@@ -239,6 +239,40 @@ describe("StandaloneCommitWindow", () => {
     expect(metrics).toHaveTextContent("总提交量 100 B");
   });
 
+  it("展示并提交文件夹的 SVN 属性变更", async () => {
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({
+        files: [
+          makeFile("src", "normal", {
+            property_status: "modified",
+            property_changed: true,
+            file_size: null,
+          }),
+        ],
+        total: 1,
+        returned: 1,
+        local_changes: 1,
+        property_changed: 1,
+      }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    const pane = await screen.findByLabelText("选择提交文件");
+    expect(await within(pane).findByText("src")).toBeInTheDocument();
+    expect(within(pane).getByText("属性修改")).toBeInTheDocument();
+    expect(within(pane).getByRole("checkbox", { name: "src" })).toBeChecked();
+
+    await fireEvent.click(screen.getByRole("button", { name: "提交 1 个文件" }));
+    await waitFor(() => {
+      expect(createCommitTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        message: "",
+        files: ["src"],
+        svn_executable: undefined,
+      });
+    });
+  });
+
   it("按 Changelist 分组文件并支持分组勾选", async () => {
     scanWorkspaceStatusMock.mockResolvedValue(
       makeStatus({

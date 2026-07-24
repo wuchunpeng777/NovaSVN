@@ -104,6 +104,40 @@ describe("StandaloneRevertWindow", () => {
     });
   });
 
+  it("展示并 Revert 文件夹的 SVN 属性变更", async () => {
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus([
+        makeFile("src", "normal", {
+          property_status: "modified",
+          property_changed: true,
+          file_size: null,
+        }),
+      ]),
+    );
+    render(StandaloneRevertWindow, { props: { targetPath: "C:\\repo\\src" } });
+
+    const pane = await screen.findByLabelText("选择 Revert 项目");
+    expect(await within(pane).findByText("src")).toBeInTheDocument();
+    expect(within(pane).getByText("属性修改")).toBeInTheDocument();
+    expect(within(pane).getByRole("checkbox", { name: "src" })).toBeChecked();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Revert 1 个项目" }));
+    await fireEvent.click(
+      within(screen.getByRole("dialog", { name: "确认 Revert" })).getByRole("button", {
+        name: "确认 Revert",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(createSvnBatchOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "revert_paths",
+        file_paths: ["src"],
+        svn_executable: undefined,
+      });
+    });
+  });
+
   it("空闲时 Escape 关闭窗口，确认框打开时只关闭确认框", async () => {
     render(StandaloneRevertWindow, { props: { targetPath: "C:\\repo\\src" } });
     const pane = await screen.findByLabelText("选择 Revert 项目");
@@ -159,7 +193,7 @@ function makeStatus(files: ChangedFile[]): WorkingCopyStatus {
   };
 }
 
-function makeFile(path: string, status: string): ChangedFile {
+function makeFile(path: string, status: string, overrides: Partial<ChangedFile> = {}): ChangedFile {
   return {
     path,
     status,
@@ -176,5 +210,6 @@ function makeFile(path: string, status: string): ChangedFile {
     conflict_kind: null,
     file_size: 100,
     content_digest: `${path}-digest`,
+    ...overrides,
   };
 }

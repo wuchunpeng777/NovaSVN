@@ -122,6 +122,7 @@
   let conflictResolutionError: CommandError | null = null;
   let svnOperationFeedback: SvnOperationFeedback | null = null;
   let changelistRunning = false;
+  let workspaceAdding = false;
   let svnOperationFeedbackTimer: ReturnType<typeof window.setTimeout> | null = null;
   let inlineUpdateRoot: string | null = null;
   let inlineUpdateTaskId: string | null = null;
@@ -1326,28 +1327,38 @@
   }
 
   async function addWorkspaceCopy() {
-    const previousWorkspace = $workspaceStore.current;
-    const previousStatus = $workspaceStore.status;
-    const workspace = await workspaceStore.chooseAndOpen(currentSvnExecutable());
-    if (!workspace) {
+    if (workspaceAdding) {
       return;
     }
+    workspaceAdding = true;
+    const previousWorkspace = $workspaceStore.current;
+    const previousStatus = $workspaceStore.status;
+    try {
+      const workspace = await workspaceStore.chooseAndOpen(currentSvnExecutable());
+      if (!workspace) {
+        return;
+      }
 
-    if (previousWorkspace) {
-      await branchPoolStore.saveExisting({
-        branchUrl: previousWorkspace.repository_url,
-        localPath: previousWorkspace.local_path,
-        revision: previousStatus?.revision_range ?? previousWorkspace.revision,
-        localChanges: previousStatus?.total ?? 0,
-      });
+      await branchPoolStore.saveExistingMany([
+        ...(previousWorkspace
+          ? [{
+              branchUrl: previousWorkspace.repository_url,
+              localPath: previousWorkspace.local_path,
+              revision: previousStatus?.revision_range ?? previousWorkspace.revision,
+              localChanges: previousStatus?.total ?? 0,
+            }]
+          : []),
+        {
+          branchUrl: workspace.repository_url,
+          localPath: workspace.local_path,
+          revision: $workspaceStore.status?.revision_range ?? workspace.revision,
+          localChanges: $workspaceStore.status?.total ?? 0,
+        },
+      ]);
+      setCurrentView("changes");
+    } finally {
+      workspaceAdding = false;
     }
-    await branchPoolStore.saveExisting({
-      branchUrl: workspace.repository_url,
-      localPath: workspace.local_path,
-      revision: $workspaceStore.status?.revision_range ?? workspace.revision,
-      localChanges: $workspaceStore.status?.total ?? 0,
-    });
-    setCurrentView("changes");
   }
 
   async function removeBranchPoolEntry(entryId: string, deleteLocalCopy = false) {
@@ -2808,7 +2819,7 @@
   view={activeView}
   workspace={$workspaceStore.current}
   workspacePathInput={$workspaceStore.pathInput}
-  workspaceLoading={$workspaceStore.loading}
+  workspaceLoading={$workspaceStore.loading || workspaceAdding}
   workspaceError={$workspaceStore.error}
   workingCopyStatus={$workspaceStore.status}
   workspaceFileTree={$workspaceStore.fileTree}

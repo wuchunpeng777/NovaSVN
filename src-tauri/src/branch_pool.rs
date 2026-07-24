@@ -39,6 +39,11 @@ pub struct SaveBranchPoolEntryRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct SaveBranchPoolEntriesRequest {
+    pub entries: Vec<SaveBranchPoolEntryRequest>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct RemoveBranchPoolEntryRequest {
     pub id: String,
     pub delete_local_copy: Option<bool>,
@@ -84,39 +89,83 @@ pub fn save_branch_pool_entry(
     app: &AppHandle,
     request: SaveBranchPoolEntryRequest,
 ) -> Result<BranchPool, NovaError> {
-    let branch_url = normalize_branch_url(&request.branch_url)?;
-    let local_path = normalize_local_path(&request.local_path)?;
-    let revision = normalize_revision(request.revision.as_deref())?;
+    save_branch_pool_entries(
+        app,
+        SaveBranchPoolEntriesRequest {
+            entries: vec![request],
+        },
+    )
+}
+
+pub fn save_branch_pool_entries(
+    app: &AppHandle,
+    request: SaveBranchPoolEntriesRequest,
+) -> Result<BranchPool, NovaError> {
+    let entries = request
+        .entries
+        .into_iter()
+        .map(|entry| {
+            Ok((
+                normalize_branch_url(&entry.branch_url)?,
+                normalize_local_path(&entry.local_path)?,
+                normalize_revision(entry.revision.as_deref())?,
+                entry.local_changes.unwrap_or_default(),
+            ))
+        })
+        .collect::<Result<Vec<_>, NovaError>>()?;
     let _mutation_guard = BRANCH_POOL_MUTATION_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let mut pool = read_branch_pool(app)?;
     let now = timestamp_millis();
-    let id = entry_id(&branch_url, &local_path);
-    let local_changes = request.local_changes.unwrap_or_default();
+    for (branch_url, local_path, revision, local_changes) in entries {
+        upsert_branch_pool_entry(
+            &mut pool,
+            branch_url,
+            local_path,
+            revision,
+            local_changes,
+            now,
+        );
+    }
 
-    if let Some(entry) = pool.entries.iter_mut().find(|entry| entry.id == id) {
+    write_branch_pool(app, &pool)?;
+    Ok(pool)
+}
+
+fn upsert_branch_pool_entry(
+    pool: &mut BranchPool,
+    branch_url: String,
+    local_path: String,
+    revision: String,
+    local_changes: usize,
+    now: u64,
+) {
+    if let Some(entry) = pool
+        .entries
+        .iter_mut()
+        .find(|entry| same_local_path(&entry.local_path, &local_path))
+    {
         entry.branch_url = branch_url;
         entry.local_path = local_path;
         entry.revision = revision;
         entry.local_changes = local_changes;
         entry.updated_at = now;
-    } else {
-        pool.entries.push(BranchPoolEntry {
-            id,
-            display_name: String::new(),
-            branch_url,
-            local_path,
-            revision,
-            local_changes,
-            created_at: now,
-            updated_at: now,
-        });
+        return;
     }
 
-    write_branch_pool(app, &pool)?;
-    Ok(pool)
+    let id = entry_id(&branch_url, &local_path_identity(&local_path));
+    pool.entries.push(BranchPoolEntry {
+        id,
+        display_name: String::new(),
+        branch_url,
+        local_path,
+        revision,
+        local_changes,
+        created_at: now,
+        updated_at: now,
+    });
 }
 
 pub fn reorder_branch_pool_entries(
@@ -344,6 +393,24 @@ fn normalize_local_path(path: &str) -> Result<String, NovaError> {
     Ok(trimmed.to_string())
 }
 
+fn same_local_path(left: &str, right: &str) -> bool {
+    local_path_identity(left) == local_path_identity(right)
+}
+
+fn local_path_identity(path: &str) -> String {
+    let normalized = path.trim().replace('\\', "/");
+    let normalized = normalized.trim_end_matches('/');
+    let windows_path = normalized.starts_with("//")
+        || normalized.as_bytes().get(..3).is_some_and(|prefix| {
+            prefix[0].is_ascii_alphabetic() && prefix[1] == b':' && prefix[2] == b'/'
+        });
+    if windows_path {
+        normalized.to_ascii_lowercase()
+    } else {
+        normalized.to_string()
+    }
+}
+
 fn normalize_revision(revision: Option<&str>) -> Result<String, NovaError> {
     let Some(value) = revision.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(String::new());
@@ -462,6 +529,74 @@ mod tests {
     fn accepts_trimmed_and_empty_display_names() {
         assert_eq!(normalize_display_name("  客户项目  ").unwrap(), "客户项目");
         assert_eq!(normalize_display_name("   ").unwrap(), "");
+    }
+
+    #[test]
+    fn upserts_equivalent_windows_paths_without_creating_duplicates() {
+        let mut pool = BranchPool {
+            entries: vec![BranchPoolEntry {
+                id: "existing".to_string(),
+                display_name: "主项目".to_string(),
+                branch_url: "https://example.com/svn/trunk/old".to_string(),
+                local_path: "C:/Work/Game".to_string(),
+                revision: "10".to_string(),
+                local_changes: 1,
+                created_at: 1,
+                updated_at: 1,
+            }],
+        };
+
+        upsert_branch_pool_entry(
+            &mut pool,
+            "https://example.com/svn/trunk/new".to_string(),
+            "c:\\work\\game\\".to_string(),
+            "20".to_string(),
+            2,
+            3,
+        );
+
+        assert_eq!(pool.entries.len(), 1);
+        assert_eq!(pool.entries[0].id, "existing");
+        assert_eq!(pool.entries[0].display_name, "主项目");
+        assert_eq!(pool.entries[0].revision, "20");
+        assert_eq!(pool.entries[0].local_changes, 2);
+    }
+
+    #[test]
+    fn upserts_multiple_projects_without_dropping_existing_entries() {
+        let mut pool = BranchPool {
+            entries: vec![BranchPoolEntry {
+                id: "existing".to_string(),
+                ..branch_entry(Path::new("C:\\wc\\existing"))
+            }],
+        };
+
+        upsert_branch_pool_entry(
+            &mut pool,
+            "https://example.com/svn/trunk/first".to_string(),
+            "C:\\wc\\first".to_string(),
+            "10".to_string(),
+            0,
+            2,
+        );
+        upsert_branch_pool_entry(
+            &mut pool,
+            "https://example.com/svn/trunk/second".to_string(),
+            "C:\\wc\\second".to_string(),
+            "11".to_string(),
+            1,
+            2,
+        );
+
+        assert_eq!(pool.entries.len(), 3);
+        assert!(pool
+            .entries
+            .iter()
+            .any(|entry| entry.local_path == "C:\\wc\\first"));
+        assert!(pool
+            .entries
+            .iter()
+            .any(|entry| entry.local_path == "C:\\wc\\second"));
     }
 
     #[test]

@@ -18,7 +18,7 @@ mod workspace;
 
 use branch_pool::{
     BranchPool, RemoveBranchPoolEntryRequest, RenameBranchPoolEntryRequest,
-    ReorderBranchPoolEntriesRequest, SaveBranchPoolEntryRequest,
+    ReorderBranchPoolEntriesRequest, SaveBranchPoolEntriesRequest, SaveBranchPoolEntryRequest,
 };
 use diagnostics::DiagnosticExport;
 use diff::{GenerateSelectedPatchRequest, ParsedDiff, SelectedPatch};
@@ -846,6 +846,16 @@ fn save_branch_pool_entry(
 }
 
 #[tauri::command]
+fn save_branch_pool_entries(
+    app: tauri::AppHandle,
+    request: SaveBranchPoolEntriesRequest,
+) -> CommandResult<BranchPool> {
+    Ok(CommandResponse::success(
+        branch_pool::save_branch_pool_entries(&app, request)?,
+    ))
+}
+
+#[tauri::command]
 fn remove_branch_pool_entry(
     app: tauri::AppHandle,
     request: RemoveBranchPoolEntryRequest,
@@ -1307,6 +1317,7 @@ pub fn run() {
             create_apply_patch_task,
             get_branch_pool,
             save_branch_pool_entry,
+            save_branch_pool_entries,
             remove_branch_pool_entry,
             reorder_branch_pool_entries,
             rename_branch_pool_entry,

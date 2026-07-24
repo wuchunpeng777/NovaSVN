@@ -291,6 +291,11 @@
         schedulePoll(taskId, currentGeneration, 350);
         return;
       }
+      clearPollTimer();
+      cancelling = false;
+      if (nextTask.status === "cancelled") {
+        return;
+      }
       if (nextTask.status !== "success") {
         error = commandError(
           "LOG_MERGE_TASK_FAILED",
@@ -327,18 +332,29 @@
     if (!task || terminalStatuses.includes(task.status) || cancelling) {
       return;
     }
+    const taskId = task.task_id;
+    const currentGeneration = ++generation;
     cancelling = true;
-    cancellationRequestedTaskId = task.task_id;
+    cancellationRequestedTaskId = taskId;
+    clearPollTimer();
     try {
-      task = await cancelTask(task.task_id);
-      if (terminalStatuses.includes(task.status)) {
-        clearPollTimer();
+      const cancelledTask = await cancelTask(taskId);
+      if (currentGeneration !== generation) {
+        return;
+      }
+      task = cancelledTask;
+      if (terminalStatuses.includes(cancelledTask.status)) {
+        cancelling = false;
+      } else {
+        schedulePoll(taskId, currentGeneration, 0);
       }
     } catch (caught) {
-      cancellationRequestedTaskId = null;
-      error = normalizeCaughtError(caught, "无法取消 Merge 任务");
-    } finally {
-      cancelling = false;
+      if (currentGeneration === generation) {
+        cancellationRequestedTaskId = null;
+        cancelling = false;
+        error = normalizeCaughtError(caught, "无法取消 Merge 任务");
+        schedulePoll(taskId, currentGeneration, 350);
+      }
     }
   }
 
