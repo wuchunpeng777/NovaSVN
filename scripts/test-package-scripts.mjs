@@ -387,6 +387,7 @@ for (const [name, clsid] of windowsStateHandlers) {
 }
 
 if (
+  !nsisHooks.includes("!define MUI_FINISHPAGE_REBOOTLATER_DEFAULT") ||
   !nsisHooks.includes("$INSTDIR\\shell-extension\\novasvn_shell_extension.pending") ||
   !nsisHooks.includes("GetTempFileName $NovaSvnActiveShellExtension") ||
   !nsisHooks.includes('WriteRegStr HKCU "Software\\Classes\\CLSID\\${CLSID}\\InprocServer32" "" "$NovaSvnActiveShellExtension"') ||
