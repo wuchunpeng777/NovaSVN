@@ -63,6 +63,11 @@
     editor.updateOptions({
       renderSideBySide: !inlineMode,
       renderWhitespace: showWhitespace ? "all" : "none",
+      lineNumbersMinChars: lineNumberMinimumCharacters(
+        inlineMode,
+        originalModel,
+        modifiedModel,
+      ),
     });
   }
 
@@ -88,7 +93,11 @@
         horizontalScrollbarSize: 12,
       },
       fontSize: 12,
-      lineNumbersMinChars: 3,
+      lineNumbersMinChars: lineNumberMinimumCharacters(
+        inlineMode,
+        originalModel,
+        modifiedModel,
+      ),
       overviewRulerLanes: 0,
     });
     diffUpdateDisposable = editor.onDidUpdateDiff(updateDifferenceCount);
@@ -150,6 +159,21 @@
     editor.getModifiedEditor().focus();
   }
 
+  function lineNumberMinimumCharacters(
+    isInline: boolean,
+    original: import("monaco-editor").editor.ITextModel | null,
+    modified: import("monaco-editor").editor.ITextModel | null,
+  ) {
+    if (!isInline) {
+      return 3;
+    }
+    const largestLineNumber = Math.max(
+      original?.getLineCount() ?? 1,
+      modified?.getLineCount() ?? 1,
+    );
+    return Math.max(4, String(largestLineNumber).length + 1);
+  }
+
   function disposeModels() {
     originalModel?.dispose();
     modifiedModel?.dispose();
@@ -158,7 +182,7 @@
   }
 </script>
 
-<div class="monaco-diff-viewer" data-theme={theme}>
+<div class="monaco-diff-viewer" class:inline-mode={inlineMode} data-theme={theme}>
   <DiffNavigation
     {differenceCount}
     {currentDifference}
@@ -171,6 +195,9 @@
 
 <style>
   .monaco-diff-viewer {
+    --inline-original-line-number: #b42318;
+    --inline-modified-line-number: #18713f;
+    --inline-line-number-divider: rgba(180, 35, 24, 0.38);
     display: grid;
     grid-template-rows: 34px minmax(0, 1fr);
     min-width: 0;
@@ -182,6 +209,25 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .monaco-diff-viewer.inline-mode
+    :global(.monaco-editor.original-in-monaco-diff-editor .line-numbers) {
+    box-sizing: border-box;
+    border-right: 1px solid var(--inline-line-number-divider);
+    padding-right: 6px;
+    color: var(--inline-original-line-number);
+  }
+
+  .monaco-diff-viewer.inline-mode
+    :global(.monaco-editor.modified-in-monaco-diff-editor .line-numbers) {
+    color: var(--inline-modified-line-number);
+  }
+
+  .monaco-diff-viewer[data-theme="dark"] {
+    --inline-original-line-number: #ff8a80;
+    --inline-modified-line-number: #7ee787;
+    --inline-line-number-divider: rgba(255, 138, 128, 0.46);
   }
 
 </style>

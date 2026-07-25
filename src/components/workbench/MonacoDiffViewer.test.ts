@@ -10,7 +10,10 @@ const mocks = vi.hoisted(() => {
     focus: vi.fn(),
     getLineChanges: vi.fn(() => [{ originalStartLineNumber: 1 }, { originalStartLineNumber: 4 }]),
     onDidChangeCursorPosition: vi.fn(() => ({ dispose: vi.fn() })),
-    createModel: vi.fn(() => ({ dispose: vi.fn() })),
+    createModel: vi.fn((value: string) => ({
+      dispose: vi.fn(),
+      getLineCount: () => value.split("\n").length,
+    })),
     setModel: vi.fn(),
     updateOptions: vi.fn(),
     disposeEditor: vi.fn(),
@@ -80,5 +83,26 @@ describe("MonacoDiffViewer", () => {
     expect(mocks.goToDiff).toHaveBeenNthCalledWith(1, "next");
     expect(mocks.goToDiff).toHaveBeenNthCalledWith(2, "previous");
     expect(mocks.focus).toHaveBeenCalledTimes(2);
+  });
+
+  it("reserves a separated gutter for large inline line numbers", async () => {
+    const largeContentDiff: FileContentDiff = {
+      ...contentDiff,
+      original_text: `${"unchanged\n".repeat(10_000)}before\n`,
+      modified_text: `${"unchanged\n".repeat(10_000)}after\n`,
+    };
+    const { container } = render(MonacoDiffViewer, {
+      props: { contentDiff: largeContentDiff, inlineMode: true },
+    });
+
+    await waitFor(() => {
+      expect(mocks.updateOptions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          renderSideBySide: false,
+          lineNumbersMinChars: 6,
+        }),
+      );
+    });
+    expect(container.querySelector(".monaco-diff-viewer")).toHaveClass("inline-mode");
   });
 });
