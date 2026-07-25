@@ -388,6 +388,10 @@ for (const [name, clsid] of windowsStateHandlers) {
 
 if (
   !nsisHooks.includes("$INSTDIR\\shell-extension\\novasvn_shell_extension.dll") ||
+  !nsisHooks.includes("!macro NSIS_HOOK_PREINSTALL") ||
+  !nsisHooks.includes('"$SYSDIR\\taskkill.exe" /F /IM explorer.exe') ||
+  !nsisHooks.includes("!macro NSIS_HOOK_POSTUNINSTALL") ||
+  !nsisHooks.includes("shell32::SHChangeNotify") ||
   !nsisHooks.includes('"ThreadingModel" "Apartment"') ||
   !nsisHooks.includes('"CommandStateHandler" "${NOVASVN_ROOT_MENU_STATE_CLSID}"') ||
   !nsisHooks.includes('"CommandStateHandler" "${STATE_HANDLER}"') ||

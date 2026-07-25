@@ -2,6 +2,8 @@
 !define NOVASVN_SVN_ONLY_STATE_CLSID "{4D64F10A-B42A-45E5-9034-02F83A16F0AB}"
 !define NOVASVN_CHECKOUT_STATE_CLSID "{6A5EA9FB-A012-4F3D-BE8A-07C41CE53B1B}"
 
+Var NovaSvnRestartExplorer
+
 !macro NOVASVN_REGISTER_STATE_HANDLER CLSID LABEL
   WriteRegStr HKCU "Software\Classes\CLSID\${CLSID}" "" "${LABEL}"
   WriteRegStr HKCU "Software\Classes\CLSID\${CLSID}\InprocServer32" "" "$INSTDIR\shell-extension\novasvn_shell_extension.dll"
@@ -48,6 +50,44 @@
   DeleteRegKey HKCU "${ROOT}\NovaSVN.Ignore"
   DeleteRegKey HKCU "${ROOT}\NovaSVN.Cleanup"
   DeleteRegKey HKCU "${ROOT}\NovaSVN.BranchWorkspace"
+!macroend
+
+!macro NOVASVN_UNREGISTER_EXPLORER_INTEGRATION
+  DeleteRegKey HKCU "Software\Classes\Directory\shell\NovaSVN"
+  DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\NovaSVN"
+  DeleteRegKey HKCU "Software\Classes\*\shell\NovaSVN"
+
+  !insertmacro NOVASVN_DELETE_LEGACY_ACTIONS "Software\Classes\Directory\shell"
+  !insertmacro NOVASVN_DELETE_LEGACY_ACTIONS "Software\Classes\Directory\Background\shell"
+  !insertmacro NOVASVN_DELETE_LEGACY_ACTIONS "Software\Classes\*\shell"
+
+  DeleteRegKey HKCU "Software\Classes\CLSID\${NOVASVN_ROOT_MENU_STATE_CLSID}"
+  DeleteRegKey HKCU "Software\Classes\CLSID\${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  DeleteRegKey HKCU "Software\Classes\CLSID\${NOVASVN_CHECKOUT_STATE_CLSID}"
+!macroend
+
+!macro NOVASVN_STOP_EXPLORER_FOR_SHELL_EXTENSION
+  StrCpy $NovaSvnRestartExplorer "1"
+  Push $0
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM explorer.exe'
+  Pop $0
+  Pop $0
+  Sleep 500
+!macroend
+
+!macro NOVASVN_NOTIFY_AND_RESTART_EXPLORER
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+  StrCmp $NovaSvnRestartExplorer "1" 0 novasvn_explorer_restart_done
+  Exec '"$WINDIR\explorer.exe"'
+  novasvn_explorer_restart_done:
+!macroend
+
+!macro NSIS_HOOK_PREINSTALL
+  StrCpy $NovaSvnRestartExplorer "0"
+  IfFileExists "$INSTDIR\shell-extension\novasvn_shell_extension.dll" 0 novasvn_preinstall_done
+  !insertmacro NOVASVN_UNREGISTER_EXPLORER_INTEGRATION
+  !insertmacro NOVASVN_STOP_EXPLORER_FOR_SHELL_EXTENSION
+  novasvn_preinstall_done:
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
@@ -100,18 +140,18 @@
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\*\shell" "Update" "NovaSVN Update" "update" "%1"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\*\shell" "Commit" "NovaSVN Commit" "commit" "%1"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\*\shell" "Log" "NovaSVN Log" "log" "%1"
+
+  !insertmacro NOVASVN_NOTIFY_AND_RESTART_EXPLORER
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  DeleteRegKey HKCU "Software\Classes\Directory\shell\NovaSVN"
-  DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\NovaSVN"
-  DeleteRegKey HKCU "Software\Classes\*\shell\NovaSVN"
+  StrCpy $NovaSvnRestartExplorer "0"
+  !insertmacro NOVASVN_UNREGISTER_EXPLORER_INTEGRATION
+  IfFileExists "$INSTDIR\shell-extension\novasvn_shell_extension.dll" 0 novasvn_preuninstall_done
+  !insertmacro NOVASVN_STOP_EXPLORER_FOR_SHELL_EXTENSION
+  novasvn_preuninstall_done:
+!macroend
 
-  !insertmacro NOVASVN_DELETE_LEGACY_ACTIONS "Software\Classes\Directory\shell"
-  !insertmacro NOVASVN_DELETE_LEGACY_ACTIONS "Software\Classes\Directory\Background\shell"
-  !insertmacro NOVASVN_DELETE_LEGACY_ACTIONS "Software\Classes\*\shell"
-
-  DeleteRegKey HKCU "Software\Classes\CLSID\${NOVASVN_ROOT_MENU_STATE_CLSID}"
-  DeleteRegKey HKCU "Software\Classes\CLSID\${NOVASVN_SVN_ONLY_STATE_CLSID}"
-  DeleteRegKey HKCU "Software\Classes\CLSID\${NOVASVN_CHECKOUT_STATE_CLSID}"
+!macro NSIS_HOOK_POSTUNINSTALL
+  !insertmacro NOVASVN_NOTIFY_AND_RESTART_EXPLORER
 !macroend
