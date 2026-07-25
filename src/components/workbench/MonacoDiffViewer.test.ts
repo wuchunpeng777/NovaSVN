@@ -85,11 +85,11 @@ describe("MonacoDiffViewer", () => {
     expect(mocks.focus).toHaveBeenCalledTimes(2);
   });
 
-  it("reserves a separated gutter for large inline line numbers", async () => {
+  it("reserves two characters of separation for large inline line numbers", async () => {
     const largeContentDiff: FileContentDiff = {
       ...contentDiff,
-      original_text: `${"unchanged\n".repeat(10_000)}before\n`,
-      modified_text: `${"unchanged\n".repeat(10_000)}after\n`,
+      original_text: `${"unchanged\n".repeat(1_000)}before\n`,
+      modified_text: `${"unchanged\n".repeat(1_000)}after\n`,
     };
     const { container } = render(MonacoDiffViewer, {
       props: { contentDiff: largeContentDiff, inlineMode: true },
