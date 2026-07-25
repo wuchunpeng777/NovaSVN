@@ -45,6 +45,7 @@
   import SyntaxHighlightedCode from "../SyntaxHighlightedCode.svelte";
   import { getRevisionFileContentDiff } from "../../lib/api";
   import { detectSvnAuthenticationFailure } from "../../lib/svn-authentication";
+  import { buildPropertyContentDiff } from "../../lib/svn-property-diff";
   import {
     findSvnCertificateFailure,
     svnCertificateFailureLabel,
@@ -298,6 +299,8 @@
   export let selectedFileParsedDiff: ParsedFileDiff | null = null;
   export let selectedHunkIds: string[] = [];
   export let selectedPatch: { text: string; file_count: number; hunk_count: number } | null = null;
+  let selectedPropertyContentDiff: FileContentDiff | null = null;
+  $: selectedPropertyContentDiff = buildPropertyContentDiff(selectedFileDiff);
   export let svnBlame: SvnBlame | null = null;
   export let svnBlameLoading = false;
   export let svnBlameError: CommandError | null = null;
@@ -3702,6 +3705,7 @@
             sourceWorkingCopyRoot={workspace.working_copy_root}
             revisions={selectedTimelineMergeRevisions}
             svnExecutable={svnExecutableInput.trim() || undefined}
+            theme={resolvedTheme}
             onClose={closeTimelineMergeDialog}
             onMerged={() => {
               timelineMergeDialogOpen = false;
@@ -6016,9 +6020,16 @@
                 <ErrorNotice error={contentDiffError} />
               {:else if diffError}
                 <ErrorNotice error={diffError} />
-              {:else if selectedFileContentDiff && !selectedFileContentDiff.binary}
+              {:else if selectedFileContentDiff && !selectedFileContentDiff.binary && selectedFileContentDiff.original_text !== selectedFileContentDiff.modified_text}
                 <MonacoDiffViewer
                   contentDiff={selectedFileContentDiff}
+                  inlineMode={diffInline}
+                  showWhitespace={showWhitespace}
+                  theme={resolvedTheme}
+                />
+              {:else if selectedPropertyContentDiff}
+                <MonacoDiffViewer
+                  contentDiff={selectedPropertyContentDiff}
                   inlineMode={diffInline}
                   showWhitespace={showWhitespace}
                   theme={resolvedTheme}

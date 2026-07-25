@@ -64,6 +64,8 @@ pub struct ScanWorkspaceStatusRequest {
     pub working_copy_root: String,
     pub scope_path: Option<String>,
     pub include_content_digests: Option<bool>,
+    pub include_revision_summary: Option<bool>,
+    pub include_unversioned: Option<bool>,
     pub svn_executable: Option<String>,
     pub offset: Option<usize>,
     pub limit: Option<usize>,
@@ -1606,10 +1608,11 @@ pub fn scan_workspace_status(
     }
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
+    let include_unversioned = request.include_unversioned.unwrap_or(true);
     let output = if request.check_remote_updates.unwrap_or(true) {
-        run_status_with_updates(&executable, &status_path)?
+        run_status_with_updates(&executable, &status_path, include_unversioned)?
     } else {
-        run_status_without_updates(&executable, &status_path)?
+        run_status_without_updates(&executable, &status_path, include_unversioned)?
     };
 
     if !output.status.success() {
@@ -1621,7 +1624,11 @@ pub fn scan_workspace_status(
         ));
     }
 
-    let revision_summary = read_workspace_revision_summary(&executable, &status_path);
+    let revision_summary = if request.include_revision_summary.unwrap_or(true) {
+        read_workspace_revision_summary(&executable, &status_path)
+    } else {
+        RevisionSummary::default()
+    };
     let xml = String::from_utf8_lossy(&output.stdout);
     parse_svn_status_xml(
         &xml,
@@ -1726,6 +1733,8 @@ pub fn list_workspace_files(
         working_copy_root: path.display().to_string(),
         scope_path: None,
         include_content_digests: None,
+        include_revision_summary: None,
+        include_unversioned: None,
         svn_executable: Some(executable.clone()),
         offset: Some(0),
         limit: Some(5000),
@@ -1800,49 +1809,53 @@ pub fn get_workspace_path_sizes(
 fn run_status_with_updates(
     executable: &str,
     path: &Path,
+    include_unversioned: bool,
 ) -> Result<std::process::Output, NovaError> {
-    let output = svn::command(executable)
-        .args(["status", "--xml", "--show-updates"])
-        .arg(path)
-        .output()
-        .map_err(|error| {
-            NovaError::command(
-                "SVN_STATUS_FAILED",
-                "无法扫描工作副本状态",
-                Some(format!(
-                    "执行 `{executable} status --xml --show-updates {}` 失败：{error}",
-                    path.display()
-                )),
-                true,
-            )
-        })?;
+    let mut command = svn::command(executable);
+    command.args(["status", "--xml", "--show-updates"]);
+    if !include_unversioned {
+        command.arg("--quiet");
+    }
+    let output = command.arg(path).output().map_err(|error| {
+        NovaError::command(
+            "SVN_STATUS_FAILED",
+            "无法扫描工作副本状态",
+            Some(format!(
+                "执行 `{executable} status --xml --show-updates {}` 失败：{error}",
+                path.display()
+            )),
+            true,
+        )
+    })?;
 
     if output.status.success() {
         return Ok(output);
     }
 
-    run_status_without_updates(executable, path)
+    run_status_without_updates(executable, path, include_unversioned)
 }
 
 fn run_status_without_updates(
     executable: &str,
     path: &Path,
+    include_unversioned: bool,
 ) -> Result<std::process::Output, NovaError> {
-    svn::command(executable)
-        .args(["status", "--xml"])
-        .arg(path)
-        .output()
-        .map_err(|error| {
-            NovaError::command(
-                "SVN_STATUS_FAILED",
-                "无法扫描工作副本状态",
-                Some(format!(
-                    "执行 `{executable} status --xml {}` 失败：{error}",
-                    path.display()
-                )),
-                true,
-            )
-        })
+    let mut command = svn::command(executable);
+    command.args(["status", "--xml"]);
+    if !include_unversioned {
+        command.arg("--quiet");
+    }
+    command.arg(path).output().map_err(|error| {
+        NovaError::command(
+            "SVN_STATUS_FAILED",
+            "无法扫描工作副本状态",
+            Some(format!(
+                "执行 `{executable} status --xml {}` 失败：{error}",
+                path.display()
+            )),
+            true,
+        )
+    })
 }
 
 fn read_versioned_workspace_paths(
@@ -4555,6 +4568,8 @@ mod tests {
             working_copy_root: working_copy.display().to_string(),
             scope_path: None,
             include_content_digests: Some(false),
+            include_revision_summary: None,
+            include_unversioned: None,
             svn_executable: None,
             offset: Some(0),
             limit: Some(100),
@@ -4578,6 +4593,8 @@ mod tests {
             working_copy_root: working_copy.display().to_string(),
             scope_path: None,
             include_content_digests: Some(false),
+            include_revision_summary: None,
+            include_unversioned: None,
             svn_executable: None,
             offset: Some(0),
             limit: Some(100),
@@ -5734,6 +5751,8 @@ line two</property>
             working_copy_root: local_working_copy.display().to_string(),
             scope_path: None,
             include_content_digests: None,
+            include_revision_summary: None,
+            include_unversioned: None,
             svn_executable: None,
             offset: Some(0),
             limit: Some(100),
@@ -6166,6 +6185,8 @@ line two</property>
             working_copy_root: working_copy.display().to_string(),
             scope_path: None,
             include_content_digests: None,
+            include_revision_summary: None,
+            include_unversioned: None,
             svn_executable: None,
             offset: Some(0),
             limit: Some(100),

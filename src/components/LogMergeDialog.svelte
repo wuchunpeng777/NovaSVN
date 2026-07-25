@@ -1,33 +1,43 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { CircleCheck, FolderOpen, LoaderCircle, RefreshCw, Square, X } from "@lucide/svelte";
+  import { CircleCheck, FolderOpen, GitMergeConflict, LoaderCircle, RefreshCw, Square, X } from "@lucide/svelte";
   import {
     cancelTask,
     chooseWorkspaceDirectory,
     createMergeTask,
+    createSvnOperationTask,
+    getFileContentDiff,
     getFileDiff,
     getTask,
     inspectUpdateTarget,
+    launchConflictWindow,
     launchMergePreviewWindow,
     scanWorkspaceStatus,
   } from "../lib/api";
+  import { LOG_FILE_DIFF_MAX_BYTES } from "../lib/svn-log";
+  import { buildPropertyContentDiff } from "../lib/svn-property-diff";
   import type {
     ChangedFile,
     CommandError,
+    FileContentDiff,
     FileDiff,
     MergeResult,
+    SvnOperationKind,
     Task,
     TaskStatus,
     UpdateTargetSummary,
     WorkingCopyStatus,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
+  import RawDiffViewer from "./workbench/RawDiffViewer.svelte";
 
   export let sourceUrl: string;
   export let sourceRepositoryRoot: string;
   export let sourceWorkingCopyRoot: string | null = null;
   export let revisions: string[];
   export let svnExecutable: string | undefined = undefined;
+  export let theme: "light" | "dark" = "light";
   export let onClose: () => void = () => {};
   export let onMerged: (workingCopyRoot: string) => void = () => {};
 
@@ -50,8 +60,14 @@
   let reviewError: CommandError | null = null;
   let selectedReviewPath: string | null = null;
   let selectedReviewDiff: FileDiff | null = null;
+  let selectedReviewContentDiff: FileContentDiff | null = null;
+  let selectedPropertyContentDiff: FileContentDiff | null = null;
   let reviewDiffLoading = false;
   let reviewGeneration = 0;
+  let reviewFilter: "all" | "conflicts" = "all";
+  let resolutionTask: Task | null = null;
+  let resolutionPath: string | null = null;
+  let resolutionPollTimer: number | null = null;
 
   const terminalStatuses: TaskStatus[] = [
     "success",
@@ -64,7 +80,16 @@
   $: mergeResult = task?.result?.merge_result ?? null;
   $: directMergeFinished =
     operation === "apply" && task !== null && terminalStatuses.includes(task.status);
+  $: directMergeSucceeded = operation === "apply" && task?.status === "success";
   $: targetDirty = (targetStatus?.total ?? 0) > 0;
+  $: reviewConflictCount = (postMergeStatus?.files ?? []).filter(isReviewConflicted).length;
+  $: reviewFiles = (postMergeStatus?.files ?? []).filter(
+    (file) => reviewFilter === "all" || isReviewConflicted(file),
+  );
+  $: selectedReviewFile =
+    postMergeStatus?.files.find((file) => file.path === selectedReviewPath) ?? null;
+  $: selectedPropertyContentDiff = buildPropertyContentDiff(selectedReviewDiff);
+  $: resolutionRunning = resolutionTask !== null && !terminalStatuses.includes(resolutionTask.status);
   $: revisionSummary = revisions.length <= 20
     ? revisions.map((revision) => `r${revision}`).join("、")
     : `${revisions.slice(0, 20).map((revision) => `r${revision}`).join("、")} 等 ${revisions.length} 个`;
@@ -78,11 +103,15 @@
   onDestroy(() => {
     generation += 1;
     clearPollTimer();
+    clearResolutionPollTimer();
     window.removeEventListener("keydown", handleWindowKeydown);
     const runningTaskId = taskRunning ? task?.task_id : null;
     if (runningTaskId && cancellationRequestedTaskId !== runningTaskId) {
       cancellationRequestedTaskId = runningTaskId;
       void cancelTask(runningTaskId).catch(() => undefined);
+    }
+    if (resolutionRunning && resolutionTask) {
+      void cancelTask(resolutionTask.task_id).catch(() => undefined);
     }
   });
 
@@ -100,16 +129,19 @@
     closing = true;
     generation += 1;
     clearPollTimer();
+    clearResolutionPollTimer();
     const runningTaskId = taskRunning ? task?.task_id : null;
     if (runningTaskId && cancellationRequestedTaskId !== runningTaskId) {
       cancellationRequestedTaskId = runningTaskId;
       void cancelTask(runningTaskId).catch(() => undefined);
     }
-    if (directMergeFinished && target) {
-      onMerged(target.target_path);
-    } else {
-      onClose();
+    if (resolutionRunning && resolutionTask) {
+      void cancelTask(resolutionTask.task_id).catch(() => undefined);
     }
+    if (directMergeSucceeded && target) {
+      onMerged(target.target_path);
+    }
+    onClose();
   }
 
   function commandError(
@@ -150,7 +182,11 @@
     reviewError = null;
     selectedReviewPath = null;
     selectedReviewDiff = null;
+    selectedReviewContentDiff = null;
     reviewDiffLoading = false;
+    reviewFilter = "all";
+    resolutionTask = null;
+    resolutionPath = null;
   }
 
   function updateTargetPath(value: string) {
@@ -266,6 +302,7 @@
     reviewError = null;
     selectedReviewPath = null;
     selectedReviewDiff = null;
+    selectedReviewContentDiff = null;
     if (dryRun) {
       previewComplete = false;
     }
@@ -372,9 +409,10 @@
     reviewGeneration += 1;
     reviewLoading = true;
     reviewError = null;
+    const previousReviewPath = selectedReviewPath;
     postMergeStatus = null;
-    selectedReviewPath = null;
     selectedReviewDiff = null;
+    selectedReviewContentDiff = null;
     try {
       const status = await scanWorkspaceStatus({
         working_copy_root: target.working_copy_root,
@@ -388,7 +426,12 @@
         return;
       }
       postMergeStatus = status;
-      const firstFile = status.files[0];
+      const firstFile = status.files.find(
+        (file) =>
+          file.path === previousReviewPath &&
+          (reviewFilter === "all" || isReviewConflicted(file)),
+      )
+        ?? status.files.find((file) => reviewFilter === "all" || isReviewConflicted(file));
       if (firstFile) {
         await loadReviewDiff(firstFile);
       }
@@ -410,16 +453,26 @@
     const currentReviewGeneration = ++reviewGeneration;
     selectedReviewPath = file.path;
     selectedReviewDiff = null;
+    selectedReviewContentDiff = null;
     reviewDiffLoading = true;
     reviewError = null;
     try {
-      const diff = await getFileDiff({
+      const request = {
         working_copy_root: target.working_copy_root,
         file_path: file.path,
         svn_executable: svnExecutable?.trim() || undefined,
-      });
+      };
+      const [diffResult, contentResult] = await Promise.allSettled([
+        getFileDiff(request),
+        getFileContentDiff({ ...request, max_bytes: LOG_FILE_DIFF_MAX_BYTES }),
+      ]);
       if (currentReviewGeneration === reviewGeneration) {
-        selectedReviewDiff = diff;
+        selectedReviewDiff = diffResult.status === "fulfilled" ? diffResult.value : null;
+        selectedReviewContentDiff =
+          contentResult.status === "fulfilled" ? contentResult.value : null;
+        if (diffResult.status === "rejected" && contentResult.status === "rejected") {
+          reviewError = normalizeCaughtError(contentResult.reason, "无法读取文件 Diff");
+        }
       }
     } catch (caught) {
       if (currentReviewGeneration === reviewGeneration) {
@@ -429,6 +482,116 @@
       if (currentReviewGeneration === reviewGeneration) {
         reviewDiffLoading = false;
       }
+    }
+  }
+
+  function applyReviewFilter(filter: "all" | "conflicts") {
+    reviewFilter = filter;
+    const files = (postMergeStatus?.files ?? []).filter(
+      (file) => filter === "all" || isReviewConflicted(file),
+    );
+    const selectedStillVisible = files.find((file) => file.path === selectedReviewPath);
+    if (selectedStillVisible) {
+      return;
+    }
+    const firstFile = files[0];
+    if (firstFile) {
+      void loadReviewDiff(firstFile);
+    } else {
+      selectedReviewPath = null;
+      selectedReviewDiff = null;
+      selectedReviewContentDiff = null;
+    }
+  }
+
+  function isReviewConflicted(file: ChangedFile) {
+    return file.status === "conflicted" || Boolean(file.conflict_kind);
+  }
+
+  async function openSelectedConflict() {
+    if (!target || !selectedReviewFile || !isReviewConflicted(selectedReviewFile)) {
+      return;
+    }
+    reviewError = null;
+    try {
+      const root = target.working_copy_root.replace(/[\\/]+$/, "");
+      const relativePath = selectedReviewFile.path.replaceAll("/", "\\").replace(/^[\\/]+/, "");
+      await launchConflictWindow({ target_path: `${root}\\${relativePath}` });
+    } catch (caught) {
+      reviewError = normalizeCaughtError(caught, "无法打开冲突编辑器");
+    }
+  }
+
+  async function resolveSelectedConflict(kind: SvnOperationKind) {
+    if (!target || !selectedReviewFile || !isReviewConflicted(selectedReviewFile) || resolutionRunning) {
+      return;
+    }
+    if (
+      kind !== "resolve_working" &&
+      !window.confirm(
+        `${kind === "resolve_mine_full" ? "采用我的完整版本" : "采用仓库完整版本"}处理冲突吗？\n${selectedReviewFile.path}`,
+      )
+    ) {
+      return;
+    }
+    reviewError = null;
+    resolutionPath = selectedReviewFile.path;
+    try {
+      resolutionTask = await createSvnOperationTask({
+        working_copy_root: target.working_copy_root,
+        kind,
+        file_path: selectedReviewFile.path,
+        svn_executable: svnExecutable?.trim() || undefined,
+      });
+      scheduleResolutionPoll(resolutionTask.task_id, generation, 0);
+    } catch (caught) {
+      resolutionTask = null;
+      resolutionPath = null;
+      reviewError = normalizeCaughtError(caught, "冲突处理失败");
+    }
+  }
+
+  function scheduleResolutionPoll(taskId: string, currentGeneration: number, delay: number) {
+    clearResolutionPollTimer();
+    resolutionPollTimer = window.setTimeout(
+      () => void pollResolutionTask(taskId, currentGeneration),
+      delay,
+    );
+  }
+
+  async function pollResolutionTask(taskId: string, currentGeneration: number) {
+    try {
+      const nextTask = await getTask(taskId);
+      if (currentGeneration !== generation) {
+        return;
+      }
+      resolutionTask = nextTask;
+      if (!terminalStatuses.includes(nextTask.status)) {
+        scheduleResolutionPoll(taskId, currentGeneration, 350);
+        return;
+      }
+      clearResolutionPollTimer();
+      if (nextTask.status === "success") {
+        await refreshPostMergeReview(currentGeneration);
+      } else {
+        reviewError = commandError(
+          "LOG_MERGE_RESOLVE_FAILED",
+          "冲突处理失败",
+          nextTask.error ?? undefined,
+        );
+      }
+      resolutionPath = null;
+    } catch (caught) {
+      if (currentGeneration === generation) {
+        reviewError = normalizeCaughtError(caught, "无法读取冲突处理任务状态");
+      }
+    }
+  }
+
+  function clearResolutionPollTimer() {
+    if (resolutionPollTimer !== null) {
+      window.clearTimeout(resolutionPollTimer);
+      resolutionPollTimer = null;
     }
   }
 
@@ -504,6 +667,7 @@
     bind:this={dialogElement}
     class="merge-dialog"
     class:reviewing={directMergeFinished}
+    data-theme={theme}
     role="dialog"
     aria-modal="true"
     aria-label="Merge 选中 Revision"
@@ -511,7 +675,7 @@
   >
     <header>
       <div>
-        <h2>Merge 选中 Revision</h2>
+        <h2>{directMergeFinished ? "Merge 结果" : "Merge 选中 Revision"}</h2>
         <p title={sourceUrl}>{sourceUrl}</p>
       </div>
       <button
@@ -607,7 +771,10 @@
             <span><strong>{mergeResult.deleted}</strong> 删除</span>
             <span class:conflicted={mergeResult.conflicted > 0}><strong>{mergeResult.conflicted}</strong> 冲突</span>
           </div>
-          <pre>{mergeResult.output_text || "svn merge 没有输出。"}</pre>
+          <details class="merge-output">
+            <summary>SVN 输出</summary>
+            <pre>{mergeResult.output_text || "svn merge 没有输出。"}</pre>
+          </details>
         </section>
       {/if}
 
@@ -615,7 +782,7 @@
         <section class="post-merge-review" aria-label="Merge 后检查">
           <header>
             <div>
-              <strong>工作副本状态与 Diff</strong>
+              <strong>改动审查</strong>
               <span>
                 {targetDirty
                   ? "包含 Merge 前已有的本地改动"
@@ -645,42 +812,105 @@
               <span><strong>{postMergeStatus.modified}</strong> 修改</span>
               <span><strong>{postMergeStatus.added}</strong> 新增</span>
               <span><strong>{postMergeStatus.deleted}</strong> 删除</span>
-              <span class:conflicted={postMergeStatus.conflicted > 0}>
-                <strong>{postMergeStatus.conflicted}</strong> 冲突
+              <span class:conflicted={reviewConflictCount > 0}>
+                <strong>{reviewConflictCount}</strong> 冲突
               </span>
             </div>
             {#if postMergeStatus.files.length > 0}
               <div class="review-layout">
-                <nav class="review-files" aria-label="Merge 后本地改动">
-                  {#each postMergeStatus.files as file (file.path)}
+                <aside class="review-file-pane">
+                  <div class="review-filters" role="tablist" aria-label="改动文件筛选">
                     <button
                       type="button"
-                      class:selected={selectedReviewPath === file.path}
-                      aria-pressed={selectedReviewPath === file.path}
-                      title={file.path}
-                      on:click={() => loadReviewDiff(file)}
+                      role="tab"
+                      aria-selected={reviewFilter === "all"}
+                      class:active={reviewFilter === "all"}
+                      on:click={() => applyReviewFilter("all")}
                     >
-                      <span class="file-status">{statusLabel(file.status)}</span>
-                      <span>{file.path}</span>
+                      全部 {postMergeStatus.files.length}
                     </button>
-                  {/each}
-                  {#if postMergeStatus.returned < postMergeStatus.total}
-                    <p>仅显示前 {postMergeStatus.returned} 项，共 {postMergeStatus.total} 项。</p>
-                  {/if}
-                </nav>
-                <div class="review-diff" aria-label="Merge 后文件 Diff">
-                  {#if reviewDiffLoading}
-                    <div class="review-empty" role="status">
-                      <LoaderCircle class="spinning" size={18} aria-hidden="true" /> 正在读取 Diff...
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={reviewFilter === "conflicts"}
+                      class:active={reviewFilter === "conflicts"}
+                      class:has-conflicts={reviewConflictCount > 0}
+                      on:click={() => applyReviewFilter("conflicts")}
+                    >
+                      冲突 {reviewConflictCount}
+                    </button>
+                  </div>
+                  <nav class="review-files" aria-label="Merge 后本地改动">
+                    {#each reviewFiles as file (file.path)}
+                      <button
+                        type="button"
+                        class:selected={selectedReviewPath === file.path}
+                        class:conflicted={isReviewConflicted(file)}
+                        aria-pressed={selectedReviewPath === file.path}
+                        aria-label={`${statusLabel(file.status)} ${file.path}`}
+                        title={file.path}
+                        on:click={() => loadReviewDiff(file)}
+                      >
+                        <span class="file-status">{isReviewConflicted(file) ? "冲突" : statusLabel(file.status)}</span>
+                        <span>{file.path}</span>
+                      </button>
+                    {:else}
+                      <div class="review-empty compact">当前没有冲突文件</div>
+                    {/each}
+                    {#if postMergeStatus.returned < postMergeStatus.total}
+                      <p>仅显示前 {postMergeStatus.returned} 项，共 {postMergeStatus.total} 项。</p>
+                    {/if}
+                  </nav>
+                </aside>
+                <section class="review-diff" aria-label="Merge 后文件 Diff">
+                  <header class="review-diff-header">
+                    <div>
+                      <strong>{selectedReviewFile ? statusLabel(selectedReviewFile.status) : "Diff"}</strong>
+                      <span title={selectedReviewPath ?? undefined}>{selectedReviewPath ?? "请选择左侧文件"}</span>
                     </div>
-                  {:else if selectedReviewDiff?.binary}
-                    <div class="review-empty">二进制文件无法显示文本 Diff</div>
-                  {:else if selectedReviewDiff?.text}
-                    <pre>{selectedReviewDiff.text}</pre>
-                  {:else}
-                    <div class="review-empty">没有可显示的文本 Diff</div>
-                  {/if}
-                </div>
+                    {#if selectedReviewFile && isReviewConflicted(selectedReviewFile)}
+                      <div class="conflict-actions" aria-label="冲突处理操作">
+                        <button type="button" disabled={resolutionRunning} on:click={openSelectedConflict}>
+                          <GitMergeConflict size={15} aria-hidden="true" /> 编辑冲突
+                        </button>
+                        <button type="button" disabled={resolutionRunning} on:click={() => resolveSelectedConflict("resolve_working")}>
+                          标记已解决
+                        </button>
+                        <button type="button" disabled={resolutionRunning} on:click={() => resolveSelectedConflict("resolve_mine_full")}>
+                          采用我的
+                        </button>
+                        <button type="button" disabled={resolutionRunning} on:click={() => resolveSelectedConflict("resolve_theirs_full")}>
+                          采用仓库
+                        </button>
+                      </div>
+                    {/if}
+                  </header>
+                  <div class="review-diff-content">
+                    {#if resolutionRunning && resolutionPath === selectedReviewPath}
+                      <div class="review-action-progress" role="status">
+                        <LoaderCircle class="spinning" size={16} aria-hidden="true" />
+                        正在处理冲突...
+                      </div>
+                    {/if}
+                    {#if reviewDiffLoading}
+                      <div class="review-empty" role="status">
+                        <LoaderCircle class="spinning" size={18} aria-hidden="true" /> 正在读取 Diff...
+                      </div>
+                    {:else if selectedReviewContentDiff?.binary || selectedReviewDiff?.binary}
+                      <div class="review-empty">二进制文件无法显示文本 Diff</div>
+                    {:else if selectedReviewContentDiff?.too_large}
+                      <div class="review-empty">文件内容过大，无法在窗口中预览</div>
+                    {:else if selectedReviewContentDiff && selectedReviewContentDiff.original_text !== selectedReviewContentDiff.modified_text}
+                      <MonacoDiffViewer contentDiff={selectedReviewContentDiff} theme={theme} />
+                    {:else if selectedPropertyContentDiff}
+                      <MonacoDiffViewer contentDiff={selectedPropertyContentDiff} theme={theme} />
+                    {:else if selectedReviewDiff?.text}
+                      <RawDiffViewer text={selectedReviewDiff.text} theme={theme} />
+                    {:else}
+                      <div class="review-empty">没有可显示的文本 Diff</div>
+                    {/if}
+                  </div>
+                </section>
               </div>
             {:else}
               <div class="review-empty">工作副本当前没有本地改动</div>
@@ -747,6 +977,8 @@
 
   .merge-dialog.reviewing {
     width: min(1080px, calc(100vw - 32px));
+    height: min(820px, calc(100vh - 32px));
+    max-height: calc(100vh - 32px);
   }
 
   .merge-dialog > header,
@@ -791,6 +1023,16 @@
     min-height: 0;
     overflow: auto;
     padding: 14px;
+  }
+
+  .merge-dialog.reviewing .merge-dialog-body {
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: stretch;
+    overflow: hidden;
+  }
+
+  .merge-dialog.reviewing :is(.revision-selection, .target-label, .target-input-row, .target-summary, .task-status) {
+    display: none;
   }
 
   .revision-selection,
@@ -918,10 +1160,21 @@
     color: #a12f2b;
   }
 
-  .merge-result > pre {
+  .merge-output {
+    margin: 8px 10px 10px;
+    color: var(--secondary);
+    font-size: 11px;
+  }
+
+  .merge-output summary {
+    width: max-content;
+    cursor: pointer;
+  }
+
+  .merge-output pre {
     max-height: 210px;
     overflow: auto;
-    margin: 9px 10px 10px;
+    margin: 7px 0 0;
     border: 1px solid var(--border);
     border-radius: 5px;
     background: var(--panel);
@@ -933,6 +1186,8 @@
   }
 
   .post-merge-review {
+    display: flex;
+    flex-direction: column;
     min-height: 0;
     overflow: hidden;
     border: 1px solid var(--border);
@@ -986,15 +1241,54 @@
 
   .review-layout {
     display: grid;
-    grid-template-columns: minmax(220px, 32%) minmax(0, 1fr);
-    height: min(360px, 42vh);
-    min-height: 260px;
+    grid-template-columns: minmax(240px, 30%) minmax(0, 1fr);
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .review-file-pane {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    border-right: 1px solid var(--border);
+    background: var(--panel);
+  }
+
+  .review-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px;
+    padding: 6px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel-subtle);
+  }
+
+  .review-filters button {
+    min-width: 0;
+    min-height: 29px;
+    border-color: transparent;
+    background: transparent;
+    padding: 4px 8px;
+    color: var(--secondary);
+    font-size: 11px;
+  }
+
+  .review-filters button.active {
+    border-color: var(--border);
+    background: var(--panel);
+    color: var(--text);
+  }
+
+  .review-filters button.has-conflicts {
+    color: #a12f2b;
   }
 
   .review-files {
     min-width: 0;
+    min-height: 0;
     overflow: auto;
-    border-right: 1px solid var(--border);
     background: var(--panel);
   }
 
@@ -1015,6 +1309,11 @@
   .review-files > button:hover,
   .review-files > button.selected {
     background: var(--panel-subtle);
+  }
+
+  .review-files > button.conflicted .file-status {
+    border-color: #bd514b;
+    color: #a12f2b;
   }
 
   .review-files > button > span:last-child {
@@ -1040,25 +1339,86 @@
   }
 
   .review-diff {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
     min-width: 0;
     min-height: 0;
     overflow: hidden;
     background: var(--panel);
   }
 
-  .review-diff pre {
+  .review-diff-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 44px;
+    border-bottom: 1px solid var(--border);
+    padding: 6px 9px;
+  }
+
+  .review-diff-header > div:first-child {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .review-diff-header span {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--secondary);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .conflict-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 5px;
+  }
+
+  .conflict-actions button {
+    min-height: 28px;
+    padding: 4px 7px;
+    font-size: 11px;
+  }
+
+  .conflict-actions button:first-child {
+    border-color: #bd514b;
+    color: #a12f2b;
+  }
+
+  .review-diff-content {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .review-diff-content :global(.monaco-diff-viewer),
+  .review-diff-content :global(.raw-diff-viewer) {
     width: 100%;
     height: 100%;
-    overflow: auto;
-    box-sizing: border-box;
-    margin: 0;
-    border: 0;
+  }
+
+  .review-action-progress {
+    position: absolute;
+    z-index: 2;
+    top: 7px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
     background: var(--panel);
-    padding: 10px 12px;
-    font-family: "SFMono-Regular", Consolas, monospace;
+    padding: 5px 8px;
+    color: var(--secondary);
     font-size: 11px;
-    line-height: 1.45;
-    white-space: pre;
   }
 
   .review-empty {
@@ -1071,6 +1431,11 @@
     color: var(--secondary);
     font-size: 12px;
     text-align: center;
+  }
+
+  .review-empty.compact {
+    min-height: 90px;
+    padding: 12px;
   }
 
   .merge-dialog > footer {
@@ -1121,6 +1486,12 @@
       max-height: calc(100vh - 16px);
     }
 
+    .merge-dialog.reviewing {
+      width: calc(100vw - 16px);
+      height: calc(100vh - 16px);
+      max-height: calc(100vh - 16px);
+    }
+
     .target-input-row {
       grid-template-columns: minmax(0, 1fr) 32px;
     }
@@ -1132,12 +1503,20 @@
     .review-layout {
       grid-template-columns: 1fr;
       grid-template-rows: minmax(140px, 40%) minmax(180px, 1fr);
-      height: min(480px, 60vh);
     }
 
-    .review-files {
+    .review-file-pane {
       border-right: 0;
       border-bottom: 1px solid var(--border);
+    }
+
+    .review-diff-header {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .conflict-actions {
+      justify-content: flex-start;
     }
   }
 </style>

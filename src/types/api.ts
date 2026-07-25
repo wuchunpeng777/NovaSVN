@@ -636,6 +636,8 @@ export interface ScanWorkspaceStatusRequest {
   working_copy_root: string;
   scope_path?: string;
   include_content_digests?: boolean;
+  include_revision_summary?: boolean;
+  include_unversioned?: boolean;
   svn_executable?: string;
   offset?: number;
   limit?: number;

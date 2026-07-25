@@ -1,13 +1,26 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("./workbench/MonacoDiffViewer.svelte", () => ({
+  default: vi.fn().mockImplementation((internals) => ({
+    c: vi.fn(),
+    m: vi.fn(),
+    p: vi.fn(),
+    d: vi.fn(),
+    ...internals,
+  })),
+}));
+
 vi.mock("../lib/api", () => ({
   cancelTask: vi.fn(),
   chooseWorkspaceDirectory: vi.fn(),
   createMergeTask: vi.fn(),
+  createSvnOperationTask: vi.fn(),
+  getFileContentDiff: vi.fn(),
   getFileDiff: vi.fn(),
   getTask: vi.fn(),
   inspectUpdateTarget: vi.fn(),
+  launchConflictWindow: vi.fn(),
   launchMergePreviewWindow: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
 }));
@@ -15,9 +28,12 @@ vi.mock("../lib/api", () => ({
 import {
   cancelTask,
   createMergeTask,
+  createSvnOperationTask,
+  getFileContentDiff,
   getFileDiff,
   getTask,
   inspectUpdateTarget,
+  launchConflictWindow,
   launchMergePreviewWindow,
   scanWorkspaceStatus,
 } from "../lib/api";
@@ -30,24 +46,41 @@ import type {
 import LogMergeDialog from "./LogMergeDialog.svelte";
 
 const createMergeTaskMock = vi.mocked(createMergeTask);
+const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
+const getFileContentDiffMock = vi.mocked(getFileContentDiff);
 const getFileDiffMock = vi.mocked(getFileDiff);
 const cancelTaskMock = vi.mocked(cancelTask);
 const getTaskMock = vi.mocked(getTask);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
+const launchConflictWindowMock = vi.mocked(launchConflictWindow);
 const launchMergePreviewWindowMock = vi.mocked(launchMergePreviewWindow);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(() => {
   cancelTaskMock.mockReset();
   createMergeTaskMock.mockReset();
+  createSvnOperationTaskMock.mockReset();
+  getFileContentDiffMock.mockReset();
   getFileDiffMock.mockReset();
   getTaskMock.mockReset();
   inspectUpdateTargetMock.mockReset();
+  launchConflictWindowMock.mockReset();
   launchMergePreviewWindowMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
   inspectUpdateTargetMock.mockResolvedValue(makeTarget());
   scanWorkspaceStatusMock.mockResolvedValue(makeStatus());
   createMergeTaskMock.mockResolvedValue(makeTask("pending"));
+  createSvnOperationTaskMock.mockResolvedValue(makeTask("pending", null, "resolve-1"));
+  getFileContentDiffMock.mockResolvedValue({
+    path: "src/main.ts",
+    node_kind: "file",
+    original_text: "before",
+    modified_text: "after",
+    language: "typescript",
+    binary: false,
+    too_large: false,
+    max_bytes: 20 * 1024 * 1024,
+  });
   getFileDiffMock.mockResolvedValue({
     path: "src/main.ts",
     node_kind: "file",
@@ -58,6 +91,7 @@ beforeEach(() => {
   cancelTaskMock.mockResolvedValue(makeTask("cancelled"));
   getTaskMock.mockResolvedValue(makeTask("success", makeMergeResult(true)));
   launchMergePreviewWindowMock.mockResolvedValue({ preview_id: "a".repeat(64) });
+  launchConflictWindowMock.mockResolvedValue({ target_path: "C:\\target\\src\\main.ts" });
 });
 
 afterEach(() => {
@@ -200,6 +234,7 @@ describe("LogMergeDialog", () => {
 
   it("允许脏工作副本直接 Merge，并展示合并后的状态和 Diff", async () => {
     const onMerged = vi.fn();
+    const onClose = vi.fn();
     const initialStatus = makeStatus({ total: 2, local_changes: 2, modified: 2 });
     const postMergeStatus = makeStatus({
       total: 3,
@@ -215,7 +250,7 @@ describe("LogMergeDialog", () => {
     createMergeTaskMock.mockResolvedValueOnce(makeTask("pending", null, "merge-apply"));
     getTaskMock.mockResolvedValueOnce(makeTask("success", makeMergeResult(false), "merge-apply"));
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    renderDialog({ onMerged });
+    renderDialog({ onMerged, onClose });
     await inspectPath("C:\\target");
 
     await fireEvent.click(screen.getByRole("button", { name: "直接应用" }));
@@ -242,8 +277,51 @@ describe("LogMergeDialog", () => {
     }));
     expect(onMerged).not.toHaveBeenCalled();
 
-    await fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    await fireEvent.click(screen.getByRole("button", { name: "关闭 Merge 窗口" }));
     expect(onMerged).toHaveBeenCalledWith("C:\\target");
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("可筛选冲突文件并从结果页标记为已解决", async () => {
+    const conflictFile = makeChangedFile("src/conflict.ts", {
+      status: "conflicted",
+      abnormal: true,
+      conflict_kind: "text",
+    });
+    const postMergeStatus = makeStatus({
+      total: 2,
+      returned: 2,
+      limit: 500,
+      local_changes: 2,
+      modified: 1,
+      conflicted: 1,
+      files: [makeChangedFile("src/main.ts"), conflictFile],
+    });
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce(makeStatus())
+      .mockResolvedValueOnce(postMergeStatus)
+      .mockResolvedValueOnce(makeStatus());
+    createMergeTaskMock.mockResolvedValueOnce(makeTask("pending", null, "merge-apply"));
+    getTaskMock
+      .mockResolvedValueOnce(makeTask("success", makeMergeResult(false), "merge-apply"))
+      .mockResolvedValueOnce(makeTask("success", null, "resolve-1"));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderDialog();
+    await inspectPath("C:\\target");
+    await fireEvent.click(screen.getByRole("button", { name: "直接应用" }));
+
+    const review = await screen.findByLabelText("Merge 后检查");
+    await fireEvent.click(within(review).getByRole("tab", { name: "冲突 1" }));
+    await fireEvent.click(within(review).getByRole("button", { name: "冲突 src/conflict.ts" }));
+    await fireEvent.click(within(review).getByRole("button", { name: "标记已解决" }));
+
+    expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+      working_copy_root: "C:\\target",
+      kind: "resolve_working",
+      file_path: "src/conflict.ts",
+      svn_executable: "C:\\Tools\\svn.exe",
+    });
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(3));
   });
 
   it("显示 dry-run 发现的冲突和 SVN 输出", async () => {
@@ -342,7 +420,10 @@ function makeStatus(overrides: Partial<WorkingCopyStatus> = {}): WorkingCopyStat
   };
 }
 
-function makeChangedFile(path: string): WorkingCopyStatus["files"][number] {
+function makeChangedFile(
+  path: string,
+  overrides: Partial<WorkingCopyStatus["files"][number]> = {},
+): WorkingCopyStatus["files"][number] {
   return {
     path,
     status: "modified",
@@ -360,6 +441,7 @@ function makeChangedFile(path: string): WorkingCopyStatus["files"][number] {
     conflict_kind: null,
     file_size: 10,
     content_digest: "digest",
+    ...overrides,
   };
 }
 

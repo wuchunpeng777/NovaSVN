@@ -149,6 +149,10 @@
     try {
       const nextStatus = await scanWorkspaceStatus({
         working_copy_root: target.working_copy_root,
+        scope_path: target.relative_path ?? undefined,
+        include_content_digests: false,
+        include_revision_summary: false,
+        include_unversioned: false,
         svn_executable: svnExecutable?.trim() || undefined,
         offset: 0,
         limit: 5000,

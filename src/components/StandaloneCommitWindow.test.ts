@@ -28,6 +28,7 @@ vi.mock("../lib/api", () => ({
   getFileDiff: vi.fn(),
   getTask: vi.fn(),
   inspectUpdateTarget: vi.fn(),
+  launchConflictWindow: vi.fn(),
   launchUpdateWindow: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
   setWorkspaceChangelist: vi.fn(),
@@ -41,6 +42,7 @@ import {
   getFileDiff,
   getTask,
   inspectUpdateTarget,
+  launchConflictWindow,
   launchUpdateWindow,
   scanWorkspaceStatus,
   setWorkspaceChangelist,
@@ -55,6 +57,7 @@ const getFileContentDiffMock = vi.mocked(getFileContentDiff);
 const getFileDiffMock = vi.mocked(getFileDiff);
 const getTaskMock = vi.mocked(getTask);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
+const launchConflictWindowMock = vi.mocked(launchConflictWindow);
 const launchUpdateWindowMock = vi.mocked(launchUpdateWindow);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 const setWorkspaceChangelistMock = vi.mocked(setWorkspaceChangelist);
@@ -70,6 +73,7 @@ beforeEach(() => {
   getFileDiffMock.mockReset();
   getTaskMock.mockReset();
   inspectUpdateTargetMock.mockReset();
+  launchConflictWindowMock.mockReset();
   launchUpdateWindowMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
   setWorkspaceChangelistMock.mockReset();
@@ -95,6 +99,7 @@ beforeEach(() => {
     makeTask("pending", [], { task_id: "batch-revert-1", title: "撤销 3 个路径" }),
   );
   launchUpdateWindowMock.mockResolvedValue({ target_path: "C:\\repo" });
+  launchConflictWindowMock.mockResolvedValue({ target_path: "C:\\repo\\src\\conflict.ts" });
   getFileContentDiffMock.mockResolvedValue({
     path: "src/main.ts",
     original_text: "const value = 1;",
@@ -271,6 +276,37 @@ describe("StandaloneCommitWindow", () => {
         svn_executable: undefined,
       });
     });
+  });
+
+  it("展示冲突文件但不将其加入提交，并可打开冲突处理", async () => {
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({
+        files: [
+          makeFile("src/main.ts", "modified"),
+          makeFile("src/conflict.ts", "conflicted", {
+            abnormal: true,
+            conflict_kind: "text",
+          }),
+        ],
+        total: 2,
+        returned: 2,
+        local_changes: 2,
+        modified: 1,
+        conflicted: 1,
+      }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    const pane = await screen.findByLabelText("选择提交文件");
+    expect(await within(pane).findByText("src/conflict.ts")).toBeInTheDocument();
+    expect(within(pane).getByText("冲突")).toBeInTheDocument();
+    expect(within(pane).queryByRole("checkbox", { name: "src/conflict.ts" })).not.toBeInTheDocument();
+    await fireEvent.click(within(pane).getByRole("button", { name: "处理冲突 src/conflict.ts" }));
+
+    expect(launchConflictWindowMock).toHaveBeenCalledWith({
+      target_path: "C:\\repo\\src\\conflict.ts",
+    });
+    expect(screen.getByRole("button", { name: "提交 1 个文件" })).toBeInTheDocument();
   });
 
   it("按 Changelist 分组文件并支持分组勾选", async () => {

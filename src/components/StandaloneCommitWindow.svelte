@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { CheckSquare, History, Minus, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from "@lucide/svelte";
+  import { CheckSquare, GitMergeConflict, History, Minus, Plus, RefreshCw, RotateCcw, Square, Trash2, X } from "@lucide/svelte";
   import {
     cancelTask,
     createCommitTask,
@@ -11,6 +11,7 @@
     getFileDiff,
     getTask,
     inspectUpdateTarget,
+    launchConflictWindow,
     launchUpdateWindow,
     scanWorkspaceStatus,
     setWorkspaceChangelist,
@@ -24,6 +25,7 @@
     writeCommitMessageSettings,
   } from "../lib/commit-message-history";
   import { LOG_FILE_DIFF_MAX_BYTES } from "../lib/svn-log";
+  import { buildPropertyContentDiff } from "../lib/svn-property-diff";
   import type {
     ChangedFile,
     CommandError,
@@ -84,6 +86,7 @@
   let activeFilePath: string | null = null;
   let selectedFileDiff: FileDiff | null = null;
   let selectedFileContentDiff: FileContentDiff | null = null;
+  let selectedPropertyContentDiff: FileContentDiff | null = null;
   let diffLoading = false;
   let diffError: CommandError | null = null;
   let diffGeneration = 0;
@@ -125,7 +128,9 @@
     (file) => isCommittable(file) && isPathInCommitTarget(file.path),
   );
   $: unversionedFiles = visibleFiles.filter((file) => file.status === "unversioned");
+  $: conflictFiles = visibleFiles.filter(isConflicted);
   $: fileGroups = groupFilesByChangelist(visibleFiles);
+  $: selectedPropertyContentDiff = buildPropertyContentDiff(selectedFileDiff);
   $: selectedCount = committableFiles.filter((file) => selectedPaths.has(file.path)).length;
   $: selectedRevertableFiles = committableFiles.filter(
     (file) => selectedPaths.has(file.path) && isRevertableFile(file),
@@ -548,6 +553,20 @@
     diffLoading = false;
   }
 
+  async function openConflict(file: ChangedFile) {
+    if (!target || !isConflicted(file)) {
+      return;
+    }
+    error = null;
+    try {
+      const root = target.working_copy_root.replace(/[\\/]+$/, "");
+      const relativePath = file.path.replaceAll("/", "\\").replace(/^[\\/]+/, "");
+      await launchConflictWindow({ target_path: `${root}\\${relativePath}` });
+    } catch (caught) {
+      error = caught as CommandError;
+    }
+  }
+
   function diffPaneMaximumHeight() {
     return Math.max(180, (reviewPaneElement?.clientHeight || window.innerHeight) - 150);
   }
@@ -701,6 +720,14 @@
     closeFileContextMenu();
     if (file) {
       await addFile(file);
+    }
+  }
+
+  async function requestContextResolveConflict() {
+    const file = fileContextMenu?.file ?? null;
+    closeFileContextMenu();
+    if (file) {
+      await openConflict(file);
     }
   }
 
@@ -1169,14 +1196,18 @@
   }
 
   function isCommittable(file: ChangedFile) {
-    if (["missing", "conflicted", "obstructed", "unversioned", "external"].includes(file.status)) {
+    if (isConflicted(file) || ["missing", "obstructed", "unversioned", "external"].includes(file.status)) {
       return false;
     }
     return file.property_changed || !["normal", "none"].includes(file.status);
   }
 
   function isVisibleFile(file: ChangedFile) {
-    return isCommittable(file) || file.status === "unversioned";
+    return isCommittable(file) || file.status === "unversioned" || isConflicted(file);
+  }
+
+  function isConflicted(file: ChangedFile) {
+    return file.status === "conflicted" || Boolean(file.conflict_kind);
   }
 
   function isRevertableFile(file: ChangedFile) {
@@ -1214,7 +1245,11 @@
       replaced: "替换",
       property_modified: "属性修改",
       unversioned: "未版本控制",
+      conflicted: "冲突",
     };
+    if (isConflicted(file)) {
+      return file.conflict_kind === "property" ? "属性冲突" : "冲突";
+    }
     const textStatus = labels[file.status] ?? file.status;
     if (!file.property_changed) {
       return textStatus;
@@ -1343,7 +1378,11 @@
         <header>
           <div>
             <h2>提交文件</h2>
-            <p>{committableFiles.length} 个可提交文件{unversionedFiles.length > 0 ? ` · ${unversionedFiles.length} 个未版本控制` : ""}</p>
+            <p>
+              {committableFiles.length} 个可提交文件{conflictFiles.length > 0
+                ? ` · ${conflictFiles.length} 个冲突待处理`
+                : ""}{unversionedFiles.length > 0 ? ` · ${unversionedFiles.length} 个未版本控制` : ""}
+            </p>
           </div>
           <div class="selection-actions">
             <button
@@ -1398,6 +1437,7 @@
                   class="file-item"
                   class:active={activeFilePath === file.path}
                   class:unversioned={file.status === "unversioned"}
+                  class:conflicted={isConflicted(file)}
                   class:reverting={revertingPaths.includes(file.path)}
                   class:adding={addingPath === file.path}
                   class:deleting={deletingPath === file.path}
@@ -1427,7 +1467,17 @@
                     <span class="file-status">{statusLabel(file)}</span>
                     <span class="file-path" title={file.path}>{file.path}</span>
                   </button>
-                  {#if file.status === "unversioned"}
+                  {#if isConflicted(file)}
+                    <button
+                      type="button"
+                      class="file-conflict-action"
+                      aria-label={`处理冲突 ${file.path}`}
+                      disabled={operationRunning || scanning || initializing}
+                      on:click={() => openConflict(file)}
+                    >
+                      <GitMergeConflict size={14} aria-hidden="true" /> 处理冲突
+                    </button>
+                  {:else if file.status === "unversioned"}
                     <button
                       type="button"
                       class="file-add-action"
@@ -1518,6 +1568,13 @@
             {:else if selectedFileContentDiff && selectedFileContentDiff.original_text !== selectedFileContentDiff.modified_text}
               <MonacoDiffViewer
                 contentDiff={selectedFileContentDiff}
+                inlineMode={diffMode === "inline"}
+                {showWhitespace}
+                theme={resolvedTheme}
+              />
+            {:else if selectedPropertyContentDiff}
+              <MonacoDiffViewer
+                contentDiff={selectedPropertyContentDiff}
                 inlineMode={diffMode === "inline"}
                 {showWhitespace}
                 theme={resolvedTheme}
@@ -1619,6 +1676,11 @@
     on:click|stopPropagation
     on:keydown={handleFileContextMenuKeydown}
   >
+    {#if isConflicted(fileContextMenu.file)}
+      <button type="button" role="menuitem" on:click={requestContextResolveConflict}>
+        <GitMergeConflict size={15} aria-hidden="true" /> 处理冲突
+      </button>
+    {/if}
     {#if fileContextMenu.file.status === "added"}
       <button type="button" role="menuitem" on:click={requestContextFileUnadd}>
         <Minus size={15} aria-hidden="true" /> Unadd
@@ -1921,6 +1983,7 @@
   .file-item.reverting { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
   .file-item.adding { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
   .file-item.deleting { background: color-mix(in srgb, #b93d3d 12%, var(--panel)); }
+  .file-item.conflicted { background: color-mix(in srgb, #c64040 8%, var(--panel)); }
   .file-item input { width: 15px; height: 15px; accent-color: var(--accent); }
   .file-selection-placeholder { width: 15px; height: 15px; }
   button.file-preview-trigger { display: grid; grid-template-columns: 72px minmax(0, 1fr); justify-content: stretch; gap: 8px; width: 100%; min-height: 35px; border: 0; border-radius: 0; padding: 5px 0; background: transparent; color: var(--text); text-align: left; }
@@ -1929,6 +1992,7 @@
   .file-status { color: var(--accent); font-weight: 600; }
   .file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .file-add-action { min-height: 27px; padding: 3px 8px; }
+  .file-conflict-action { min-height: 27px; border-color: color-mix(in srgb, #c64040 55%, var(--border)); color: #a12a2a; padding: 3px 8px; }
   .diff-content { min-width: 0; min-height: 0; overflow: hidden; }
   .diff-content :global(.monaco-diff-viewer), .diff-content :global(.raw-diff-viewer) { width: 100%; height: 100%; border: 0; border-radius: 0; }
   .empty-files, .empty-diff, .empty-output { padding: 28px 16px; color: var(--secondary); text-align: center; font-size: 12px; }

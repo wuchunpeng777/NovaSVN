@@ -68,6 +68,17 @@ describe("StandaloneRevertWindow", () => {
     expect(within(pane).queryByText("src/untracked.ts")).not.toBeInTheDocument();
     expect(within(pane).queryByText("other.ts")).not.toBeInTheDocument();
     expect(within(pane).getAllByRole("checkbox")).toHaveLength(2);
+    expect(scanWorkspaceStatusMock).toHaveBeenCalledWith({
+      working_copy_root: "C:\\repo",
+      scope_path: "src",
+      include_content_digests: false,
+      include_revision_summary: false,
+      include_unversioned: false,
+      svn_executable: undefined,
+      offset: 0,
+      limit: 5000,
+      check_remote_updates: false,
+    });
 
     await fireEvent.click(screen.getByRole("button", { name: "Revert 2 个项目" }));
     const dialog = screen.getByRole("dialog", { name: "确认 Revert" });

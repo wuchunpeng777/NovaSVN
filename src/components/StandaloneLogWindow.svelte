@@ -1003,6 +1003,7 @@
       sourceWorkingCopyRoot={log.working_copy_root ?? null}
       revisions={selectedMergeRevisions}
       {svnExecutable}
+      theme={resolvedTheme}
       onClose={closeMergeDialog}
       onMerged={() => (mergeCompleted = true)}
     />
