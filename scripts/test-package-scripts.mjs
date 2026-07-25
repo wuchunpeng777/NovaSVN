@@ -360,7 +360,7 @@ if (
   packageJson.scripts?.["build:windows"] !==
     "npm run build && npm run build:windows-shell-extension" ||
   tauriWindowsConfig.build?.beforeBuildCommand !== "npm run build:windows" ||
-  windowsShellExtensionResource !== "shell-extension/novasvn_shell_extension.dll" ||
+  windowsShellExtensionResource !== "shell-extension/novasvn_shell_extension.pending" ||
   !windowsShellCargo.includes('crate-type = ["cdylib"]') ||
   !windowsShellCargo.includes('windows = { version = "0.61.3"')
 ) {
@@ -387,7 +387,10 @@ for (const [name, clsid] of windowsStateHandlers) {
 }
 
 if (
-  !nsisHooks.includes("$INSTDIR\\shell-extension\\novasvn_shell_extension.dll") ||
+  !nsisHooks.includes("$INSTDIR\\shell-extension\\novasvn_shell_extension.pending") ||
+  !nsisHooks.includes("GetTempFileName $NovaSvnActiveShellExtension") ||
+  !nsisHooks.includes('WriteRegStr HKCU "Software\\Classes\\CLSID\\${CLSID}\\InprocServer32" "" "$NovaSvnActiveShellExtension"') ||
+  !nsisHooks.includes('Delete /REBOOTOK "$INSTDIR\\shell-extension\\*.tmp.dll"') ||
   !nsisHooks.includes("!macro NSIS_HOOK_PREINSTALL") ||
   !nsisHooks.includes('"$SYSDIR\\taskkill.exe" /F /IM explorer.exe') ||
   !nsisHooks.includes("!macro NSIS_HOOK_POSTUNINSTALL") ||
@@ -399,6 +402,8 @@ if (
   !nsisHooks.includes('"checkout" "%1" "${NOVASVN_CHECKOUT_STATE_CLSID}"') ||
   !nsisHooks.includes('"checkout" "%V" "${NOVASVN_CHECKOUT_STATE_CLSID}"') ||
   !windowsExplorerScript.includes('Name "CommandStateHandler" -Value $stateHandlers.RootMenu') ||
+  !windowsExplorerScript.includes('GetValue("")') ||
+  !windowsExplorerScript.includes('-Filter "*.tmp.dll"') ||
   !windowsExplorerScript.includes('$item.Action -eq "checkout"') ||
   !windowsExplorerScript.includes('Name "CommandStateHandler" -Value $stateHandlers.SvnOnly') ||
   !windowsShellSource.includes('directory.join(".svn").is_dir()') ||

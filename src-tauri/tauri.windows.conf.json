@@ -6,7 +6,7 @@
   "bundle": {
     "resources": {
       "icons/explorer/*.ico": "explorer-icons/",
-      "windows-shell-extension/target/release/novasvn_shell_extension.dll": "shell-extension/novasvn_shell_extension.dll"
+      "windows-shell-extension/target/release/novasvn_shell_extension.dll": "shell-extension/novasvn_shell_extension.pending"
     }
   }
 }

@@ -3,10 +3,11 @@
 !define NOVASVN_CHECKOUT_STATE_CLSID "{6A5EA9FB-A012-4F3D-BE8A-07C41CE53B1B}"
 
 Var NovaSvnRestartExplorer
+Var NovaSvnActiveShellExtension
 
 !macro NOVASVN_REGISTER_STATE_HANDLER CLSID LABEL
   WriteRegStr HKCU "Software\Classes\CLSID\${CLSID}" "" "${LABEL}"
-  WriteRegStr HKCU "Software\Classes\CLSID\${CLSID}\InprocServer32" "" "$INSTDIR\shell-extension\novasvn_shell_extension.dll"
+  WriteRegStr HKCU "Software\Classes\CLSID\${CLSID}\InprocServer32" "" "$NovaSvnActiveShellExtension"
   WriteRegStr HKCU "Software\Classes\CLSID\${CLSID}\InprocServer32" "ThreadingModel" "Apartment"
 !macroend
 
@@ -75,6 +76,23 @@ Var NovaSvnRestartExplorer
   Sleep 500
 !macroend
 
+!macro NOVASVN_DELETE_INSTALLED_SHELL_EXTENSIONS
+  Delete /REBOOTOK "$INSTDIR\shell-extension\novasvn_shell_extension.dll"
+  Delete /REBOOTOK "$INSTDIR\shell-extension\*.tmp.dll"
+!macroend
+
+!macro NOVASVN_PREPARE_ACTIVE_SHELL_EXTENSION
+  GetTempFileName $NovaSvnActiveShellExtension "$INSTDIR\shell-extension"
+  Delete "$NovaSvnActiveShellExtension"
+  StrCpy $NovaSvnActiveShellExtension "$NovaSvnActiveShellExtension.dll"
+  ClearErrors
+  Rename "$INSTDIR\shell-extension\novasvn_shell_extension.pending" "$NovaSvnActiveShellExtension"
+  IfErrors 0 novasvn_shell_extension_ready
+  MessageBox MB_ICONSTOP|MB_OK "NovaSVN could not prepare its Explorer extension."
+  Abort
+  novasvn_shell_extension_ready:
+!macroend
+
 !macro NOVASVN_NOTIFY_AND_RESTART_EXPLORER
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
   StrCmp $NovaSvnRestartExplorer "1" 0 novasvn_explorer_restart_done
@@ -84,13 +102,17 @@ Var NovaSvnRestartExplorer
 
 !macro NSIS_HOOK_PREINSTALL
   StrCpy $NovaSvnRestartExplorer "0"
-  IfFileExists "$INSTDIR\shell-extension\novasvn_shell_extension.dll" 0 novasvn_preinstall_done
+  IfFileExists "$INSTDIR\shell-extension\novasvn_shell_extension.dll" novasvn_preinstall_extension_found 0
+  IfFileExists "$INSTDIR\shell-extension\*.tmp.dll" novasvn_preinstall_extension_found novasvn_preinstall_done
+  novasvn_preinstall_extension_found:
   !insertmacro NOVASVN_UNREGISTER_EXPLORER_INTEGRATION
   !insertmacro NOVASVN_STOP_EXPLORER_FOR_SHELL_EXTENSION
+  !insertmacro NOVASVN_DELETE_INSTALLED_SHELL_EXTENSIONS
   novasvn_preinstall_done:
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  !insertmacro NOVASVN_PREPARE_ACTIVE_SHELL_EXTENSION
   !insertmacro NOVASVN_REGISTER_STATE_HANDLER "${NOVASVN_ROOT_MENU_STATE_CLSID}" "NovaSVN root menu state"
   !insertmacro NOVASVN_REGISTER_STATE_HANDLER "${NOVASVN_SVN_ONLY_STATE_CLSID}" "NovaSVN working copy state"
   !insertmacro NOVASVN_REGISTER_STATE_HANDLER "${NOVASVN_CHECKOUT_STATE_CLSID}" "NovaSVN checkout state"
@@ -147,8 +169,11 @@ Var NovaSvnRestartExplorer
 !macro NSIS_HOOK_PREUNINSTALL
   StrCpy $NovaSvnRestartExplorer "0"
   !insertmacro NOVASVN_UNREGISTER_EXPLORER_INTEGRATION
-  IfFileExists "$INSTDIR\shell-extension\novasvn_shell_extension.dll" 0 novasvn_preuninstall_done
+  IfFileExists "$INSTDIR\shell-extension\novasvn_shell_extension.dll" novasvn_preuninstall_extension_found 0
+  IfFileExists "$INSTDIR\shell-extension\*.tmp.dll" novasvn_preuninstall_extension_found novasvn_preuninstall_done
+  novasvn_preuninstall_extension_found:
   !insertmacro NOVASVN_STOP_EXPLORER_FOR_SHELL_EXTENSION
+  !insertmacro NOVASVN_DELETE_INSTALLED_SHELL_EXTENSIONS
   novasvn_preuninstall_done:
 !macroend
 

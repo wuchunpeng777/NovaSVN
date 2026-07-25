@@ -7,6 +7,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $usingDefaultExecutable = [string]::IsNullOrWhiteSpace($NovaSvnExe)
+$stateHandlers = @{
+  RootMenu = "{0B2DD325-75D0-461D-9FC5-F191AD22FFF6}"
+  SvnOnly = "{4D64F10A-B42A-45E5-9034-02F83A16F0AB}"
+  Checkout = "{6A5EA9FB-A012-4F3D-BE8A-07C41CE53B1B}"
+}
 
 if ($Mode -eq "Install" -and $usingDefaultExecutable) {
   $NovaSvnExe = Join-Path $PSScriptRoot "..\src-tauri\target\release\NovaSVN.exe"
@@ -20,7 +25,15 @@ if ($Mode -eq "Install" -and [string]::IsNullOrWhiteSpace($ShellExtensionDll)) {
   if ($usingDefaultExecutable) {
     $ShellExtensionDll = Join-Path $PSScriptRoot "..\src-tauri\windows-shell-extension\target\release\novasvn_shell_extension.dll"
   } else {
-    $ShellExtensionDll = Join-Path (Split-Path -Parent $NovaSvnExe) "shell-extension\novasvn_shell_extension.dll"
+    $registeredHandler = Get-Item -LiteralPath "HKCU:\Software\Classes\CLSID\$($stateHandlers.RootMenu)\InprocServer32" -ErrorAction SilentlyContinue
+    if ($null -ne $registeredHandler) {
+      $ShellExtensionDll = [string]$registeredHandler.GetValue("")
+    }
+    if ([string]::IsNullOrWhiteSpace($ShellExtensionDll)) {
+      $ShellExtensionDll = Get-ChildItem (Join-Path (Split-Path -Parent $NovaSvnExe) "shell-extension") -Filter "*.tmp.dll" -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
+    }
   }
 }
 
@@ -28,11 +41,6 @@ if ($Mode -eq "Install" -and !(Test-Path -LiteralPath $ShellExtensionDll -PathTy
   throw "NovaSVN shell extension not found: $ShellExtensionDll. Build it first or pass -ShellExtensionDll with the installed DLL path."
 }
 
-$stateHandlers = @{
-  RootMenu = "{0B2DD325-75D0-461D-9FC5-F191AD22FFF6}"
-  SvnOnly = "{4D64F10A-B42A-45E5-9034-02F83A16F0AB}"
-  Checkout = "{6A5EA9FB-A012-4F3D-BE8A-07C41CE53B1B}"
-}
 $classRoot = "HKCU:\Software\Classes\CLSID"
 
 foreach ($entry in $stateHandlers.GetEnumerator()) {
