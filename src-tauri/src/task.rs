@@ -5005,7 +5005,11 @@ fn run_revert_revision_task(
                 state,
                 task_id,
                 TaskStatus::Failed,
-                "撤销单次提交失败",
+                if payload.whole_workspace {
+                    "回退工作区失败"
+                } else {
+                    "撤销单次提交失败"
+                },
                 Some(error),
             );
         }
@@ -5029,7 +5033,7 @@ fn execute_revert_revision(
     payload: &RevertRevisionTaskPayload,
 ) -> Result<(std::process::Output, String, String), NovaError> {
     let root = PathBuf::from(&payload.working_copy_root);
-    if workspace_has_local_changes_with_error(
+    if revert_workspace_has_local_changes(
         &payload.svn_executable,
         &root,
         "REVERT_REVISION_STATUS_FAILED",
@@ -7494,6 +7498,16 @@ fn workspace_has_local_changes_with_error(
     status_xml_has_entries_with_error(&xml, parse_error_code)
 }
 
+fn revert_workspace_has_local_changes(
+    executable: &str,
+    root: &Path,
+    status_error_code: &'static str,
+    parse_error_code: &'static str,
+) -> Result<bool, NovaError> {
+    let xml = svn_status_xml_for_guard(executable, root, status_error_code)?;
+    status_xml_has_versioned_changes_with_error(&xml, parse_error_code)
+}
+
 fn svn_status_xml_for_guard(
     executable: &str,
     root: &Path,
@@ -7549,6 +7563,35 @@ fn status_xml_has_entries_with_error(
     Ok(document
         .descendants()
         .any(|node| node.has_tag_name("entry")))
+}
+
+fn status_xml_has_versioned_changes_with_error(
+    xml: &str,
+    parse_error_code: &'static str,
+) -> Result<bool, NovaError> {
+    let document = Document::parse(xml).map_err(|error| {
+        NovaError::command(
+            parse_error_code,
+            "解析工作副本本地改动状态失败",
+            Some(format!("svn status --xml 返回了无法解析的 XML：{error}")),
+            true,
+        )
+    })?;
+
+    Ok(document
+        .descendants()
+        .filter(|node| node.has_tag_name("wc-status"))
+        .any(|node| {
+            let item_is_changed = !matches!(
+                node.attribute("item"),
+                Some("normal" | "none" | "unversioned" | "ignored" | "external")
+            );
+            let properties_are_changed =
+                !matches!(node.attribute("props"), None | Some("normal" | "none"));
+            let tree_is_conflicted = node.attribute("tree-conflicted") == Some("true");
+
+            item_is_changed || properties_are_changed || tree_is_conflicted
+        }))
 }
 
 fn normalize_workspace_root(path: &str) -> Result<PathBuf, NovaError> {
@@ -10918,6 +10961,18 @@ mod tests {
         dir
     }
 
+    fn test_file_repository_url(repository: &Path) -> String {
+        let path = repository.to_string_lossy().replace('\\', "/");
+        #[cfg(windows)]
+        {
+            format!("file:///{}", path.trim_start_matches('/'))
+        }
+        #[cfg(not(windows))]
+        {
+            format!("file://{path}")
+        }
+    }
+
     fn svn_tools_available() -> bool {
         Command::new("svn")
             .args(["--version", "--quiet"])
@@ -12498,6 +12553,53 @@ mod tests {
         assert!(status_xml_has_entries(changed).unwrap());
         assert!(!status_xml_has_entries(clean).unwrap());
         assert!(status_xml_has_entries("<not xml").is_err());
+    }
+
+    #[test]
+    fn revert_guard_ignores_unversioned_entries_and_blocks_versioned_changes() {
+        for item in ["normal", "none", "unversioned", "ignored", "external"] {
+            let xml = format!(
+                r#"<status><target path="C:\wc"><entry path="generated.tmp"><wc-status item="{item}" props="none" /></entry></target></status>"#
+            );
+            assert!(
+                !status_xml_has_versioned_changes_with_error(&xml, "TEST_PARSE_FAILED").unwrap(),
+                "{item} must not block a revision revert"
+            );
+        }
+
+        for item in [
+            "added",
+            "missing",
+            "incomplete",
+            "deleted",
+            "replaced",
+            "modified",
+            "merged",
+            "conflicted",
+            "obstructed",
+        ] {
+            let xml = format!(
+                r#"<status><target path="C:\wc"><entry path="tracked.txt"><wc-status item="{item}" props="none" /></entry></target></status>"#
+            );
+            assert!(
+                status_xml_has_versioned_changes_with_error(&xml, "TEST_PARSE_FAILED").unwrap(),
+                "{item} must block a revision revert"
+            );
+        }
+
+        let property_change = r#"<status><target path="C:\wc"><entry path="tracked.txt"><wc-status item="normal" props="modified" /></entry></target></status>"#;
+        let tree_conflict = r#"<status><target path="C:\wc"><entry path="tracked.txt"><wc-status item="normal" props="none" tree-conflicted="true" /></entry></target></status>"#;
+        assert!(
+            status_xml_has_versioned_changes_with_error(property_change, "TEST_PARSE_FAILED")
+                .unwrap()
+        );
+        assert!(
+            status_xml_has_versioned_changes_with_error(tree_conflict, "TEST_PARSE_FAILED")
+                .unwrap()
+        );
+        assert!(
+            status_xml_has_versioned_changes_with_error("<not xml", "TEST_PARSE_FAILED").is_err()
+        );
     }
 
     #[test]
@@ -14690,7 +14792,7 @@ mod tests {
     }
 
     #[test]
-    fn reverts_single_commit_and_whole_workspace_in_clean_head_working_copy() {
+    fn reverts_single_commit_and_whole_workspace_with_unversioned_files() {
         if !svn_tools_available() {
             return;
         }
@@ -14699,7 +14801,7 @@ mod tests {
         let repository = root.join("repository");
         let working_copy = root.join("working-copy");
         run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
-        let repository_url = format!("file://{}", repository.display());
+        let repository_url = test_file_repository_url(&repository);
         run_test_command(
             Command::new("svn")
                 .arg("checkout")
@@ -14724,6 +14826,8 @@ mod tests {
                 .args(["-m", "revision two"]),
         );
         run_test_command(Command::new("svn").arg("update").arg(&working_copy));
+        let unversioned = working_copy.join("generated.tmp");
+        fs::write(&unversioned, "generated\n").expect("write unversioned file");
 
         let payload = RevertRevisionTaskPayload {
             working_copy_root: working_copy.display().to_string(),
@@ -14743,6 +14847,10 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&file).expect("read reverted file"),
             "revision one\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&unversioned).expect("read unversioned file"),
+            "generated\n"
         );
         let status = run_test_command(
             Command::new("svn")
@@ -14777,6 +14885,10 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&file).expect("read workspace reverted file"),
             "revision one\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&unversioned).expect("read unversioned file"),
+            "generated\n"
         );
 
         fs::remove_dir_all(root).ok();
