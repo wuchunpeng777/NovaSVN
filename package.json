@@ -7,6 +7,8 @@
     "check": "npm run test:components && npm run test:scripts && npm run build && npm run lint:rust && npm run test:rust",
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:windows-shell-extension": "cargo build --release --manifest-path src-tauri/windows-shell-extension/Cargo.toml",
+    "build:windows": "npm run build && npm run build:windows-shell-extension",
     "preview": "vite preview",
     "test:components": "vitest run --dir src",
     "test:svn": "powershell -ExecutionPolicy Bypass -File scripts/test-svn-workflow.ps1",

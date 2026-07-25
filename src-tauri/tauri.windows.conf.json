@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "npm run build:windows"
+  },
+  "bundle": {
+    "resources": {
+      "icons/explorer/*.ico": "explorer-icons/",
+      "windows-shell-extension/target/release/novasvn_shell_extension.dll": "shell-extension/novasvn_shell_extension.dll"
+    }
+  }
+}

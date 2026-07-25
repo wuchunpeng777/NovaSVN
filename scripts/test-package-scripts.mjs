@@ -83,8 +83,19 @@ const releaseArtifactsTest = fs.readFileSync(
   "utf8",
 );
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, "src-tauri", "tauri.conf.json"), "utf8"));
+const tauriWindowsConfig = JSON.parse(
+  fs.readFileSync(path.join(root, "src-tauri", "tauri.windows.conf.json"), "utf8"),
+);
 const nsisHooks = fs.readFileSync(path.join(root, "src-tauri", "nsis-hooks.nsh"), "utf8");
 const tauriCargo = fs.readFileSync(path.join(root, "src-tauri", "Cargo.toml"), "utf8");
+const windowsShellCargo = fs.readFileSync(
+  path.join(root, "src-tauri", "windows-shell-extension", "Cargo.toml"),
+  "utf8",
+);
+const windowsShellSource = fs.readFileSync(
+  path.join(root, "src-tauri", "windows-shell-extension", "src", "lib.rs"),
+  "utf8",
+);
 const defaultCapability = fs.readFileSync(
   path.join(root, "src-tauri", "capabilities", "default.json"),
   "utf8",
@@ -336,6 +347,60 @@ if (!packageJson.scripts?.["release:windows"]?.includes("--bundles nsis")) {
 
 if (tauriConfig.bundle?.windows?.nsis?.installerHooks !== "nsis-hooks.nsh") {
   console.error("Windows NSIS 安装包必须加载 Explorer 菜单钩子");
+  failed = true;
+}
+
+const windowsShellExtensionResource =
+  tauriWindowsConfig.bundle?.resources?.[
+    "windows-shell-extension/target/release/novasvn_shell_extension.dll"
+  ];
+if (
+  packageJson.scripts?.["build:windows-shell-extension"] !==
+    "cargo build --release --manifest-path src-tauri/windows-shell-extension/Cargo.toml" ||
+  packageJson.scripts?.["build:windows"] !==
+    "npm run build && npm run build:windows-shell-extension" ||
+  tauriWindowsConfig.build?.beforeBuildCommand !== "npm run build:windows" ||
+  windowsShellExtensionResource !== "shell-extension/novasvn_shell_extension.dll" ||
+  !windowsShellCargo.includes('crate-type = ["cdylib"]') ||
+  !windowsShellCargo.includes('windows = { version = "0.61.3"')
+) {
+  console.error("Windows 发布必须先构建 Explorer 状态处理 DLL 并将其打入 NSIS 安装包");
+  failed = true;
+}
+
+const windowsStateHandlers = [
+  ["ROOT_MENU", "{0B2DD325-75D0-461D-9FC5-F191AD22FFF6}"],
+  ["SVN_ONLY", "{4D64F10A-B42A-45E5-9034-02F83A16F0AB}"],
+  ["CHECKOUT", "{6A5EA9FB-A012-4F3D-BE8A-07C41CE53B1B}"],
+];
+for (const [name, clsid] of windowsStateHandlers) {
+  const rustClsid = clsid.slice(1, -1).toLowerCase().replaceAll("-", "_");
+  if (
+    !nsisHooks.includes(`!define NOVASVN_${name}_STATE_CLSID "${clsid}"`) ||
+    !nsisHooks.includes(`DeleteRegKey HKCU "Software\\Classes\\CLSID\\\${NOVASVN_${name}_STATE_CLSID}"`) ||
+    !windowsExplorerScript.includes(clsid) ||
+    !windowsShellSource.includes(rustClsid)
+  ) {
+    console.error(`Windows Explorer 状态处理器缺少注册或卸载清理：${name}`);
+    failed = true;
+  }
+}
+
+if (
+  !nsisHooks.includes("$INSTDIR\\shell-extension\\novasvn_shell_extension.dll") ||
+  !nsisHooks.includes('"ThreadingModel" "Apartment"') ||
+  !nsisHooks.includes('"CommandStateHandler" "${NOVASVN_ROOT_MENU_STATE_CLSID}"') ||
+  !nsisHooks.includes('"CommandStateHandler" "${STATE_HANDLER}"') ||
+  !nsisHooks.includes('"CommandStateHandler" "${NOVASVN_SVN_ONLY_STATE_CLSID}"') ||
+  !nsisHooks.includes('"checkout" "%1" "${NOVASVN_CHECKOUT_STATE_CLSID}"') ||
+  !nsisHooks.includes('"checkout" "%V" "${NOVASVN_CHECKOUT_STATE_CLSID}"') ||
+  !windowsExplorerScript.includes('Name "CommandStateHandler" -Value $stateHandlers.RootMenu') ||
+  !windowsExplorerScript.includes('$item.Action -eq "checkout"') ||
+  !windowsExplorerScript.includes('Name "CommandStateHandler" -Value $stateHandlers.SvnOnly') ||
+  !windowsShellSource.includes('directory.join(".svn").is_dir()') ||
+  !windowsShellSource.includes("ECS_HIDDEN.0 as u32")
+) {
+  console.error("Windows Explorer 菜单必须按工作副本状态隐藏不适用的 SVN 操作");
   failed = true;
 }
 

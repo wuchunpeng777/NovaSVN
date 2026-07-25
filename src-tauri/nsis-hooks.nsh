@@ -1,3 +1,13 @@
+!define NOVASVN_ROOT_MENU_STATE_CLSID "{0B2DD325-75D0-461D-9FC5-F191AD22FFF6}"
+!define NOVASVN_SVN_ONLY_STATE_CLSID "{4D64F10A-B42A-45E5-9034-02F83A16F0AB}"
+!define NOVASVN_CHECKOUT_STATE_CLSID "{6A5EA9FB-A012-4F3D-BE8A-07C41CE53B1B}"
+
+!macro NOVASVN_REGISTER_STATE_HANDLER CLSID LABEL
+  WriteRegStr HKCU "Software\Classes\CLSID\${CLSID}" "" "${LABEL}"
+  WriteRegStr HKCU "Software\Classes\CLSID\${CLSID}\InprocServer32" "" "$INSTDIR\shell-extension\novasvn_shell_extension.dll"
+  WriteRegStr HKCU "Software\Classes\CLSID\${CLSID}\InprocServer32" "ThreadingModel" "Apartment"
+!macroend
+
 !macro NOVASVN_REGISTER_MENU ROOT
   DeleteRegKey HKCU "${ROOT}\NovaSVN"
   WriteRegStr HKCU "${ROOT}\NovaSVN" "MUIVerb" "NovaSVN"
@@ -6,11 +16,13 @@
   WriteRegStr HKCU "${ROOT}\NovaSVN" "Position" "Bottom"
   WriteRegStr HKCU "${ROOT}\NovaSVN" "SeparatorBefore" ""
   WriteRegStr HKCU "${ROOT}\NovaSVN" "SeparatorAfter" ""
+  WriteRegStr HKCU "${ROOT}\NovaSVN" "CommandStateHandler" "${NOVASVN_ROOT_MENU_STATE_CLSID}"
 !macroend
 
-!macro NOVASVN_REGISTER_ACTION ROOT KEY LABEL ACTION PATH_PLACEHOLDER
+!macro NOVASVN_REGISTER_ACTION ROOT KEY LABEL ACTION PATH_PLACEHOLDER STATE_HANDLER
   WriteRegStr HKCU "${ROOT}\NovaSVN\shell\${KEY}" "MUIVerb" "${LABEL}"
   WriteRegStr HKCU "${ROOT}\NovaSVN\shell\${KEY}" "Icon" "$INSTDIR\explorer-icons\${ACTION}.ico"
+  WriteRegStr HKCU "${ROOT}\NovaSVN\shell\${KEY}" "CommandStateHandler" "${STATE_HANDLER}"
   WriteRegStr HKCU "${ROOT}\NovaSVN\shell\${KEY}\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --novasvn-action $\"${ACTION}$\" --novasvn-path $\"${PATH_PLACEHOLDER}$\""
 !macroend
 
@@ -18,6 +30,7 @@
   WriteRegStr HKCU "${ROOT}\NovaSVN.${KEY}" "MUIVerb" "${LABEL}"
   WriteRegStr HKCU "${ROOT}\NovaSVN.${KEY}" "Icon" "$INSTDIR\explorer-icons\${ACTION}.ico"
   WriteRegStr HKCU "${ROOT}\NovaSVN.${KEY}" "Position" "Bottom"
+  WriteRegStr HKCU "${ROOT}\NovaSVN.${KEY}" "CommandStateHandler" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
   WriteRegStr HKCU "${ROOT}\NovaSVN.${KEY}\command" "" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --novasvn-action $\"${ACTION}$\" --novasvn-path $\"${PATH_PLACEHOLDER}$\""
 !macroend
 
@@ -38,48 +51,52 @@
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  !insertmacro NOVASVN_REGISTER_STATE_HANDLER "${NOVASVN_ROOT_MENU_STATE_CLSID}" "NovaSVN root menu state"
+  !insertmacro NOVASVN_REGISTER_STATE_HANDLER "${NOVASVN_SVN_ONLY_STATE_CLSID}" "NovaSVN working copy state"
+  !insertmacro NOVASVN_REGISTER_STATE_HANDLER "${NOVASVN_CHECKOUT_STATE_CLSID}" "NovaSVN checkout state"
+
   !insertmacro NOVASVN_DELETE_LEGACY_ACTIONS "Software\Classes\Directory\shell"
   !insertmacro NOVASVN_DELETE_LEGACY_ACTIONS "Software\Classes\Directory\Background\shell"
   !insertmacro NOVASVN_DELETE_LEGACY_ACTIONS "Software\Classes\*\shell"
 
   !insertmacro NOVASVN_REGISTER_MENU "Software\Classes\Directory\shell"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "01.Open" "Open" "open" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "02.Checkout" "Checkout" "checkout" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "03.Info" "SVN Info" "info" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "04.Diff" "Diff" "diff" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "05.Revert" "Revert" "revert" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "06.Delete" "Delete" "delete" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "07.Ignore" "Ignore" "ignore" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "08.Cleanup" "Cleanup" "cleanup" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "09.BranchWorkspace" "Branch Workspace" "branch-workspace" "%1"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "01.Open" "Open" "open" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "02.Checkout" "Checkout" "checkout" "%1" "${NOVASVN_CHECKOUT_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "03.Info" "SVN Info" "info" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "04.Diff" "Diff" "diff" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "05.Revert" "Revert" "revert" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "06.Delete" "Delete" "delete" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "07.Ignore" "Ignore" "ignore" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "08.Cleanup" "Cleanup" "cleanup" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "09.BranchWorkspace" "Branch Workspace" "branch-workspace" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\Directory\shell" "Update" "NovaSVN Update" "update" "%1"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\Directory\shell" "Commit" "NovaSVN Commit" "commit" "%1"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\Directory\shell" "Log" "NovaSVN Log" "log" "%1"
 
   !insertmacro NOVASVN_REGISTER_MENU "Software\Classes\Directory\Background\shell"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "01.Open" "Open" "open" "%V"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "02.Checkout" "Checkout" "checkout" "%V"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "03.Info" "SVN Info" "info" "%V"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "04.Diff" "Diff" "diff" "%V"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "05.Revert" "Revert" "revert" "%V"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "06.Delete" "Delete" "delete" "%V"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "07.Ignore" "Ignore" "ignore" "%V"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "08.Cleanup" "Cleanup" "cleanup" "%V"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "09.BranchWorkspace" "Branch Workspace" "branch-workspace" "%V"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "01.Open" "Open" "open" "%V" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "02.Checkout" "Checkout" "checkout" "%V" "${NOVASVN_CHECKOUT_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "03.Info" "SVN Info" "info" "%V" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "04.Diff" "Diff" "diff" "%V" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "05.Revert" "Revert" "revert" "%V" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "06.Delete" "Delete" "delete" "%V" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "07.Ignore" "Ignore" "ignore" "%V" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "08.Cleanup" "Cleanup" "cleanup" "%V" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "09.BranchWorkspace" "Branch Workspace" "branch-workspace" "%V" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\Directory\Background\shell" "Update" "NovaSVN Update" "update" "%V"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\Directory\Background\shell" "Commit" "NovaSVN Commit" "commit" "%V"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\Directory\Background\shell" "Log" "NovaSVN Log" "log" "%V"
 
   !insertmacro NOVASVN_REGISTER_MENU "Software\Classes\*\shell"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "01.Open" "Open" "open" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "02.Info" "SVN Info" "info" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "03.Diff" "Diff" "diff" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "04.Blame" "Blame" "blame" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "05.Revert" "Revert" "revert" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "06.Delete" "Delete" "delete" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "07.Ignore" "Ignore" "ignore" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "08.Cleanup" "Cleanup" "cleanup" "%1"
-  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "09.BranchWorkspace" "Branch Workspace" "branch-workspace" "%1"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "01.Open" "Open" "open" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "02.Info" "SVN Info" "info" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "03.Diff" "Diff" "diff" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "04.Blame" "Blame" "blame" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "05.Revert" "Revert" "revert" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "06.Delete" "Delete" "delete" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "07.Ignore" "Ignore" "ignore" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "08.Cleanup" "Cleanup" "cleanup" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "09.BranchWorkspace" "Branch Workspace" "branch-workspace" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\*\shell" "Update" "NovaSVN Update" "update" "%1"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\*\shell" "Commit" "NovaSVN Commit" "commit" "%1"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\*\shell" "Log" "NovaSVN Log" "log" "%1"
@@ -93,4 +110,8 @@
   !insertmacro NOVASVN_DELETE_LEGACY_ACTIONS "Software\Classes\Directory\shell"
   !insertmacro NOVASVN_DELETE_LEGACY_ACTIONS "Software\Classes\Directory\Background\shell"
   !insertmacro NOVASVN_DELETE_LEGACY_ACTIONS "Software\Classes\*\shell"
+
+  DeleteRegKey HKCU "Software\Classes\CLSID\${NOVASVN_ROOT_MENU_STATE_CLSID}"
+  DeleteRegKey HKCU "Software\Classes\CLSID\${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  DeleteRegKey HKCU "Software\Classes\CLSID\${NOVASVN_CHECKOUT_STATE_CLSID}"
 !macroend
