@@ -197,6 +197,8 @@
   .monaco-diff-viewer {
     --inline-original-line-number: #b42318;
     --inline-modified-line-number: #18713f;
+    --inline-original-line-number-background: rgba(180, 35, 24, 0.055);
+    --inline-modified-line-number-background: rgba(24, 113, 63, 0.055);
     --inline-line-number-divider: rgba(180, 35, 24, 0.38);
     display: grid;
     grid-template-rows: 34px minmax(0, 1fr);
@@ -212,7 +214,29 @@
   }
 
   .monaco-diff-viewer.inline-mode
-    :global(.monaco-editor.original-in-monaco-diff-editor .line-numbers) {
+    :global(.monaco-editor.original-in-monaco-diff-editor) {
+    --vscode-editorLineNumber-foreground: var(--inline-original-line-number);
+    --vscode-editorLineNumber-activeForeground: var(--inline-original-line-number);
+  }
+
+  .monaco-diff-viewer.inline-mode
+    :global(.monaco-editor.modified-in-monaco-diff-editor) {
+    --vscode-editorLineNumber-foreground: var(--inline-modified-line-number);
+    --vscode-editorLineNumber-activeForeground: var(--inline-modified-line-number);
+  }
+
+  .monaco-diff-viewer.inline-mode
+    :global(.monaco-editor.original-in-monaco-diff-editor .margin) {
+    background-color: var(--inline-original-line-number-background);
+  }
+
+  .monaco-diff-viewer.inline-mode
+    :global(.monaco-editor.modified-in-monaco-diff-editor .margin) {
+    background-color: var(--inline-modified-line-number-background);
+  }
+
+  .monaco-diff-viewer.inline-mode
+    :global(.monaco-editor.original-in-monaco-diff-editor .margin-view-overlays .line-numbers) {
     box-sizing: border-box;
     border-right: 1px solid var(--inline-line-number-divider);
     padding-right: 6px;
@@ -220,13 +244,15 @@
   }
 
   .monaco-diff-viewer.inline-mode
-    :global(.monaco-editor.modified-in-monaco-diff-editor .line-numbers) {
+    :global(.monaco-editor.modified-in-monaco-diff-editor .margin-view-overlays .line-numbers) {
     color: var(--inline-modified-line-number);
   }
 
   .monaco-diff-viewer[data-theme="dark"] {
     --inline-original-line-number: #ff8a80;
     --inline-modified-line-number: #7ee787;
+    --inline-original-line-number-background: rgba(255, 138, 128, 0.075);
+    --inline-modified-line-number-background: rgba(126, 231, 135, 0.065);
     --inline-line-number-divider: rgba(255, 138, 128, 0.46);
   }
 
