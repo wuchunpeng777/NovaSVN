@@ -2415,12 +2415,14 @@ describe("workspaceStore SVN operation state", () => {
   it("恢复最近工作副本后立即返回，并只在后台检查本地状态", async () => {
     const workspace = makeWorkspace();
     const pendingStatus = deferred<WorkingCopyStatus>();
+    const pendingTree = deferred<WorkspaceFileTree>();
     const localStatus = makeStatus([], {
       remote_updates_checked: false,
       repository_revision: null,
     });
     getRecentWorkspaceMock.mockResolvedValueOnce({ workspace });
     scanWorkspaceStatusMock.mockReturnValueOnce(pendingStatus.promise);
+    listWorkspaceFilesMock.mockReturnValueOnce(pendingTree.promise);
 
     await workspaceStore.loadRecent();
 
@@ -2438,6 +2440,10 @@ describe("workspaceStore SVN operation state", () => {
     });
 
     pendingStatus.resolve(localStatus);
+    await vi.waitFor(() => expect(get(workspaceStore).status).toBe(localStatus));
+    expect(get(workspaceStore).statusLoading).toBe(true);
+
+    pendingTree.resolve(makeFileTree("C:/repo/wc"));
     await vi.waitFor(() => expect(get(workspaceStore).statusLoading).toBe(false));
     expect(get(workspaceStore).status?.remote_updates_checked).toBe(false);
   });

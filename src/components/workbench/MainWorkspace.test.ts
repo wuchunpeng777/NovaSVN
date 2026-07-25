@@ -89,6 +89,8 @@ describe("MainWorkspace", () => {
     expect(
       within(toolbar).getByRole("button", { name: "正在刷新工作副本状态" }),
     ).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("正在扫描工作副本...");
+    expect(screen.queryByText("点击“刷新”扫描工作副本")).not.toBeInTheDocument();
     expect(within(toolbar).getByRole("button", { name: "隐藏项目侧栏" })).toBeEnabled();
     expect(within(toolbar).getByRole("button", { name: "隐藏检查器" })).toBeEnabled();
     for (const name of ["更新工作副本", "应用 Patch", "清理工作副本"]) {

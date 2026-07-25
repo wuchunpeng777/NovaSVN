@@ -4106,7 +4106,12 @@ function createWorkspaceStore() {
         return null;
       }
       refreshedStatus = status;
-      const selectedFilePath = applyStatusResult(status, previousSelectedFilePath);
+      const selectedFilePath = applyStatusResult(
+        status,
+        previousSelectedFilePath,
+        false,
+        true,
+      );
       await refreshFileTree(svnExecutable, root);
       if (!isCurrentStatusRequest(requestGeneration, root)) {
         return null;
@@ -4118,6 +4123,13 @@ function createWorkspaceStore() {
         ]);
         await refreshParsedDiff(selectedFilePath);
       }
+      if (!isCurrentStatusRequest(requestGeneration, root)) {
+        return null;
+      }
+      update((state) => ({
+        ...state,
+        statusLoading: false,
+      }));
       return status;
     } catch (error) {
       if (!isCurrentStatusRequest(requestGeneration, root)) {
@@ -4560,6 +4572,7 @@ function createWorkspaceStore() {
     status: WorkingCopyStatus,
     previousSelectedFilePath: string | null,
     preserveUnloadedSelection = false,
+    keepLoading = false,
   ) {
     const selectedFilePath =
       preserveUnloadedSelection && previousSelectedFilePath
@@ -4600,7 +4613,7 @@ function createWorkspaceStore() {
         selectedHunks,
         selectedPatch: null,
         reviewedFiles,
-        statusLoading: false,
+        statusLoading: keepLoading,
         statusError: null,
         ...(selectedFileChanged ? clearSvnBlameState() : {}),
         ...(selectedFileChanged && !preserveScopedProperties

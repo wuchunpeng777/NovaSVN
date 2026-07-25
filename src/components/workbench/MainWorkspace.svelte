@@ -5707,6 +5707,10 @@
               {#if treeRowWindow.afterHeight > 0}
                 <div class="virtual-list-spacer file-tree-spacer" style={`height: ${treeRowWindow.afterHeight}px`} aria-hidden="true"></div>
               {/if}
+            {:else if workspace && statusLoading}
+              <article class="empty-state" role="status" aria-live="polite">
+                正在扫描工作副本...
+              </article>
             {:else if workspaceFileTree}
               <article class="empty-state">没有匹配的文件</article>
             {:else if workspace}
