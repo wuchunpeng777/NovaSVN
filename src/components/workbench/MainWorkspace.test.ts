@@ -1021,6 +1021,7 @@ Certificate information:
     const diffResizer = within(timelineLayout).getByRole("slider", {
       name: "调整文件 Diff 宽度",
     });
+    expect(diffResizer).toHaveAttribute("aria-valuemax", "1600");
     await fireEvent.keyDown(diffResizer, { key: "Home" });
     expect(diffResizer).toHaveAttribute("aria-valuenow", "360");
     const closeFileDiff = within(fileDiff).getByRole("button", { name: "关闭文件 Diff" });

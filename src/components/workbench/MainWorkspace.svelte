@@ -740,7 +740,7 @@
   let inspectorMaximumWidth = inspectorMaxWidth;
   let resizingInspector = false;
   const timelineDiffMinWidth = 360;
-  const timelineDiffMaxWidth = 900;
+  const timelineDiffMaxWidth = 1600;
   const timelineListMinWidth = 360;
   const timelineDiffDividerWidth = 6;
   let timelineDiffWidth = 520;

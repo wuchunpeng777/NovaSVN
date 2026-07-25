@@ -64,7 +64,6 @@
       renderSideBySide: !inlineMode,
       renderWhitespace: showWhitespace ? "all" : "none",
       lineNumbersMinChars: lineNumberMinimumCharacters(
-        inlineMode,
         originalModel,
         modifiedModel,
       ),
@@ -94,7 +93,6 @@
       },
       fontSize: 12,
       lineNumbersMinChars: lineNumberMinimumCharacters(
-        inlineMode,
         originalModel,
         modifiedModel,
       ),
@@ -160,13 +158,9 @@
   }
 
   function lineNumberMinimumCharacters(
-    isInline: boolean,
     original: import("monaco-editor").editor.ITextModel | null,
     modified: import("monaco-editor").editor.ITextModel | null,
   ) {
-    if (!isInline) {
-      return 3;
-    }
     const largestLineNumber = Math.max(
       original?.getLineCount() ?? 1,
       modified?.getLineCount() ?? 1,
@@ -213,19 +207,19 @@
     overflow: hidden;
   }
 
-  .monaco-diff-viewer.inline-mode
+  .monaco-diff-viewer
     :global(.monaco-diff-editor:not(.side-by-side) > .editor.original .monaco-editor) {
     --vscode-editorLineNumber-foreground: var(--inline-original-line-number);
     --vscode-editorLineNumber-activeForeground: var(--inline-original-line-number);
   }
 
-  .monaco-diff-viewer.inline-mode
+  .monaco-diff-viewer
     :global(.monaco-diff-editor:not(.side-by-side) > .editor.modified .monaco-editor) {
     --vscode-editorLineNumber-foreground: var(--inline-modified-line-number);
     --vscode-editorLineNumber-activeForeground: var(--inline-modified-line-number);
   }
 
-  .monaco-diff-viewer.inline-mode
+  .monaco-diff-viewer
     :global(.monaco-diff-editor:not(.side-by-side) > .editor.original::after) {
     position: absolute;
     z-index: 20;
@@ -238,24 +232,24 @@
     pointer-events: none;
   }
 
-  .monaco-diff-viewer.inline-mode
+  .monaco-diff-viewer
     :global(.monaco-diff-editor:not(.side-by-side) > .editor.original .margin) {
     background-color: var(--inline-original-line-number-background);
   }
 
-  .monaco-diff-viewer.inline-mode
+  .monaco-diff-viewer
     :global(.monaco-diff-editor:not(.side-by-side) > .editor.modified .margin) {
     background-color: var(--inline-modified-line-number-background);
   }
 
-  .monaco-diff-viewer.inline-mode
+  .monaco-diff-viewer
     :global(.monaco-diff-editor:not(.side-by-side) > .editor.original .margin-view-overlays .line-numbers) {
     box-sizing: border-box;
     padding-right: 6px;
     color: var(--inline-original-line-number);
   }
 
-  .monaco-diff-viewer.inline-mode
+  .monaco-diff-viewer
     :global(.monaco-diff-editor:not(.side-by-side) > .editor.modified .margin-view-overlays .line-numbers) {
     color: var(--inline-modified-line-number);
   }

@@ -85,24 +85,24 @@ describe("MonacoDiffViewer", () => {
     expect(mocks.focus).toHaveBeenCalledTimes(2);
   });
 
-  it("reserves two characters of separation for large inline line numbers", async () => {
+  it("reserves line number separation when side-by-side mode automatically collapses", async () => {
     const largeContentDiff: FileContentDiff = {
       ...contentDiff,
       original_text: `${"unchanged\n".repeat(1_000)}before\n`,
       modified_text: `${"unchanged\n".repeat(1_000)}after\n`,
     };
     const { container } = render(MonacoDiffViewer, {
-      props: { contentDiff: largeContentDiff, inlineMode: true },
+      props: { contentDiff: largeContentDiff },
     });
 
     await waitFor(() => {
       expect(mocks.updateOptions).toHaveBeenCalledWith(
         expect.objectContaining({
-          renderSideBySide: false,
+          renderSideBySide: true,
           lineNumbersMinChars: 6,
         }),
       );
     });
-    expect(container.querySelector(".monaco-diff-viewer")).toHaveClass("inline-mode");
+    expect(container.querySelector(".monaco-diff-viewer")).not.toHaveClass("inline-mode");
   });
 });
