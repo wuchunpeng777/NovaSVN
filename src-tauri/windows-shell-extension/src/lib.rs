@@ -47,7 +47,7 @@ impl StateKind {
             .all(|path| path.is_directory && !path.in_working_copy);
 
         match self {
-            Self::RootMenu => all_in_working_copy || checkout_available,
+            Self::RootMenu => all_in_working_copy,
             Self::SvnOnly => all_in_working_copy,
             Self::Checkout => checkout_available,
         }
@@ -333,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn exposes_checkout_only_for_non_working_copy_directories() {
+    fn exposes_separate_working_copy_and_checkout_menus() {
         let working_copy_directory = PathState {
             is_directory: true,
             in_working_copy: true,
@@ -353,7 +353,7 @@ mod tests {
 
         assert!(!StateKind::SvnOnly.is_visible(&[plain_directory]));
         assert!(StateKind::Checkout.is_visible(&[plain_directory]));
-        assert!(StateKind::RootMenu.is_visible(&[plain_directory]));
+        assert!(!StateKind::RootMenu.is_visible(&[plain_directory]));
 
         assert!(!StateKind::SvnOnly.is_visible(&[plain_file]));
         assert!(!StateKind::Checkout.is_visible(&[plain_file]));
@@ -382,6 +382,10 @@ mod tests {
         assert_eq!(
             command_state(CHECKOUT_STATE_CLSID, &plain_directory),
             ECS_ENABLED.0 as u32
+        );
+        assert_eq!(
+            command_state(ROOT_MENU_STATE_CLSID, &plain_directory),
+            ECS_HIDDEN.0 as u32
         );
         assert_eq!(
             command_state(ROOT_MENU_STATE_CLSID, &plain_file),

@@ -400,12 +400,15 @@ if (
   !nsisHooks.includes('"CommandStateHandler" "${NOVASVN_ROOT_MENU_STATE_CLSID}"') ||
   !nsisHooks.includes('"CommandStateHandler" "${STATE_HANDLER}"') ||
   !nsisHooks.includes('"CommandStateHandler" "${NOVASVN_SVN_ONLY_STATE_CLSID}"') ||
-  !nsisHooks.includes('"checkout" "%1" "${NOVASVN_CHECKOUT_STATE_CLSID}"') ||
-  !nsisHooks.includes('"checkout" "%V" "${NOVASVN_CHECKOUT_STATE_CLSID}"') ||
+  !nsisHooks.includes('"CommandStateHandler" "${NOVASVN_CHECKOUT_STATE_CLSID}"') ||
+  !nsisHooks.includes('WriteRegDWORD HKCU "${ROOT}\\NovaSVN" "ImpliedSelectionModel" 1') ||
   !windowsExplorerScript.includes('Name "CommandStateHandler" -Value $stateHandlers.RootMenu') ||
   !windowsExplorerScript.includes('GetValue("")') ||
+  !windowsExplorerScript.includes("[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey") ||
+  !windowsExplorerScript.includes('Set-Item -LiteralPath $commandPath -Value $command') ||
   !windowsExplorerScript.includes('-Filter "*.tmp.dll"') ||
-  !windowsExplorerScript.includes('$item.Action -eq "checkout"') ||
+  !windowsExplorerScript.includes('Name "CommandStateHandler" -Value $stateHandlers.Checkout') ||
+  !windowsExplorerScript.includes('Name "ImpliedSelectionModel" -Value 1 -PropertyType DWord') ||
   !windowsExplorerScript.includes('Name "CommandStateHandler" -Value $stateHandlers.SvnOnly') ||
   !windowsShellSource.includes('directory.join(".svn").is_dir()') ||
   !windowsShellSource.includes("ECS_HIDDEN.0 as u32")
@@ -420,15 +423,15 @@ const windowsExplorerMenus = [
     placeholder: "%1",
     submenu: [
       ["01.Open", "Open", "open"],
-      ["02.Checkout", "Checkout", "checkout"],
-      ["03.Info", "SVN Info", "info"],
-      ["04.Diff", "Diff", "diff"],
-      ["05.Revert", "Revert", "revert"],
-      ["06.Delete", "Delete", "delete"],
-      ["07.Ignore", "Ignore", "ignore"],
-      ["08.Cleanup", "Cleanup", "cleanup"],
-      ["09.BranchWorkspace", "Branch Workspace", "branch-workspace"],
+      ["02.Info", "SVN Info", "info"],
+      ["03.Diff", "Diff", "diff"],
+      ["04.Revert", "Revert", "revert"],
+      ["05.Delete", "Delete", "delete"],
+      ["06.Ignore", "Ignore", "ignore"],
+      ["07.Cleanup", "Cleanup", "cleanup"],
+      ["08.BranchWorkspace", "Branch Workspace", "branch-workspace"],
     ],
+    checkout: true,
     direct: [
       ["Update", "NovaSVN Update", "update"],
       ["Commit", "NovaSVN Commit", "commit"],
@@ -440,15 +443,16 @@ const windowsExplorerMenus = [
     placeholder: "%V",
     submenu: [
       ["01.Open", "Open", "open"],
-      ["02.Checkout", "Checkout", "checkout"],
-      ["03.Info", "SVN Info", "info"],
-      ["04.Diff", "Diff", "diff"],
-      ["05.Revert", "Revert", "revert"],
-      ["06.Delete", "Delete", "delete"],
-      ["07.Ignore", "Ignore", "ignore"],
-      ["08.Cleanup", "Cleanup", "cleanup"],
-      ["09.BranchWorkspace", "Branch Workspace", "branch-workspace"],
+      ["02.Info", "SVN Info", "info"],
+      ["03.Diff", "Diff", "diff"],
+      ["04.Revert", "Revert", "revert"],
+      ["05.Delete", "Delete", "delete"],
+      ["06.Ignore", "Ignore", "ignore"],
+      ["07.Cleanup", "Cleanup", "cleanup"],
+      ["08.BranchWorkspace", "Branch Workspace", "branch-workspace"],
     ],
+    checkout: true,
+    background: true,
     direct: [
       ["Update", "NovaSVN Update", "update"],
       ["Commit", "NovaSVN Commit", "commit"],
@@ -478,6 +482,7 @@ const windowsExplorerMenus = [
 ];
 
 const windowsExplorerIconActions = [
+  "checkout",
   ...new Set(
     windowsExplorerMenus.flatMap((menu) =>
       [...menu.submenu, ...menu.direct].map(([, , action]) => action),
@@ -522,6 +527,7 @@ for (const action of windowsExplorerIconActions) {
   }
   if (
     svg.includes("<rect") ||
+    !svg.includes('stroke-width="3.6"') ||
     bitsPerPixel !== 32 ||
     !hasTransparentPixel ||
     !hasVisiblePixel
@@ -568,6 +574,21 @@ for (const menu of windowsExplorerMenus) {
       failed = true;
     }
   }
+  if (menu.checkout) {
+    const registration =
+      `!insertmacro NOVASVN_REGISTER_CHECKOUT_ACTION "${menu.root}" "${menu.placeholder}"`;
+    if (!nsisHooks.includes(registration)) {
+      console.error(`Windows Explorer 一级菜单缺少 NovaSVN Checkout：${menu.root}`);
+      failed = true;
+    }
+  }
+  if (
+    menu.background &&
+    !nsisHooks.includes(`!insertmacro NOVASVN_MARK_BACKGROUND_CONTEXT "${menu.root}"`)
+  ) {
+    console.error(`Windows Explorer 空白处菜单缺少隐含文件夹上下文：${menu.root}`);
+    failed = true;
+  }
 }
 
 const registeredDirectActions = [
@@ -580,7 +601,7 @@ if (
   registeredDirectActions.length !== expectedDirectActions.length ||
   registeredDirectActions.some((action, index) => action !== expectedDirectActions[index])
 ) {
-  console.error("Windows Explorer 一级菜单只能包含带 NovaSVN 前缀的 Update、Commit、Log");
+  console.error("Windows Explorer SVN 一级菜单只能包含带 NovaSVN 前缀的 Update、Commit、Log");
   failed = true;
 }
 
@@ -593,7 +614,7 @@ if (
   !nsisHooks.includes("%1") ||
   !nsisHooks.includes("%V")
 ) {
-  console.error("Windows Explorer 操作必须位于带独立分隔线的 NovaSVN 二级菜单中");
+  console.error("Windows Explorer 操作必须包含 NovaSVN 二级菜单及独立分隔的一级 Checkout");
   failed = true;
 }
 
