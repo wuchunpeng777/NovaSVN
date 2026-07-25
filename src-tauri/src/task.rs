@@ -347,6 +347,8 @@ pub struct CreateRevisionDiffTaskRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateRevertRevisionTaskRequest {
     pub working_copy_root: String,
+    pub target_path: Option<String>,
+    pub source_url: Option<String>,
     pub target_revision: String,
     pub svn_executable: Option<String>,
     #[serde(default)]
@@ -692,6 +694,8 @@ struct RevisionDiffTaskPayload {
 #[derive(Debug, Clone)]
 struct RevertRevisionTaskPayload {
     working_copy_root: String,
+    target_path: String,
+    source_url: Option<String>,
     target_revision: String,
     svn_executable: String,
     whole_workspace: bool,
@@ -1978,6 +1982,14 @@ impl TaskQueue {
         request: CreateRevertRevisionTaskRequest,
     ) -> Result<Task, NovaError> {
         let working_copy_root = normalize_workspace_root(&request.working_copy_root)?;
+        let target_path =
+            normalize_revert_target_path(&working_copy_root, request.target_path.as_deref())?;
+        let target_is_root = target_path == working_copy_root;
+        let source_url = request
+            .source_url
+            .as_deref()
+            .map(normalize_repository_url)
+            .transpose()?;
         let target_revision = normalize_revert_target_revision(&request.target_revision)?;
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
@@ -1985,7 +1997,11 @@ impl TaskQueue {
         let task = Task {
             task_id: task_id.clone(),
             title: if request.whole_workspace {
-                format!("回退工作区到 r{target_revision}")
+                if target_is_root {
+                    format!("回退工作区到 r{target_revision}")
+                } else {
+                    format!("回退目标到 r{target_revision}")
+                }
             } else {
                 format!("撤销提交 r{target_revision}")
             },
@@ -2004,6 +2020,8 @@ impl TaskQueue {
             updated_at: now,
             payload: TaskPayload::RevertRevision(RevertRevisionTaskPayload {
                 working_copy_root: working_copy_root.display().to_string(),
+                target_path: target_path.display().to_string(),
+                source_url,
                 target_revision,
                 svn_executable,
                 whole_workspace: request.whole_workspace,
@@ -4953,12 +4971,17 @@ fn run_revert_revision_task(
     task_id: &str,
     payload: RevertRevisionTaskPayload,
 ) {
+    let target_is_root = Path::new(&payload.target_path) == Path::new(&payload.working_copy_root);
     update_task(
         state,
         task_id,
         TaskStatus::Running,
         if payload.whole_workspace {
-            "回退工作区开始执行"
+            if target_is_root {
+                "回退工作区开始执行"
+            } else {
+                "回退目标开始执行"
+            }
         } else {
             "撤销单次提交开始执行"
         },
@@ -4966,7 +4989,7 @@ fn run_revert_revision_task(
     );
 
     match execute_revert_revision(state, task_id, &payload) {
-        Ok((output, _base_revision, source_url)) => {
+        Ok((output, source_url)) => {
             append_task_log(
                 state,
                 task_id,
@@ -4974,12 +4997,12 @@ fn run_revert_revision_task(
                     "执行 {}：{}",
                     if payload.whole_workspace {
                         format!(
-                            "svn merge --ignore-ancestry -r HEAD:{}",
+                            "svn merge --ignore-ancestry --allow-mixed-revisions -r HEAD:{}",
                             payload.target_revision
                         )
                     } else {
                         format!(
-                            "svn merge --ignore-ancestry -c -{}",
+                            "svn merge --ignore-ancestry --allow-mixed-revisions -c -{}",
                             payload.target_revision
                         )
                     },
@@ -4992,7 +5015,11 @@ fn run_revert_revision_task(
                 task_id,
                 TaskStatus::Success,
                 if payload.whole_workspace {
-                    "工作区已回退并生成本地改动"
+                    if target_is_root {
+                        "工作区已回退并生成本地改动"
+                    } else {
+                        "目标已回退并生成本地改动"
+                    }
                 } else {
                     "单次提交已撤销并生成本地改动"
                 },
@@ -5006,7 +5033,11 @@ fn run_revert_revision_task(
                 task_id,
                 TaskStatus::Failed,
                 if payload.whole_workspace {
-                    "回退工作区失败"
+                    if target_is_root {
+                        "回退工作区失败"
+                    } else {
+                        "回退目标失败"
+                    }
                 } else {
                     "撤销单次提交失败"
                 },
@@ -5031,59 +5062,9 @@ fn execute_revert_revision(
     state: &Arc<Mutex<TaskQueueState>>,
     task_id: &str,
     payload: &RevertRevisionTaskPayload,
-) -> Result<(std::process::Output, String, String), NovaError> {
+) -> Result<(std::process::Output, String), NovaError> {
     let root = PathBuf::from(&payload.working_copy_root);
-    if revert_workspace_has_local_changes(
-        &payload.svn_executable,
-        &root,
-        "REVERT_REVISION_STATUS_FAILED",
-        "REVERT_REVISION_STATUS_XML_PARSE_FAILED",
-    )? {
-        return Err(NovaError::command(
-            "REVERT_REVISION_LOCAL_CHANGES",
-            "当前工作副本有本地改动",
-            Some(
-                if payload.whole_workspace {
-                    "回退工作区前请先提交或撤销现有本地改动。"
-                } else {
-                    "撤销单次提交前请先提交或撤销现有本地改动。"
-                }
-                .to_string(),
-            ),
-            true,
-        ));
-    }
-
-    let base_revision =
-        read_revert_revision_info_item(&payload.svn_executable, &root, "revision", false)?;
-    let head_revision =
-        read_revert_revision_info_item(&payload.svn_executable, &root, "revision", true)?;
-    let base_number = base_revision.parse::<u64>().map_err(|error| {
-        NovaError::command(
-            "REVERT_REVISION_BASE_INVALID",
-            "当前工作副本 Revision 无效",
-            Some(format!("返回值：{base_revision}；错误：{error}")),
-            true,
-        )
-    })?;
-    let head_number = head_revision.parse::<u64>().map_err(|error| {
-        NovaError::command(
-            "REVERT_REVISION_HEAD_INVALID",
-            "仓库 HEAD Revision 无效",
-            Some(format!("返回值：{head_revision}；错误：{error}")),
-            true,
-        )
-    })?;
-    if base_number != head_number {
-        return Err(NovaError::command(
-            "REVERT_REVISION_UPDATE_REQUIRED",
-            "工作副本尚未 Update 到 HEAD",
-            Some(format!(
-                "当前根 Revision：r{base_number}；仓库 HEAD：r{head_number}。请先执行 Update。"
-            )),
-            true,
-        ));
-    }
+    let target = normalize_revert_target_path(&root, Some(&payload.target_path))?;
 
     let target_number = payload.target_revision.parse::<u64>().map_err(|error| {
         NovaError::command(
@@ -5093,42 +5074,39 @@ fn execute_revert_revision(
             true,
         )
     })?;
-    if (!payload.whole_workspace && target_number == 0) || target_number > base_number {
+    if !payload.whole_workspace && target_number == 0 {
         return Err(NovaError::command(
             "REVERT_COMMIT_TARGET_OUT_OF_RANGE",
-            "目标提交 Revision 不在当前工作副本范围内",
-            Some(format!(
-                "当前 Revision：r{base_number}；目标提交：r{target_number}"
-            )),
+            "目标提交 Revision 无效",
+            Some("r0 不包含可撤销的提交改动。".to_string()),
             true,
         ));
     }
 
-    let source_url = read_revert_revision_info_item(&payload.svn_executable, &root, "url", false)?;
-    let source_url = normalize_repository_url(&source_url)?;
-    let mut command = svn::command(&payload.svn_executable);
-    command.arg("merge").arg("--ignore-ancestry");
-    if payload.whole_workspace {
-        if target_number == base_number {
-            return Err(NovaError::command(
-                "REVERT_WORKSPACE_TARGET_UNCHANGED",
-                "目标 Revision 与当前工作副本相同",
-                Some(format!("当前 Revision：r{base_number}")),
-                true,
-            ));
+    let source_url = match payload.source_url.as_deref() {
+        Some(source_url) => source_url.to_string(),
+        None => {
+            let source_url =
+                read_revert_revision_info_item(&payload.svn_executable, &target, "url")?;
+            normalize_repository_url(&source_url)?
         }
-        command
-            .arg("-r")
-            .arg(format!("{base_number}:{target_number}"));
+    };
+    let source_url = format!("{source_url}@HEAD");
+    let mut command = svn::command(&payload.svn_executable);
+    command
+        .arg("merge")
+        .args(["--ignore-ancestry", "--allow-mixed-revisions"]);
+    if payload.whole_workspace {
+        command.arg("-r").arg(format!("HEAD:{target_number}"));
     } else {
         command.arg("-c").arg(format!("-{target_number}"));
     }
-    command.arg(&source_url).arg(&root).current_dir(&root);
+    command.arg(&source_url).arg(&target).current_dir(&root);
     let output = run_task_command(state, task_id, &mut command).map_err(|error| {
         NovaError::command(
             "REVERT_REVISION_COMMAND_FAILED",
             if payload.whole_workspace {
-                "无法启动回退工作区命令"
+                "无法启动回退到指定版本命令"
             } else {
                 "无法启动撤销单次提交命令"
             },
@@ -5140,7 +5118,7 @@ fn execute_revert_revision(
         return Err(NovaError::command(
             "REVERT_REVISION_FAILED",
             if payload.whole_workspace {
-                "回退工作区命令执行失败"
+                "回退到指定版本命令执行失败"
             } else {
                 "撤销单次提交命令执行失败"
             },
@@ -5149,38 +5127,30 @@ fn execute_revert_revision(
         ));
     }
 
-    Ok((output, base_number.to_string(), source_url))
+    Ok((output, source_url))
 }
 
 fn read_revert_revision_info_item(
     executable: &str,
     root: &Path,
     item: &str,
-    repository_head: bool,
 ) -> Result<String, NovaError> {
     let mut command = svn::command(executable);
     command.args(["info", "--show-item", item]);
-    if repository_head {
-        command.args(["--revision", "HEAD"]);
-    }
-    let output = command
-        .arg(root)
-        .current_dir(root)
-        .output()
-        .map_err(|error| {
-            NovaError::command(
-                "REVERT_REVISION_INFO_FAILED",
-                "无法读取撤销单次提交所需的 SVN 信息",
-                Some(format!(
-                    "无法执行 `{executable} info --show-item {item}`：{error}"
-                )),
-                true,
-            )
-        })?;
+    let output = command.arg(root).output().map_err(|error| {
+        NovaError::command(
+            "REVERT_REVISION_INFO_FAILED",
+            "无法读取版本回退所需的 SVN 信息",
+            Some(format!(
+                "无法执行 `{executable} info --show-item {item}`：{error}"
+            )),
+            true,
+        )
+    })?;
     if !output.status.success() {
         return Err(NovaError::command(
             "REVERT_REVISION_INFO_FAILED",
-            "无法读取撤销单次提交所需的 SVN 信息",
+            "无法读取版本回退所需的 SVN 信息",
             Some(command_error_detail(executable, &output)),
             true,
         ));
@@ -5189,7 +5159,7 @@ fn read_revert_revision_info_item(
     if value.is_empty() {
         return Err(NovaError::command(
             "REVERT_REVISION_INFO_EMPTY",
-            "撤销单次提交所需的 SVN 信息为空",
+            "版本回退所需的 SVN 信息为空",
             Some(format!("字段：{item}")),
             true,
         ));
@@ -7498,16 +7468,6 @@ fn workspace_has_local_changes_with_error(
     status_xml_has_entries_with_error(&xml, parse_error_code)
 }
 
-fn revert_workspace_has_local_changes(
-    executable: &str,
-    root: &Path,
-    status_error_code: &'static str,
-    parse_error_code: &'static str,
-) -> Result<bool, NovaError> {
-    let xml = svn_status_xml_for_guard(executable, root, status_error_code)?;
-    status_xml_has_versioned_changes_with_error(&xml, parse_error_code)
-}
-
 fn svn_status_xml_for_guard(
     executable: &str,
     root: &Path,
@@ -7565,35 +7525,6 @@ fn status_xml_has_entries_with_error(
         .any(|node| node.has_tag_name("entry")))
 }
 
-fn status_xml_has_versioned_changes_with_error(
-    xml: &str,
-    parse_error_code: &'static str,
-) -> Result<bool, NovaError> {
-    let document = Document::parse(xml).map_err(|error| {
-        NovaError::command(
-            parse_error_code,
-            "解析工作副本本地改动状态失败",
-            Some(format!("svn status --xml 返回了无法解析的 XML：{error}")),
-            true,
-        )
-    })?;
-
-    Ok(document
-        .descendants()
-        .filter(|node| node.has_tag_name("wc-status"))
-        .any(|node| {
-            let item_is_changed = !matches!(
-                node.attribute("item"),
-                Some("normal" | "none" | "unversioned" | "ignored" | "external")
-            );
-            let properties_are_changed =
-                !matches!(node.attribute("props"), None | Some("normal" | "none"));
-            let tree_is_conflicted = node.attribute("tree-conflicted") == Some("true");
-
-            item_is_changed || properties_are_changed || tree_is_conflicted
-        }))
-}
-
 fn normalize_workspace_root(path: &str) -> Result<PathBuf, NovaError> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -7616,6 +7547,95 @@ fn normalize_workspace_root(path: &str) -> Result<PathBuf, NovaError> {
     }
 
     Ok(path)
+}
+
+fn normalize_revert_target_path(
+    working_copy_root: &Path,
+    target_path: Option<&str>,
+) -> Result<PathBuf, NovaError> {
+    let Some(raw_target) = target_path else {
+        return Ok(working_copy_root.to_path_buf());
+    };
+    let raw_target = raw_target.trim();
+    if raw_target.is_empty() || raw_target.chars().any(char::is_control) {
+        return Err(NovaError::command(
+            "REVERT_REVISION_TARGET_PATH_INVALID",
+            "版本回退目标路径无效",
+            Some("目标路径不能为空或包含控制字符。".to_string()),
+            true,
+        ));
+    }
+
+    let raw_path = Path::new(raw_target);
+    let target = if path_utils::is_absolute_or_windows_path(raw_path, raw_target) {
+        raw_path.to_path_buf()
+    } else {
+        let relative = normalize_relative_file_path(
+            raw_target,
+            "REVERT_REVISION_TARGET_PATH_INVALID",
+            "版本回退目标路径无效",
+        )?;
+        working_copy_root.join(relative)
+    };
+    let canonical_root = fs::canonicalize(working_copy_root).map_err(|error| {
+        NovaError::command(
+            "REVERT_REVISION_WORKSPACE_RESOLVE_FAILED",
+            "无法解析版本回退工作副本",
+            Some(format!(
+                "路径：{}；错误：{error}",
+                working_copy_root.display()
+            )),
+            true,
+        )
+    })?;
+    let mut existing_ancestor = target.as_path();
+    while !existing_ancestor.exists() {
+        existing_ancestor = existing_ancestor.parent().ok_or_else(|| {
+            NovaError::command(
+                "REVERT_REVISION_TARGET_PATH_INVALID",
+                "无法解析版本回退目标路径",
+                Some(format!("路径：{}", target.display())),
+                true,
+            )
+        })?;
+    }
+    let canonical_ancestor = fs::canonicalize(existing_ancestor).map_err(|error| {
+        NovaError::command(
+            "REVERT_REVISION_TARGET_PATH_INVALID",
+            "无法解析版本回退目标路径",
+            Some(format!("路径：{}；错误：{error}", target.display())),
+            true,
+        )
+    })?;
+    let relative = canonical_ancestor
+        .strip_prefix(&canonical_root)
+        .map_err(|_| {
+            NovaError::command(
+                "REVERT_REVISION_TARGET_OUTSIDE_WORKSPACE",
+                "版本回退目标不在工作副本内",
+                Some(format!(
+                    "目标：{}；工作副本：{}",
+                    target.display(),
+                    working_copy_root.display()
+                )),
+                true,
+            )
+        })?;
+    if relative.components().any(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(".svn")
+    }) {
+        return Err(NovaError::command(
+            "REVERT_REVISION_TARGET_PATH_INVALID",
+            "版本回退目标路径无效",
+            Some("不能对工作副本的 .svn 元数据目录执行版本回退。".to_string()),
+            true,
+        ));
+    }
+
+    Ok(target)
 }
 
 fn normalize_apply_patch_paths(
@@ -12513,6 +12533,40 @@ mod tests {
     }
 
     #[test]
+    fn keeps_revert_targets_inside_the_working_copy() {
+        let parent = test_temp_dir("revert-target-paths");
+        let working_copy = parent.join("working-copy");
+        let nested = working_copy.join("src").join("tracked.txt");
+        let outside = parent.join("outside.txt");
+        fs::create_dir_all(nested.parent().expect("nested parent")).expect("create nested path");
+        fs::write(&nested, "tracked\n").expect("write nested target");
+        fs::write(&outside, "outside\n").expect("write outside target");
+
+        assert_eq!(
+            normalize_revert_target_path(&working_copy, None).unwrap(),
+            working_copy
+        );
+        assert_eq!(
+            normalize_revert_target_path(&working_copy, Some("src/tracked.txt")).unwrap(),
+            nested
+        );
+        assert_eq!(
+            normalize_revert_target_path(&working_copy, Some("src/missing.txt")).unwrap(),
+            working_copy.join("src").join("missing.txt")
+        );
+        let error =
+            normalize_revert_target_path(&working_copy, Some(outside.to_string_lossy().as_ref()))
+                .expect_err("outside target must be rejected");
+        assert!(matches!(
+            error,
+            NovaError::Command { ref code, .. }
+                if code == "REVERT_REVISION_TARGET_OUTSIDE_WORKSPACE"
+        ));
+
+        fs::remove_dir_all(parent).ok();
+    }
+
+    #[test]
     fn validates_repository_list_revision_values() {
         assert_eq!(normalize_repository_list_revision(None).unwrap(), None);
         assert_eq!(
@@ -12553,53 +12607,6 @@ mod tests {
         assert!(status_xml_has_entries(changed).unwrap());
         assert!(!status_xml_has_entries(clean).unwrap());
         assert!(status_xml_has_entries("<not xml").is_err());
-    }
-
-    #[test]
-    fn revert_guard_ignores_unversioned_entries_and_blocks_versioned_changes() {
-        for item in ["normal", "none", "unversioned", "ignored", "external"] {
-            let xml = format!(
-                r#"<status><target path="C:\wc"><entry path="generated.tmp"><wc-status item="{item}" props="none" /></entry></target></status>"#
-            );
-            assert!(
-                !status_xml_has_versioned_changes_with_error(&xml, "TEST_PARSE_FAILED").unwrap(),
-                "{item} must not block a revision revert"
-            );
-        }
-
-        for item in [
-            "added",
-            "missing",
-            "incomplete",
-            "deleted",
-            "replaced",
-            "modified",
-            "merged",
-            "conflicted",
-            "obstructed",
-        ] {
-            let xml = format!(
-                r#"<status><target path="C:\wc"><entry path="tracked.txt"><wc-status item="{item}" props="none" /></entry></target></status>"#
-            );
-            assert!(
-                status_xml_has_versioned_changes_with_error(&xml, "TEST_PARSE_FAILED").unwrap(),
-                "{item} must block a revision revert"
-            );
-        }
-
-        let property_change = r#"<status><target path="C:\wc"><entry path="tracked.txt"><wc-status item="normal" props="modified" /></entry></target></status>"#;
-        let tree_conflict = r#"<status><target path="C:\wc"><entry path="tracked.txt"><wc-status item="normal" props="none" tree-conflicted="true" /></entry></target></status>"#;
-        assert!(
-            status_xml_has_versioned_changes_with_error(property_change, "TEST_PARSE_FAILED")
-                .unwrap()
-        );
-        assert!(
-            status_xml_has_versioned_changes_with_error(tree_conflict, "TEST_PARSE_FAILED")
-                .unwrap()
-        );
-        assert!(
-            status_xml_has_versioned_changes_with_error("<not xml", "TEST_PARSE_FAILED").is_err()
-        );
     }
 
     #[test]
@@ -14792,7 +14799,7 @@ mod tests {
     }
 
     #[test]
-    fn reverts_single_commit_and_whole_workspace_with_unversioned_files() {
+    fn matches_tortoise_reverts_with_scoped_target_local_changes_and_mixed_revisions() {
         if !svn_tools_available() {
             return;
         }
@@ -14810,8 +14817,10 @@ mod tests {
         );
 
         let file = working_copy.join("tracked.txt");
+        let local_file = working_copy.join("local.txt");
         fs::write(&file, "revision one\n").expect("write revision one");
-        run_test_command(Command::new("svn").arg("add").arg(&file));
+        fs::write(&local_file, "local base\n").expect("write local base");
+        run_test_command(Command::new("svn").arg("add").arg(&file).arg(&local_file));
         run_test_command(
             Command::new("svn")
                 .arg("commit")
@@ -14828,25 +14837,31 @@ mod tests {
         run_test_command(Command::new("svn").arg("update").arg(&working_copy));
         let unversioned = working_copy.join("generated.tmp");
         fs::write(&unversioned, "generated\n").expect("write unversioned file");
+        fs::write(&local_file, "local edit before single revert\n").expect("write local edit");
 
         let payload = RevertRevisionTaskPayload {
             working_copy_root: working_copy.display().to_string(),
+            target_path: file.display().to_string(),
+            source_url: None,
             target_revision: "2".to_string(),
             svn_executable: "svn".to_string(),
             whole_workspace: false,
         };
         let state = Arc::new(Mutex::new(TaskQueueState::default()));
-        let (output, base_revision, source_url) =
+        let (output, source_url) =
             execute_revert_revision(&state, "revert-revision-test", &payload)
                 .expect("reverse merge should succeed");
 
         assert!(output.status.success());
-        assert_eq!(base_revision, "2");
         assert!(source_url.starts_with("file:"));
-        assert!(source_url.trim_end_matches('/').ends_with("/repository"));
+        assert!(source_url.ends_with("/tracked.txt@HEAD"));
         assert_eq!(
             fs::read_to_string(&file).expect("read reverted file"),
             "revision one\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&local_file).expect("read local file"),
+            "local edit before single revert\n"
         );
         assert_eq!(
             fs::read_to_string(&unversioned).expect("read unversioned file"),
@@ -14860,6 +14875,7 @@ mod tests {
         );
         assert!(String::from_utf8_lossy(&status.stdout).contains("item=\"modified\""));
 
+        run_test_command(Command::new("svn").arg("revert").arg(&local_file));
         fs::write(&file, "revision three\n").expect("write revision three");
         run_test_command(
             Command::new("svn")
@@ -14867,28 +14883,115 @@ mod tests {
                 .arg(&working_copy)
                 .args(["-m", "revision three"]),
         );
-        run_test_command(Command::new("svn").arg("update").arg(&working_copy));
+        fs::write(&local_file, "local edit before revert to revision\n")
+            .expect("write second local edit");
 
         let payload = RevertRevisionTaskPayload {
             working_copy_root: working_copy.display().to_string(),
+            target_path: working_copy.display().to_string(),
+            source_url: None,
             target_revision: "1".to_string(),
             svn_executable: "svn".to_string(),
             whole_workspace: true,
         };
         let state = Arc::new(Mutex::new(TaskQueueState::default()));
-        let (output, base_revision, _) =
+        let (output, source_url) =
             execute_revert_revision(&state, "revert-workspace-test", &payload)
                 .expect("whole workspace reverse merge should succeed");
 
         assert!(output.status.success());
-        assert_eq!(base_revision, "3");
+        assert!(source_url.ends_with("/repository@HEAD"));
         assert_eq!(
             fs::read_to_string(&file).expect("read workspace reverted file"),
             "revision one\n"
         );
         assert_eq!(
+            fs::read_to_string(&local_file).expect("read second local edit"),
+            "local edit before revert to revision\n"
+        );
+        assert_eq!(
             fs::read_to_string(&unversioned).expect("read unversioned file"),
             "generated\n"
+        );
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn follows_copy_history_when_reverting_a_pre_copy_revision() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("revert-copy-history-integration");
+        let repository = root.join("repository");
+        let seed_working_copy = root.join("seed-working-copy");
+        let branch_working_copy = root.join("branch-working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = test_file_repository_url(&repository);
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&seed_working_copy),
+        );
+
+        let trunk = seed_working_copy.join("trunk");
+        let branches = seed_working_copy.join("branches");
+        fs::create_dir_all(&trunk).expect("create trunk");
+        fs::create_dir_all(&branches).expect("create branches");
+        let trunk_file = trunk.join("tracked.txt");
+        fs::write(&trunk_file, "revision one\n").expect("write revision one");
+        run_test_command(Command::new("svn").arg("add").arg(&trunk).arg(&branches));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&seed_working_copy)
+                .args(["-m", "create layout"]),
+        );
+        fs::write(&trunk_file, "revision two\n").expect("write revision two");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&trunk_file)
+                .args(["-m", "change before copy"]),
+        );
+
+        let trunk_url = format!("{repository_url}/trunk");
+        let branch_url = format!("{repository_url}/branches/feature");
+        run_test_command(
+            Command::new("svn")
+                .arg("copy")
+                .arg(&trunk_url)
+                .arg(&branch_url)
+                .args(["-m", "copy branch"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&branch_url)
+                .arg(&branch_working_copy),
+        );
+
+        let branch_file = branch_working_copy.join("tracked.txt");
+        let payload = RevertRevisionTaskPayload {
+            working_copy_root: branch_working_copy.display().to_string(),
+            target_path: branch_file.display().to_string(),
+            source_url: Some(format!("{branch_url}/tracked.txt")),
+            target_revision: "2".to_string(),
+            svn_executable: "svn".to_string(),
+            whole_workspace: false,
+        };
+        let state = Arc::new(Mutex::new(TaskQueueState::default()));
+        let (output, source_url) =
+            execute_revert_revision(&state, "revert-copy-history-test", &payload)
+                .expect("reverse merge should follow copy history");
+
+        assert!(output.status.success());
+        assert!(source_url.ends_with("/branches/feature/tracked.txt@HEAD"));
+        assert_eq!(
+            fs::read_to_string(&branch_file).expect("read reverted branch file"),
+            "revision one\n"
         );
 
         fs::remove_dir_all(root).ok();

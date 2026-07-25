@@ -1027,12 +1027,17 @@ if (
   !mainWorkspace.includes("onRevertToRevision(entry.revision)") ||
   !appSvelte.includes("revertWorkspaceToRevision") ||
   !appSvelte.includes("反向应用该次提交") ||
+  !appSvelte.includes("targetPath") ||
+  !appSvelte.includes("sourceUrl") ||
   !taskRs.includes("fn execute_revert_revision(") ||
-  !taskRs.includes('command.arg("merge").arg("--ignore-ancestry")') ||
+  !taskRs.includes('args(["--ignore-ancestry", "--allow-mixed-revisions"])') ||
+  !taskRs.includes('let source_url = format!("{source_url}@HEAD")') ||
   !taskRs.includes('command.arg("-c").arg(format!("-{target_number}"))') ||
+  !taskRs.includes('command.arg("-r").arg(format!("HEAD:{target_number}"))') ||
+  !taskRs.includes('command.arg(&source_url).arg(&target).current_dir(&root)') ||
   !tauriLib.includes("create_revert_revision_task")
 ) {
-  console.error("Timeline 日志撤销必须只反向应用单次提交");
+  console.error("Timeline 日志回退必须保持 TortoiseSVN 的目标、peg 和混合 Revision 语义");
   failed = true;
 }
 

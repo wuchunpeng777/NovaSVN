@@ -883,6 +883,8 @@ function createTaskStore() {
 
   async function createRevertRevision(request: {
     workingCopyRoot: string;
+    targetPath?: string;
+    sourceUrl?: string;
     targetRevision: string;
     svnExecutable?: string | null;
     wholeWorkspace?: boolean;
@@ -892,6 +894,8 @@ function createTaskStore() {
     try {
       const task = await createRevertRevisionTask({
         working_copy_root: request.workingCopyRoot,
+        ...(request.targetPath ? { target_path: request.targetPath } : {}),
+        ...(request.sourceUrl ? { source_url: request.sourceUrl } : {}),
         target_revision: request.targetRevision,
         whole_workspace: request.wholeWorkspace || undefined,
         svn_executable: request.svnExecutable || undefined,

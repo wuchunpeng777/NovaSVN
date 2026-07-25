@@ -1769,8 +1769,13 @@
 
   async function revertWorkspaceToRevision(revision: string, wholeWorkspace = false) {
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+    const targetPath = $workspaceStore.svnLogFileOnly
+      ? $workspaceStore.selectedFilePath?.trim()
+      : undefined;
+    const sourceUrl = $workspaceStore.svnLog?.repository_url?.trim();
     if (
       !workingCopyRoot ||
+      ($workspaceStore.svnLogFileOnly && !targetPath) ||
       svnOperationCreationCoordinator.isCreating() ||
       $workspaceStore.pendingSvnOperationTaskId !== null
     ) {
@@ -1779,8 +1784,8 @@
 
     const confirmed = window.confirm(
       wholeWorkspace
-        ? `确定要把整个工作区回退到 r${revision} 吗？\n${workingCopyRoot}\n\n这会反向应用 r${revision} 之后的全部提交并生成本地改动，不会自动提交。\n工作副本必须无本地改动且已 Update 到 HEAD。`
-        : `确定要撤销 r${revision} 这次提交吗？\n${workingCopyRoot}\n\n这只会反向应用该次提交并生成本地改动，不会自动提交，也不会把整个工作副本回退到 r${revision}。\n工作副本必须无本地改动且已 Update 到 HEAD。`,
+        ? `确定要把${targetPath ? "当前日志目标" : "整个工作区"}回退到 r${revision} 吗？\n${targetPath ?? workingCopyRoot}\n\n这会反向应用该目标在 r${revision} 之后的全部提交并生成本地改动，不会自动提交。\n现有本地改动会保留；如果修改了相同内容，SVN 可能产生冲突。`
+        : `确定要撤销 r${revision} 对当前日志目标造成的改动吗？\n${targetPath ?? workingCopyRoot}\n\n这只会反向应用该次提交并生成本地改动，不会自动提交，也不会回退其他 revision。\n现有本地改动会保留；如果修改了相同内容，SVN 可能产生冲突。`,
     );
     if (!confirmed) {
       return;
@@ -1791,6 +1796,8 @@
       () =>
         taskStore.createRevertRevision({
           workingCopyRoot,
+          targetPath,
+          sourceUrl,
           targetRevision: revision,
           wholeWorkspace,
           svnExecutable: currentSvnExecutable(),

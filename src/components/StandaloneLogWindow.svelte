@@ -371,14 +371,15 @@
 
   async function revertToRevision(revision: string, wholeWorkspace = false) {
     const workingCopyRoot = log?.working_copy_root?.trim();
-    if (!workingCopyRoot || revertRunning) {
+    const revertPath = log?.target?.trim();
+    if (!workingCopyRoot || !revertPath || revertRunning) {
       return;
     }
     if (
       !window.confirm(
         wholeWorkspace
-          ? `确定要把整个工作区回退到 r${revision} 吗？\n${workingCopyRoot}\n\n这会反向应用 r${revision} 之后的全部提交并生成本地改动，不会自动提交。\n工作副本必须无本地改动且已 Update 到 HEAD。`
-          : `确定要撤销 r${revision} 这次提交吗？\n${workingCopyRoot}\n\n这只会反向应用该次提交并生成本地改动，不会自动提交，也不会把整个工作副本回退到 r${revision}。\n工作副本必须无本地改动且已 Update 到 HEAD。`,
+          ? `确定要把当前日志目标回退到 r${revision} 吗？\n${revertPath}\n\n这会反向应用该目标在 r${revision} 之后的全部提交并生成本地改动，不会自动提交。\n现有本地改动会保留；如果修改了相同内容，SVN 可能产生冲突。`
+          : `确定要撤销 r${revision} 对当前日志目标造成的改动吗？\n${revertPath}\n\n这只会反向应用该次提交并生成本地改动，不会自动提交，也不会回退其他 revision。\n现有本地改动会保留；如果修改了相同内容，SVN 可能产生冲突。`,
       )
     ) {
       return;
@@ -393,6 +394,8 @@
       handleRevertTask(
         await createRevertRevisionTask({
           working_copy_root: workingCopyRoot,
+          target_path: revertPath,
+          source_url: log?.repository_url?.trim() || undefined,
           target_revision: revision,
           ...(wholeWorkspace ? { whole_workspace: true } : {}),
           svn_executable: svnExecutable?.trim() || undefined,
@@ -470,7 +473,7 @@
     clearRevertPollTimer();
     if (task.status === "success") {
       revertNotice = revertWholeWorkspace
-        ? `工作区已回退到 r${revertTargetRevision ?? "-"}，本地修改已生成`
+        ? `目标已回退到 r${revertTargetRevision ?? "-"}，本地修改已生成`
         : `已撤销提交 r${revertTargetRevision ?? "-"}，本地修改已生成`;
       revertError = null;
       return;
@@ -478,7 +481,9 @@
     revertNotice = null;
     revertError = {
       code: "REVERT_REVISION_FAILED",
-      message: `撤销提交 r${revertTargetRevision ?? "-"} 失败`,
+      message: revertWholeWorkspace
+        ? `回退目标到 r${revertTargetRevision ?? "-"} 失败`
+        : `撤销提交 r${revertTargetRevision ?? "-"} 失败`,
       detail: task.error ?? `任务状态：${task.status}`,
       recoverable: true,
     };
@@ -795,7 +800,7 @@
     <ErrorNotice error={error ?? launchWindowError ?? revertError} />
     {#if revertRunning}
       <p class="revert-status" role="status">
-        {revertWholeWorkspace ? "正在回退工作区到" : "正在撤销提交"} r{revertTargetRevision ?? "-"}...
+        {revertWholeWorkspace ? "正在回退目标到" : "正在撤销提交"} r{revertTargetRevision ?? "-"}...
       </p>
     {:else if revertNotice}
       <p class="revert-status success" role="status">{revertNotice}</p>
@@ -833,9 +838,10 @@
       onOpenContextMenu={openChangedPathContextMenu}
       onRevert={(entry) => revertToRevision(entry.revision)}
       workspaceRevertDisabled={() => !log?.working_copy_root || loading || revertRunning}
+      workspaceRevertLabel={(entry) => `回退当前日志目标到 r${entry.revision}`}
       workspaceRevertTitle={(entry) => log?.working_copy_root
-        ? `回退整个工作区到 r${entry.revision}`
-        : "仅本地工作副本日志支持回退工作区"}
+        ? `回退 ${log.target} 到 r${entry.revision}`
+        : "仅本地工作副本日志支持回退目标"}
       onRevertWorkspace={(entry) => revertToRevision(entry.revision, true)}
     />
   {#if selectedDiff || selectedMergeRevisions.length > 0}

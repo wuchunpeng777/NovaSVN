@@ -3557,8 +3557,13 @@
             formatDate={formatTimelineDate}
             revertDisabled={timelineRevertDisabled}
             workspaceRevertDisabled={timelineWorkspaceRevertDisabled}
+            workspaceRevertLabel={(entry) => svnLogFileOnly
+              ? `回退当前文件到 r${entry.revision}`
+              : `回退工作区到 r${entry.revision}`}
             workspaceRevertTitle={(entry) =>
-              workspace ? `回退整个工作区到 r${entry.revision}` : "请先打开 SVN 工作副本"}
+              workspace
+                ? `${svnLogFileOnly ? "回退当前文件" : "回退整个工作区"}到 r${entry.revision}`
+                : "请先打开 SVN 工作副本"}
             onTogglePaths={toggleTimelineEntryPaths}
             onToggleMerge={toggleTimelineMerge}
             onOpenDiff={openTimelineEntryDiff}

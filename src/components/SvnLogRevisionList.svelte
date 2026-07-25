@@ -22,6 +22,8 @@
   export let revertTitle: (entry: SvnLogEntry) => string = (entry) =>
     `撤销提交 r${entry.revision}`;
   export let workspaceRevertDisabled: (entry: SvnLogEntry) => boolean = () => true;
+  export let workspaceRevertLabel: (entry: SvnLogEntry) => string = (entry) =>
+    `回退工作区到 r${entry.revision}`;
   export let workspaceRevertTitle: (entry: SvnLogEntry) => string = (entry) =>
     `回退工作区到 r${entry.revision}`;
   export let onTogglePaths: (revision: string) => void = () => {};
@@ -175,7 +177,7 @@
             <button
               type="button"
               class="svn-log-revert svn-log-revert-workspace"
-              aria-label={`回退工作区到 r${entry.revision}`}
+              aria-label={workspaceRevertLabel(entry)}
               title={workspaceRevertTitle(entry)}
               disabled={workspaceRevertDisabled(entry)}
               on:click={() => onRevertWorkspace(entry)}

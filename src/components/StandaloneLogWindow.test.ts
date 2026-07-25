@@ -342,11 +342,46 @@ describe("StandaloneLogWindow", () => {
     expect(confirmMock).toHaveBeenCalledOnce();
     expect(createRevertRevisionTaskMock).toHaveBeenCalledWith({
       working_copy_root: "C:\\repo",
+      target_path: "C:\\repo\\src\\main.ts",
+      source_url: "https://svn.example.test/repo/trunk/src/main.ts",
       target_revision: "20",
       svn_executable: "C:\\Tools\\svn.exe",
     });
     expect(await screen.findByRole("status")).toHaveTextContent(
       "已撤销提交 r20，本地修改已生成",
+    );
+    confirmMock.mockRestore();
+  });
+
+  it("从独立 Log 把当前日志目标回退到指定版本", async () => {
+    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
+    getPathSvnLogMock.mockResolvedValue(makeLog());
+    createRevertRevisionTaskMock.mockResolvedValue(
+      makeTask({ status: "success", title: "回退目标到 r20" }),
+    );
+    render(StandaloneLogWindow, {
+      props: {
+        targetPath: "C:\\repo\\src\\main.ts",
+        svnExecutable: "C:\\Tools\\svn.exe",
+      },
+    });
+    await screen.findByText("Add log window");
+
+    await fireEvent.click(
+      screen.getByRole("button", { name: "回退当前日志目标到 r20" }),
+    );
+
+    expect(confirmMock).toHaveBeenCalledOnce();
+    expect(createRevertRevisionTaskMock).toHaveBeenCalledWith({
+      working_copy_root: "C:\\repo",
+      target_path: "C:\\repo\\src\\main.ts",
+      source_url: "https://svn.example.test/repo/trunk/src/main.ts",
+      target_revision: "20",
+      whole_workspace: true,
+      svn_executable: "C:\\Tools\\svn.exe",
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "目标已回退到 r20，本地修改已生成",
     );
     confirmMock.mockRestore();
   });

@@ -2177,6 +2177,8 @@ describe("taskStore revision diff tasks", () => {
 
     const task = await taskStore.createRevertRevision({
       workingCopyRoot: "C:/repo/wc",
+      targetPath: "src/main.ts",
+      sourceUrl: "https://svn.example.test/repo/trunk/src/main.ts",
       targetRevision: "10",
       svnExecutable: "C:/svn/svn.exe",
     });
@@ -2184,6 +2186,8 @@ describe("taskStore revision diff tasks", () => {
     expect(task?.task_id).toBe("revert-revision-1");
     expect(createRevertRevisionTaskMock).toHaveBeenCalledWith({
       working_copy_root: "C:/repo/wc",
+      target_path: "src/main.ts",
+      source_url: "https://svn.example.test/repo/trunk/src/main.ts",
       target_revision: "10",
       svn_executable: "C:/svn/svn.exe",
     });
