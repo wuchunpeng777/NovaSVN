@@ -2193,6 +2193,23 @@ describe("taskStore revision diff tasks", () => {
     });
   });
 
+  it("forwards multiple revisions in one batch revert task", async () => {
+    createRevertRevisionTaskMock.mockResolvedValue(makeTask({ task_id: "batch-revert-1" }));
+
+    const task = await taskStore.createRevertRevision({
+      workingCopyRoot: "C:/repo/wc",
+      targetRevisions: ["8", "10"],
+      svnExecutable: "C:/svn/svn.exe",
+    });
+
+    expect(task?.task_id).toBe("batch-revert-1");
+    expect(createRevertRevisionTaskMock).toHaveBeenCalledWith({
+      working_copy_root: "C:/repo/wc",
+      target_revisions: ["8", "10"],
+      svn_executable: "C:/svn/svn.exe",
+    });
+  });
+
   it("forwards a working-copy file target", async () => {
     createRevisionDiffTaskMock.mockResolvedValue(makeTask({ task_id: "revision-diff-file-1" }));
 

@@ -885,7 +885,8 @@ function createTaskStore() {
     workingCopyRoot: string;
     targetPath?: string;
     sourceUrl?: string;
-    targetRevision: string;
+    targetRevision?: string;
+    targetRevisions?: string[];
     svnExecutable?: string | null;
     wholeWorkspace?: boolean;
   }) {
@@ -896,7 +897,10 @@ function createTaskStore() {
         working_copy_root: request.workingCopyRoot,
         ...(request.targetPath ? { target_path: request.targetPath } : {}),
         ...(request.sourceUrl ? { source_url: request.sourceUrl } : {}),
-        target_revision: request.targetRevision,
+        ...(request.targetRevision ? { target_revision: request.targetRevision } : {}),
+        ...(request.targetRevisions?.length
+          ? { target_revisions: request.targetRevisions }
+          : {}),
         whole_workspace: request.wholeWorkspace || undefined,
         svn_executable: request.svnExecutable || undefined,
       });

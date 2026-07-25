@@ -839,6 +839,63 @@ Certificate information:
     });
   });
 
+  it("确认后创建单个多 Revision 批量撤销任务", async () => {
+    getSvnLogMock.mockResolvedValue({
+      target: "C:/repo/wc",
+      working_copy_root: "C:/repo/wc",
+      repository_url: "https://example.com/svn/trunk",
+      entries: [
+        {
+          revision: "12",
+          author: "alice",
+          date: "2026-07-12T10:00:00Z",
+          message: "newer",
+          changed_paths: [],
+        },
+        {
+          revision: "10",
+          author: "bob",
+          date: "2026-07-10T10:00:00Z",
+          message: "older",
+          changed_paths: [],
+        },
+      ],
+      has_more: false,
+      next_start_revision: null,
+    });
+    await workspaceStore.refreshSvnLog(undefined);
+    setCurrentView("history");
+    createRevertRevisionTaskMock.mockResolvedValue(
+      makeTask({ task_id: "batch-revert-revisions", status: "pending" }),
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(App);
+
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r12" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r10" }));
+    await fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Revision 批量操作" })).getByRole(
+        "button",
+        { name: "撤销选中 Revision" },
+      ),
+    );
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("选中：r10、r12"));
+    await waitFor(() => {
+      expect(createRevertRevisionTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:/repo/wc",
+        source_url: "https://example.com/svn/trunk",
+        target_revisions: ["10", "12"],
+        svn_executable: undefined,
+      });
+    });
+    expect(get(workspaceStore)).toMatchObject({
+      pendingSvnOperationTaskId: "batch-revert-revisions",
+      pendingSvnOperationKind: "revert_to_revision",
+      pendingSvnOperationWorkingCopyRoot: "C:/repo/wc",
+    });
+  });
+
   it("多选路径确认后创建单个批量 Revert 任务", async () => {
     await showBatchOperationSource();
     const task = makeTask({ task_id: "batch-revert", status: "pending" });

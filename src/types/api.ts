@@ -887,7 +887,8 @@ export interface CreateRevertRevisionTaskRequest {
   working_copy_root: string;
   target_path?: string;
   source_url?: string;
-  target_revision: string;
+  target_revision?: string;
+  target_revisions?: string[];
   svn_executable?: string;
   whole_workspace?: boolean;
 }

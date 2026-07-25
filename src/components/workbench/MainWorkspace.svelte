@@ -542,6 +542,8 @@
   export let onLoadAllSvnLog: () => void = () => {};
   export let onRevertToRevision: (revision: string) => void = () => {};
   export let onRevertWorkspaceToRevision: (revision: string) => void = () => {};
+  export let onRevertSelectedRevisions: (revisions: string[]) => Promise<boolean> = async () =>
+    false;
 
   export let onCommitMessageInput: (value: string) => void = () => {};
   export let onCommitTemplateInput: (value: string) => void = () => {};
@@ -665,6 +667,7 @@
   let timelineMergeRevisions = new Set<string>();
   let timelineMergeSelectionAnchor: string | null = null;
   let timelineMergeDialogOpen = false;
+  let timelineBatchRevertRunning = false;
   let collapsedTreePaths = new Set<string>();
   let openRowMenuPath: string | null = null;
   let selectedRowPaths = new Set<string>();
@@ -1207,6 +1210,20 @@
 
   function closeTimelineMergeDialog() {
     timelineMergeDialogOpen = false;
+  }
+
+  async function revertSelectedTimelineRevisions() {
+    if (timelineBatchRevertRunning || selectedTimelineMergeRevisions.length === 0) {
+      return;
+    }
+    timelineBatchRevertRunning = true;
+    try {
+      if (await onRevertSelectedRevisions(selectedTimelineMergeRevisions)) {
+        clearTimelineMergeSelection();
+      }
+    } finally {
+      timelineBatchRevertRunning = false;
+    }
   }
 
   $: selectedTimelineMergeRevisions = [...timelineMergeRevisions].sort(
@@ -3655,7 +3672,7 @@
           {/if}
         </div>
         {#if selectedTimelineMergeRevisions.length > 0}
-          <div class="merge-selection-bar" role="toolbar" aria-label="Revision Merge 操作">
+          <div class="merge-selection-bar" role="toolbar" aria-label="Revision 批量操作">
             <div>
               <strong>已选 {selectedTimelineMergeRevisions.length} 个 Revision</strong>
               <span>
@@ -3664,7 +3681,15 @@
                   : `r${selectedTimelineMergeRevisions[0]} 至 r${selectedTimelineMergeRevisions[selectedTimelineMergeRevisions.length - 1]}`}
               </span>
             </div>
-            <button type="button" on:click={clearTimelineMergeSelection}>清除</button>
+            <button type="button" disabled={timelineBatchRevertRunning} on:click={clearTimelineMergeSelection}>清除</button>
+            <button
+              type="button"
+              disabled={!workspace || toolbarLocked || timelineBatchRevertRunning}
+              on:click={revertSelectedTimelineRevisions}
+            >
+              <Undo2 size={16} aria-hidden="true" />
+              {timelineBatchRevertRunning ? "正在撤销..." : "撤销选中 Revision"}
+            </button>
             <button type="button" class="primary" on:click={openTimelineMergeDialog}>
               <GitMerge size={16} aria-hidden="true" /> Merge 到...
             </button>

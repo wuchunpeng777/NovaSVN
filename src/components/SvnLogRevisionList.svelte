@@ -113,7 +113,7 @@
             <input
               type="checkbox"
               class="svn-log-revision-checkbox"
-              aria-label={`选择 r${entry.revision} 用于 Merge`}
+              aria-label={`选择 r${entry.revision}`}
               checked={mergeRevisions.has(entry.revision)}
               on:click={(event) => onToggleMerge(event, entry.revision)}
             />

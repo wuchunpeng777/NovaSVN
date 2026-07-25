@@ -349,7 +349,8 @@ pub struct CreateRevertRevisionTaskRequest {
     pub working_copy_root: String,
     pub target_path: Option<String>,
     pub source_url: Option<String>,
-    pub target_revision: String,
+    pub target_revision: Option<String>,
+    pub target_revisions: Option<Vec<String>>,
     pub svn_executable: Option<String>,
     #[serde(default)]
     pub whole_workspace: bool,
@@ -696,7 +697,7 @@ struct RevertRevisionTaskPayload {
     working_copy_root: String,
     target_path: String,
     source_url: Option<String>,
-    target_revision: String,
+    target_revisions: Vec<String>,
     svn_executable: String,
     whole_workspace: bool,
 }
@@ -1990,7 +1991,13 @@ impl TaskQueue {
             .as_deref()
             .map(normalize_repository_url)
             .transpose()?;
-        let target_revision = normalize_revert_target_revision(&request.target_revision)?;
+        let target_revisions = normalize_revert_target_revisions(
+            request.target_revision.as_deref(),
+            request.target_revisions.as_deref(),
+            request.whole_workspace,
+        )?;
+        let revision_label = revert_revision_selection_label(&target_revisions);
+        let is_batch = target_revisions.len() > 1;
         let svn_executable = normalize_svn_executable(request.svn_executable.as_deref())?;
         let task_id = format!("task-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let now = timestamp_millis();
@@ -1998,17 +2005,24 @@ impl TaskQueue {
             task_id: task_id.clone(),
             title: if request.whole_workspace {
                 if target_is_root {
-                    format!("回退工作区到 r{target_revision}")
+                    format!("回退工作区到 {revision_label}")
                 } else {
-                    format!("回退目标到 r{target_revision}")
+                    format!("回退目标到 {revision_label}")
                 }
+            } else if is_batch {
+                format!("批量撤销 {} 个 Revision", target_revisions.len())
             } else {
-                format!("撤销提交 r{target_revision}")
+                format!("撤销提交 {revision_label}")
             },
             status: TaskStatus::Pending,
             logs: vec![TaskLog {
                 message: if request.whole_workspace {
                     "回退工作区任务已加入队列".to_string()
+                } else if is_batch {
+                    format!(
+                        "批量撤销 {} 个 Revision 的任务已加入队列",
+                        target_revisions.len()
+                    )
                 } else {
                     "撤销单次提交任务已加入队列".to_string()
                 },
@@ -2022,7 +2036,7 @@ impl TaskQueue {
                 working_copy_root: working_copy_root.display().to_string(),
                 target_path: target_path.display().to_string(),
                 source_url,
-                target_revision,
+                target_revisions,
                 svn_executable,
                 whole_workspace: request.whole_workspace,
             }),
@@ -4972,6 +4986,7 @@ fn run_revert_revision_task(
     payload: RevertRevisionTaskPayload,
 ) {
     let target_is_root = Path::new(&payload.target_path) == Path::new(&payload.working_copy_root);
+    let is_batch = payload.target_revisions.len() > 1;
     update_task(
         state,
         task_id,
@@ -4982,6 +4997,8 @@ fn run_revert_revision_task(
             } else {
                 "回退目标开始执行"
             }
+        } else if is_batch {
+            "批量撤销 Revision 开始执行"
         } else {
             "撤销单次提交开始执行"
         },
@@ -4998,12 +5015,12 @@ fn run_revert_revision_task(
                     if payload.whole_workspace {
                         format!(
                             "svn merge --ignore-ancestry --allow-mixed-revisions -r HEAD:{}",
-                            payload.target_revision
+                            payload.target_revisions[0]
                         )
                     } else {
                         format!(
                             "svn merge --ignore-ancestry --allow-mixed-revisions -c -{}",
-                            payload.target_revision
+                            payload.target_revisions.join(",-")
                         )
                     },
                     source_url,
@@ -5020,6 +5037,8 @@ fn run_revert_revision_task(
                     } else {
                         "目标已回退并生成本地改动"
                     }
+                } else if is_batch {
+                    "选中的 Revision 已批量撤销并生成本地改动"
                 } else {
                     "单次提交已撤销并生成本地改动"
                 },
@@ -5038,6 +5057,8 @@ fn run_revert_revision_task(
                     } else {
                         "回退目标失败"
                     }
+                } else if is_batch {
+                    "批量撤销 Revision 失败"
                 } else {
                     "撤销单次提交失败"
                 },
@@ -5066,22 +5087,14 @@ fn execute_revert_revision(
     let root = PathBuf::from(&payload.working_copy_root);
     let target = normalize_revert_target_path(&root, Some(&payload.target_path))?;
 
-    let target_number = payload.target_revision.parse::<u64>().map_err(|error| {
+    let target_revision = payload.target_revisions.first().ok_or_else(|| {
         NovaError::command(
-            "REVERT_COMMIT_TARGET_INVALID",
-            "目标提交 Revision 无效",
-            Some(error.to_string()),
+            "REVERT_REVISION_TARGET_REQUIRED",
+            "请选择要撤销的 Revision",
+            None,
             true,
         )
     })?;
-    if !payload.whole_workspace && target_number == 0 {
-        return Err(NovaError::command(
-            "REVERT_COMMIT_TARGET_OUT_OF_RANGE",
-            "目标提交 Revision 无效",
-            Some("r0 不包含可撤销的提交改动。".to_string()),
-            true,
-        ));
-    }
 
     let source_url = match payload.source_url.as_deref() {
         Some(source_url) => source_url.to_string(),
@@ -5097,9 +5110,11 @@ fn execute_revert_revision(
         .arg("merge")
         .args(["--ignore-ancestry", "--allow-mixed-revisions"]);
     if payload.whole_workspace {
-        command.arg("-r").arg(format!("HEAD:{target_number}"));
+        command.arg("-r").arg(format!("HEAD:{target_revision}"));
     } else {
-        command.arg("-c").arg(format!("-{target_number}"));
+        command
+            .arg("-c")
+            .arg(format!("-{}", payload.target_revisions.join(",-")));
     }
     command.arg(&source_url).arg(&target).current_dir(&root);
     let output = run_task_command(state, task_id, &mut command).map_err(|error| {
@@ -9759,6 +9774,14 @@ fn normalize_revision_value(
 
 fn normalize_revert_target_revision(revision: &str) -> Result<String, NovaError> {
     let value = revision.trim();
+    let number = value.parse::<u64>().map_err(|_| {
+        NovaError::command(
+            "REVERT_REVISION_TARGET_INVALID",
+            "目标 Revision 无效",
+            Some("目标 Revision 必须是有效的数字版本号。".to_string()),
+            true,
+        )
+    })?;
     if value.is_empty() || !value.chars().all(|character| character.is_ascii_digit()) {
         return Err(NovaError::command(
             "REVERT_REVISION_TARGET_INVALID",
@@ -9767,7 +9790,81 @@ fn normalize_revert_target_revision(revision: &str) -> Result<String, NovaError>
             true,
         ));
     }
-    Ok(value.to_string())
+    Ok(number.to_string())
+}
+
+fn normalize_revert_target_revisions(
+    target_revision: Option<&str>,
+    target_revisions: Option<&[String]>,
+    whole_workspace: bool,
+) -> Result<Vec<String>, NovaError> {
+    let single = target_revision
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let multiple = target_revisions.filter(|revisions| !revisions.is_empty());
+    if single.is_some() && multiple.is_some() {
+        return Err(NovaError::command(
+            "REVERT_REVISION_SELECTION_CONFLICT",
+            "不能同时指定单个和多个 Revision",
+            None,
+            true,
+        ));
+    }
+
+    let mut revisions = match (single, multiple) {
+        (Some(revision), None) => vec![normalize_revert_target_revision(revision)?],
+        (None, Some(revisions)) => revisions
+            .iter()
+            .map(|revision| normalize_revert_target_revision(revision))
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => {
+            return Err(NovaError::command(
+                "REVERT_REVISION_TARGET_REQUIRED",
+                "请选择要撤销的 Revision",
+                None,
+                true,
+            ));
+        }
+    };
+    if revisions.len() > 500 {
+        return Err(NovaError::command(
+            "REVERT_REVISIONS_TOO_MANY",
+            "一次最多撤销 500 个 Revision",
+            None,
+            true,
+        ));
+    }
+    revisions.sort_by_key(|revision| std::cmp::Reverse(revision.parse::<u64>().unwrap_or(0)));
+    revisions.dedup();
+    if whole_workspace && revisions.len() != 1 {
+        return Err(NovaError::command(
+            "REVERT_TO_REVISION_REQUIRES_SINGLE_TARGET",
+            "回退到指定版本只能选择一个 Revision",
+            None,
+            true,
+        ));
+    }
+    if !whole_workspace && revisions.iter().any(|revision| revision == "0") {
+        return Err(NovaError::command(
+            "REVERT_COMMIT_TARGET_OUT_OF_RANGE",
+            "目标提交 Revision 无效",
+            Some("r0 不包含可撤销的提交改动。".to_string()),
+            true,
+        ));
+    }
+    Ok(revisions)
+}
+
+fn revert_revision_selection_label(revisions: &[String]) -> String {
+    match revisions {
+        [revision] => format!("r{revision}"),
+        _ => revisions
+            .iter()
+            .rev()
+            .map(|revision| format!("r{revision}"))
+            .collect::<Vec<_>>()
+            .join("、"),
+    }
 }
 
 pub(crate) fn normalize_repository_list_revision(
@@ -12533,6 +12630,35 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_batch_revert_revisions_from_newest_to_oldest() {
+        assert_eq!(
+            normalize_revert_target_revisions(
+                None,
+                Some(&["8".to_string(), "12".to_string(), "8".to_string()]),
+                false,
+            )
+            .unwrap(),
+            vec!["12".to_string(), "8".to_string()]
+        );
+        assert!(
+            normalize_revert_target_revisions(Some("12"), Some(&["8".to_string()]), false,)
+                .is_err()
+        );
+        assert!(normalize_revert_target_revisions(
+            None,
+            Some(&["12".to_string(), "8".to_string()]),
+            true,
+        )
+        .is_err());
+        assert!(normalize_revert_target_revisions(
+            None,
+            Some(&["0".to_string(), "8".to_string()]),
+            false,
+        )
+        .is_err());
+    }
+
+    #[test]
     fn keeps_revert_targets_inside_the_working_copy() {
         let parent = test_temp_dir("revert-target-paths");
         let working_copy = parent.join("working-copy");
@@ -14843,7 +14969,7 @@ mod tests {
             working_copy_root: working_copy.display().to_string(),
             target_path: file.display().to_string(),
             source_url: None,
-            target_revision: "2".to_string(),
+            target_revisions: vec!["2".to_string()],
             svn_executable: "svn".to_string(),
             whole_workspace: false,
         };
@@ -14890,7 +15016,7 @@ mod tests {
             working_copy_root: working_copy.display().to_string(),
             target_path: working_copy.display().to_string(),
             source_url: None,
-            target_revision: "1".to_string(),
+            target_revisions: vec!["1".to_string()],
             svn_executable: "svn".to_string(),
             whole_workspace: true,
         };
@@ -14912,6 +15038,81 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&unversioned).expect("read unversioned file"),
             "generated\n"
+        );
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn batch_reverts_non_contiguous_revisions_in_one_merge() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("batch-revert-revisions-integration");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = test_file_repository_url(&repository);
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+
+        let local_file = working_copy.join("local.txt");
+        fs::write(&local_file, "local base\n").expect("write local base");
+        run_test_command(Command::new("svn").arg("add").arg(&local_file));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "revision one"]),
+        );
+
+        let removed_r2 = working_copy.join("remove-r2.txt");
+        let kept_r3 = working_copy.join("keep-r3.txt");
+        let removed_r4 = working_copy.join("remove-r4.txt");
+        for (path, contents, message) in [
+            (&removed_r2, "remove revision two\n", "revision two"),
+            (&kept_r3, "keep revision three\n", "revision three"),
+            (&removed_r4, "remove revision four\n", "revision four"),
+        ] {
+            fs::write(path, contents).expect("write batch revert revision");
+            run_test_command(Command::new("svn").arg("add").arg(path));
+            run_test_command(
+                Command::new("svn")
+                    .arg("commit")
+                    .arg(path)
+                    .args(["-m", message]),
+            );
+        }
+        fs::write(&local_file, "local edit kept during batch revert\n").expect("write local edit");
+
+        let payload = RevertRevisionTaskPayload {
+            working_copy_root: working_copy.display().to_string(),
+            target_path: working_copy.display().to_string(),
+            source_url: None,
+            target_revisions: vec!["4".to_string(), "2".to_string()],
+            svn_executable: "svn".to_string(),
+            whole_workspace: false,
+        };
+        let state = Arc::new(Mutex::new(TaskQueueState::default()));
+        let (output, source_url) = execute_revert_revision(&state, "batch-revert-test", &payload)
+            .expect("batch reverse merge should succeed");
+
+        assert!(output.status.success());
+        assert!(source_url.ends_with("/repository@HEAD"));
+        assert!(!removed_r2.exists());
+        assert!(!removed_r4.exists());
+        assert_eq!(
+            fs::read_to_string(&kept_r3).expect("read untouched revision file"),
+            "keep revision three\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&local_file).expect("read preserved local edit"),
+            "local edit kept during batch revert\n"
         );
 
         fs::remove_dir_all(root).ok();
@@ -14978,7 +15179,7 @@ mod tests {
             working_copy_root: branch_working_copy.display().to_string(),
             target_path: branch_file.display().to_string(),
             source_url: Some(format!("{branch_url}/tracked.txt")),
-            target_revision: "2".to_string(),
+            target_revisions: vec!["2".to_string()],
             svn_executable: "svn".to_string(),
             whole_workspace: false,
         };

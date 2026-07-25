@@ -1091,10 +1091,10 @@ Certificate information:
     });
 
     expect(screen.queryByLabelText("已选 Revision 文件变化")).not.toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r12 用于 Merge" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r12" }));
 
     const contentPane = screen.getByRole("main", { name: "日志" });
-    const toolbar = screen.getByRole("toolbar", { name: "Revision Merge 操作" });
+    const toolbar = screen.getByRole("toolbar", { name: "Revision 批量操作" });
     const changedPaths = screen.getByLabelText("已选 Revision 文件变化");
     expect(contentPane).toHaveClass("timeline-merge-active");
     expect(within(changedPaths).getByLabelText("所选 Revision 文件合集")).toBeInTheDocument();
@@ -1103,7 +1103,41 @@ Certificate information:
       screen.getByRole("slider", { name: "调整文件变化宽度" }),
     ).toBeInTheDocument();
     expect(toolbar.parentElement).toBe(contentPane);
+    expect(within(toolbar).getByRole("button", { name: "撤销选中 Revision" })).toBeVisible();
     expect(within(toolbar).getByRole("button", { name: "Merge 到..." })).toBeVisible();
+  });
+
+  it("passes selected Timeline revisions to the batch revert action", async () => {
+    const onRevertSelectedRevisions = vi.fn().mockResolvedValue(true);
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.history,
+        workspace: makeWorkspace(),
+        svnLog: {
+          target: "https://svn.example.test/repo/trunk",
+          has_more: false,
+          next_start_revision: null,
+          entries: [
+            makeLogEntry("12", "2026-07-11T12:00:00", "alice", "latest"),
+            makeLogEntry("10", "2026-07-09T12:00:00", "bob", "older"),
+          ],
+        },
+        onRevertSelectedRevisions,
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r12" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r10" }));
+    await fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Revision 批量操作" })).getByRole(
+        "button",
+        { name: "撤销选中 Revision" },
+      ),
+    );
+
+    expect(onRevertSelectedRevisions).toHaveBeenCalledWith(["10", "12"]);
+    expect(screen.queryByRole("toolbar", { name: "Revision 批量操作" }))
+      .not.toBeInTheDocument();
   });
 
   it("browses repository URLs at an explicit revision and keeps it while navigating", async () => {

@@ -998,11 +998,13 @@ if (
 if (
   !mainWorkspace.includes("timelineMergeRevisions") ||
   !mainWorkspace.includes("selectedTimelineMergeRevisions") ||
-  !mainWorkspace.includes('aria-label="Revision Merge 操作"') ||
+  !mainWorkspace.includes('aria-label="Revision 批量操作"') ||
+  !mainWorkspace.includes("撤销选中 Revision") ||
+  !mainWorkspace.includes("onRevertSelectedRevisions") ||
   !mainWorkspace.includes("<LogMergeDialog") ||
-  !svnLogRevisionList.includes('aria-label={`选择 r${entry.revision} 用于 Merge`}')
+  !svnLogRevisionList.includes('aria-label={`选择 r${entry.revision}`}')
 ) {
-  console.error("Timeline 多 Revision 选择必须准备有序范围并进入 Merge 预览流程");
+  console.error("Timeline 多 Revision 选择必须支持批量撤销和 Merge 预览流程");
   failed = true;
 }
 
@@ -1026,14 +1028,16 @@ if (
   !mainWorkspace.includes("onRevert={revertTimelineEntry}") ||
   !mainWorkspace.includes("onRevertToRevision(entry.revision)") ||
   !appSvelte.includes("revertWorkspaceToRevision") ||
-  !appSvelte.includes("反向应用该次提交") ||
+  !appSvelte.includes("按从新到旧的顺序反向应用") ||
   !appSvelte.includes("targetPath") ||
   !appSvelte.includes("sourceUrl") ||
+  !appSvelte.includes("targetRevisions") ||
   !taskRs.includes("fn execute_revert_revision(") ||
+  !taskRs.includes("normalize_revert_target_revisions") ||
   !taskRs.includes('args(["--ignore-ancestry", "--allow-mixed-revisions"])') ||
   !taskRs.includes('let source_url = format!("{source_url}@HEAD")') ||
-  !taskRs.includes('command.arg("-c").arg(format!("-{target_number}"))') ||
-  !taskRs.includes('command.arg("-r").arg(format!("HEAD:{target_number}"))') ||
+  !taskRs.includes('payload.target_revisions.join(",-")') ||
+  !taskRs.includes('command.arg("-r").arg(format!("HEAD:{target_revision}"))') ||
   !taskRs.includes('command.arg(&source_url).arg(&target).current_dir(&root)') ||
   !tauriLib.includes("create_revert_revision_task")
 ) {

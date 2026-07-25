@@ -1767,7 +1767,10 @@
     );
   }
 
-  async function revertWorkspaceToRevision(revision: string, wholeWorkspace = false) {
+  async function revertWorkspaceRevisions(revisions: string[], wholeWorkspace = false) {
+    const selectedRevisions = [...new Set(revisions.map((revision) => revision.trim()))]
+      .filter((revision) => /^\d+$/.test(revision))
+      .sort((left, right) => Number(left) - Number(right));
     const workingCopyRoot = $workspaceStore.current?.working_copy_root;
     const targetPath = $workspaceStore.svnLogFileOnly
       ? $workspaceStore.selectedFilePath?.trim()
@@ -1775,30 +1778,36 @@
     const sourceUrl = $workspaceStore.svnLog?.repository_url?.trim();
     if (
       !workingCopyRoot ||
+      selectedRevisions.length === 0 ||
+      (wholeWorkspace && selectedRevisions.length !== 1) ||
       ($workspaceStore.svnLogFileOnly && !targetPath) ||
       svnOperationCreationCoordinator.isCreating() ||
       $workspaceStore.pendingSvnOperationTaskId !== null
     ) {
-      return;
+      return false;
     }
 
+    const revisionLabel = selectedRevisions.map((revision) => `r${revision}`).join("、");
+    const batch = selectedRevisions.length > 1;
     const confirmed = window.confirm(
       wholeWorkspace
-        ? `确定要把${targetPath ? "当前日志目标" : "整个工作区"}回退到 r${revision} 吗？\n${targetPath ?? workingCopyRoot}\n\n这会反向应用该目标在 r${revision} 之后的全部提交并生成本地改动，不会自动提交。\n现有本地改动会保留；如果修改了相同内容，SVN 可能产生冲突。`
-        : `确定要撤销 r${revision} 对当前日志目标造成的改动吗？\n${targetPath ?? workingCopyRoot}\n\n这只会反向应用该次提交并生成本地改动，不会自动提交，也不会回退其他 revision。\n现有本地改动会保留；如果修改了相同内容，SVN 可能产生冲突。`,
+        ? `确定要把${targetPath ? "当前日志目标" : "整个工作区"}回退到 ${revisionLabel} 吗？\n${targetPath ?? workingCopyRoot}\n\n这会反向应用该目标在 ${revisionLabel} 之后的全部提交并生成本地改动，不会自动提交。\n现有本地改动会保留；如果修改了相同内容，SVN 可能产生冲突。`
+        : `确定要撤销${batch ? "选中的多个 Revision" : ` ${revisionLabel}`}对当前日志目标造成的改动吗？\n${targetPath ?? workingCopyRoot}\n${batch ? `\n选中：${revisionLabel}` : ""}\n\n这会按从新到旧的顺序反向应用${batch ? "这些提交" : "该次提交"}并生成本地改动，不会自动提交，也不会回退其他 Revision。\n现有本地改动会保留；如果修改了相同内容，SVN 可能产生冲突。`,
     );
     if (!confirmed) {
-      return;
+      return false;
     }
 
-    await svnOperationCreationCoordinator.create(
+    return svnOperationCreationCoordinator.create(
       () => $workspaceStore.pendingSvnOperationTaskId !== null,
       () =>
         taskStore.createRevertRevision({
           workingCopyRoot,
           targetPath,
           sourceUrl,
-          targetRevision: revision,
+          ...(batch
+            ? { targetRevisions: selectedRevisions }
+            : { targetRevision: selectedRevisions[0] }),
           wholeWorkspace,
           svnExecutable: currentSvnExecutable(),
         }),
@@ -1811,8 +1820,16 @@
     );
   }
 
+  function revertWorkspaceToRevision(revision: string, wholeWorkspace = false) {
+    return revertWorkspaceRevisions([revision], wholeWorkspace);
+  }
+
   function revertWholeWorkspaceToRevision(revision: string) {
     return revertWorkspaceToRevision(revision, true);
+  }
+
+  function revertSelectedWorkspaceRevisions(revisions: string[]) {
+    return revertWorkspaceRevisions(revisions);
   }
 
   async function runSvnBatchOperation(
@@ -3135,6 +3152,7 @@
   onLoadAllSvnLog={() => workspaceStore.loadAllSvnLog(currentSvnExecutable())}
   onRevertToRevision={revertWorkspaceToRevision}
   onRevertWorkspaceToRevision={revertWholeWorkspaceToRevision}
+  onRevertSelectedRevisions={revertSelectedWorkspaceRevisions}
   onCommitMessageInput={workspaceStore.setCommitMessage}
   onCommitTemplateInput={workspaceStore.setCommitTemplate}
   onUseCommitHistoryMessage={workspaceStore.useCommitHistoryMessage}

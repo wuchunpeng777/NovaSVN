@@ -5,6 +5,7 @@
     GitMerge,
     History,
     RefreshCw,
+    Undo2,
     X,
   } from "@lucide/svelte";
   import {
@@ -84,7 +85,7 @@
   let mergeDialogOpen = false;
   let mergeCompleted = false;
   let revertTask: Task | null = null;
-  let revertTargetRevision: string | null = null;
+  let revertTargetRevisions: string[] = [];
   let revertWholeWorkspace = false;
   let revertNotice: string | null = null;
   let revertError: CommandError | null = null;
@@ -135,6 +136,7 @@
   $: workingCopyRevision = log?.working_copy_root ? log.working_copy_revision ?? null : null;
   $: effectiveRevision = resolveWorkingCopyLogRevision(log?.entries ?? [], workingCopyRevision);
   $: revertRunning = !!revertTask && !terminalTaskStatuses.includes(revertTask.status);
+  $: revertRevisionLabel = revisionSelectionLabel(revertTargetRevisions);
 
   onMount(() => {
     if (typeof window.matchMedia === "function") {
@@ -369,42 +371,64 @@
     mergeCompleted = false;
   }
 
-  async function revertToRevision(revision: string, wholeWorkspace = false) {
+  async function revertRevisions(revisions: string[], wholeWorkspace = false) {
+    const selectedRevisions = [...new Set(revisions.map((revision) => revision.trim()))]
+      .filter((revision) => /^\d+$/.test(revision))
+      .sort((left, right) => Number(left) - Number(right));
     const workingCopyRoot = log?.working_copy_root?.trim();
     const revertPath = log?.target?.trim();
-    if (!workingCopyRoot || !revertPath || revertRunning) {
+    if (
+      !workingCopyRoot ||
+      !revertPath ||
+      selectedRevisions.length === 0 ||
+      (wholeWorkspace && selectedRevisions.length !== 1) ||
+      revertRunning
+    ) {
       return;
     }
+    const revisionLabel = revisionSelectionLabel(selectedRevisions);
+    const batch = selectedRevisions.length > 1;
     if (
       !window.confirm(
         wholeWorkspace
-          ? `确定要把当前日志目标回退到 r${revision} 吗？\n${revertPath}\n\n这会反向应用该目标在 r${revision} 之后的全部提交并生成本地改动，不会自动提交。\n现有本地改动会保留；如果修改了相同内容，SVN 可能产生冲突。`
-          : `确定要撤销 r${revision} 对当前日志目标造成的改动吗？\n${revertPath}\n\n这只会反向应用该次提交并生成本地改动，不会自动提交，也不会回退其他 revision。\n现有本地改动会保留；如果修改了相同内容，SVN 可能产生冲突。`,
+          ? `确定要把当前日志目标回退到 ${revisionLabel} 吗？\n${revertPath}\n\n这会反向应用该目标在 ${revisionLabel} 之后的全部提交并生成本地改动，不会自动提交。\n现有本地改动会保留；如果修改了相同内容，SVN 可能产生冲突。`
+          : `确定要撤销${batch ? "选中的多个 Revision" : ` ${revisionLabel}`}对当前日志目标造成的改动吗？\n${revertPath}\n${batch ? `\n选中：${revisionLabel}` : ""}\n\n这会按从新到旧的顺序反向应用${batch ? "这些提交" : "该次提交"}并生成本地改动，不会自动提交，也不会回退其他 Revision。\n现有本地改动会保留；如果修改了相同内容，SVN 可能产生冲突。`,
       )
     ) {
       return;
     }
 
     clearRevertPollTimer();
-    revertTargetRevision = revision;
+    revertTargetRevisions = selectedRevisions;
     revertWholeWorkspace = wholeWorkspace;
     revertNotice = null;
     revertError = null;
     try {
-      handleRevertTask(
-        await createRevertRevisionTask({
-          working_copy_root: workingCopyRoot,
-          target_path: revertPath,
-          source_url: log?.repository_url?.trim() || undefined,
-          target_revision: revision,
-          ...(wholeWorkspace ? { whole_workspace: true } : {}),
-          svn_executable: svnExecutable?.trim() || undefined,
-        }),
-      );
+      handleRevertTask(await createRevertRevisionTask({
+        working_copy_root: workingCopyRoot,
+        target_path: revertPath,
+        source_url: log?.repository_url?.trim() || undefined,
+        ...(batch
+          ? { target_revisions: selectedRevisions }
+          : { target_revision: selectedRevisions[0] }),
+        ...(wholeWorkspace ? { whole_workspace: true } : {}),
+        svn_executable: svnExecutable?.trim() || undefined,
+      }));
+      if (batch) {
+        clearMergeSelection();
+      }
     } catch (caught) {
       revertTask = null;
-      revertError = normalizeCommandError(caught, `无法撤销提交 r${revision}`);
+      revertError = normalizeCommandError(caught, `无法撤销 ${revisionLabel}`);
     }
+  }
+
+  function revertToRevision(revision: string, wholeWorkspace = false) {
+    return revertRevisions([revision], wholeWorkspace);
+  }
+
+  function revisionSelectionLabel(revisions: string[]) {
+    return revisions.map((revision) => `r${revision}`).join("、");
   }
 
   async function loadAllLogs() {
@@ -473,8 +497,10 @@
     clearRevertPollTimer();
     if (task.status === "success") {
       revertNotice = revertWholeWorkspace
-        ? `目标已回退到 r${revertTargetRevision ?? "-"}，本地修改已生成`
-        : `已撤销提交 r${revertTargetRevision ?? "-"}，本地修改已生成`;
+        ? `目标已回退到 ${revertRevisionLabel || "-"}，本地修改已生成`
+        : revertTargetRevisions.length > 1
+          ? `已批量撤销 ${revertTargetRevisions.length} 个 Revision，本地修改已生成`
+          : `已撤销提交 ${revertRevisionLabel || "-"}，本地修改已生成`;
       revertError = null;
       return;
     }
@@ -482,8 +508,10 @@
     revertError = {
       code: "REVERT_REVISION_FAILED",
       message: revertWholeWorkspace
-        ? `回退目标到 r${revertTargetRevision ?? "-"} 失败`
-        : `撤销提交 r${revertTargetRevision ?? "-"} 失败`,
+        ? `回退目标到 ${revertRevisionLabel || "-"} 失败`
+        : revertTargetRevisions.length > 1
+          ? `批量撤销 ${revertTargetRevisions.length} 个 Revision 失败`
+          : `撤销提交 ${revertRevisionLabel || "-"} 失败`,
       detail: task.error ?? `任务状态：${task.status}`,
       recoverable: true,
     };
@@ -800,7 +828,11 @@
     <ErrorNotice error={error ?? launchWindowError ?? revertError} />
     {#if revertRunning}
       <p class="revert-status" role="status">
-        {revertWholeWorkspace ? "正在回退目标到" : "正在撤销提交"} r{revertTargetRevision ?? "-"}...
+        {revertWholeWorkspace
+          ? `正在回退目标到 ${revertRevisionLabel || "-"}`
+          : revertTargetRevisions.length > 1
+            ? `正在批量撤销 ${revertTargetRevisions.length} 个 Revision`
+            : `正在撤销提交 ${revertRevisionLabel || "-"}`}...
       </p>
     {:else if revertNotice}
       <p class="revert-status success" role="status">{revertNotice}</p>
@@ -928,7 +960,7 @@
   {/if}
   </div>
   {#if selectedMergeRevisions.length > 0}
-    <div class="merge-selection-bar" role="toolbar" aria-label="Revision Merge 操作">
+    <div class="merge-selection-bar" role="toolbar" aria-label="Revision 批量操作">
       <div>
         <strong>已选 {selectedMergeRevisions.length} 个 Revision</strong>
         <span>
@@ -937,7 +969,14 @@
             : `r${selectedMergeRevisions[0]} 至 r${selectedMergeRevisions[selectedMergeRevisions.length - 1]}`}
         </span>
       </div>
-      <button type="button" on:click={clearMergeSelection}>清除</button>
+      <button type="button" disabled={revertRunning} on:click={clearMergeSelection}>清除</button>
+      <button
+        type="button"
+        disabled={!log?.working_copy_root || loading || revertRunning}
+        on:click={() => revertRevisions(selectedMergeRevisions)}
+      >
+        <Undo2 size={16} aria-hidden="true" /> 撤销选中 Revision
+      </button>
       <button type="button" class="primary" on:click={openMergeDialog}>
         <GitMerge size={16} aria-hidden="true" /> Merge 到...
       </button>
@@ -1214,6 +1253,7 @@
     position: fixed;
     z-index: 35;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 7px;
     right: 14px;

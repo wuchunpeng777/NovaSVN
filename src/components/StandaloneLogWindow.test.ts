@@ -386,6 +386,50 @@ describe("StandaloneLogWindow", () => {
     confirmMock.mockRestore();
   });
 
+  it("从独立 Log 批量撤销选中的多个 Revision", async () => {
+    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
+    getPathSvnLogMock.mockResolvedValue(
+      makeLog({
+        entries: [
+          makeEntry("20", "alice", "2026-07-10T10:00:00Z", "Newer change"),
+          makeEntry("18", "bob", "2026-07-08T10:00:00Z", "Older change"),
+        ],
+      }),
+    );
+    createRevertRevisionTaskMock.mockResolvedValue(
+      makeTask({ status: "success", title: "批量撤销 2 个 Revision" }),
+    );
+    render(StandaloneLogWindow, {
+      props: {
+        targetPath: "C:\\repo\\src\\main.ts",
+        svnExecutable: "C:\\Tools\\svn.exe",
+      },
+    });
+    await screen.findByText("Newer change");
+
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r20" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r18" }));
+    const toolbar = screen.getByRole("toolbar", { name: "Revision 批量操作" });
+    await fireEvent.click(
+      within(toolbar).getByRole("button", { name: "撤销选中 Revision" }),
+    );
+
+    expect(confirmMock).toHaveBeenCalledWith(expect.stringContaining("选中：r18、r20"));
+    expect(createRevertRevisionTaskMock).toHaveBeenCalledWith({
+      working_copy_root: "C:\\repo",
+      target_path: "C:\\repo\\src\\main.ts",
+      source_url: "https://svn.example.test/repo/trunk/src/main.ts",
+      target_revisions: ["18", "20"],
+      svn_executable: "C:\\Tools\\svn.exe",
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "已批量撤销 2 个 Revision，本地修改已生成",
+    );
+    expect(screen.queryByRole("toolbar", { name: "Revision 批量操作" }))
+      .not.toBeInTheDocument();
+    confirmMock.mockRestore();
+  });
+
   it("多选离散 Revision 后按数字顺序打开 Merge 对话框", async () => {
     getPathSvnLogMock.mockResolvedValue(
       makeLog({
@@ -405,21 +449,21 @@ describe("StandaloneLogWindow", () => {
     await screen.findByText("Newer change");
 
     expect(screen.queryByLabelText("已选 Revision 文件变化")).not.toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r20 用于 Merge" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r20" }));
     let changedPaths = screen.getByLabelText("已选 Revision 文件变化");
     expect(within(changedPaths).getByText("/trunk/src/main.ts")).toBeInTheDocument();
     expect(within(changedPaths).getByLabelText("所选 Revision 文件合集")).toBeInTheDocument();
 
     await fireEvent.click(
-      within(screen.getByRole("toolbar", { name: "Revision Merge 操作" })).getByRole(
+      within(screen.getByRole("toolbar", { name: "Revision 批量操作" })).getByRole(
         "button",
         { name: "清除" },
       ),
     );
     expect(screen.queryByLabelText("已选 Revision 文件变化")).not.toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r20 用于 Merge" }));
-    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r18 用于 Merge" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r20" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "选择 r18" }));
     changedPaths = screen.getByLabelText("已选 Revision 文件变化");
     expect(within(changedPaths).getByText("/branches/release/older.ts")).toBeInTheDocument();
     expect(within(changedPaths).getAllByText("/trunk/src/main.ts")).toHaveLength(1);
@@ -428,7 +472,7 @@ describe("StandaloneLogWindow", () => {
     });
     expect(within(sharedPath).getByLabelText("状态 A、M")).toBeInTheDocument();
     expect(within(changedPaths).getByText("2 个 Revision，2 个路径")).toBeInTheDocument();
-    const toolbar = screen.getByRole("toolbar", { name: "Revision Merge 操作" });
+    const toolbar = screen.getByRole("toolbar", { name: "Revision 批量操作" });
     expect(within(toolbar).getByText("已选 2 个 Revision")).toBeInTheDocument();
     expect(within(toolbar).getByText("r18、r20")).toBeInTheDocument();
 
