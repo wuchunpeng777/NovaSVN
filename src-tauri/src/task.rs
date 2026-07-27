@@ -11113,7 +11113,10 @@ mod tests {
     }
 
     fn wait_for_test_task(queue: &TaskQueue, task_id: &str) -> Task {
-        for _ in 0..100 {
+        // CI 并行跑真实 SVN 时，单任务偶发超过旧的 2 秒轮询窗口。
+        const TIMEOUT: Duration = Duration::from_secs(30);
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
             let task = queue.get_task(task_id).expect("task exists");
             if matches!(
                 task.status,
@@ -11124,9 +11127,14 @@ mod tests {
             ) {
                 return task;
             }
+            if Instant::now() >= deadline {
+                panic!(
+                    "任务未在测试超时前结束：task_id={task_id}, status={:?}, timeout={TIMEOUT:?}",
+                    task.status
+                );
+            }
             thread::sleep(Duration::from_millis(20));
         }
-        panic!("任务未在测试超时前结束");
     }
 
     fn repository_file_test_state(task_id: &str) -> Arc<Mutex<TaskQueueState>> {
