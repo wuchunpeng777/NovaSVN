@@ -576,11 +576,11 @@
   button.danger-primary { border-color: #b93d3d; background: #b93d3d; color: #ffffff; font-weight: 600; }
   button.danger-primary:hover:not(:disabled) { border-color: #9f2f2f; background: #9f2f2f; color: #ffffff; }
   button.icon-button { width: 30px; min-width: 30px; padding: 0; }
-  .dialog-backdrop { position: fixed; inset: 0; z-index: 3100; display: grid; padding: 24px; background: rgb(10 18 26 / 35%); place-items: center; }
-  .confirmation-dialog { display: grid; gap: 16px; width: min(560px, 100%); max-height: min(620px, 100%); border: 1px solid var(--border); border-radius: 6px; padding: 16px; background: var(--panel); color: var(--text); }
+  .dialog-backdrop { position: fixed; inset: 0; z-index: 3100; display: grid; overflow: hidden; padding: 24px; background: rgb(10 18 26 / 35%); place-items: center; }
+  .confirmation-dialog { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 16px; width: min(560px, 100%); max-height: min(620px, calc(100vh - 48px)); max-height: min(620px, calc(100dvh - 48px)); overflow: hidden; border: 1px solid var(--border); border-radius: 6px; padding: 16px; background: var(--panel); color: var(--text); }
   .confirmation-dialog > header, .confirmation-dialog > footer { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .confirmation-dialog > header p { margin-top: 5px; color: var(--secondary); font-size: 12px; }
   .confirmation-dialog > footer { justify-content: flex-end; }
-  .confirmation-paths { display: grid; gap: 6px; overflow: auto; }
+  .confirmation-paths { display: grid; min-height: 0; gap: 6px; overflow: auto; overscroll-behavior: contain; }
   .confirmation-paths code { border: 1px solid var(--border); background: var(--panel-subtle); padding: 8px 10px; font-size: 12px; }
 </style>
