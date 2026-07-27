@@ -40,6 +40,7 @@
   import SvnLogSelectionDetails from "../SvnLogSelectionDetails.svelte";
   import SvnRevisionLogDialog from "../SvnRevisionLogDialog.svelte";
   import ConflictResolver from "./ConflictResolver.svelte";
+  import ImageDiffViewer from "./ImageDiffViewer.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
   import RawDiffViewer from "./RawDiffViewer.svelte";
   import SyntaxHighlightedCode from "../SyntaxHighlightedCode.svelte";
@@ -3644,12 +3645,14 @@
                     <div class="revision-file-diff-empty" role="status">正在读取 Diff...</div>
                   {:else if revisionFileDiffError}
                     <ErrorNotice error={revisionFileDiffError} />
-                  {:else if revisionFileContentDiff?.binary}
-                    <div class="revision-file-diff-empty">二进制文件无法预览文本修改</div>
+                  {:else if revisionFileContentDiff?.is_image}
+                    <ImageDiffViewer contentDiff={revisionFileContentDiff} />
                   {:else if revisionFileContentDiff?.too_large}
                     <div class="revision-file-diff-empty">
                       文件内容超过 {Math.round(revisionFileContentDiff.max_bytes / 1024)} KB，无法在窗口中预览
                     </div>
+                  {:else if revisionFileContentDiff?.binary}
+                    <div class="revision-file-diff-empty">二进制文件无法预览文本修改</div>
                   {:else if revisionFileContentDiff && revisionFileContentDiff.original_text !== revisionFileContentDiff.modified_text}
                     <MonacoDiffViewer
                       contentDiff={revisionFileContentDiff}
@@ -6024,7 +6027,9 @@
                 <ErrorNotice error={contentDiffError} />
               {:else if diffError}
                 <ErrorNotice error={diffError} />
-              {:else if selectedFileContentDiff && !selectedFileContentDiff.binary && selectedFileContentDiff.original_text !== selectedFileContentDiff.modified_text}
+              {:else if selectedFileContentDiff?.is_image}
+                <ImageDiffViewer contentDiff={selectedFileContentDiff} />
+              {:else if selectedFileContentDiff && !selectedFileContentDiff.binary && !selectedFileContentDiff.too_large && selectedFileContentDiff.original_text !== selectedFileContentDiff.modified_text}
                 <MonacoDiffViewer
                   contentDiff={selectedFileContentDiff}
                   inlineMode={diffInline}
@@ -6038,6 +6043,12 @@
                   showWhitespace={showWhitespace}
                   theme={resolvedTheme}
                 />
+              {:else if selectedFileContentDiff?.too_large}
+                <p class="muted">
+                  文件内容超过 {Math.round(selectedFileContentDiff.max_bytes / 1024 / 1024)} MB，无法预览
+                </p>
+              {:else if selectedFileContentDiff?.binary || selectedFileDiff?.binary}
+                <p class="muted">二进制文件无法预览文本修改</p>
               {:else if selectedFileDiff}
                 {#if selectedFileDiff.text}
                   <RawDiffViewer text={selectedFileDiff.text} theme={resolvedTheme} />

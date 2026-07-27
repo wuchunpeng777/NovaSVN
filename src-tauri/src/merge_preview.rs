@@ -6,6 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
@@ -72,6 +73,12 @@ pub struct MergePreviewFileContent {
     pub binary: bool,
     pub too_large: bool,
     pub max_bytes: u64,
+    pub is_image: bool,
+    pub image_mime: Option<String>,
+    pub original_bytes_base64: Option<String>,
+    pub modified_bytes_base64: Option<String>,
+    pub original_byte_size: u64,
+    pub modified_byte_size: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -247,27 +254,91 @@ pub fn read_preview_file(
                 true,
             )
         })?;
-    if file.binary || file.too_large {
+    let directory = session_dir(app, &request.preview_id)?;
+    let relative = safe_relative_path(&file.path)?;
+    let modified_root = session_working_target_dir(&directory, &session.target_relative_path)?;
+    let original_path = directory.join("original").join(&relative);
+    let modified_path = modified_root.join(&relative);
+
+    if file.too_large {
         return Ok(MergePreviewFileContent {
             path: file.path.clone(),
             original_text: String::new(),
             modified_text: String::new(),
             language: language_for_path(&file.path),
             binary: file.binary,
-            too_large: file.too_large,
+            too_large: true,
             max_bytes: MERGE_PREVIEW_MAX_TEXT_BYTES,
+            is_image: false,
+            image_mime: None,
+            original_bytes_base64: None,
+            modified_bytes_base64: None,
+            original_byte_size: file.original_bytes,
+            modified_byte_size: file.modified_bytes,
         });
     }
-    let directory = session_dir(app, &request.preview_id)?;
-    let relative = safe_relative_path(&file.path)?;
-    let modified_root = session_working_target_dir(&directory, &session.target_relative_path)?;
+
+    if is_previewable_image(&file.path) {
+        let original_bytes = if file.original_exists {
+            read_bytes_file(&original_path)?
+        } else {
+            Vec::new()
+        };
+        let modified_bytes = if file.modified_exists {
+            read_bytes_file(&modified_path)?
+        } else {
+            Vec::new()
+        };
+        return Ok(MergePreviewFileContent {
+            path: file.path.clone(),
+            original_text: String::new(),
+            modified_text: String::new(),
+            language: language_for_path(&file.path),
+            binary: true,
+            too_large: false,
+            max_bytes: MERGE_PREVIEW_MAX_TEXT_BYTES,
+            is_image: true,
+            image_mime: Some(image_mime_for_path(&file.path).to_string()),
+            original_byte_size: original_bytes.len() as u64,
+            modified_byte_size: modified_bytes.len() as u64,
+            original_bytes_base64: if original_bytes.is_empty() {
+                None
+            } else {
+                Some(BASE64.encode(&original_bytes))
+            },
+            modified_bytes_base64: if modified_bytes.is_empty() {
+                None
+            } else {
+                Some(BASE64.encode(&modified_bytes))
+            },
+        });
+    }
+
+    if file.binary {
+        return Ok(MergePreviewFileContent {
+            path: file.path.clone(),
+            original_text: String::new(),
+            modified_text: String::new(),
+            language: language_for_path(&file.path),
+            binary: true,
+            too_large: false,
+            max_bytes: MERGE_PREVIEW_MAX_TEXT_BYTES,
+            is_image: false,
+            image_mime: None,
+            original_bytes_base64: None,
+            modified_bytes_base64: None,
+            original_byte_size: file.original_bytes,
+            modified_byte_size: file.modified_bytes,
+        });
+    }
+
     let original = if file.original_exists {
-        read_utf8_file(&directory.join("original").join(&relative))?
+        read_utf8_file(&original_path)?
     } else {
         String::new()
     };
     let modified = if file.modified_exists {
-        read_utf8_file(&modified_root.join(&relative))?
+        read_utf8_file(&modified_path)?
     } else {
         String::new()
     };
@@ -279,6 +350,12 @@ pub fn read_preview_file(
         binary: false,
         too_large: false,
         max_bytes: MERGE_PREVIEW_MAX_TEXT_BYTES,
+        is_image: false,
+        image_mime: None,
+        original_bytes_base64: None,
+        modified_bytes_base64: None,
+        original_byte_size: file.original_bytes,
+        modified_byte_size: file.modified_bytes,
     })
 }
 
@@ -826,6 +903,47 @@ fn read_utf8_file(path: &Path) -> Result<String, NovaError> {
     })
 }
 
+fn read_bytes_file(path: &Path) -> Result<Vec<u8>, NovaError> {
+    fs::read(path).map_err(|error| {
+        io_error(
+            "MERGE_PREVIEW_FILE_READ_FAILED",
+            "无法读取 Merge 预览文件",
+            path,
+            error,
+        )
+    })
+}
+
+fn is_previewable_image(path: &str) -> bool {
+    matches!(
+        Path::new(path)
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico"
+    )
+}
+
+fn image_mime_for_path(path: &str) -> &'static str {
+    match Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        _ => "application/octet-stream",
+    }
+}
+
 fn file_is_binary(path: &Path) -> Result<bool, NovaError> {
     let mut file = fs::File::open(path).map_err(|error| {
         io_error(
@@ -972,6 +1090,21 @@ mod tests {
         assert!(!text.binary);
         assert!(text.original_exists && text.modified_exists);
         assert!(binary.binary);
+
+        fs::write(session.join("work/src/icon.png"), b"\x89PNG\r\n\x1a\nimage").unwrap();
+        save_original_file(&session, &session.join("work"), "src/icon.png").unwrap();
+        fs::write(session.join("work/src/icon.png"), b"\x89PNG\r\n\x1a\nimage-changed").unwrap();
+        let image = inspect_preview_file(
+            &session,
+            &session.join("work"),
+            "src/icon.png",
+            "M".to_string(),
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(image.binary);
+        assert!(is_previewable_image(&image.path));
 
         fs::remove_dir_all(root).ok();
     }

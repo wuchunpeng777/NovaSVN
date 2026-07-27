@@ -27,6 +27,7 @@
     TaskStatus,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import ImageDiffViewer from "./workbench/ImageDiffViewer.svelte";
   import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
 
   export let previewId: string;
@@ -120,6 +121,12 @@
         binary: content.binary,
         too_large: content.too_large,
         max_bytes: content.max_bytes,
+        is_image: content.is_image,
+        image_mime: content.image_mime,
+        original_bytes_base64: content.original_bytes_base64,
+        modified_bytes_base64: content.modified_bytes_base64,
+        original_byte_size: content.original_byte_size,
+        modified_byte_size: content.modified_byte_size,
       };
     } catch (caught) {
       if (currentGeneration === generation) fileError = normalizeError(caught, "无法读取预览文件");
@@ -269,10 +276,24 @@
         </header>
         {#if fileLoading}
           <div class="loading-state" role="status"><LoaderCircle class="spinning" size={20} /> 正在读取文件...</div>
-        {:else if selectedFile?.binary || selectedFile?.too_large || selectedFile?.property_only}
+        {:else if contentDiff?.is_image}
+          <ImageDiffViewer {contentDiff} />
+        {:else if selectedFile?.too_large}
           <div class="unsupported-state">
             <FileWarning size={30} aria-hidden="true" />
-            <strong>{selectedFile.binary ? "二进制文件不支持文本 Diff" : selectedFile.too_large ? "文件超过文本预览大小限制" : "仅包含 SVN 属性变化"}</strong>
+            <strong>文件超过文本预览大小限制</strong>
+            <span>Merge 状态：{statusLabel(selectedFile)}</span>
+          </div>
+        {:else if selectedFile?.binary}
+          <div class="unsupported-state">
+            <FileWarning size={30} aria-hidden="true" />
+            <strong>二进制文件不支持文本 Diff</strong>
+            <span>Merge 状态：{statusLabel(selectedFile)}</span>
+          </div>
+        {:else if selectedFile?.property_only}
+          <div class="unsupported-state">
+            <FileWarning size={30} aria-hidden="true" />
+            <strong>仅包含 SVN 属性变化</strong>
             <span>Merge 状态：{statusLabel(selectedFile)}</span>
           </div>
         {:else if contentDiff}

@@ -40,6 +40,7 @@
   import SvnLogRevisionList from "./SvnLogRevisionList.svelte";
   import SvnLogSelectionDetails from "./SvnLogSelectionDetails.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
+  import ImageDiffViewer from "./workbench/ImageDiffViewer.svelte";
   import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
 
   export let targetPath: string;
@@ -927,12 +928,14 @@
         <ErrorNotice error={revisionDiffError} />
         {#if revisionDiffLoading}
           <div class="diff-empty" role="status">正在读取 Diff...</div>
-        {:else if revisionDiff?.binary}
-          <div class="diff-empty">二进制文件无法预览文本修改</div>
+        {:else if revisionDiff?.is_image}
+          <ImageDiffViewer contentDiff={revisionDiff} />
         {:else if revisionDiff?.too_large}
           <div class="diff-empty">
             文件内容超过 {Math.round(revisionDiff.max_bytes / 1024)} KB，无法在窗口中预览
           </div>
+        {:else if revisionDiff?.binary}
+          <div class="diff-empty">二进制文件无法预览文本修改</div>
         {:else if revisionDiff && revisionDiff.original_text !== revisionDiff.modified_text}
           <MonacoDiffViewer
             contentDiff={revisionDiff}

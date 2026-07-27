@@ -39,6 +39,7 @@
   import ErrorNotice from "./ErrorNotice.svelte";
   import OperationMetrics from "./OperationMetrics.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
+  import ImageDiffViewer from "./workbench/ImageDiffViewer.svelte";
   import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
   import RawDiffViewer from "./workbench/RawDiffViewer.svelte";
 
@@ -1559,12 +1560,14 @@
               <div class="empty-diff" role="status">正在读取修改内容...</div>
             {:else if diffError}
               <ErrorNotice error={diffError} />
-            {:else if selectedFileContentDiff?.binary || selectedFileDiff?.binary}
-              <div class="empty-diff">二进制文件无法预览文本修改</div>
+            {:else if selectedFileContentDiff?.is_image}
+              <ImageDiffViewer contentDiff={selectedFileContentDiff} />
             {:else if selectedFileContentDiff?.too_large}
               <div class="empty-diff">
                 文件内容超过 {Math.round(selectedFileContentDiff.max_bytes / 1024 / 1024)} MB，无法在窗口中预览
               </div>
+            {:else if selectedFileContentDiff?.binary || selectedFileDiff?.binary}
+              <div class="empty-diff">二进制文件无法预览文本修改</div>
             {:else if selectedFileContentDiff && selectedFileContentDiff.original_text !== selectedFileContentDiff.modified_text}
               <MonacoDiffViewer
                 contentDiff={selectedFileContentDiff}

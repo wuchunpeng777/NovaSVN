@@ -28,6 +28,12 @@ export function buildPropertyContentDiff(diff: FileDiff | null): FileContentDiff
     binary: false,
     too_large: false,
     max_bytes: new TextEncoder().encode(diff.text).byteLength,
+    is_image: false,
+    image_mime: null,
+    original_bytes_base64: null,
+    modified_bytes_base64: null,
+    original_byte_size: 0,
+    modified_byte_size: 0,
   };
 }
 

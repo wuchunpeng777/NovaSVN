@@ -13,6 +13,7 @@ use quick_xml::{
     events::{attributes::Attribute, Event},
     Reader as XmlReader,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use roxmltree::Document;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -358,6 +359,33 @@ pub struct FileContentDiff {
     pub binary: bool,
     pub too_large: bool,
     pub max_bytes: u64,
+    pub is_image: bool,
+    pub image_mime: Option<String>,
+    pub original_bytes_base64: Option<String>,
+    pub modified_bytes_base64: Option<String>,
+    pub original_byte_size: u64,
+    pub modified_byte_size: u64,
+}
+
+impl FileContentDiff {
+    fn empty_text(path: String, node_kind: String, max_bytes: u64) -> Self {
+        Self {
+            path,
+            node_kind,
+            original_text: String::new(),
+            modified_text: String::new(),
+            language: "plaintext".to_string(),
+            binary: false,
+            too_large: false,
+            max_bytes,
+            is_image: false,
+            image_mime: None,
+            original_bytes_base64: None,
+            modified_bytes_base64: None,
+            original_byte_size: 0,
+            modified_byte_size: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1306,16 +1334,19 @@ pub fn get_file_content_diff(
     let node_kind = read_diff_target_kind(&executable, &root, &target);
 
     if node_kind == "dir" {
-        return Ok(FileContentDiff {
-            path: file_path,
+        return Ok(FileContentDiff::empty_text(file_path, node_kind, max_bytes));
+    }
+
+    if is_previewable_image(&file_path) {
+        let working = read_limited_bytes_file(&target, max_bytes)?;
+        let original = read_svn_base_bytes(&executable, &root, &target, max_bytes)?;
+        return Ok(build_image_content_diff(
+            file_path,
             node_kind,
-            original_text: String::new(),
-            modified_text: String::new(),
-            language: "plaintext".to_string(),
-            binary: false,
-            too_large: false,
+            &original,
+            &working,
             max_bytes,
-        });
+        ));
     }
 
     let working = read_limited_text_file(&target, max_bytes)?;
@@ -1341,6 +1372,12 @@ pub fn get_file_content_diff(
         binary,
         too_large,
         max_bytes,
+        is_image: false,
+        image_mime: None,
+        original_bytes_base64: None,
+        modified_bytes_base64: None,
+        original_byte_size: 0,
+        modified_byte_size: 0,
     })
 }
 
@@ -1554,6 +1591,26 @@ pub fn get_revision_file_content_diff(
     let max_bytes = request.max_bytes.unwrap_or(20 * 1024 * 1024);
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
 
+    if is_previewable_image(&file_path) {
+        let original = if action == "A" {
+            LimitedBytes::empty()
+        } else {
+            read_repository_revision_bytes(&executable, &target_url, &left_revision, max_bytes)?
+        };
+        let modified = if action == "D" {
+            LimitedBytes::empty()
+        } else {
+            read_repository_revision_bytes(&executable, &target_url, &right_revision, max_bytes)?
+        };
+        return Ok(build_image_content_diff(
+            file_path,
+            "file".to_string(),
+            &original,
+            &modified,
+            max_bytes,
+        ));
+    }
+
     let original = if action == "A" {
         LimitedText::empty()
     } else {
@@ -1584,6 +1641,12 @@ pub fn get_revision_file_content_diff(
         binary,
         too_large,
         max_bytes,
+        is_image: false,
+        image_mime: None,
+        original_bytes_base64: None,
+        modified_bytes_base64: None,
+        original_byte_size: 0,
+        modified_byte_size: 0,
     })
 }
 
@@ -2688,6 +2751,212 @@ impl LimitedText {
             too_large: false,
         }
     }
+}
+
+#[derive(Debug)]
+struct LimitedBytes {
+    bytes: Vec<u8>,
+    byte_size: u64,
+    too_large: bool,
+}
+
+impl LimitedBytes {
+    fn empty() -> Self {
+        Self {
+            bytes: Vec::new(),
+            byte_size: 0,
+            too_large: false,
+        }
+    }
+}
+
+fn is_previewable_image(path: &str) -> bool {
+    matches!(
+        Path::new(path)
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico"
+    )
+}
+
+fn image_mime_for_path(path: &str) -> &'static str {
+    match Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        _ => "application/octet-stream",
+    }
+}
+
+fn build_image_content_diff(
+    path: String,
+    node_kind: String,
+    original: &LimitedBytes,
+    modified: &LimitedBytes,
+    max_bytes: u64,
+) -> FileContentDiff {
+    let too_large = original.too_large || modified.too_large;
+    FileContentDiff {
+        image_mime: Some(image_mime_for_path(&path).to_string()),
+        language: language_for_path(&path),
+        path,
+        node_kind,
+        original_text: String::new(),
+        modified_text: String::new(),
+        binary: true,
+        too_large,
+        max_bytes,
+        is_image: !too_large,
+        original_bytes_base64: if too_large || original.bytes.is_empty() {
+            None
+        } else {
+            Some(BASE64.encode(&original.bytes))
+        },
+        modified_bytes_base64: if too_large || modified.bytes.is_empty() {
+            None
+        } else {
+            Some(BASE64.encode(&modified.bytes))
+        },
+        original_byte_size: original.byte_size,
+        modified_byte_size: modified.byte_size,
+    }
+}
+
+fn read_limited_bytes_file(path: &Path, max_bytes: u64) -> Result<LimitedBytes, NovaError> {
+    if !path.exists() {
+        return Ok(LimitedBytes::empty());
+    }
+
+    let metadata = fs::metadata(path).map_err(|error| {
+        NovaError::command(
+            "FILE_CONTENT_METADATA_FAILED",
+            "无法读取文件信息",
+            Some(format!("路径：{}。错误：{error}", path.display())),
+            true,
+        )
+    })?;
+
+    if metadata.len() > max_bytes {
+        return Ok(LimitedBytes {
+            bytes: Vec::new(),
+            byte_size: metadata.len(),
+            too_large: true,
+        });
+    }
+
+    let bytes = fs::read(path).map_err(|error| {
+        NovaError::command(
+            "FILE_CONTENT_READ_FAILED",
+            "无法读取文件内容",
+            Some(format!("路径：{}。错误：{error}", path.display())),
+            true,
+        )
+    })?;
+
+    Ok(LimitedBytes {
+        byte_size: bytes.len() as u64,
+        bytes,
+        too_large: false,
+    })
+}
+
+fn read_svn_base_bytes(
+    executable: &str,
+    root: &Path,
+    target: &Path,
+    max_bytes: u64,
+) -> Result<LimitedBytes, NovaError> {
+    let output = svn::command(executable)
+        .arg("cat")
+        .arg(target)
+        .current_dir(root)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "SVN_CAT_FAILED",
+                "无法读取文件基线内容",
+                Some(format!(
+                    "执行 `{executable} cat {}` 失败：{error}",
+                    target.display()
+                )),
+                true,
+            )
+        })?;
+
+    if !output.status.success() {
+        return Ok(LimitedBytes::empty());
+    }
+
+    if output.stdout.len() as u64 > max_bytes {
+        return Ok(LimitedBytes {
+            bytes: Vec::new(),
+            byte_size: output.stdout.len() as u64,
+            too_large: true,
+        });
+    }
+
+    Ok(LimitedBytes {
+        byte_size: output.stdout.len() as u64,
+        bytes: output.stdout,
+        too_large: false,
+    })
+}
+
+fn read_repository_revision_bytes(
+    executable: &str,
+    target_url: &str,
+    revision: &str,
+    max_bytes: u64,
+) -> Result<LimitedBytes, NovaError> {
+    let output = svn::command(executable)
+        .args(["cat", "-r", revision, "--"])
+        .arg(target_url)
+        .output()
+        .map_err(|error| {
+            NovaError::command(
+                "REVISION_FILE_CONTENT_FAILED",
+                "无法读取历史文件内容",
+                Some(format!(
+                    "执行 `{executable} cat -r {revision}` 失败：{error}"
+                )),
+                true,
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(NovaError::command(
+            "REVISION_FILE_CONTENT_COMMAND_FAILED",
+            "历史文件内容读取失败",
+            Some(command_error_detail(executable, "cat", &output)),
+            true,
+        ));
+    }
+
+    if output.stdout.len() as u64 > max_bytes {
+        return Ok(LimitedBytes {
+            bytes: Vec::new(),
+            byte_size: output.stdout.len() as u64,
+            too_large: true,
+        });
+    }
+
+    Ok(LimitedBytes {
+        byte_size: output.stdout.len() as u64,
+        bytes: output.stdout,
+        too_large: false,
+    })
 }
 
 fn read_limited_text_file(path: &Path, max_bytes: u64) -> Result<LimitedText, NovaError> {
@@ -4646,8 +4915,81 @@ mod tests {
         assert!(diff.modified_text.is_empty());
         assert!(!diff.binary);
         assert!(!diff.too_large);
+        assert!(!diff.is_image);
         assert_eq!(diff.max_bytes, 20 * 1024 * 1024);
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn returns_image_content_diff_with_base64_payload() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-image-content-diff-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("create root");
+        // 最小有效 PNG 头 + 占位数据，足够验证二进制载荷通道。
+        let png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xdeimage-diff-payload".to_vec();
+        fs::write(root.join("icon.png"), &png).expect("write png");
+        fs::write(root.join("data.bin"), [0u8, 1, 2, 0]).expect("write bin");
+
+        let diff = get_file_content_diff(GetFileContentDiffRequest {
+            working_copy_root: root.display().to_string(),
+            file_path: "icon.png".to_string(),
+            svn_executable: None,
+            max_bytes: None,
+        })
+        .expect("image content diff");
+
+        let encoded = BASE64.encode(&png);
+        assert!(diff.is_image);
+        assert!(diff.binary);
+        assert!(!diff.too_large);
+        assert_eq!(diff.image_mime.as_deref(), Some("image/png"));
+        assert!(diff.original_bytes_base64.is_none());
+        assert_eq!(diff.modified_bytes_base64.as_deref(), Some(encoded.as_str()));
+        assert_eq!(diff.modified_byte_size, png.len() as u64);
+        assert_eq!(diff.original_byte_size, 0);
+
+        let binary = get_file_content_diff(GetFileContentDiffRequest {
+            working_copy_root: root.display().to_string(),
+            file_path: "data.bin".to_string(),
+            svn_executable: None,
+            max_bytes: None,
+        })
+        .expect("binary content diff");
+        assert!(binary.binary);
+        assert!(!binary.is_image);
+        assert!(binary.original_bytes_base64.is_none());
+        assert!(binary.modified_bytes_base64.is_none());
+
+        let oversized = get_file_content_diff(GetFileContentDiffRequest {
+            working_copy_root: root.display().to_string(),
+            file_path: "icon.png".to_string(),
+            svn_executable: None,
+            max_bytes: Some(8),
+        })
+        .expect("oversized image content diff");
+        assert!(oversized.too_large);
+        assert!(!oversized.is_image);
+        assert!(oversized.modified_bytes_base64.is_none());
+        assert_eq!(oversized.modified_byte_size, png.len() as u64);
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn previewable_image_extension_helpers_cover_common_formats() {
+        assert!(is_previewable_image("assets/logo.PNG"));
+        assert!(is_previewable_image("a/b/c.jpeg"));
+        assert!(is_previewable_image("icon.webp"));
+        assert!(!is_previewable_image("notes.svg"));
+        assert!(!is_previewable_image("archive.zip"));
+        assert_eq!(image_mime_for_path("photo.jpg"), "image/jpeg");
+        assert_eq!(image_mime_for_path("badge.ico"), "image/x-icon");
     }
 
     #[test]

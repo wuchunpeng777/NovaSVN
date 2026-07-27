@@ -29,6 +29,7 @@
     WorkingCopyStatus,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import ImageDiffViewer from "./workbench/ImageDiffViewer.svelte";
   import MonacoDiffViewer from "./workbench/MonacoDiffViewer.svelte";
   import RawDiffViewer from "./workbench/RawDiffViewer.svelte";
 
@@ -896,10 +897,12 @@
                       <div class="review-empty" role="status">
                         <LoaderCircle class="spinning" size={18} aria-hidden="true" /> 正在读取 Diff...
                       </div>
-                    {:else if selectedReviewContentDiff?.binary || selectedReviewDiff?.binary}
-                      <div class="review-empty">二进制文件无法显示文本 Diff</div>
+                    {:else if selectedReviewContentDiff?.is_image}
+                      <ImageDiffViewer contentDiff={selectedReviewContentDiff} />
                     {:else if selectedReviewContentDiff?.too_large}
                       <div class="review-empty">文件内容过大，无法在窗口中预览</div>
+                    {:else if selectedReviewContentDiff?.binary || selectedReviewDiff?.binary}
+                      <div class="review-empty">二进制文件无法显示文本 Diff</div>
                     {:else if selectedReviewContentDiff && selectedReviewContentDiff.original_text !== selectedReviewContentDiff.modified_text}
                       <MonacoDiffViewer contentDiff={selectedReviewContentDiff} theme={theme} />
                     {:else if selectedPropertyContentDiff}

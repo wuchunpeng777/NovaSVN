@@ -500,6 +500,12 @@ export interface MergePreviewFileContent {
   binary: boolean;
   too_large: boolean;
   max_bytes: number;
+  is_image?: boolean;
+  image_mime?: string | null;
+  original_bytes_base64?: string | null;
+  modified_bytes_base64?: string | null;
+  original_byte_size?: number;
+  modified_byte_size?: number;
 }
 
 export interface ReleasedMergePreview {
@@ -918,6 +924,12 @@ export interface FileContentDiff {
   binary: boolean;
   too_large: boolean;
   max_bytes: number;
+  is_image?: boolean;
+  image_mime?: string | null;
+  original_bytes_base64?: string | null;
+  modified_bytes_base64?: string | null;
+  original_byte_size?: number;
+  modified_byte_size?: number;
 }
 
 export interface SvnLog {
