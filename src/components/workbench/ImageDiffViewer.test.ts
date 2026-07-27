@@ -85,6 +85,41 @@ describe("ImageDiffViewer", () => {
     expect(screen.getByLabelText("像素差异图")).toBeInTheDocument();
   });
 
+  it("supports wheel zoom, drag pan, and reset", async () => {
+    render(ImageDiffViewer, { props: { contentDiff: imageDiff } });
+    await waitFor(() => expect(screen.getByTestId("image-diff-viewport-original")).toBeInTheDocument());
+
+    const viewport = screen.getByTestId("image-diff-viewport-original");
+    Object.defineProperty(viewport, "getBoundingClientRect", {
+      value: () => ({
+        left: 0,
+        top: 0,
+        width: 200,
+        height: 200,
+        right: 200,
+        bottom: 200,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }),
+    });
+
+    await fireEvent.wheel(viewport, { deltaY: -100, clientX: 100, clientY: 100 });
+    expect(screen.getByTestId("image-diff-zoom").textContent).not.toBe("100%");
+
+    await fireEvent.pointerDown(viewport, { button: 0, pointerId: 1, clientX: 50, clientY: 50 });
+    await fireEvent.pointerMove(viewport, { pointerId: 1, clientX: 70, clientY: 80 });
+    await fireEvent.pointerUp(viewport, { pointerId: 1, clientX: 70, clientY: 80 });
+
+    const stage = viewport.querySelector(".image-diff-stage") as HTMLElement;
+    expect(stage.getAttribute("style")).toContain("translate(");
+    expect(stage.getAttribute("style")).not.toContain("translate(0px, 0px) scale(1)");
+
+    await fireEvent.click(screen.getByRole("button", { name: "重置视图" }));
+    expect(screen.getByTestId("image-diff-zoom")).toHaveTextContent("100%");
+    expect(stage.getAttribute("style")).toContain("translate(0px, 0px) scale(1)");
+  });
+
   it("shows decode errors without falling back to text diff", async () => {
     loadImageFromDataUrl.mockRejectedValue(new Error("图片解码失败"));
     render(ImageDiffViewer, { props: { contentDiff: imageDiff } });

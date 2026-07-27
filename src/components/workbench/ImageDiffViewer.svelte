@@ -3,13 +3,20 @@
   import type { FileContentDiff } from "../../types/api";
   import {
     compareImagePixels,
+    createImageViewportTransform,
     formatByteSize,
     formatChangedPixelSummary,
     formatImageDimensions,
+    formatImageScale,
     imageDataUrl,
+    imageViewportStyle,
     loadImageFromDataUrl,
+    panImageViewport,
+    zoomImageViewport,
+    IMAGE_DIFF_ZOOM_FACTOR,
     type ImageDimensions,
     type ImagePixelDiffResult,
+    type ImageViewportTransform,
   } from "../../lib/image-diff";
 
   export let contentDiff: FileContentDiff | null = null;
@@ -28,8 +35,14 @@
   let pixelDiff: ImagePixelDiffResult | null = null;
   let diffCanvas: HTMLCanvasElement | null = null;
   let loadToken = 0;
+  let viewport: ImageViewportTransform = createImageViewportTransform();
+  let dragging = false;
+  let dragPointerId: number | null = null;
+  let lastPointerX = 0;
+  let lastPointerY = 0;
 
   $: loadPayload(contentDiff);
+  $: viewportCss = imageViewportStyle(viewport);
 
   $: if (diffCanvas && pixelDiff) {
     const context = diffCanvas.getContext("2d");
@@ -42,6 +55,7 @@
 
   onDestroy(() => {
     loadToken += 1;
+    endDrag();
   });
 
   async function loadPayload(diff: FileContentDiff | null) {
@@ -54,6 +68,8 @@
     decodeError = null;
     originalUrl = null;
     modifiedUrl = null;
+    viewport = createImageViewportTransform();
+    endDrag();
 
     if (!diff?.is_image) {
       loading = false;
@@ -104,6 +120,71 @@
     }
     return a.width !== b.width || a.height !== b.height;
   }
+
+  function resetViewport() {
+    viewport = createImageViewportTransform();
+    endDrag();
+  }
+
+  function zoomBy(factor: number, event?: WheelEvent | MouseEvent, target?: HTMLElement | null) {
+    if (!target) {
+      viewport = zoomImageViewport(viewport, factor);
+      return;
+    }
+    const rect = target.getBoundingClientRect();
+    const clientX = event && "clientX" in event ? event.clientX : rect.left + rect.width / 2;
+    const clientY = event && "clientY" in event ? event.clientY : rect.top + rect.height / 2;
+    viewport = zoomImageViewport(
+      viewport,
+      factor,
+      clientX - rect.left - rect.width / 2,
+      clientY - rect.top - rect.height / 2,
+    );
+  }
+
+  function handleWheel(event: WheelEvent) {
+    event.preventDefault();
+    const target = event.currentTarget as HTMLElement;
+    const factor = event.deltaY < 0 ? IMAGE_DIFF_ZOOM_FACTOR : 1 / IMAGE_DIFF_ZOOM_FACTOR;
+    zoomBy(factor, event, target);
+  }
+
+  function handlePointerDown(event: PointerEvent) {
+    if (event.button !== 0) {
+      return;
+    }
+    const target = event.currentTarget as HTMLElement;
+    dragging = true;
+    dragPointerId = event.pointerId;
+    lastPointerX = event.clientX;
+    lastPointerY = event.clientY;
+    target.setPointerCapture?.(event.pointerId);
+  }
+
+  function handlePointerMove(event: PointerEvent) {
+    if (!dragging || dragPointerId !== event.pointerId) {
+      return;
+    }
+    const deltaX = event.clientX - lastPointerX;
+    const deltaY = event.clientY - lastPointerY;
+    lastPointerX = event.clientX;
+    lastPointerY = event.clientY;
+    viewport = panImageViewport(viewport, deltaX, deltaY);
+  }
+
+  function handlePointerUp(event: PointerEvent) {
+    if (dragPointerId !== event.pointerId) {
+      return;
+    }
+    const target = event.currentTarget as HTMLElement;
+    target.releasePointerCapture?.(event.pointerId);
+    endDrag();
+  }
+
+  function endDrag() {
+    dragging = false;
+    dragPointerId = null;
+  }
 </script>
 
 {#if contentDiff?.is_image}
@@ -127,7 +208,19 @@
       <button type="button" class:active={viewMode === "diff"} on:click={() => (viewMode = "diff")}>
         差异
       </button>
+      <span class="toolbar-divider" aria-hidden="true"></span>
+      <button type="button" aria-label="缩小" title="缩小" on:click={() => zoomBy(1 / IMAGE_DIFF_ZOOM_FACTOR)}>
+        −
+      </button>
+      <span class="zoom-label" data-testid="image-diff-zoom">{formatImageScale(viewport.scale)}</span>
+      <button type="button" aria-label="放大" title="放大" on:click={() => zoomBy(IMAGE_DIFF_ZOOM_FACTOR)}>
+        +
+      </button>
+      <button type="button" aria-label="重置视图" title="重置视图" on:click={resetViewport}>
+        重置
+      </button>
     </div>
+    <p class="image-diff-hint">滚轮缩放，拖动平移；左右视图同步。</p>
 
     {#if loading}
       <div class="image-diff-empty" role="status">正在解码图片...</div>
@@ -138,7 +231,21 @@
         <figure>
           <figcaption>旧版本</figcaption>
           {#if originalUrl && originalImage}
-            <img src={originalUrl} alt="旧版本图片" />
+            <div
+              class="image-diff-viewport"
+              class:dragging
+              data-testid="image-diff-viewport-original"
+              role="presentation"
+              on:wheel={handleWheel}
+              on:pointerdown={handlePointerDown}
+              on:pointermove={handlePointerMove}
+              on:pointerup={handlePointerUp}
+              on:pointercancel={handlePointerUp}
+            >
+              <div class="image-diff-stage" style={viewportCss}>
+                <img src={originalUrl} alt="旧版本图片" draggable="false" />
+              </div>
+            </div>
           {:else}
             <div class="image-diff-placeholder">无旧版本</div>
           {/if}
@@ -146,7 +253,21 @@
         <figure>
           <figcaption>新版本</figcaption>
           {#if modifiedUrl && modifiedImage}
-            <img src={modifiedUrl} alt="新版本图片" />
+            <div
+              class="image-diff-viewport"
+              class:dragging
+              data-testid="image-diff-viewport-modified"
+              role="presentation"
+              on:wheel={handleWheel}
+              on:pointerdown={handlePointerDown}
+              on:pointermove={handlePointerMove}
+              on:pointerup={handlePointerUp}
+              on:pointercancel={handlePointerUp}
+            >
+              <div class="image-diff-stage" style={viewportCss}>
+                <img src={modifiedUrl} alt="新版本图片" draggable="false" />
+              </div>
+            </div>
           {:else}
             <div class="image-diff-placeholder">无新版本</div>
           {/if}
@@ -155,7 +276,21 @@
     {:else}
       <div class="image-diff-pixel">
         {#if pixelDiff}
-          <canvas bind:this={diffCanvas} aria-label="像素差异图"></canvas>
+          <div
+            class="image-diff-viewport"
+            class:dragging
+            data-testid="image-diff-viewport-diff"
+            role="presentation"
+            on:wheel={handleWheel}
+            on:pointerdown={handlePointerDown}
+            on:pointermove={handlePointerMove}
+            on:pointerup={handlePointerUp}
+            on:pointercancel={handlePointerUp}
+          >
+            <div class="image-diff-stage" style={viewportCss}>
+              <canvas bind:this={diffCanvas} aria-label="像素差异图"></canvas>
+            </div>
+          </div>
         {:else}
           <div class="image-diff-empty">无法生成像素差异</div>
         {/if}
@@ -187,6 +322,7 @@
 
   .image-diff-toolbar {
     display: inline-flex;
+    align-items: center;
     gap: 4px;
     width: fit-content;
     padding: 3px;
@@ -207,6 +343,26 @@
   .image-diff-toolbar button.active {
     background: var(--accent, #2674b9);
     color: #fff;
+  }
+
+  .toolbar-divider {
+    width: 1px;
+    align-self: stretch;
+    margin: 2px 4px;
+    background: var(--border, #ccd3da);
+  }
+
+  .zoom-label {
+    min-width: 3.5em;
+    text-align: center;
+    font-size: 12px;
+    color: var(--secondary, #66727e);
+  }
+
+  .image-diff-hint {
+    margin: 0;
+    font-size: 12px;
+    color: var(--secondary, #66727e);
   }
 
   .image-diff-side-by-side {
@@ -231,31 +387,55 @@
     color: var(--secondary, #66727e);
   }
 
-  img,
-  canvas {
-    display: block;
-    max-width: 100%;
-    max-height: 100%;
-    width: auto;
-    height: auto;
-    object-fit: contain;
+  .image-diff-viewport {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 220px;
+    height: 100%;
+    overflow: hidden;
+    border: 1px solid var(--border, #ccd3da);
+    border-radius: 8px;
     background:
       linear-gradient(45deg, #d8dde3 25%, transparent 25%) 0 0 / 16px 16px,
       linear-gradient(-45deg, #d8dde3 25%, transparent 25%) 0 8px / 16px 16px,
       linear-gradient(45deg, transparent 75%, #d8dde3 75%) 8px -8px / 16px 16px,
       linear-gradient(-45deg, transparent 75%, #d8dde3 75%) -8px 0 / 16px 16px;
     background-color: #f7f8fa;
-    border: 1px solid var(--border, #ccd3da);
-    border-radius: 8px;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .image-diff-viewport.dragging {
+    cursor: grabbing;
+  }
+
+  .image-diff-stage {
+    transform-origin: center center;
+    will-change: transform;
+  }
+
+  img,
+  canvas {
+    display: block;
+    max-width: min(100%, 720px);
+    max-height: min(70vh, 640px);
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    pointer-events: none;
   }
 
   .image-diff-pixel {
     display: flex;
-    justify-content: center;
-    align-items: flex-start;
     min-height: 0;
     flex: 1;
-    overflow: auto;
+  }
+
+  .image-diff-pixel .image-diff-viewport {
+    flex: 1;
   }
 
   .image-diff-placeholder,

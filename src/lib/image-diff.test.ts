@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  clampImageScale,
   comparePixelBuffers,
+  createImageViewportTransform,
   formatByteSize,
   formatChangedPixelSummary,
   formatImageDimensions,
+  formatImageScale,
   hasImageDiffPayload,
   imageDataUrl,
+  imageViewportStyle,
   isPreviewableImagePath,
+  panImageViewport,
+  zoomImageViewport,
+  IMAGE_DIFF_MAX_SCALE,
+  IMAGE_DIFF_MIN_SCALE,
 } from "./image-diff";
 
 function solidPixels(
@@ -65,5 +73,27 @@ describe("image-diff helpers", () => {
     expect(result.changedPixels).toBe(1);
     expect(result.scaled).toBe(true);
     expect(formatChangedPixelSummary(result)).toBe("1 / 2（50.00%）");
+  });
+
+  it("zooms and pans the shared image viewport", () => {
+    const initial = createImageViewportTransform();
+    expect(formatImageScale(initial.scale)).toBe("100%");
+    expect(imageViewportStyle(initial)).toContain("scale(1)");
+
+    const zoomed = zoomImageViewport(initial, 2, 10, 20);
+    expect(zoomed.scale).toBe(2);
+    expect(zoomed.offsetX).toBe(10 - (10 - 0) * 2);
+    expect(zoomed.offsetY).toBe(20 - (20 - 0) * 2);
+
+    const panned = panImageViewport(zoomed, 5, -3);
+    expect(panned).toEqual({ scale: 2, offsetX: zoomed.offsetX + 5, offsetY: zoomed.offsetY - 3 });
+
+    expect(clampImageScale(0.001)).toBe(IMAGE_DIFF_MIN_SCALE);
+    expect(clampImageScale(999)).toBe(IMAGE_DIFF_MAX_SCALE);
+    expect(zoomImageViewport({ scale: IMAGE_DIFF_MAX_SCALE, offsetX: 0, offsetY: 0 }, 2)).toEqual({
+      scale: IMAGE_DIFF_MAX_SCALE,
+      offsetX: 0,
+      offsetY: 0,
+    });
   });
 });

@@ -1,6 +1,68 @@
 import type { FileContentDiff, MergePreviewFileContent } from "../types/api";
 
 export const IMAGE_DIFF_MAX_COMPARE_EDGE = 2048;
+export const IMAGE_DIFF_MIN_SCALE = 0.1;
+export const IMAGE_DIFF_MAX_SCALE = 16;
+export const IMAGE_DIFF_ZOOM_FACTOR = 1.12;
+
+export interface ImageViewportTransform {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+export function createImageViewportTransform(): ImageViewportTransform {
+  return {
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+  };
+}
+
+export function clampImageScale(scale: number): number {
+  if (!Number.isFinite(scale)) {
+    return 1;
+  }
+  return Math.min(IMAGE_DIFF_MAX_SCALE, Math.max(IMAGE_DIFF_MIN_SCALE, scale));
+}
+
+export function zoomImageViewport(
+  current: ImageViewportTransform,
+  factor: number,
+  pivotX = 0,
+  pivotY = 0,
+): ImageViewportTransform {
+  const nextScale = clampImageScale(current.scale * factor);
+  if (nextScale === current.scale) {
+    return current;
+  }
+  const ratio = nextScale / current.scale;
+  return {
+    scale: nextScale,
+    offsetX: pivotX - (pivotX - current.offsetX) * ratio,
+    offsetY: pivotY - (pivotY - current.offsetY) * ratio,
+  };
+}
+
+export function panImageViewport(
+  current: ImageViewportTransform,
+  deltaX: number,
+  deltaY: number,
+): ImageViewportTransform {
+  return {
+    scale: current.scale,
+    offsetX: current.offsetX + deltaX,
+    offsetY: current.offsetY + deltaY,
+  };
+}
+
+export function formatImageScale(scale: number): string {
+  return `${Math.round(clampImageScale(scale) * 100)}%`;
+}
+
+export function imageViewportStyle(transform: ImageViewportTransform): string {
+  return `transform: translate(${transform.offsetX}px, ${transform.offsetY}px) scale(${transform.scale});`;
+}
 
 export type ImageDiffPayload = Pick<
   FileContentDiff,
