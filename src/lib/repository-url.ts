@@ -2,10 +2,25 @@
 
 export function isRepositoryUrl(value: string): boolean {
   const trimmed = value.trim();
-  if (!trimmed) {
+  if (!trimmed || /\s/.test(trimmed)) {
     return false;
   }
-  return /^(https?|svn|svn\+ssh|file):\/\//i.test(trimmed);
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return false;
+  }
+
+  const protocol = parsed.protocol.toLowerCase();
+  if (!["http:", "https:", "svn:", "svn+ssh:", "file:"].includes(protocol)) {
+    return false;
+  }
+  if (protocol === "file:") {
+    return parsed.pathname !== "" && parsed.pathname !== "/";
+  }
+  return Boolean(parsed.hostname);
 }
 
 export function joinRepositoryUrl(root: string, path: string): string {

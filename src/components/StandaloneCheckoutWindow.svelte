@@ -8,7 +8,9 @@
     createRepositoryCheckoutTask,
     getTask,
     openLocalPathLocation,
+    readClipboardText,
   } from "../lib/api";
+  import { isRepositoryUrl } from "../lib/repository-url";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import { extractSvnFileChanges } from "../lib/svn-operation-output";
   import type { CommandError, Task, TaskStatus } from "../types/api";
@@ -29,6 +31,7 @@
   ) => Promise<boolean> = async () => false;
 
   let repositoryUrl = "";
+  let repositoryUrlTouched = false;
   let localPath = targetPath.trim();
   let revision = "";
   let checkoutTask: Task | null = null;
@@ -63,6 +66,7 @@
     }
     window.addEventListener("keydown", handleWindowKeydown);
     repositoryUrlElement?.focus();
+    void initializeRepositoryUrl();
   });
 
   onDestroy(() => {
@@ -84,6 +88,17 @@
     void getCurrentWindow().close();
   }
 
+  async function initializeRepositoryUrl() {
+    try {
+      const clipboardUrl = (await readClipboardText()).trim();
+      if (!repositoryUrlTouched && !repositoryUrl.trim() && isRepositoryUrl(clipboardUrl)) {
+        repositoryUrl = clipboardUrl;
+      }
+    } catch {
+      // Clipboard access is optional; an unavailable or unreadable clipboard leaves the field blank.
+    }
+  }
+
   async function startCheckout() {
     if (checkoutRunning) {
       return;
@@ -97,6 +112,15 @@
         "CHECKOUT_URL_MISSING",
         "请输入仓库 URL",
         "Checkout 需要一个 SVN 仓库 URL。",
+      );
+      repositoryUrlElement?.focus();
+      return;
+    }
+    if (!isRepositoryUrl(url)) {
+      commandError = formError(
+        "CHECKOUT_URL_INVALID",
+        "仓库 URL 无效",
+        "请输入有效的 SVN 仓库 URL（http、https、svn、svn+ssh 或 file）。",
       );
       repositoryUrlElement?.focus();
       return;
@@ -354,10 +378,10 @@
             bind:this={repositoryUrlElement}
             type="url"
             value={repositoryUrl}
-            placeholder="https://example.com/svn/project/trunk"
             autocomplete="url"
             disabled={checkoutRunning}
             on:input={(event) => {
+              repositoryUrlTouched = true;
               repositoryUrl = (event.currentTarget as HTMLInputElement).value;
               clearFormError();
             }}

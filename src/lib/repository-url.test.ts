@@ -11,8 +11,14 @@ describe("repository-url", () => {
   it("detects repository URL schemes", () => {
     expect(isRepositoryUrl("https://example.com/svn/trunk")).toBe(true);
     expect(isRepositoryUrl("svn://server/repo")).toBe(true);
+    expect(isRepositoryUrl("svn+ssh://user@server/repo")).toBe(true);
     expect(isRepositoryUrl("file:///C:/repo")).toBe(true);
     expect(isRepositoryUrl("C:\\wc")).toBe(false);
+    expect(isRepositoryUrl("https://")).toBe(false);
+    expect(isRepositoryUrl("file:/// ")).toBe(false);
+    expect(isRepositoryUrl("https://example.com/repo name")).toBe(false);
+    expect(isRepositoryUrl("ftp://example.com/repo")).toBe(false);
+    expect(isRepositoryUrl("default")).toBe(false);
     expect(isRepositoryUrl("")).toBe(false);
   });
 

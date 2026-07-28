@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   CommandError,
@@ -147,6 +148,10 @@ export function createMockTask(request: CreateMockTaskRequest): Promise<Task> {
 
 export function getStartupIntent(): Promise<StartupIntent> {
   return callBackend<StartupIntent>("get_startup_intent");
+}
+
+export function readClipboardText(): Promise<string> {
+  return readText();
 }
 
 export function launchLogWindow(

@@ -2,20 +2,31 @@
   import { onDestroy, onMount, tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
+    ArrowLeft,
+    ArrowRight,
+    ArrowUp,
     ChevronDown,
     ChevronRight,
     Copy,
     Download,
     ExternalLink,
-    FileText,
+    File,
+    FileDown,
+    Folder,
     FolderOpen,
+    FolderPlus,
     FolderTree,
     GitCommitHorizontal,
+    Home,
     History,
     ListChecks,
     LoaderCircle,
+    MoveRight,
+    Pencil,
     RefreshCw,
+    Search,
     Trash2,
+    Upload,
     X,
   } from "@lucide/svelte";
   import {
@@ -61,6 +72,7 @@
   import ErrorNotice from "./ErrorNotice.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
   import SyntaxHighlightedCode from "./SyntaxHighlightedCode.svelte";
+  import "./StandaloneRepoBrowserWindow.css";
 
   export let targetPath = "";
   export let repositoryRevision: string | undefined = undefined;
@@ -104,6 +116,11 @@
     kind: string;
   };
 
+  type SortKey = "name" | "kind" | "revision" | "author" | "date";
+  type SortDirection = "asc" | "desc";
+  type NavigationMode = "push" | "replace" | "history" | "none";
+  type NavigationEntry = { url: string; revision: string };
+
   const terminalStatuses: TaskStatus[] = ["success", "failed", "cancelled", "interrupted"];
   const pollIntervalMs = 350;
 
@@ -112,11 +129,16 @@
   let repositoryRoot: string | null = null;
   let list: RepositoryListResult | null = null;
   let listTask: Task | null = null;
+  let treeTask: Task | null = null;
   let writeTask: Task | null = null;
   let fileTask: Task | null = null;
   let commandError: CommandError | null = null;
   let statusMessage: string | null = null;
   let selectedName: string | null = null;
+  let searchInput = "";
+  let searchInputElement: HTMLInputElement | null = null;
+  let sortKey: SortKey = "name";
+  let sortDirection: SortDirection = "asc";
   let activePanel: "none" | "log" | "blame" | "properties" | WriteKind = "none";
   let fileLog: SvnLog | null = null;
   let fileBlame: SvnBlame | null = null;
@@ -138,6 +160,8 @@
   let treeRootUrl: string | null = null;
   let resolvingInitial = false;
   let pollTimer: number | null = null;
+  let navigationHistory: NavigationEntry[] = [];
+  let navigationIndex = -1;
   let generation = 0;
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
@@ -145,12 +169,26 @@
   $: resolvedTheme =
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
   $: listRunning = isTaskRunning(listTask);
+  $: treeRunning = isTaskRunning(treeTask);
   $: writeRunning = isTaskRunning(writeTask);
   $: fileRunning = isTaskRunning(fileTask);
-  $: busy = listRunning || writeRunning || fileRunning || resolvingInitial || detailLoading;
+  $: busy =
+    listRunning || treeRunning || writeRunning || fileRunning || resolvingInitial || detailLoading;
   $: currentUrl = list?.url ?? urlInput.trim();
   $: breadcrumbs = repositoryBreadcrumbs(currentUrl);
   $: entries = list?.entries ?? [];
+  $: visibleEntries = entries
+    .filter((entry) => entry.name.toLocaleLowerCase().includes(searchInput.trim().toLocaleLowerCase()))
+    .sort(compareEntries);
+  $: selectedEntry = entries.find((entry) => entry.name === selectedName) ?? null;
+  $: selectedUrl = selectedEntry ? entryUrlFor(selectedEntry.name) : null;
+  $: canGoBack = navigationIndex > 0;
+  $: canGoForward = navigationIndex >= 0 && navigationIndex < navigationHistory.length - 1;
+  $: canGoUp = Boolean(
+    currentUrl &&
+      parentRepositoryUrl(currentUrl) !== currentUrl &&
+      (!repositoryRoot || currentUrl.replace(/\/+$/, "") !== repositoryRoot),
+  );
   $: authenticationFailure =
     detectSvnAuthenticationFailure(commandErrorText(commandError)) ??
     detectSvnAuthenticationFailure(listTask?.error ?? null) ??
@@ -198,7 +236,7 @@
       }
       if (isRepositoryUrl(initial)) {
         urlInput = initial.replace(/\/+$/, "");
-        await loadDirectory(urlInput, currentGeneration, true);
+        await loadDirectory(urlInput, currentGeneration, true, "replace");
         return;
       }
       statusMessage = "正在解析工作副本仓库 URL...";
@@ -225,7 +263,7 @@
         urlInputElement?.focus();
         return;
       }
-      await loadDirectory(urlInput, currentGeneration, true);
+      await loadDirectory(urlInput, currentGeneration, true, "replace");
     } catch (caught) {
       if (currentGeneration === generation) {
         commandError = normalizeCommandError(caught);
@@ -244,6 +282,8 @@
     url: string,
     requestGeneration = generation,
     seedTree = false,
+    navigationMode: NavigationMode = "push",
+    historyRollbackIndex: number | null = null,
   ) {
     const target = url.trim().replace(/\/+$/, "");
     if (!target) {
@@ -289,11 +329,24 @@
       listTask = task;
       if (seedTree || !treeRootUrl) {
         ensureTreeRoot(target);
+      } else {
+        ensureTreePath(target);
       }
       markTreeLoading(target);
-      schedulePoll(task.task_id, requestGeneration, "list", target);
+      schedulePoll(
+        task.task_id,
+        requestGeneration,
+        "list",
+        target,
+        navigationMode,
+        requestedRevision,
+        historyRollbackIndex,
+      );
     } catch (caught) {
       if (requestGeneration === generation) {
+        if (historyRollbackIndex !== null) {
+          navigationIndex = historyRollbackIndex;
+        }
         commandError = normalizeCommandError(caught);
         statusMessage = null;
         markTreeError(target, commandError.message);
@@ -302,7 +355,7 @@
   }
 
   function ensureTreeRoot(url: string) {
-    const root = repositoryRoot || deriveTreeRoot(url);
+    const root = repositoryRoot || url.replace(/\/+$/, "");
     treeRootUrl = root;
     if (!treeByUrl[root]) {
       treeByUrl = {
@@ -323,6 +376,50 @@
         [root]: { ...treeByUrl[root], expanded: true },
       };
     }
+    ensureTreePath(url);
+  }
+
+  function ensureTreePath(url: string) {
+    if (!treeRootUrl) {
+      return;
+    }
+    const root = treeRootUrl.replace(/\/+$/, "");
+    const target = url.replace(/\/+$/, "");
+    if (target !== root && !target.startsWith(`${root}/`)) {
+      return;
+    }
+
+    const nextTree = { ...treeByUrl };
+    const relative = target.slice(root.length).replace(/^\/+/, "");
+    let parentUrl = root;
+    for (const segment of relative.split("/").filter(Boolean)) {
+      const childUrl = joinRepositoryUrl(parentUrl, segment);
+      const decodedLabel = rootLabel(childUrl);
+      const parent = nextTree[parentUrl];
+      if (parent && !parent.children.some((child) => child.url === childUrl)) {
+        nextTree[parentUrl] = {
+          ...parent,
+          expanded: true,
+          children: [
+            ...parent.children,
+            { name: decodedLabel, url: childUrl, kind: "dir" },
+          ],
+        };
+      }
+      if (!nextTree[childUrl]) {
+        nextTree[childUrl] = {
+          url: childUrl,
+          label: decodedLabel,
+          expanded: childUrl !== target,
+          loading: false,
+          loaded: false,
+          error: null,
+          children: [],
+        };
+      }
+      parentUrl = childUrl;
+    }
+    treeByUrl = nextTree;
   }
 
   function deriveTreeRoot(url: string): string {
@@ -373,10 +470,10 @@
         url: joinRepositoryUrl(url, entry.name),
         kind: entry.kind,
       }));
-    const existing = treeByUrl[url];
-    treeByUrl = {
-      ...treeByUrl,
-      [url]: {
+    ensureTreePath(url);
+    const nextTree = { ...treeByUrl };
+    const existing = nextTree[url];
+    nextTree[url] = {
         url,
         label: existing?.label ?? rootLabel(url),
         expanded: true,
@@ -384,13 +481,10 @@
         loaded: true,
         error: null,
         children,
-      },
-    };
+      };
     for (const child of children) {
-      if (!treeByUrl[child.url]) {
-        treeByUrl = {
-          ...treeByUrl,
-          [child.url]: {
+      if (!nextTree[child.url]) {
+        nextTree[child.url] = {
             url: child.url,
             label: child.name,
             expanded: false,
@@ -398,10 +492,10 @@
             loaded: false,
             error: null,
             children: [],
-          },
-        };
+          };
       }
     }
+    treeByUrl = nextTree;
   }
 
   async function toggleTreeNode(url: string) {
@@ -421,7 +515,7 @@
       [url]: { ...node, expanded: true },
     };
     if (!node.loaded && !node.loading) {
-      await loadDirectory(url);
+      await loadTreeDirectory(url);
     }
   }
 
@@ -429,23 +523,59 @@
     await loadDirectory(url);
   }
 
+  async function loadTreeDirectory(url: string) {
+    const target = url.trim().replace(/\/+$/, "");
+    if (!target || listRunning || treeRunning || writeRunning || fileRunning) {
+      return;
+    }
+    const requestedRevision = revisionInput.trim();
+    markTreeLoading(target);
+    try {
+      const task = await createRepositoryListTask({
+        url: target,
+        revision: requestedRevision || undefined,
+        svn_executable: svnExecutable?.trim() || undefined,
+      });
+      treeTask = task;
+      schedulePoll(task.task_id, generation, "tree", target);
+    } catch (caught) {
+      const error = normalizeCommandError(caught);
+      commandError = error;
+      markTreeError(target, error.message);
+    }
+  }
+
   function schedulePoll(
     taskId: string,
     requestGeneration: number,
-    kind: "list" | "write" | "file",
+    kind: "list" | "tree" | "write" | "file",
     contextUrl?: string,
+    navigationMode: NavigationMode = "none",
+    requestedRevision = "",
+    historyRollbackIndex: number | null = null,
   ) {
     clearPollTimer();
     pollTimer = window.setTimeout(() => {
-      void pollTask(taskId, requestGeneration, kind, contextUrl);
+      void pollTask(
+        taskId,
+        requestGeneration,
+        kind,
+        contextUrl,
+        navigationMode,
+        requestedRevision,
+        historyRollbackIndex,
+      );
     }, pollIntervalMs);
   }
 
   async function pollTask(
     taskId: string,
     requestGeneration: number,
-    kind: "list" | "write" | "file",
+    kind: "list" | "tree" | "write" | "file",
     contextUrl?: string,
+    navigationMode: NavigationMode = "none",
+    requestedRevision = "",
+    historyRollbackIndex: number | null = null,
   ) {
     if (requestGeneration !== generation) {
       return;
@@ -457,6 +587,8 @@
       }
       if (kind === "list") {
         listTask = task;
+      } else if (kind === "tree") {
+        treeTask = task;
       } else if (kind === "write") {
         writeTask = task;
       } else {
@@ -464,7 +596,15 @@
       }
 
       if (!terminalStatuses.includes(task.status)) {
-        schedulePoll(taskId, requestGeneration, kind, contextUrl);
+        schedulePoll(
+          taskId,
+          requestGeneration,
+          kind,
+          contextUrl,
+          navigationMode,
+          requestedRevision,
+          historyRollbackIndex,
+        );
         return;
       }
 
@@ -474,13 +614,16 @@
       if (task.status !== "success") {
         const message = task.error ?? "任务失败";
         commandError = formError("REPO_BROWSER_TASK_FAILED", message, task.error ?? undefined);
-        if (kind === "list" && contextUrl) {
+        if ((kind === "list" || kind === "tree") && contextUrl) {
           markTreeError(contextUrl, message);
+        }
+        if (kind === "list" && historyRollbackIndex !== null) {
+          navigationIndex = historyRollbackIndex;
         }
         return;
       }
 
-      if (kind === "list") {
+      if (kind === "list" || kind === "tree") {
         const result = task.result?.repository_list;
         if (!result) {
           commandError = formError(
@@ -490,9 +633,13 @@
           );
           return;
         }
+        applyListToTree(result);
+        if (kind === "tree") {
+          return;
+        }
         list = result;
         urlInput = result.url;
-        applyListToTree(result);
+        commitNavigation(result.url, requestedRevision, navigationMode);
         return;
       }
 
@@ -528,7 +675,7 @@
           // 打开资源管理器失败不阻断刷新
         }
       }
-      await loadDirectory(refreshUrl, requestGeneration);
+      await loadDirectory(refreshUrl, requestGeneration, false, "none");
     } catch (caught) {
       if (requestGeneration === generation) {
         commandError = normalizeCommandError(caught);
@@ -577,6 +724,93 @@
 
   function selectEntry(entry: RepositoryListEntry) {
     selectedName = entry.name;
+  }
+
+  function compareEntries(left: RepositoryListEntry, right: RepositoryListEntry) {
+    if (sortKey !== "kind" && left.kind !== right.kind) {
+      if (left.kind === "dir") return -1;
+      if (right.kind === "dir") return 1;
+    }
+    const leftValue = entrySortValue(left, sortKey);
+    const rightValue = entrySortValue(right, sortKey);
+    const result = leftValue.localeCompare(rightValue, undefined, {
+      numeric: sortKey === "revision" || sortKey === "name",
+      sensitivity: "base",
+    });
+    return sortDirection === "asc" ? result : -result;
+  }
+
+  function entrySortValue(entry: RepositoryListEntry, key: SortKey) {
+    return String(entry[key] ?? "");
+  }
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      sortDirection = sortDirection === "asc" ? "desc" : "asc";
+      return;
+    }
+    sortKey = key;
+    sortDirection = "asc";
+  }
+
+  function sortIndicator(key: SortKey) {
+    if (sortKey !== key) {
+      return "";
+    }
+    return sortDirection === "asc" ? "↑" : "↓";
+  }
+
+  function commitNavigation(url: string, revision: string, mode: NavigationMode) {
+    if (mode === "none" || mode === "history") {
+      return;
+    }
+    const entry = { url: url.replace(/\/+$/, ""), revision };
+    if (mode === "replace") {
+      if (navigationIndex < 0) {
+        navigationHistory = [entry];
+        navigationIndex = 0;
+      } else {
+        navigationHistory = navigationHistory.map((item, index) =>
+          index === navigationIndex ? entry : item,
+        );
+      }
+      return;
+    }
+    const current = navigationHistory[navigationIndex];
+    if (current?.url === entry.url && current.revision === entry.revision) {
+      return;
+    }
+    navigationHistory = [...navigationHistory.slice(0, navigationIndex + 1), entry];
+    navigationIndex = navigationHistory.length - 1;
+  }
+
+  function navigateHistory(offset: -1 | 1) {
+    const nextIndex = navigationIndex + offset;
+    const entry = navigationHistory[nextIndex];
+    if (!entry || listRunning) {
+      return;
+    }
+    const rollbackIndex = navigationIndex;
+    navigationIndex = nextIndex;
+    revisionInput = entry.revision;
+    void loadDirectory(entry.url, generation, false, "history", rollbackIndex);
+  }
+
+  function navigateUp() {
+    if (!canGoUp) {
+      return;
+    }
+    void loadDirectory(parentRepositoryUrl(currentUrl));
+  }
+
+  function refreshCurrentDirectory() {
+    void loadDirectory(currentUrl || urlInput, generation, false, "none");
+  }
+
+  function openSelectedEntry() {
+    if (selectedEntry) {
+      void openEntry(selectedEntry);
+    }
   }
 
   function entryUrlFor(name: string): string {
@@ -937,8 +1171,8 @@
     event.stopPropagation();
     selectedName = entry.name;
     contextMenu = {
-      x: event.clientX,
-      y: event.clientY,
+      x: Math.min(event.clientX, Math.max(8, window.innerWidth - 224)),
+      y: Math.min(event.clientY, Math.max(8, window.innerHeight - 430)),
       url: entry.url ?? entryUrlFor(entry.name),
       name: entry.name,
       kind: entry.kind,
@@ -967,6 +1201,34 @@
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
+    const editable = isEditableTarget(event.target);
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "l") {
+      event.preventDefault();
+      urlInputElement?.focus();
+      urlInputElement?.select();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      searchInputElement?.focus();
+      searchInputElement?.select();
+      return;
+    }
+    if (event.altKey && event.key === "ArrowLeft") {
+      event.preventDefault();
+      navigateHistory(-1);
+      return;
+    }
+    if (event.altKey && event.key === "ArrowRight") {
+      event.preventDefault();
+      navigateHistory(1);
+      return;
+    }
+    if (event.altKey && event.key === "ArrowUp") {
+      event.preventDefault();
+      navigateUp();
+      return;
+    }
     if (event.key === "Escape") {
       if (contextMenu) {
         event.preventDefault();
@@ -987,8 +1249,27 @@
     }
     if (event.key === "F5") {
       event.preventDefault();
-      void loadDirectory(currentUrl || urlInput);
+      refreshCurrentDirectory();
+      return;
     }
+    if (!editable && event.key === "F2" && selectedEntry) {
+      event.preventDefault();
+      prepareWrite("rename", { sourceUrl: selectedUrl ?? undefined, name: selectedEntry.name });
+      return;
+    }
+    if (!editable && event.key === "Delete" && selectedEntry) {
+      event.preventDefault();
+      prepareWrite("delete", { sourceUrl: selectedUrl ?? undefined });
+    }
+  }
+
+  function isEditableTarget(target: EventTarget | null) {
+    return (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement ||
+      (target instanceof HTMLElement && target.isContentEditable)
+    );
   }
 
   function handleThemeChange(event: MediaQueryListEvent) {
@@ -1070,9 +1351,8 @@
       void loadDirectory(repositoryRoot);
       return;
     }
-    if (list?.url) {
-      const root = deriveTreeRoot(list.url);
-      void loadDirectory(root);
+    if (treeRootUrl) {
+      void loadDirectory(treeRootUrl);
     }
   }
 
@@ -1090,64 +1370,64 @@
     return rows;
   }
 
-  $: treeRows = treeRootUrl ? renderTreeNodes(treeRootUrl, 0) : [];
+  $: treeRows = treeByUrl && treeRootUrl ? renderTreeNodes(treeRootUrl, 0) : [];
 </script>
 
 <main class="standalone-repo-browser" data-theme={resolvedTheme} aria-label="NovaSVN Repository Browser">
   <header class="browser-titlebar">
     <div class="browser-heading">
       <span class="browser-mark" aria-hidden="true">
-        <FolderTree size={18} strokeWidth={2} />
+        <FolderTree size={17} strokeWidth={2} />
       </span>
       <div>
         <h1>Repository Browser</h1>
-        <p title={currentUrl || targetPath}>
-          {currentUrl || targetPath || "浏览远端 SVN 仓库"}
-        </p>
+        <p>远程仓库</p>
       </div>
     </div>
     <div class="browser-actions">
-      <span data-status={listTask?.status ?? writeTask?.status ?? "idle"}>
-        {busy ? "忙碌" : "就绪"}
+      <span class="connection-state" class:busy data-status={listTask?.status ?? writeTask?.status ?? "idle"}>
+        {#if busy}<LoaderCircle class="spin" size={12} aria-hidden="true" />{/if}
+        {busy ? "正在处理" : "已连接"}
       </span>
-      <button type="button" on:click={useRepositoryRoot} disabled={!repositoryRoot && !list}>
-        Root
-      </button>
-      <button
-        type="button"
-        class="primary"
-        disabled={busy}
-        on:click={() => loadDirectory(urlInput || currentUrl)}
-      >
-        {#if listRunning}
-          <LoaderCircle class="spin" size={15} aria-hidden="true" />
-        {:else}
-          <RefreshCw size={15} aria-hidden="true" />
-        {/if}
-        {listRunning ? "加载中" : "浏览"}
-      </button>
     </div>
   </header>
 
   <section class="browser-urlbar" aria-label="仓库地址">
-    <input
-      bind:this={urlInputElement}
-      type="url"
-      value={urlInput}
-      placeholder="https://example.com/svn/project"
-      aria-label="仓库 URL"
-      disabled={listRunning}
-      on:input={(event) => {
-        urlInput = (event.currentTarget as HTMLInputElement).value;
-      }}
-      on:keydown={(event) => {
-        if (event.key === "Enter") {
-          void loadDirectory(urlInput);
-        }
-      }}
-    />
+    <div class="navigation-buttons" aria-label="浏览历史">
+      <button type="button" class="icon-button" aria-label="后退" disabled={!canGoBack || listRunning} on:click={() => navigateHistory(-1)}>
+        <ArrowLeft size={16} aria-hidden="true" />
+      </button>
+      <button type="button" class="icon-button" aria-label="前进" disabled={!canGoForward || listRunning} on:click={() => navigateHistory(1)}>
+        <ArrowRight size={16} aria-hidden="true" />
+      </button>
+      <button type="button" class="icon-button" aria-label="上一级" disabled={!canGoUp || listRunning} on:click={navigateUp}>
+        <ArrowUp size={16} aria-hidden="true" />
+      </button>
+      <button type="button" class="icon-button" aria-label="仓库根目录" on:click={useRepositoryRoot} disabled={!repositoryRoot && !list}>
+        <Home size={15} aria-hidden="true" />
+      </button>
+    </div>
+    <div class="location-control">
+      <FolderOpen size={15} aria-hidden="true" />
+      <input
+        bind:this={urlInputElement}
+        type="url"
+        value={urlInput}
+        placeholder="https://example.com/svn/project"
+        aria-label="仓库 URL"
+        disabled={listRunning}
+        on:input={(event) => {
+          urlInput = (event.currentTarget as HTMLInputElement).value;
+        }}
+        on:keydown={(event) => {
+          if (event.key === "Enter") {
+            void loadDirectory(urlInput);
+          }
+        }}
+      />
+    </div>
     <label class="revision-field">
-      <span>Revision</span>
+      <span>版本</span>
       <input
         type="text"
         inputmode="numeric"
@@ -1165,10 +1445,17 @@
         }}
       />
     </label>
-    <span class="revision-status" aria-live="polite">@{revisionLabel}</span>
+    <span class="revision-status" aria-live="polite">{revisionLabel}</span>
+    <button type="button" class="go-button" disabled={busy} on:click={() => loadDirectory(urlInput || currentUrl)}>
+      {#if listRunning}<LoaderCircle class="spin" size={14} aria-hidden="true" />{/if}
+      转到
+    </button>
+    <button type="button" class="icon-button" aria-label="刷新仓库目录" disabled={busy || !currentUrl} on:click={refreshCurrentDirectory}>
+      <RefreshCw size={16} aria-hidden="true" />
+    </button>
   </section>
 
-  <section class="browser-notices" class:has-notices={Boolean(commandError || listTask?.error || writeTask?.error || statusMessage)}>
+  <section class="browser-notices" class:has-notices={Boolean(commandError || listTask?.error || writeTask?.error)}>
     <ErrorNotice error={commandError} />
     {#if listTask?.error}
       <div class="inline-error" role="alert">{listTask.error}</div>
@@ -1176,56 +1463,64 @@
     {#if writeTask?.error}
       <div class="inline-error" role="alert">{writeTask.error}</div>
     {/if}
-    {#if statusMessage}
-      <div class="status-line" role="status">{statusMessage}</div>
-    {/if}
   </section>
 
   <div class="browser-toolbar" role="toolbar" aria-label="仓库操作">
-    <button type="button" disabled={!currentUrl} on:click={() => prepareWrite("mkdir", { targetUrl: currentUrl })}>
-      创建目录
-    </button>
-    <button type="button" disabled={!currentUrl} on:click={() => prepareWrite("import", { targetUrl: currentUrl })}>
-      Import
-    </button>
-    <button type="button" disabled={!selectedName || !list} on:click={() => {
-      if (!selectedName || !list) return;
-      const entry = entries.find((item) => item.name === selectedName);
-      if (!entry) return;
-      prepareWrite("copy", { sourceUrl: entryUrlFor(entry.name), name: entry.name });
-    }}>
-      Copy
-    </button>
-    <button type="button" disabled={!selectedName || !list} on:click={() => {
-      if (!selectedName) return;
-      prepareWrite("move", { sourceUrl: entryUrlFor(selectedName) });
-    }}>
-      Move
-    </button>
-    <button type="button" disabled={!selectedName || !list} on:click={() => {
-      if (!selectedName) return;
-      prepareWrite("rename", { sourceUrl: entryUrlFor(selectedName), name: selectedName });
-    }}>
-      Rename
-    </button>
-    <button type="button" disabled={!selectedName || !list} on:click={() => {
-      if (!selectedName) return;
-      prepareWrite("delete", { sourceUrl: entryUrlFor(selectedName) });
-    }}>
-      Delete
-    </button>
-    <button type="button" disabled={!currentUrl} on:click={() => prepareWrite("checkout", { sourceUrl: currentUrl })}>
-      Checkout
-    </button>
-    <button type="button" disabled={!currentUrl} on:click={() => prepareWrite("export", { sourceUrl: currentUrl })}>
-      Export
-    </button>
+    <div class="toolbar-group">
+      <button type="button" disabled={!currentUrl} on:click={() => prepareWrite("mkdir", { targetUrl: currentUrl })}>
+        <FolderPlus size={15} aria-hidden="true" /><span>创建目录</span>
+      </button>
+      <button type="button" disabled={!currentUrl} on:click={() => prepareWrite("import", { targetUrl: currentUrl })}>
+        <Upload size={15} aria-hidden="true" /><span>导入</span>
+      </button>
+    </div>
+    <span class="toolbar-divider" aria-hidden="true"></span>
+    <div class="toolbar-group">
+      <button type="button" disabled={!selectedEntry} on:click={openSelectedEntry}>
+        <ExternalLink size={15} aria-hidden="true" /><span>打开</span>
+      </button>
+      <button type="button" disabled={!selectedEntry} on:click={() => selectedEntry && prepareWrite("copy", { sourceUrl: selectedUrl ?? undefined, name: selectedEntry.name })}>
+        <Copy size={15} aria-hidden="true" /><span>复制</span>
+      </button>
+      <button type="button" disabled={!selectedEntry} on:click={() => selectedEntry && prepareWrite("move", { sourceUrl: selectedUrl ?? undefined })}>
+        <MoveRight size={15} aria-hidden="true" /><span>移动</span>
+      </button>
+      <button type="button" disabled={!selectedEntry} on:click={() => selectedEntry && prepareWrite("rename", { sourceUrl: selectedUrl ?? undefined, name: selectedEntry.name })}>
+        <Pencil size={15} aria-hidden="true" /><span>重命名</span>
+      </button>
+      <button type="button" class="danger-button" disabled={!selectedEntry} on:click={() => selectedEntry && prepareWrite("delete", { sourceUrl: selectedUrl ?? undefined })}>
+        <Trash2 size={15} aria-hidden="true" /><span>删除</span>
+      </button>
+    </div>
+    <span class="toolbar-divider" aria-hidden="true"></span>
+    <div class="toolbar-group">
+      <button type="button" disabled={!selectedUrl} on:click={() => selectedUrl && showLogForUrl(selectedUrl)}>
+        <History size={15} aria-hidden="true" /><span>日志</span>
+      </button>
+      <button type="button" disabled={!selectedUrl} on:click={() => selectedUrl && showPropertiesForUrl(selectedUrl)}>
+        <ListChecks size={15} aria-hidden="true" /><span>属性</span>
+      </button>
+    </div>
+    <span class="toolbar-spacer"></span>
+    <div class="toolbar-group">
+      <button type="button" disabled={!currentUrl} on:click={() => prepareWrite("checkout", { sourceUrl: currentUrl })}>
+        <FileDown size={15} aria-hidden="true" /><span>检出</span>
+      </button>
+      <button type="button" disabled={!currentUrl} on:click={() => prepareWrite("export", { sourceUrl: currentUrl })}>
+        <Download size={15} aria-hidden="true" /><span>导出</span>
+      </button>
+    </div>
   </div>
 
+  <div class="browser-workspace" class:detail-open={activePanel !== "none"}>
   <div class="browser-body">
     <aside class="tree-pane" style={`width: ${treePaneWidth}px`} aria-label="仓库目录树">
+      <header class="pane-label">
+        <span>仓库目录</span>
+        <small>{treeRows.length}</small>
+      </header>
       {#if treeRows.length === 0}
-        <div class="empty-state">加载目录后显示树</div>
+        <div class="empty-state compact">加载目录后显示树</div>
       {:else}
         {#each treeRows as row (row.node.url)}
           <div
@@ -1259,6 +1554,7 @@
                   url: row.node.url,
                 })}
             >
+              <Folder size={15} aria-hidden="true" />
               {row.node.label}
             </button>
           </div>
@@ -1274,7 +1570,8 @@
     ></div>
 
     <section class="list-pane" aria-label="仓库目录内容">
-      {#if breadcrumbs.length > 0}
+      <header class="list-header">
+        {#if breadcrumbs.length > 0}
         <nav class="breadcrumbs" aria-label="仓库路径">
           {#each breadcrumbs as crumb, index (crumb.url)}
             <button
@@ -1289,31 +1586,36 @@
             {/if}
           {/each}
         </nav>
-      {/if}
+        {/if}
+        <label class="search-control">
+          <Search size={14} aria-hidden="true" />
+          <input bind:this={searchInputElement} type="search" bind:value={searchInput} placeholder="筛选当前目录" aria-label="筛选当前目录" />
+          {#if searchInput}
+            <button type="button" class="search-clear" aria-label="清除筛选" on:click={() => { searchInput = ""; searchInputElement?.focus(); }}>
+              <X size={13} aria-hidden="true" />
+            </button>
+          {/if}
+        </label>
+      </header>
 
       <div class="repository-table" aria-label="仓库目录">
         <div class="table-head">
-          <span>名称</span>
-          <span>类型</span>
-          <span>Last Revision</span>
-          <span>作者</span>
-          <span>日期</span>
+          <button type="button" on:click={() => toggleSort("name")}>名称 <span>{sortIndicator("name")}</span></button>
+          <button type="button" on:click={() => toggleSort("kind")}>类型 <span>{sortIndicator("kind")}</span></button>
+          <button type="button" on:click={() => toggleSort("revision")}>版本 <span>{sortIndicator("revision")}</span></button>
+          <button type="button" on:click={() => toggleSort("author")}>作者 <span>{sortIndicator("author")}</span></button>
+          <button type="button" on:click={() => toggleSort("date")}>修改日期 <span>{sortIndicator("date")}</span></button>
         </div>
         {#if listRunning || resolvingInitial}
-          <article class="empty-state">仓库目录加载中</article>
+          <article class="empty-state loading-state"><LoaderCircle class="spin" size={20} aria-hidden="true" />正在读取仓库目录</article>
         {:else if list}
-          <button
-            type="button"
-            class="repository-row"
-            on:click={() => loadDirectory(parentRepositoryUrl(list.url))}
-          >
-            <strong>..</strong>
-            <span>目录</span>
-            <span>-</span>
-            <span>-</span>
-            <span>-</span>
-          </button>
-          {#each entries as entry (entry.kind + ":" + entry.name)}
+          {#if canGoUp && !searchInput}
+            <button type="button" class="repository-row parent-row" on:click={navigateUp}>
+              <strong><span class="entry-icon folder"><ArrowUp size={14} aria-hidden="true" /></span><span>上一级</span></strong>
+              <span>目录</span><span>-</span><span>-</span><span>-</span>
+            </button>
+          {/if}
+          {#each visibleEntries as entry (entry.kind + ":" + entry.name)}
             <button
               type="button"
               class="repository-row"
@@ -1330,7 +1632,12 @@
                 }
               }}
             >
-              <strong title={entry.name}>{entry.name || "/"}</strong>
+              <strong title={entry.name}>
+                <span class:folder={entry.kind === "dir"} class="entry-icon">
+                  {#if entry.kind === "dir"}<Folder size={15} aria-hidden="true" />{:else}<File size={15} aria-hidden="true" />{/if}
+                </span>
+                <span>{entry.name || "/"}</span>
+              </strong>
               <span>{repositoryEntryKindLabel(entry.kind)}</span>
               <span>{entry.revision || "-"}</span>
               <span title={entry.author || undefined}>{entry.author || "-"}</span>
@@ -1339,6 +1646,8 @@
           {/each}
           {#if entries.length === 0}
             <article class="empty-state">当前目录为空</article>
+          {:else if visibleEntries.length === 0}
+            <article class="empty-state">没有匹配“{searchInput}”的条目</article>
           {/if}
         {:else}
           <article class="empty-state">输入仓库 URL 后开始浏览</article>
@@ -1348,31 +1657,31 @@
   </div>
 
   {#if activePanel !== "none"}
-    <section class="detail-pane" aria-label="仓库操作面板">
+    <aside class="detail-pane" aria-label="仓库操作面板">
       <header>
         <h2>
           {#if activePanel === "log"}
-            文件 Log
+            文件日志
           {:else if activePanel === "blame"}
-            文件 Blame
+            逐行追溯
           {:else if activePanel === "properties"}
-            文件 Properties
+            SVN 属性
           {:else if activePanel === "mkdir"}
             创建目录
           {:else if activePanel === "import"}
-            Import
+            导入到仓库
           {:else if activePanel === "copy"}
-            Copy
+            复制仓库条目
           {:else if activePanel === "move"}
-            Move
+            移动仓库条目
           {:else if activePanel === "rename"}
-            Rename
+            重命名仓库条目
           {:else if activePanel === "delete"}
-            Delete
+            删除仓库条目
           {:else if activePanel === "checkout"}
-            Checkout
+            检出工作副本
           {:else}
-            Export
+            导出仓库内容
           {/if}
         </h2>
         <button
@@ -1535,8 +1844,30 @@
           </button>
         </form>
       {/if}
-    </section>
+    </aside>
   {/if}
+  </div>
+
+  <footer class="browser-statusbar">
+    <div class="status-primary" role="status">
+      {#if statusMessage}
+        <span>{statusMessage}</span>
+      {:else if selectedEntry}
+        <span class="status-kind">{selectedEntry.kind === "dir" ? "目录" : "文件"}</span>
+        <strong>{selectedEntry.name}</strong>
+        <span>r{selectedEntry.revision || "-"}</span>
+        <span>{selectedEntry.author || "-"}</span>
+      {:else if list}
+        <span>{entries.length} 个条目{searchInput ? `，显示 ${visibleEntries.length} 个` : ""}</span>
+      {:else}
+        <span>输入仓库地址开始浏览</span>
+      {/if}
+    </div>
+    <div class="status-secondary">
+      <span>{revisionLabel}</span>
+      <span>{busy ? "任务运行中" : "就绪"}</span>
+    </div>
+  </footer>
 
   {#if contextMenu}
     <div
@@ -1558,7 +1889,7 @@
             ),
           )}
       >
-        <ExternalLink size={14} aria-hidden="true" /> Open
+        <ExternalLink size={14} aria-hidden="true" /> 打开
       </button>
       <button
         type="button"
@@ -1572,7 +1903,7 @@
         role="menuitem"
         on:click={() => runContextAction(() => showLogForUrl(contextMenu?.url ?? ""))}
       >
-        <History size={14} aria-hidden="true" /> Show Log
+        <History size={14} aria-hidden="true" /> 查看日志
       </button>
       {#if contextMenu.kind === "file"}
         <button
@@ -1580,16 +1911,16 @@
           role="menuitem"
           on:click={() => runContextAction(() => showBlameForUrl(contextMenu?.url ?? ""))}
         >
-          <GitCommitHorizontal size={14} aria-hidden="true" /> Blame
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          on:click={() => runContextAction(() => showPropertiesForUrl(contextMenu?.url ?? ""))}
-        >
-          <ListChecks size={14} aria-hidden="true" /> Properties
+          <GitCommitHorizontal size={14} aria-hidden="true" /> 逐行追溯
         </button>
       {/if}
+      <button
+        type="button"
+        role="menuitem"
+        on:click={() => runContextAction(() => showPropertiesForUrl(contextMenu?.url ?? ""))}
+      >
+        <ListChecks size={14} aria-hidden="true" /> SVN 属性
+      </button>
       {#if contextMenu.kind === "dir"}
         <button
           type="button"
@@ -1599,7 +1930,7 @@
               prepareWrite("mkdir", { targetUrl: contextMenu?.url }),
             )}
         >
-          <FileText size={14} aria-hidden="true" /> 创建目录
+          <FolderPlus size={14} aria-hidden="true" /> 创建子目录
         </button>
         <button
           type="button"
@@ -1609,7 +1940,7 @@
               prepareWrite("import", { targetUrl: contextMenu?.url }),
             )}
         >
-          <Download size={14} aria-hidden="true" /> Import
+          <Upload size={14} aria-hidden="true" /> 导入到此处
         </button>
       {/if}
       <button
@@ -1623,7 +1954,7 @@
             }),
           )}
       >
-        <Copy size={14} aria-hidden="true" /> Copy
+        <Copy size={14} aria-hidden="true" /> 复制到...
       </button>
       <button
         type="button"
@@ -1633,7 +1964,7 @@
             prepareWrite("move", { sourceUrl: contextMenu?.url }),
           )}
       >
-        Move
+        <MoveRight size={14} aria-hidden="true" /> 移动到...
       </button>
       <button
         type="button"
@@ -1646,7 +1977,7 @@
             }),
           )}
       >
-        Rename
+        <Pencil size={14} aria-hidden="true" /> 重命名
       </button>
       <button
         type="button"
@@ -1656,7 +1987,7 @@
             prepareWrite("delete", { sourceUrl: contextMenu?.url }),
           )}
       >
-        <Trash2 size={14} aria-hidden="true" /> Delete
+        <Trash2 size={14} aria-hidden="true" /> 删除
       </button>
       <button
         type="button"
@@ -1666,7 +1997,7 @@
             prepareWrite("checkout", { sourceUrl: contextMenu?.url }),
           )}
       >
-        <Download size={14} aria-hidden="true" /> Checkout
+        <FileDown size={14} aria-hidden="true" /> 检出到...
       </button>
       <button
         type="button"
@@ -1676,7 +2007,7 @@
             prepareWrite("export", { sourceUrl: contextMenu?.url }),
           )}
       >
-        Export
+        <Download size={14} aria-hidden="true" /> 导出到...
       </button>
     </div>
   {/if}
@@ -1691,404 +2022,3 @@
     onSubmit={onSvnAuthenticationSubmit}
   />
 </main>
-
-<style>
-  .standalone-repo-browser {
-    --background: #f5f6f7;
-    --panel: #ffffff;
-    --panel-subtle: #f0f2f4;
-    --text: #17202a;
-    --secondary: #687482;
-    --border: #cfd6dd;
-    --control: #ffffff;
-    --accent: #2674b9;
-    --selected: #dcecfc;
-    --danger: #b42318;
-    display: grid;
-    grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
-    width: 100vw;
-    height: 100vh;
-    overflow: hidden;
-    background: var(--background);
-    color: var(--text);
-    user-select: none;
-  }
-
-  .standalone-repo-browser[data-theme="dark"] {
-    --background: #1f1f21;
-    --panel: #29292b;
-    --panel-subtle: #242426;
-    --text: #f2f2f4;
-    --secondary: #aaaab0;
-    --border: #3a3a3e;
-    --control: #1f1f21;
-    --accent: #4d9de0;
-    --selected: #24384d;
-    --danger: #f97066;
-  }
-
-  .browser-titlebar,
-  .browser-urlbar,
-  .browser-toolbar,
-  .browser-notices,
-  .detail-pane header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    background: var(--panel);
-  }
-
-  .browser-heading {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .browser-mark {
-    display: grid;
-    place-items: center;
-    width: 34px;
-    height: 34px;
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
-    color: var(--accent);
-  }
-
-  .browser-heading h1 {
-    margin: 0;
-    font-size: 15px;
-  }
-
-  .browser-heading p,
-  .status-line {
-    margin: 0;
-    color: var(--secondary);
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .browser-actions,
-  .browser-toolbar,
-  .path-control {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .browser-urlbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    gap: 10px;
-  }
-
-  .browser-urlbar input,
-  .write-form input,
-  .write-form textarea {
-    width: 100%;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--control);
-    color: var(--text);
-    padding: 8px 10px;
-    font: inherit;
-  }
-
-  .revision-field {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--secondary);
-    font-size: 12px;
-  }
-
-  .revision-field input {
-    width: 110px;
-  }
-
-  .revision-status {
-    color: var(--secondary);
-    font-size: 12px;
-    white-space: nowrap;
-  }
-
-  button {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--panel-subtle);
-    color: var(--text);
-    padding: 6px 10px;
-    font: inherit;
-    cursor: pointer;
-  }
-
-  button.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: white;
-  }
-
-  button:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-
-  .icon-button {
-    display: grid;
-    place-items: center;
-    width: 30px;
-    height: 30px;
-    padding: 0;
-  }
-
-  .browser-notices:not(.has-notices) {
-    display: none;
-  }
-
-  .inline-error {
-    color: var(--danger);
-    font-size: 12px;
-  }
-
-  .browser-body {
-    display: flex;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .tree-pane {
-    flex: 0 0 auto;
-    overflow: auto;
-    border-right: 1px solid var(--border);
-    background: var(--panel);
-  }
-
-  .tree-resizer {
-    flex: 0 0 5px;
-    cursor: col-resize;
-    background: transparent;
-  }
-
-  .tree-resizer:hover {
-    background: color-mix(in srgb, var(--accent) 35%, transparent);
-  }
-
-  .tree-row {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    min-height: 28px;
-  }
-
-  .tree-row.active {
-    background: var(--selected);
-  }
-
-  .tree-toggle,
-  .tree-label {
-    border: 0;
-    background: transparent;
-    padding: 4px;
-  }
-
-  .tree-label {
-    flex: 1;
-    text-align: left;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .list-pane {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    flex: 1;
-    overflow: hidden;
-  }
-
-  .breadcrumbs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 6px;
-    align-items: center;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border);
-    background: var(--panel-subtle);
-  }
-
-  .breadcrumbs button {
-    border: 0;
-    background: transparent;
-    color: var(--accent);
-    padding: 2px 4px;
-  }
-
-  .repository-table {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    overflow: auto;
-  }
-
-  .table-head,
-  .repository-row {
-    display: grid;
-    grid-template-columns: minmax(180px, 2fr) 70px 110px 110px 160px;
-    gap: 8px;
-    align-items: center;
-    padding: 8px 12px;
-    border: 0;
-    border-bottom: 1px solid var(--border);
-    background: transparent;
-    color: inherit;
-    text-align: left;
-    font: inherit;
-  }
-
-  .table-head {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background: var(--panel);
-    color: var(--secondary);
-    font-size: 12px;
-  }
-
-  .repository-row:hover,
-  .repository-row.selected {
-    background: var(--selected);
-  }
-
-  .repository-row strong {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .empty-state {
-    margin: 18px;
-    color: var(--secondary);
-    font-size: 13px;
-  }
-
-  .detail-pane {
-    border-top: 1px solid var(--border);
-    background: var(--panel);
-    max-height: 42vh;
-    overflow: auto;
-  }
-
-  .detail-pane header {
-    justify-content: space-between;
-    position: sticky;
-    top: 0;
-    z-index: 1;
-  }
-
-  .detail-pane h2 {
-    margin: 0;
-    font-size: 14px;
-  }
-
-  .write-form {
-    display: grid;
-    gap: 10px;
-    padding: 12px 14px 16px;
-  }
-
-  .write-form label {
-    display: grid;
-    gap: 4px;
-    font-size: 12px;
-    color: var(--secondary);
-  }
-
-  .detail-list {
-    display: grid;
-    gap: 8px;
-    padding: 12px 14px;
-  }
-
-  .detail-list article {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 8px 10px;
-    background: var(--panel-subtle);
-  }
-
-  .detail-list pre {
-    margin: 6px 0 0;
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-size: 12px;
-  }
-
-  .detail-summary {
-    margin: 0;
-    padding: 8px 14px 0;
-    color: var(--secondary);
-    font-size: 12px;
-  }
-
-  .blame-table {
-    display: grid;
-    gap: 2px;
-    padding: 8px 14px 14px;
-    font-size: 12px;
-  }
-
-  .blame-row {
-    display: grid;
-    grid-template-columns: 70px 90px 50px minmax(0, 1fr);
-    gap: 8px;
-  }
-
-  .blame-content {
-    overflow: hidden;
-  }
-
-  .context-menu {
-    position: fixed;
-    z-index: 50;
-    min-width: 180px;
-    display: grid;
-    gap: 2px;
-    padding: 6px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--panel);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
-  }
-
-  .context-menu button {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    justify-content: flex-start;
-    border: 0;
-    background: transparent;
-    border-radius: 6px;
-  }
-
-  .context-menu button:hover,
-  .context-menu button:focus-visible {
-    background: var(--selected);
-  }
-
-  :global(.spin) {
-    animation: spin 0.9s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-</style>

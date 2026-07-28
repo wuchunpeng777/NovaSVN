@@ -201,6 +201,59 @@ describe("StandaloneRepoBrowserWindow", () => {
     });
     confirmSpy.mockRestore();
   });
+
+  it("可筛选当前目录并保留目录统计", async () => {
+    render(StandaloneRepoBrowserWindow, {
+      props: { targetPath: "https://example.com/svn/trunk" },
+    });
+
+    await screen.findByRole("button", { name: "打开仓库文件 README.md" });
+    await fireEvent.input(screen.getByRole("searchbox", { name: "筛选当前目录" }), {
+      target: { value: "readme" },
+    });
+
+    expect(screen.queryByRole("button", { name: "打开仓库目录 src" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开仓库文件 README.md" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("2 个条目，显示 1 个");
+  });
+
+  it("展开目录树时不切换右侧当前目录", async () => {
+    render(StandaloneRepoBrowserWindow, {
+      props: { targetPath: "https://example.com/svn/trunk" },
+    });
+
+    await screen.findByRole("button", { name: "打开仓库文件 README.md" });
+    createRepositoryListTaskMock.mockResolvedValue(makeTask("pending", "tree-task"));
+    getTaskMock.mockResolvedValue(
+      makeTask("success", "tree-task", {
+        repository_list: {
+          url: "https://example.com/svn/trunk/src",
+          revision: "42",
+          entries: [
+            {
+              name: "components",
+              kind: "dir",
+              revision: "42",
+              author: "alice",
+              date: "2026-07-01T00:00:00.000Z",
+            },
+          ],
+        },
+      }),
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: "展开 src" }));
+
+    await waitFor(() => {
+      expect(createRepositoryListTaskMock).toHaveBeenLastCalledWith({
+        url: "https://example.com/svn/trunk/src",
+        revision: undefined,
+        svn_executable: undefined,
+      });
+    });
+    expect(screen.getByLabelText("仓库 URL")).toHaveValue("https://example.com/svn/trunk");
+    expect(screen.getByRole("button", { name: "打开仓库文件 README.md" })).toBeInTheDocument();
+  });
 });
 
 function makeTask(

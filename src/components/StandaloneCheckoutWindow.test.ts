@@ -7,6 +7,7 @@ vi.mock("../lib/api", () => ({
   createRepositoryCheckoutTask: vi.fn(),
   getTask: vi.fn(),
   openLocalPathLocation: vi.fn(),
+  readClipboardText: vi.fn(),
 }));
 
 import {
@@ -15,6 +16,7 @@ import {
   createRepositoryCheckoutTask,
   getTask,
   openLocalPathLocation,
+  readClipboardText,
 } from "../lib/api";
 import type { Task, TaskStatus } from "../types/api";
 import StandaloneCheckoutWindow from "./StandaloneCheckoutWindow.svelte";
@@ -24,6 +26,7 @@ const chooseCheckoutTargetDirectoryMock = vi.mocked(chooseCheckoutTargetDirector
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
 const getTaskMock = vi.mocked(getTask);
 const openLocalPathLocationMock = vi.mocked(openLocalPathLocation);
+const readClipboardTextMock = vi.mocked(readClipboardText);
 
 beforeEach(() => {
   cancelTaskMock.mockReset();
@@ -31,6 +34,8 @@ beforeEach(() => {
   createRepositoryCheckoutTaskMock.mockReset();
   getTaskMock.mockReset();
   openLocalPathLocationMock.mockReset();
+  readClipboardTextMock.mockReset();
+  readClipboardTextMock.mockResolvedValue("");
   createRepositoryCheckoutTaskMock.mockResolvedValue(makeTask("pending"));
   getTaskMock.mockResolvedValue(
     makeTask("success", [
@@ -44,6 +49,58 @@ beforeEach(() => {
 });
 
 describe("StandaloneCheckoutWindow", () => {
+  it("使用剪贴板中的合法仓库 URL 预填输入框", async () => {
+    readClipboardTextMock.mockResolvedValue("  svn+ssh://user@example.com/project/trunk\r\n");
+    render(StandaloneCheckoutWindow, { props: { targetPath: "C:\\work\\project" } });
+
+    const urlInput = screen.getByLabelText("仓库 URL");
+    await waitFor(() => {
+      expect(urlInput).toHaveValue("svn+ssh://user@example.com/project/trunk");
+    });
+    expect(urlInput).not.toHaveAttribute("placeholder");
+  });
+
+  it.each(["", "default", "普通文本", "https://"])(
+    "剪贴板内容 %j 不是合法仓库 URL 时保持空白",
+    async (clipboardText) => {
+      readClipboardTextMock.mockResolvedValue(clipboardText);
+      render(StandaloneCheckoutWindow, { props: { targetPath: "C:\\work\\project" } });
+
+      const urlInput = screen.getByLabelText("仓库 URL");
+      await waitFor(() => expect(readClipboardTextMock).toHaveBeenCalledOnce());
+      expect(urlInput).toHaveValue("");
+      expect(urlInput).not.toHaveAttribute("placeholder");
+    },
+  );
+
+  it("剪贴板读取失败时保持空白", async () => {
+    readClipboardTextMock.mockRejectedValue(new Error("clipboard unavailable"));
+    render(StandaloneCheckoutWindow, { props: { targetPath: "C:\\work\\project" } });
+
+    const urlInput = screen.getByLabelText("仓库 URL");
+    await waitFor(() => expect(readClipboardTextMock).toHaveBeenCalledOnce());
+    expect(urlInput).toHaveValue("");
+  });
+
+  it("不会用稍后返回的剪贴板地址覆盖用户输入", async () => {
+    let resolveClipboard!: (value: string) => void;
+    readClipboardTextMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveClipboard = resolve;
+      }),
+    );
+    render(StandaloneCheckoutWindow, { props: { targetPath: "C:\\work\\project" } });
+
+    const urlInput = screen.getByLabelText("仓库 URL");
+    await fireEvent.input(urlInput, {
+      target: { value: "https://manual.example.com/repo" },
+    });
+    resolveClipboard("https://clipboard.example.com/repo");
+
+    await waitFor(() => expect(readClipboardTextMock).toHaveBeenCalledOnce());
+    expect(urlInput).toHaveValue("https://manual.example.com/repo");
+  });
+
   it("预填右键目录并通过独立窗口执行 Checkout", async () => {
     render(StandaloneCheckoutWindow, {
       props: {
@@ -116,6 +173,20 @@ describe("StandaloneCheckoutWindow", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
 
     expect(screen.getByRole("alert", { name: "命令错误" })).toHaveTextContent("请输入仓库 URL");
+    expect(createRepositoryCheckoutTaskMock).not.toHaveBeenCalled();
+  });
+
+  it("手动输入无效仓库 URL 时阻止 Checkout", async () => {
+    render(StandaloneCheckoutWindow, { props: { targetPath: "C:\\work\\project" } });
+    await fireEvent.input(screen.getByLabelText("仓库 URL"), {
+      target: { value: "https://" },
+    });
+
+    const form = screen.getByRole("button", { name: "Checkout" }).closest("form");
+    expect(form).not.toBeNull();
+    await fireEvent.submit(form!);
+
+    expect(screen.getByRole("alert", { name: "命令错误" })).toHaveTextContent("仓库 URL 无效");
     expect(createRepositoryCheckoutTaskMock).not.toHaveBeenCalled();
   });
 
