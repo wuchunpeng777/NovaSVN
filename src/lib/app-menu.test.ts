@@ -27,7 +27,7 @@ describe("buildAppMenuState", () => {
     });
   });
 
-  it("offers Add and Ignore only for an active unversioned path", () => {
+  it("offers Add and Ignore for an active unversioned directory without Delete", () => {
     const node = makeNode("drafts", "unversioned", false, "local", "dir");
     const state = buildAppMenuState({
       ...baseInput(node, makeFile("drafts", "unversioned", "local")),
@@ -40,6 +40,20 @@ describe("buildAppMenuState", () => {
     expect(state.can_commit).toBe(false);
     expect(state.can_revert).toBe(false);
     expect(state.can_delete).toBe(false);
+  });
+
+  it("offers Delete for an active unversioned file", () => {
+    const node = makeNode("notes/new.txt", "unversioned", false, "local");
+    const state = buildAppMenuState({
+      ...baseInput(node, makeFile("notes/new.txt", "unversioned", "local")),
+      commitFiles: [],
+    });
+
+    expect(state.can_add).toBe(true);
+    expect(state.can_ignore).toBe(true);
+    expect(state.can_delete).toBe(true);
+    expect(state.can_move).toBe(false);
+    expect(state.can_copy).toBe(false);
   });
 
   it("disables mutating path actions while keeping safe file actions available", () => {

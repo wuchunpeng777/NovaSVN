@@ -737,6 +737,15 @@
       }
     }
 
+    if (kind === "delete_unversioned_file") {
+      const confirmed = window.confirm(
+        `确定永久删除未版本控制文件吗？\n${filePath ?? ""}\n\n该文件将从磁盘删除，NovaSVN 无法撤销此操作。`,
+      );
+      if (!confirmed) {
+        return null;
+      }
+    }
+
     if (kind.startsWith("resolve_")) {
       const confirmed = window.confirm(`确定要标记或选择冲突解决结果吗？\n${filePath ?? ""}`);
       if (!confirmed) {
@@ -1651,7 +1660,7 @@
       case "delete":
         setCurrentView("changes");
         if ($workspaceStore.selectedFilePath) {
-          await runSvnOperation("delete_path", $workspaceStore.selectedFilePath);
+          await deleteWorkspacePath($workspaceStore.selectedFilePath);
         }
         break;
       case "ignore":
@@ -1703,7 +1712,7 @@
       move: moveWorkspacePath,
       copy: copyWorkspacePath,
       ignore: ignoreWorkspacePath,
-      delete: (path) => runSvnOperation("delete_path", path),
+      delete: deleteWorkspacePath,
     });
     if (handledPathCommand) {
       return;
@@ -1897,14 +1906,85 @@
     await runSvnBatchOperation("revert_paths", paths);
   }
 
-  async function deleteWorkspacePaths(paths: string[]) {
-    const confirmed = window.confirm(
-      `确定从工作副本删除 ${paths.length} 个路径吗？\n\n${formatBatchPathList(paths)}\n\n这会删除本地内容并安排 SVN 删除。目录内未版本控制内容和未提交改动可能丢失。`,
+  function isUnversionedWorkspacePath(filePath: string) {
+    return (
+      $workspaceStore.status?.files.some(
+        (file) => file.path === filePath && file.status === "unversioned",
+      ) ?? false
     );
+  }
+
+  function deleteKindForPath(filePath: string): SvnOperationKind {
+    return isUnversionedWorkspacePath(filePath) ? "delete_unversioned_file" : "delete_path";
+  }
+
+  async function deleteWorkspacePath(filePath: string) {
+    await runSvnOperation(deleteKindForPath(filePath), filePath);
+  }
+
+  async function deleteWorkspacePaths(paths: string[]) {
+    const unversionedPaths = paths.filter((path) => isUnversionedWorkspacePath(path));
+    const versionedPaths = paths.filter((path) => !isUnversionedWorkspacePath(path));
+    const confirmMessage =
+      unversionedPaths.length > 0 && versionedPaths.length > 0
+        ? `确定删除 ${paths.length} 个路径吗？\n\n${formatBatchPathList(paths)}\n\n已版本控制路径会安排 SVN 删除；未版本控制文件将从磁盘永久删除，NovaSVN 无法撤销。`
+        : unversionedPaths.length > 0
+          ? `确定永久删除 ${unversionedPaths.length} 个未版本控制文件吗？\n\n${formatBatchPathList(unversionedPaths)}\n\n这些文件将从磁盘删除，NovaSVN 无法撤销此操作。`
+          : `确定从工作副本删除 ${paths.length} 个路径吗？\n\n${formatBatchPathList(paths)}\n\n这会删除本地内容并安排 SVN 删除。目录内未版本控制内容和未提交改动可能丢失。`;
+    const confirmed = window.confirm(confirmMessage);
     if (!confirmed) {
       return;
     }
-    await runSvnBatchOperation("delete_paths", paths);
+
+    if (versionedPaths.length > 0 && unversionedPaths.length === 0) {
+      await runSvnBatchOperation("delete_paths", versionedPaths);
+      return;
+    }
+
+    const workingCopyRoot = $workspaceStore.current?.working_copy_root;
+    if (
+      !workingCopyRoot ||
+      svnOperationCreationCoordinator.isCreating() ||
+      $workspaceStore.pendingSvnOperationTaskId !== null
+    ) {
+      return;
+    }
+
+    await svnOperationCreationCoordinator.create(
+      () => $workspaceStore.pendingSvnOperationTaskId !== null,
+      async () => {
+        let lastTask: Task | null = null;
+        if (versionedPaths.length > 0) {
+          lastTask = await taskStore.createSvnBatchOperation({
+            workingCopyRoot,
+            kind: "delete_paths",
+            filePaths: versionedPaths,
+            svnExecutable: currentSvnExecutable(),
+          });
+          if (!lastTask) {
+            return null;
+          }
+        }
+        for (const filePath of unversionedPaths) {
+          lastTask = await taskStore.createSvnOperation({
+            workingCopyRoot,
+            kind: "delete_unversioned_file",
+            filePath,
+            svnExecutable: currentSvnExecutable(),
+          });
+          if (!lastTask) {
+            return null;
+          }
+        }
+        return lastTask;
+      },
+      (task) =>
+        workspaceStore.markSvnOperationTask(
+          task.task_id,
+          unversionedPaths.length > 0 ? "delete_unversioned_file" : "delete_paths",
+          workingCopyRoot,
+        ),
+    );
   }
 
   async function moveWorkspacePaths(paths: string[]) {
@@ -3074,7 +3154,7 @@
   onClearCommitFiles={workspaceStore.clearCommitFiles}
   onAddFile={(path) => runSvnOperation("add_file", path)}
   onIgnorePath={ignoreWorkspacePath}
-  onDeletePath={(path) => runSvnOperation("delete_path", path)}
+  onDeletePath={deleteWorkspacePath}
   onMovePath={moveWorkspacePath}
   onCopyPath={copyWorkspacePath}
   onRevertFile={(path) => runSvnOperation("revert_file", path)}

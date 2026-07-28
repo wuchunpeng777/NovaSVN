@@ -1700,6 +1700,7 @@ Certificate information:
     const onClearCommitFiles = vi.fn();
     const onAddFile = vi.fn();
     const onIgnorePath = vi.fn();
+    const onDeletePath = vi.fn();
     const modified = makeFile("src/main.ts", "modified", "main-digest");
     const unversioned = makeFile("notes/new.txt", "unversioned", "new-digest");
 
@@ -1720,6 +1721,7 @@ Certificate information:
         onClearCommitFiles,
         onAddFile,
         onIgnorePath,
+        onDeletePath,
         svnProperties: {
           target: "notes",
           properties: [{ name: "svn:ignore", value: "new.txt" }],
@@ -1757,14 +1759,16 @@ Certificate information:
     await fireEvent.click(screen.getByRole("button", { name: "更多操作 文件 notes/new.txt" }));
     const ignoreMenuItem = screen.getByRole("menuitem", { name: "Ignore 文件 notes/new.txt" });
     expect(ignoreMenuItem.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("menuitem", { name: "删除文件 notes/new.txt" })).toBeInTheDocument();
     await fireEvent.click(ignoreMenuItem);
     expect(onAddFile).toHaveBeenCalledWith("notes/new.txt");
     expect(onIgnorePath).toHaveBeenCalledWith("notes/new.txt");
     await fireEvent.click(screen.getByRole("tab", { name: "Properties" }));
     expect(screen.getByText("作用目录：notes", { exact: true })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "删除文件 notes/new.txt" }),
-    ).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作 文件 notes/new.txt" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "删除文件 notes/new.txt" }));
+    expect(onDeletePath).toHaveBeenCalledWith("notes/new.txt");
   });
 
   it("loads and enables operations for a changed file outside the first status page", async () => {
@@ -2369,6 +2373,7 @@ Certificate information:
     await fireEvent.contextMenu(document.getElementById("workspace-row-draft.txt") as HTMLElement);
     const draftMenu = screen.getByRole("menu", { name: "路径菜单 draft.txt" });
     expect(within(draftMenu).getByRole("menuitem", { name: "Add" })).toBeInTheDocument();
+    expect(within(draftMenu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
     await fireEvent.click(within(draftMenu).getByRole("menuitem", { name: "Ignore" }));
     expect(onIgnorePath).toHaveBeenCalledWith("draft.txt");
 

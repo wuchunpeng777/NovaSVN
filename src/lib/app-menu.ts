@@ -39,7 +39,7 @@ export function buildAppMenuState(input: BuildAppMenuStateInput): AppMenuState {
     ? input.status?.files.find((candidate) => candidate.path === activePath) ?? null
     : null;
   const pathBusy = workspaceBusy || !node;
-  const versionedOperation = canMoveOrDelete(node);
+  const versionedOperation = canMoveOrCopy(node);
   const unversioned = node?.status === "unversioned" || file?.status === "unversioned";
   const localChange = hasLocalChange(file);
   const remoteChange = hasRemoteChange(file, node);
@@ -62,7 +62,7 @@ export function buildAppMenuState(input: BuildAppMenuStateInput): AppMenuState {
     can_move: !pathBusy && versionedOperation,
     can_copy: !pathBusy && versionedOperation,
     can_ignore: !pathBusy && canIgnore(node),
-    can_delete: !pathBusy && versionedOperation,
+    can_delete: !pathBusy && (versionedOperation || canDeleteUnversioned(node)),
   };
 }
 
@@ -131,13 +131,17 @@ function canOpen(node: WorkspaceFileNode | null) {
   return !!node && node.kind === "file" && !["deleted", "missing"].includes(node.status);
 }
 
-function canMoveOrDelete(node: WorkspaceFileNode | null) {
+function canMoveOrCopy(node: WorkspaceFileNode | null) {
   return (
     !!node &&
     node.versioned &&
     ["file", "dir"].includes(node.kind) &&
     !["deleted", "missing", "external", "unversioned"].includes(node.status)
   );
+}
+
+function canDeleteUnversioned(node: WorkspaceFileNode | null) {
+  return !!node && node.kind === "file" && node.status === "unversioned";
 }
 
 function canIgnore(node: WorkspaceFileNode | null) {

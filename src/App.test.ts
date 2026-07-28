@@ -944,6 +944,37 @@ Certificate information:
     expect(get(workspaceStore).pendingSvnOperationTaskId).toBeNull();
   });
 
+  it("删除未版本控制文件时创建 delete_unversioned_file 任务", async () => {
+    await showIgnorableSource();
+    const task = makeTask({ task_id: "delete-unversioned", status: "pending" });
+    createSvnOperationTaskMock.mockResolvedValue(task);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "未管理文件" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "更多操作 文件 assets/cache.tmp" }),
+    );
+    await fireEvent.click(
+      screen.getByRole("menuitem", { name: "删除文件 assets/cache.tmp" }),
+    );
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("永久删除未版本控制文件"));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("assets/cache.tmp"));
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:/repo/wc",
+        kind: "delete_unversioned_file",
+        file_path: "assets/cache.tmp",
+        svn_executable: undefined,
+      });
+    });
+    expect(get(workspaceStore)).toMatchObject({
+      pendingSvnOperationTaskId: "delete-unversioned",
+      pendingSvnOperationKind: "delete_unversioned_file",
+    });
+  });
+
   it("多选 Move 使用目标目录创建单个批量任务", async () => {
     await showBatchOperationSource();
     const task = makeTask({ task_id: "batch-move", status: "pending" });

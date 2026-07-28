@@ -1376,13 +1376,21 @@
     return labelStatus(localStatus);
   }
 
-  function canDeletePath(node: WorkspaceFileNode | null) {
+  function canDeleteVersionedPath(node: WorkspaceFileNode | null) {
     return (
       !!node &&
       node.versioned &&
       ["file", "dir"].includes(node.kind) &&
       !["deleted", "missing", "external", "unversioned"].includes(node.status)
     );
+  }
+
+  function canDeleteUnversionedFile(node: WorkspaceFileNode | null) {
+    return !!node && node.kind === "file" && node.status === "unversioned";
+  }
+
+  function canDeletePath(node: WorkspaceFileNode | null) {
+    return canDeleteVersionedPath(node) || canDeleteUnversionedFile(node);
   }
 
   function formatSvnDate(value: string | null) {
@@ -1393,7 +1401,7 @@
   }
 
   function canMovePath(node: WorkspaceFileNode | null) {
-    return canDeletePath(node);
+    return canDeleteVersionedPath(node);
   }
 
   function canIgnorePath(node: WorkspaceFileNode | null) {
@@ -5595,7 +5603,7 @@
                         </button>
                       {/if}
                     {/if}
-                    {#if canShowPathContextMenu(node) && (isUnversionedPath(node.path) || isLocalChangedPath(node.path) || canMovePath(node))}
+                    {#if canShowPathContextMenu(node) && (isUnversionedPath(node.path) || isLocalChangedPath(node.path) || canMovePath(node) || canDeletePath(node))}
                       <button
                         type="button"
                         class="row-menu-trigger"
@@ -5691,6 +5699,8 @@
                             <Copy size={15} aria-hidden="true" />
                             复制
                           </button>
+                        {/if}
+                        {#if canDeletePath(node)}
                           <button
                             type="button"
                             role="menuitem"
@@ -5903,6 +5913,8 @@
                     >
                       复制
                     </button>
+                  {/if}
+                  {#if canDeletePath(selectedTreeNode)}
                     <button
                       type="button"
                       aria-label={`从工作副本删除 ${selectedTreeNode?.path ?? ""}`}
