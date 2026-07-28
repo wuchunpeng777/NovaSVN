@@ -1,6 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const windowApiMocks = vi.hoisted(() => ({
+  close: vi.fn(),
+  setMinSize: vi.fn(),
+  setSize: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => windowApiMocks,
+}));
+
 vi.mock("../lib/api", () => ({
   chooseCheckoutTargetDirectory: vi.fn(),
   chooseExportDirectory: vi.fn(),
@@ -29,6 +39,7 @@ import {
   createRepositoryMkdirTask,
   getSvnInfo,
   getTask,
+  launchLogWindow,
 } from "../lib/api";
 import type { Task, TaskStatus } from "../types/api";
 import StandaloneRepoBrowserWindow from "./StandaloneRepoBrowserWindow.svelte";
@@ -37,12 +48,26 @@ const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
 const createRepositoryMkdirTaskMock = vi.mocked(createRepositoryMkdirTask);
 const getSvnInfoMock = vi.mocked(getSvnInfo);
 const getTaskMock = vi.mocked(getTask);
+const launchLogWindowMock = vi.mocked(launchLogWindow);
 
 beforeEach(() => {
+  delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  window.localStorage.removeItem("novasvn:repo-browser-compact-window-v1");
+  windowApiMocks.close.mockReset();
+  windowApiMocks.setMinSize.mockReset();
+  windowApiMocks.setMinSize.mockResolvedValue(undefined);
+  windowApiMocks.setSize.mockReset();
+  windowApiMocks.setSize.mockResolvedValue(undefined);
   createRepositoryListTaskMock.mockReset();
   createRepositoryMkdirTaskMock.mockReset();
   getSvnInfoMock.mockReset();
   getTaskMock.mockReset();
+  launchLogWindowMock.mockReset();
+  launchLogWindowMock.mockResolvedValue({
+    repository_url: "https://example.com/svn/trunk/README.md",
+    repository_root: "https://example.com/svn",
+    revision: "42",
+  });
   createRepositoryListTaskMock.mockResolvedValue(makeTask("pending", "list-task"));
   getTaskMock.mockResolvedValue(
     makeTask("success", "list-task", {
@@ -71,6 +96,29 @@ beforeEach(() => {
 });
 
 describe("StandaloneRepoBrowserWindow", () => {
+  it("首次加载少量条目时收紧窗口高度", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(StandaloneRepoBrowserWindow, {
+      props: { targetPath: "https://example.com/svn/trunk" },
+    });
+
+    await screen.findByRole("button", { name: "打开仓库文件 README.md" });
+    await waitFor(() => expect(windowApiMocks.setSize).toHaveBeenCalledOnce());
+
+    expect(windowApiMocks.setMinSize).toHaveBeenCalledWith(
+      expect.objectContaining({ width: 900, height: 380 }),
+    );
+    expect(windowApiMocks.setSize).toHaveBeenCalledWith(
+      expect.objectContaining({ height: 380 }),
+    );
+    expect(window.localStorage.getItem("novasvn:repo-browser-compact-window-v1")).toBe(
+      "applied",
+    );
+  });
+
   it("从工作副本路径解析仓库 URL 并加载目录", async () => {
     getSvnInfoMock.mockResolvedValue({
       target_path: "C:\\wc",
@@ -149,6 +197,24 @@ describe("StandaloneRepoBrowserWindow", () => {
       });
     });
     expect(await screen.findByRole("button", { name: "打开仓库文件 main.ts" })).toBeInTheDocument();
+  });
+
+  it("从右键菜单查看日志时保留仓库条目 URL", async () => {
+    render(StandaloneRepoBrowserWindow, {
+      props: { targetPath: "https://example.com/svn/trunk" },
+    });
+
+    const readme = await screen.findByRole("button", { name: "打开仓库文件 README.md" });
+    await fireEvent.contextMenu(readme, { clientX: 120, clientY: 160 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "查看日志" }));
+
+    await waitFor(() => {
+      expect(launchLogWindowMock).toHaveBeenCalledWith({
+        repository_url: "https://example.com/svn/trunk/README.md",
+        repository_root: "https://example.com/svn",
+        revision: "42",
+      });
+    });
   });
 
   it("可通过创建目录表单执行 mkdir 并刷新", async () => {

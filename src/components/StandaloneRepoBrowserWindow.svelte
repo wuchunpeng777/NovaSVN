@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
+  import { LogicalSize } from "@tauri-apps/api/dpi";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
     ArrowLeft,
@@ -123,6 +124,7 @@
 
   const terminalStatuses: TaskStatus[] = ["success", "failed", "cancelled", "interrupted"];
   const pollIntervalMs = 350;
+  const compactWindowLayoutKey = "novasvn:repo-browser-compact-window-v1";
 
   let urlInput = "";
   let revisionInput = repositoryRevision?.trim() ?? "";
@@ -165,6 +167,7 @@
   let generation = 0;
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
+  let compactWindowRequested = false;
 
   $: resolvedTheme =
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
@@ -640,6 +643,7 @@
         list = result;
         urlInput = result.url;
         commitNavigation(result.url, requestedRevision, navigationMode);
+        void compactWindowForInitialDirectory(result.entries.length);
         return;
       }
 
@@ -1187,8 +1191,35 @@
   }
 
   function runContextAction(action: () => void | Promise<void>) {
-    closeContextMenu();
-    void action();
+    try {
+      void action();
+    } finally {
+      closeContextMenu();
+    }
+  }
+
+  async function compactWindowForInitialDirectory(entryCount: number) {
+    if (
+      compactWindowRequested ||
+      !("__TAURI_INTERNALS__" in window) ||
+      window.localStorage.getItem(compactWindowLayoutKey) === "applied"
+    ) {
+      return;
+    }
+
+    compactWindowRequested = true;
+    const visibleRows = Math.max(3, Math.min(entryCount, 11));
+    const targetHeight = Math.max(380, Math.min(620, 240 + visibleRows * 34));
+    const targetWidth = Math.max(960, window.outerWidth || window.innerWidth);
+
+    try {
+      const appWindow = getCurrentWindow();
+      await appWindow.setMinSize(new LogicalSize(900, 380));
+      await appWindow.setSize(new LogicalSize(targetWidth, targetHeight));
+      window.localStorage.setItem(compactWindowLayoutKey, "applied");
+    } catch {
+      // Window sizing is a presentation enhancement; browsing remains usable if it is unavailable.
+    }
   }
 
   function handleOutsidePointer(event: PointerEvent) {

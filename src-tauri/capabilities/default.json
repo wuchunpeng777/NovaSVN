@@ -5,6 +5,8 @@
   "windows": ["main"],
   "permissions": [
     "core:window:allow-close",
+    "core:window:allow-set-min-size",
+    "core:window:allow-set-size",
     "clipboard-manager:allow-read-text",
     "dialog:default",
     "drag:default"
