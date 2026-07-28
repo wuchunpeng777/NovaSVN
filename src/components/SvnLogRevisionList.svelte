@@ -11,6 +11,7 @@
   export let mergeRevisions: Set<string> | null = null;
   export let diffLoading = false;
   export let compact = false;
+  export let fastRevertTooltips = false;
   export let currentRevision: string | null = null;
   export let effectiveRevision: string | null = null;
   export let theme: "light" | "dark" = "light";
@@ -168,7 +169,8 @@
               type="button"
               class="svn-log-revert"
               aria-label={`撤销提交 r${entry.revision}`}
-              title={revertTitle(entry)}
+              title={fastRevertTooltips ? undefined : revertTitle(entry)}
+              data-tooltip={fastRevertTooltips ? revertTitle(entry) : undefined}
               disabled={revertDisabled(entry)}
               on:click={() => onRevert(entry)}
             >
@@ -178,7 +180,8 @@
               type="button"
               class="svn-log-revert svn-log-revert-workspace"
               aria-label={workspaceRevertLabel(entry)}
-              title={workspaceRevertTitle(entry)}
+              title={fastRevertTooltips ? undefined : workspaceRevertTitle(entry)}
+              data-tooltip={fastRevertTooltips ? workspaceRevertTitle(entry) : undefined}
               disabled={workspaceRevertDisabled(entry)}
               on:click={() => onRevertWorkspace(entry)}
             >
@@ -530,6 +533,7 @@
   }
 
   .svn-log-revert {
+    position: relative;
     display: inline-grid;
     flex: 0 0 28px;
     width: 28px;
@@ -541,6 +545,43 @@
     padding: 0;
     color: var(--log-accent);
     place-items: center;
+  }
+
+  .svn-log-revert[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 5px);
+    right: 0;
+    width: max-content;
+    max-width: 280px;
+    visibility: hidden;
+    border: 1px solid color-mix(in srgb, var(--log-text) 20%, var(--log-border));
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--log-text) 92%, var(--log-panel));
+    box-shadow: 0 4px 12px rgb(0 0 0 / 18%);
+    padding: 5px 7px;
+    color: var(--log-panel);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.35;
+    opacity: 0;
+    pointer-events: none;
+    text-align: left;
+    transform: translateY(-2px);
+    transition:
+      opacity 70ms ease,
+      transform 70ms ease,
+      visibility 0s linear 170ms;
+    white-space: normal;
+  }
+
+  .svn-log-revert[data-tooltip]:hover::after,
+  .svn-log-revert[data-tooltip]:focus-visible::after {
+    visibility: visible;
+    opacity: 1;
+    transform: translateY(0);
+    transition-delay: 100ms;
   }
 
   .svn-log-revert-workspace {

@@ -95,24 +95,20 @@ beforeEach(() => {
 });
 
 describe("StandaloneRepoBrowserWindow", () => {
-  it("每次加载少量条目时都收紧窗口高度", async () => {
+  it("加载、选择和进入目录时不调整窗口大小，也不显示底部状态栏", async () => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
       value: {},
     });
-    render(StandaloneRepoBrowserWindow, {
+    const { container } = render(StandaloneRepoBrowserWindow, {
       props: { targetPath: "https://example.com/svn/trunk" },
     });
 
     await screen.findByRole("button", { name: "打开仓库文件 README.md" });
-    await waitFor(() => expect(windowApiMocks.setSize).toHaveBeenCalledOnce());
-
-    expect(windowApiMocks.setMinSize).toHaveBeenCalledWith(
-      expect.objectContaining({ width: 900, height: 380 }),
-    );
-    expect(windowApiMocks.setSize).toHaveBeenCalledWith(
-      expect.objectContaining({ height: 380 }),
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "打开仓库文件 README.md" }));
+    expect(windowApiMocks.setMinSize).not.toHaveBeenCalled();
+    expect(windowApiMocks.setSize).not.toHaveBeenCalled();
+    expect(container.querySelector(".browser-statusbar")).not.toBeInTheDocument();
 
     createRepositoryListTaskMock.mockResolvedValue(makeTask("pending", "list-task-2"));
     getTaskMock.mockResolvedValue(
@@ -135,7 +131,8 @@ describe("StandaloneRepoBrowserWindow", () => {
 
     await fireEvent.doubleClick(screen.getByRole("button", { name: "打开仓库目录 src" }));
     await screen.findByRole("button", { name: "打开仓库文件 main.ts" });
-    await waitFor(() => expect(windowApiMocks.setSize).toHaveBeenCalledTimes(2));
+    expect(windowApiMocks.setMinSize).not.toHaveBeenCalled();
+    expect(windowApiMocks.setSize).not.toHaveBeenCalled();
   });
 
   it("从工作副本路径解析仓库 URL 并加载目录", async () => {
@@ -329,7 +326,7 @@ describe("StandaloneRepoBrowserWindow", () => {
     confirmSpy.mockRestore();
   });
 
-  it("可筛选当前目录并保留目录统计", async () => {
+  it("可筛选当前目录", async () => {
     render(StandaloneRepoBrowserWindow, {
       props: { targetPath: "https://example.com/svn/trunk" },
     });
@@ -341,7 +338,6 @@ describe("StandaloneRepoBrowserWindow", () => {
 
     expect(screen.queryByRole("button", { name: "打开仓库目录 src" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "打开仓库文件 README.md" })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("2 个条目，显示 1 个");
   });
 
   it("展开目录树时不切换右侧当前目录", async () => {

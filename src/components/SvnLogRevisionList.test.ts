@@ -57,6 +57,7 @@ describe("SvnLogRevisionList", () => {
         totalEntries: 1,
         currentRevision: "r100M",
         effectiveRevision: "42",
+        fastRevertTooltips: true,
         revertDisabled: () => false,
         workspaceRevertDisabled: () => false,
         onRevert,
@@ -82,6 +83,10 @@ describe("SvnLogRevisionList", () => {
     expect(revert.querySelector(".lucide-undo-2")).toBeInTheDocument();
     expect(workspaceRevert.querySelector(".lucide-folder-clock")).toBeInTheDocument();
     expect(workspaceRevert).toHaveClass("svn-log-revert-workspace");
+    expect(revert).toHaveAttribute("data-tooltip", "撤销提交 r42");
+    expect(workspaceRevert).toHaveAttribute("data-tooltip", "回退工作区到 r42");
+    expect(revert).not.toHaveAttribute("title");
+    expect(workspaceRevert).not.toHaveAttribute("title");
 
     await fireEvent.click(revert);
     await fireEvent.click(workspaceRevert);

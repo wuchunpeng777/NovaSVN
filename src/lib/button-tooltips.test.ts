@@ -49,6 +49,24 @@ describe("installButtonTooltips", () => {
     uninstall();
     expect(button).toHaveAttribute("title", "更新暂不可用");
   });
+
+  it("leaves custom fast tooltips without a duplicate native title", async () => {
+    document.body.innerHTML = `
+      <button aria-label="回退工作区到 r42" data-tooltip="回退目标到 r42"></button>
+    `;
+
+    const button = document.querySelector("button")!;
+    const uninstall = installButtonTooltips(document);
+
+    expect(button).toHaveAttribute("data-tooltip", "回退目标到 r42");
+    expect(button).not.toHaveAttribute("title");
+
+    button.setAttribute("aria-label", "回退当前日志目标到 r42");
+    await mutationCycle();
+    expect(button).not.toHaveAttribute("title");
+
+    uninstall();
+  });
 });
 
 async function mutationCycle() {

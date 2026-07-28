@@ -395,9 +395,15 @@ describe("StandaloneLogWindow", () => {
     });
     await screen.findByText("Add log window");
 
-    await fireEvent.click(
-      screen.getByRole("button", { name: "回退当前日志目标到 r20" }),
+    const workspaceRevertButton = screen.getByRole("button", {
+      name: "回退当前日志目标到 r20",
+    });
+    expect(workspaceRevertButton).toHaveAttribute(
+      "data-tooltip",
+      "回退 C:\\repo\\src\\main.ts 到 r20",
     );
+    expect(workspaceRevertButton).not.toHaveAttribute("title");
+    await fireEvent.click(workspaceRevertButton);
 
     expect(confirmMock).toHaveBeenCalledOnce();
     expect(createRevertRevisionTaskMock).toHaveBeenCalledWith({

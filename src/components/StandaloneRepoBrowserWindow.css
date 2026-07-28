@@ -24,7 +24,7 @@ body:has(.standalone-repo-browser) #app {
   --repo-danger: #a63a34;
   --repo-danger-bg: #fff1f0;
   display: grid;
-  grid-template-rows: 44px auto auto auto minmax(0, 1fr) 26px;
+  grid-template-rows: 44px auto auto auto minmax(0, 1fr);
   width: 100vw;
   height: 100vh;
   overflow: hidden;
@@ -143,9 +143,7 @@ body:has(.standalone-repo-browser) #app {
 .standalone-repo-browser .browser-actions,
 .standalone-repo-browser .navigation-buttons,
 .standalone-repo-browser .toolbar-group,
-.standalone-repo-browser .path-control,
-.standalone-repo-browser .status-primary,
-.standalone-repo-browser .status-secondary {
+.standalone-repo-browser .path-control {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -799,40 +797,6 @@ body:has(.standalone-repo-browser) #app {
   font-family: "SFMono-Regular", Consolas, monospace;
 }
 
-.standalone-repo-browser .browser-statusbar {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-top: 1px solid var(--repo-border);
-  background: var(--repo-toolbar);
-  padding: 0 10px;
-  color: var(--repo-muted);
-  font-size: 10px;
-}
-
-.standalone-repo-browser .status-primary,
-.standalone-repo-browser .status-secondary {
-  gap: 9px;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.standalone-repo-browser .status-primary strong {
-  max-width: 320px;
-  overflow: hidden;
-  color: var(--repo-text);
-  text-overflow: ellipsis;
-}
-
-.standalone-repo-browser .status-kind {
-  border-radius: 3px;
-  background: var(--repo-selected);
-  padding: 1px 5px;
-  color: var(--repo-accent);
-}
-
 .standalone-repo-browser .context-menu {
   position: fixed;
   z-index: 50;
@@ -890,7 +854,7 @@ body:has(.standalone-repo-browser) #app {
 
 @media (max-width: 820px) {
   .standalone-repo-browser {
-    grid-template-rows: 42px auto auto auto minmax(0, 1fr) 26px;
+    grid-template-rows: 42px auto auto auto minmax(0, 1fr);
   }
 
   .browser-urlbar {

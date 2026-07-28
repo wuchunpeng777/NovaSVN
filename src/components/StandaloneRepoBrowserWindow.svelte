@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { LogicalSize } from "@tauri-apps/api/dpi";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
     ArrowLeft,
@@ -131,7 +130,6 @@
   let writeTask: Task | null = null;
   let fileTask: Task | null = null;
   let commandError: CommandError | null = null;
-  let statusMessage: string | null = null;
   let selectedName: string | null = null;
   let searchInput = "";
   let searchInputElement: HTMLInputElement | null = null;
@@ -223,7 +221,6 @@
     const currentGeneration = ++generation;
     resolvingInitial = true;
     commandError = null;
-    statusMessage = null;
     try {
       const initial = targetPath.trim();
       if (!initial) {
@@ -236,7 +233,6 @@
         await loadDirectory(urlInput, currentGeneration, true, "replace");
         return;
       }
-      statusMessage = "正在解析工作副本仓库 URL...";
       const info = await getSvnInfo({
         path: initial,
         svn_executable: svnExecutable?.trim() || undefined,
@@ -270,7 +266,6 @@
     } finally {
       if (currentGeneration === generation) {
         resolvingInitial = false;
-        statusMessage = null;
       }
     }
   }
@@ -308,7 +303,6 @@
     clearPollTimer();
     commandError = null;
     detailError = null;
-    statusMessage = "正在加载仓库目录...";
     selectedName = null;
     closeContextMenu();
     urlInput = target;
@@ -345,7 +339,6 @@
           navigationIndex = historyRollbackIndex;
         }
         commandError = normalizeCommandError(caught);
-        statusMessage = null;
         markTreeError(target, commandError.message);
       }
     }
@@ -606,7 +599,6 @@
       }
 
       clearPollTimer();
-      statusMessage = null;
 
       if (task.status !== "success") {
         const message = task.error ?? "任务失败";
@@ -637,7 +629,6 @@
         list = result;
         urlInput = result.url;
         commitNavigation(result.url, requestedRevision, navigationMode);
-        void fitWindowToDirectory(result.entries.length);
         return;
       }
 
@@ -652,7 +643,6 @@
           return;
         }
         await openRepositoryTempFile({ path: result.file_path });
-        statusMessage = `已打开 ${result.file_name}`;
         return;
       }
 
@@ -662,7 +652,6 @@
       const finishedLocalPath = formLocalPath.trim();
       revisionInput = "";
       activePanel = "none";
-      statusMessage = "操作成功，正在刷新...";
       if (
         (finishedPanel === "checkout" || finishedPanel === "export") &&
         finishedLocalPath
@@ -677,7 +666,6 @@
     } catch (caught) {
       if (requestGeneration === generation) {
         commandError = normalizeCommandError(caught);
-        statusMessage = null;
       }
     }
   }
@@ -699,7 +687,6 @@
     }
     clearPollTimer();
     commandError = null;
-    statusMessage = `正在打开 ${name}...`;
     const requestGeneration = generation;
     try {
       const task = await createRepositoryFileTask({
@@ -715,7 +702,6 @@
     } catch (caught) {
       if (requestGeneration === generation) {
         commandError = normalizeCommandError(caught);
-        statusMessage = null;
       }
     }
   }
@@ -818,9 +804,8 @@
   async function copyText(value: string) {
     try {
       await navigator.clipboard.writeText(value);
-      statusMessage = "已复制到剪贴板";
-    } catch {
-      statusMessage = "复制失败";
+    } catch (caught) {
+      commandError = normalizeCommandError(caught);
     }
   }
 
@@ -834,10 +819,8 @@
         repository_root: root,
         revision: revision || undefined,
       });
-      statusMessage = "已打开 Log 窗口";
     } catch (caught) {
       commandError = normalizeCommandError(caught);
-      statusMessage = null;
     }
   }
 
@@ -1114,7 +1097,6 @@
         return;
       }
       writeTask = task;
-      statusMessage = "正在执行仓库操作...";
       schedulePoll(task.task_id, requestGeneration, "write", refreshUrl);
 
       // checkout/export 成功后额外打开本地位置
@@ -1157,24 +1139,6 @@
       void action();
     } finally {
       closeContextMenu();
-    }
-  }
-
-  async function fitWindowToDirectory(entryCount: number) {
-    if (!("__TAURI_INTERNALS__" in window)) {
-      return;
-    }
-
-    const visibleRows = Math.max(3, Math.min(entryCount, 11));
-    const targetHeight = Math.max(380, Math.min(620, 240 + visibleRows * 34));
-    const targetWidth = Math.max(960, window.outerWidth || window.innerWidth);
-
-    try {
-      const appWindow = getCurrentWindow();
-      await appWindow.setMinSize(new LogicalSize(900, 380));
-      await appWindow.setSize(new LogicalSize(targetWidth, targetHeight));
-    } catch {
-      // Window sizing is a presentation enhancement; browsing remains usable if it is unavailable.
     }
   }
 
@@ -1815,27 +1779,6 @@
     </aside>
   {/if}
   </div>
-
-  <footer class="browser-statusbar">
-    <div class="status-primary" role="status">
-      {#if statusMessage}
-        <span>{statusMessage}</span>
-      {:else if selectedEntry}
-        <span class="status-kind">{selectedEntry.kind === "dir" ? "目录" : "文件"}</span>
-        <strong>{selectedEntry.name}</strong>
-        <span>r{selectedEntry.revision || "-"}</span>
-        <span>{selectedEntry.author || "-"}</span>
-      {:else if list}
-        <span>{entries.length} 个条目{searchInput ? `，显示 ${visibleEntries.length} 个` : ""}</span>
-      {:else}
-        <span>输入仓库地址开始浏览</span>
-      {/if}
-    </div>
-    <div class="status-secondary">
-      <span>{revisionLabel}</span>
-      <span>{busy ? "任务运行中" : "就绪"}</span>
-    </div>
-  </footer>
 
   {#if contextMenu}
     <div

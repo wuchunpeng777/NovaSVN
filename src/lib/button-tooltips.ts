@@ -1,4 +1,5 @@
 const AUTO_TOOLTIP_ATTRIBUTE = "data-auto-button-tooltip";
+const CUSTOM_TOOLTIP_ATTRIBUTE = "data-tooltip";
 const TOOLTIP_TARGET_SELECTOR = 'button, [role="button"]';
 const AUTO_TOOLTIP_TARGET_SELECTOR =
   `button[${AUTO_TOOLTIP_ATTRIBUTE}], [role="button"][${AUTO_TOOLTIP_ATTRIBUTE}]`;
@@ -17,6 +18,14 @@ function setAttributeIfChanged(element: HTMLElement, name: string, value: string
 function syncButtonTooltip(target: HTMLElement) {
   const generatedTitle = target.getAttribute(AUTO_TOOLTIP_ATTRIBUTE);
   const currentTitle = target.getAttribute("title");
+
+  if (target.getAttribute(CUSTOM_TOOLTIP_ATTRIBUTE)?.trim()) {
+    if (generatedTitle !== null && currentTitle === generatedTitle) {
+      target.removeAttribute("title");
+    }
+    target.removeAttribute(AUTO_TOOLTIP_ATTRIBUTE);
+    return;
+  }
 
   if (generatedTitle === null && currentTitle?.trim()) {
     return;
@@ -79,7 +88,7 @@ export function installButtonTooltips(root: Document | HTMLElement = document) {
 
   observer.observe(root, {
     attributes: true,
-    attributeFilter: ["aria-label", "title"],
+    attributeFilter: ["aria-label", "title", CUSTOM_TOOLTIP_ATTRIBUTE],
     characterData: true,
     childList: true,
     subtree: true,

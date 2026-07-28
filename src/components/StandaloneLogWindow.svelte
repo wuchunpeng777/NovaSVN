@@ -856,6 +856,7 @@
       {expandedRevisions}
       mergeRevisions={mergeRevisions}
       diffLoading={revisionDiffLoading}
+      fastRevertTooltips={true}
       compact={selectedDiff !== null || selectedMergeRevisions.length > 0}
       currentRevision={workingCopyRevision}
       {effectiveRevision}
