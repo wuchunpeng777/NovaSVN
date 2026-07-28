@@ -1,4 +1,3 @@
-!define MUI_FINISHPAGE_REBOOTLATER_DEFAULT
 !define NOVASVN_ROOT_MENU_STATE_CLSID "{0B2DD325-75D0-461D-9FC5-F191AD22FFF6}"
 !define NOVASVN_SVN_ONLY_STATE_CLSID "{4D64F10A-B42A-45E5-9034-02F83A16F0AB}"
 !define NOVASVN_CHECKOUT_STATE_CLSID "{6A5EA9FB-A012-4F3D-BE8A-07C41CE53B1B}"
@@ -105,8 +104,10 @@ Var NovaSvnActiveShellExtension
 !macroend
 
 !macro NOVASVN_DELETE_INSTALLED_SHELL_EXTENSIONS
-  Delete /REBOOTOK "$INSTDIR\shell-extension\novasvn_shell_extension.dll"
-  Delete /REBOOTOK "$INSTDIR\shell-extension\*.tmp.dll"
+  ; 不使用 /REBOOTOK，避免安装完成页进入“重启电脑”流程。
+  ; Explorer 已在前置步骤停止，扩展 DLL 应可直接删除。
+  Delete "$INSTDIR\shell-extension\novasvn_shell_extension.dll"
+  Delete "$INSTDIR\shell-extension\*.tmp.dll"
 !macroend
 
 !macro NOVASVN_PREPARE_ACTIVE_SHELL_EXTENSION
@@ -126,6 +127,8 @@ Var NovaSvnActiveShellExtension
   StrCmp $NovaSvnRestartExplorer "1" 0 novasvn_explorer_restart_done
   Exec '"$WINDIR\explorer.exe"'
   novasvn_explorer_restart_done:
+  ; 清除可能残留的重启标记，保留完成页“是否自动打开”选项。
+  SetRebootFlag false
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL

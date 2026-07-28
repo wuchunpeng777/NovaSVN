@@ -387,11 +387,13 @@ for (const [name, clsid] of windowsStateHandlers) {
 }
 
 if (
-  !nsisHooks.includes("!define MUI_FINISHPAGE_REBOOTLATER_DEFAULT") ||
+  nsisHooks.includes("!define MUI_FINISHPAGE_REBOOTLATER_DEFAULT") ||
+  nsisHooks.includes("Delete /REBOOTOK") ||
+  !nsisHooks.includes("SetRebootFlag false") ||
   !nsisHooks.includes("$INSTDIR\\shell-extension\\novasvn_shell_extension.pending") ||
   !nsisHooks.includes("GetTempFileName $NovaSvnActiveShellExtension") ||
   !nsisHooks.includes('WriteRegStr HKCU "Software\\Classes\\CLSID\\${CLSID}\\InprocServer32" "" "$NovaSvnActiveShellExtension"') ||
-  !nsisHooks.includes('Delete /REBOOTOK "$INSTDIR\\shell-extension\\*.tmp.dll"') ||
+  !nsisHooks.includes('Delete "$INSTDIR\\shell-extension\\*.tmp.dll"') ||
   !nsisHooks.includes("!macro NSIS_HOOK_PREINSTALL") ||
   !nsisHooks.includes('"$SYSDIR\\taskkill.exe" /F /IM explorer.exe') ||
   !nsisHooks.includes("!macro NSIS_HOOK_POSTUNINSTALL") ||
