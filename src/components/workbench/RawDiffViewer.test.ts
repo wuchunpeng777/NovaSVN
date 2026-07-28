@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RawDiffViewer from "./RawDiffViewer.svelte";
 
@@ -7,7 +7,7 @@ describe("RawDiffViewer", () => {
     HTMLElement.prototype.scrollTo = vi.fn();
   });
 
-  it("jumps between unified diff hunks", async () => {
+  it("reveals the first unified diff hunk, then jumps between hunks", async () => {
     render(RawDiffViewer, {
       props: {
         text: [
@@ -23,11 +23,16 @@ describe("RawDiffViewer", () => {
     });
 
     expect(screen.getByText("1 / 2 处差异")).toBeInTheDocument();
+    await waitFor(() => expect(HTMLElement.prototype.scrollTo).toHaveBeenCalledOnce());
+    expect(HTMLElement.prototype.scrollTo).toHaveBeenLastCalledWith({
+      top: 4,
+      behavior: "auto",
+    });
     await fireEvent.click(screen.getByRole("button", { name: "下一处差异" }));
     expect(screen.getByText("2 / 2 处差异")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "上一处差异" }));
     expect(screen.getByText("1 / 2 处差异")).toBeInTheDocument();
 
-    expect(HTMLElement.prototype.scrollTo).toHaveBeenCalledTimes(2);
+    expect(HTMLElement.prototype.scrollTo).toHaveBeenCalledTimes(3);
   });
 });

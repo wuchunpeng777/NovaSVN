@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileContentDiff } from "../../types/api";
 
 const mocks = vi.hoisted(() => {
@@ -68,20 +68,30 @@ const contentDiff: FileContentDiff = {
 };
 
 describe("MonacoDiffViewer", () => {
-  it("navigates to the previous and next computed differences", async () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.state.onDidUpdateDiff = null;
+  });
+
+  it("reveals the first computed difference, then navigates between differences", async () => {
     render(MonacoDiffViewer, { props: { contentDiff } });
 
     await waitFor(() => expect(mocks.state.onDidUpdateDiff).not.toBeNull());
     mocks.state.onDidUpdateDiff?.();
     await waitFor(() => expect(screen.getByText("1 / 2 处差异")).toBeInTheDocument());
+    expect(mocks.goToDiff).toHaveBeenCalledOnce();
+    expect(mocks.goToDiff).toHaveBeenLastCalledWith("next");
+    expect(mocks.focus).not.toHaveBeenCalled();
+    mocks.state.onDidUpdateDiff?.();
+    expect(mocks.goToDiff).toHaveBeenCalledOnce();
 
     await fireEvent.click(screen.getByRole("button", { name: "下一处差异" }));
     expect(screen.getByText("2 / 2 处差异")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "上一处差异" }));
     expect(screen.getByText("1 / 2 处差异")).toBeInTheDocument();
 
-    expect(mocks.goToDiff).toHaveBeenNthCalledWith(1, "next");
-    expect(mocks.goToDiff).toHaveBeenNthCalledWith(2, "previous");
+    expect(mocks.goToDiff).toHaveBeenNthCalledWith(2, "next");
+    expect(mocks.goToDiff).toHaveBeenNthCalledWith(3, "previous");
     expect(mocks.focus).toHaveBeenCalledTimes(2);
   });
 

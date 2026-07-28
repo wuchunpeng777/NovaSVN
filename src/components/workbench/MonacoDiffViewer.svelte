@@ -19,6 +19,7 @@
   let cursorUpdateDisposable: import("monaco-editor").IDisposable | null = null;
   let differenceCount = 0;
   let currentDifference = 0;
+  let revealFirstDifference = false;
 
   onMount(async () => {
     window.MonacoEnvironment = {
@@ -113,6 +114,7 @@
 
     differenceCount = 0;
     currentDifference = 0;
+    revealFirstDifference = true;
     disposeModels();
     originalModel = monacoEditor.createModel(
       contentDiff.original_text,
@@ -131,7 +133,17 @@
   function updateDifferenceCount() {
     const nextCount = editor?.getLineChanges()?.length ?? 0;
     differenceCount = nextCount;
-    currentDifference = nextCount === 0 ? 0 : Math.min(Math.max(currentDifference, 1), nextCount);
+    if (nextCount === 0) {
+      currentDifference = 0;
+      return;
+    }
+    if (revealFirstDifference) {
+      revealFirstDifference = false;
+      currentDifference = 1;
+      editor?.goToDiff("next");
+      return;
+    }
+    currentDifference = Math.min(Math.max(currentDifference, 1), nextCount);
   }
 
   function syncDifferenceFromLine(lineNumber: number) {

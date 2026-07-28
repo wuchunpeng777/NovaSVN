@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import DiffNavigation from "./DiffNavigation.svelte";
 
   export let text = "";
@@ -16,6 +17,17 @@
       .map((line, index) => (line.startsWith("@@") ? index : -1))
       .filter((index) => index >= 0);
     activeHunkIndex = hunkLineIndexes.length > 0 ? 0 : -1;
+    if (activeHunkIndex >= 0) {
+      void revealFirstHunk(sourceText);
+    }
+  }
+
+  async function revealFirstHunk(expectedText: string) {
+    await tick();
+    if (sourceText !== expectedText || activeHunkIndex !== 0) {
+      return;
+    }
+    scrollToHunk(0, "auto");
   }
 
   function goToHunk(offset: -1 | 1) {
@@ -30,12 +42,21 @@
         (activeHunkIndex + offset + hunkLineIndexes.length) % hunkLineIndexes.length;
     }
 
+    scrollToHunk(activeHunkIndex, "smooth");
+  }
+
+  function scrollToHunk(index: number, behavior: ScrollBehavior) {
+    if (!contentElement || index < 0 || index >= hunkLineIndexes.length) {
+      return;
+    }
     const computedLineHeight = Number.parseFloat(getComputedStyle(contentElement).lineHeight);
     const lineHeight = Number.isFinite(computedLineHeight) ? computedLineHeight : 16;
-    contentElement.scrollTo({
-      top: Math.max(0, hunkLineIndexes[activeHunkIndex] * lineHeight - 12),
-      behavior: "smooth",
-    });
+    const top = Math.max(0, hunkLineIndexes[index] * lineHeight - 12);
+    if (typeof contentElement.scrollTo === "function") {
+      contentElement.scrollTo({ top, behavior });
+    } else {
+      contentElement.scrollTop = top;
+    }
   }
 
   function syncHunkFromScroll() {
