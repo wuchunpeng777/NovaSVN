@@ -113,6 +113,9 @@ describe("StandaloneRepoBrowserWindow", () => {
 
     await screen.findByRole("button", { name: "打开仓库文件 README.md" });
     await fireEvent.click(screen.getByRole("button", { name: "打开仓库文件 README.md" }));
+    const notices = container.querySelector(".browser-notices");
+    expect(notices).toBeInTheDocument();
+    expect(notices).not.toHaveClass("has-notices");
     expect(windowApiMocks.setMinSize).not.toHaveBeenCalled();
     expect(windowApiMocks.setSize).not.toHaveBeenCalled();
     expect(container.querySelector(".browser-statusbar")).not.toBeInTheDocument();

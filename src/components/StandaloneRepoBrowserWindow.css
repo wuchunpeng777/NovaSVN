@@ -134,6 +134,7 @@ body:has(.standalone-repo-browser) #app {
 }
 
 .standalone-repo-browser .browser-titlebar {
+  grid-row: 1;
   display: flex;
   min-width: 0;
   align-items: center;
@@ -190,6 +191,7 @@ body:has(.standalone-repo-browser) #app {
 }
 
 .standalone-repo-browser .browser-urlbar {
+  grid-row: 2;
   display: grid;
   grid-template-columns: auto minmax(220px, 1fr) auto auto auto auto;
   align-items: center;
@@ -261,15 +263,20 @@ body:has(.standalone-repo-browser) #app {
 }
 
 .standalone-repo-browser .browser-notices {
-  display: none;
-  gap: 6px;
-  border-bottom: 1px solid var(--repo-border);
+  grid-row: 3;
+  display: grid;
+  min-height: 0;
+  gap: 0;
+  overflow: hidden;
+  border-bottom: 0;
   background: var(--repo-panel);
-  padding: 7px 10px;
+  padding: 0;
 }
 
 .standalone-repo-browser .browser-notices.has-notices {
-  display: grid;
+  gap: 6px;
+  border-bottom: 1px solid var(--repo-border);
+  padding: 7px 10px;
 }
 
 .standalone-repo-browser .browser-notices .inline-error,
@@ -284,6 +291,7 @@ body:has(.standalone-repo-browser) #app {
 }
 
 .standalone-repo-browser .browser-toolbar {
+  grid-row: 4;
   display: flex;
   min-width: 0;
   align-items: center;
@@ -327,6 +335,7 @@ body:has(.standalone-repo-browser) #app {
 }
 
 .standalone-repo-browser .browser-workspace {
+  grid-row: 5;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
