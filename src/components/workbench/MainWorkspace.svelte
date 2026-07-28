@@ -455,6 +455,7 @@
   export let onRepositoryUrlInput: (value: string) => void = () => {};
   export let onRepositoryRevisionInput: (value: string) => void = () => {};
   export let onUseWorkspaceRepositoryRoot: () => void = () => {};
+  export let onOpenStandaloneRepoBrowser: () => void = () => {};
   export let onLoadRepositoryUrl: (url?: string) => void = () => {};
   export let onOpenRepositoryFile: (fileName: string) => void = () => {};
   export let onLoadRepositoryFileLog: (fileName: string) => void = () => {};
@@ -3734,6 +3735,13 @@
           <div class="pane-actions">
             <button type="button" on:click={onUseWorkspaceRepositoryRoot} disabled={!workspace}>
               使用 Root
+            </button>
+            <button
+              type="button"
+              on:click={onOpenStandaloneRepoBrowser}
+              disabled={!repositoryCurrentUrl && !repositoryUrlInput && !workspace}
+            >
+              独立窗口
             </button>
             <button
               type="button"

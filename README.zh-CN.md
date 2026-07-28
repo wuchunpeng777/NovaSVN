@@ -13,11 +13,11 @@ NovaSVN 是一款面向 Windows 和 macOS 的桌面 Subversion 客户端，将�
 - **工作副本：** 查看本地及远端变化，浏览文件树，查看 Diff、Blame 和 Properties，使用 SVN Changelist 组织文件并选择提交目标。
 - **SVN 操作：** 支持 Add、Commit、Update、Revert、Move、Copy、Delete、Ignore、Lock、Unlock、Clean Up、Switch 和 SVN 属性编辑。
 - **时间线：** 自动加载仓库日志，过滤和分页 Revision，高亮当前工作副本 Revision，查看变化路径、比较 Revision，并撤销指定 Revision 的改动。
-- **仓库浏览：** 浏览 HEAD 或历史 Revision，并执行 Log、Blame、Properties、Checkout、Export、Import、Mkdir、Copy、Move、Rename 和 Delete。
+- **仓库浏览：** 在主工作台或独立 Repository Browser 窗口（Explorer「Repo Browser」、CLI `--novasvn-action browse`）浏览 HEAD 或历史 Revision，并执行 Log、Blame、Properties、Checkout、Export、Import、Mkdir、Copy、Move、Rename 和 Delete。
 - **Merge 流程：** 配置 Revision 范围及 Merge 参数，运行可取消的 Dry-run，在独立 Merge 预览窗口逐文件检查结果，并处理文本冲突。
 - **Patch 与部分提交：** 预览所选 Hunk，生成或应用 Patch，并在不引入 Git 式暂存区的前提下提交所选文件。
 - **项目管理：** 在有序项目列表中管理多个工作副本，切换项目时不会加载非当前页签的数据。
-- **桌面集成：** 通过 Windows Explorer 或 macOS Finder 集成使用独立的 Log、Update、Commit、Revert、Clean Up、Checkout、Blame、Info 和冲突处理窗口。
+- **桌面集成：** 通过 Windows Explorer 或 macOS Finder 集成使用独立的 Log、Update、Commit、Revert、Clean Up、Checkout、Repo Browser、Blame、Info 和冲突处理窗口。
 
 ## 运行要求
 

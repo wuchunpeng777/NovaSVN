@@ -61,6 +61,8 @@
 - Windows 安装包自动注册 `NovaSVN Update` 右键菜单，独立窗口自动更新所选路径、实时展示 SVN 输出，并支持打开和手动解决冲突。
 - Windows 安装包自动注册 `NovaSVN Commit` 右键菜单，独立窗口支持选择目标文件、点击文件预览修改内容、通过按钮获取本地缓存的历史日志并执行提交任务。
 - Windows 安装包和 Explorer 菜单脚本为目录及目录空白处注册 `NovaSVN Checkout`，独立窗口预填本地目标目录并执行真实 Checkout 任务。
+- 支持独立 Repository Browser 窗口：可从工作副本路径或仓库 URL 启动，左树懒加载 + 右表浏览，条目右键执行 Log/Blame/Properties/Mkdir/Import/Copy/Move/Rename/Delete/Checkout/Export。
+- Windows Explorer 工作副本菜单增加 `Repo Browser`，CLI 支持 `--novasvn-action browse`；主工作台仓库视图可“独立窗口”打开。
 - 支持二进制资源、大文件和生成目录提醒。
 - 支持 `svn:externals` 配置展示和 externals 状态提醒。
 - 支持设置持久化、SVN 路径、工作副本池默认路径、Diff 偏好、提交模板、大文件阈值和外部 diff/merge 工具路径。

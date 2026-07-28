@@ -13,11 +13,11 @@ NovaSVN is a desktop Subversion client for Windows and macOS. It combines a comp
 - **Working copies:** inspect local and remote changes, browse the file tree, view diffs, blame and properties, organize files with SVN changelists, and select commit targets.
 - **SVN operations:** add, commit, update, revert, move, copy, delete, ignore, lock, unlock, clean up, switch, and edit SVN properties.
 - **Timeline:** automatically load repository history, filter and paginate revisions, highlight the current working-copy revision, inspect changed paths, compare revisions, and revert changes from a revision.
-- **Repository browser:** browse HEAD or historical revisions and run log, blame, properties, checkout, export, import, mkdir, copy, move, rename, and delete operations.
+- **Repository browser:** browse HEAD or historical revisions in the main app or a standalone window (Explorer “Repo Browser”, CLI `--novasvn-action browse`) and run log, blame, properties, checkout, export, import, mkdir, copy, move, rename, and delete operations.
 - **Merge workflow:** configure revision ranges and merge options, run cancellable dry runs, inspect every affected file in a standalone merge preview, and resolve text conflicts.
 - **Patch and partial commit:** preview selected hunks, generate or apply patches, and commit selected files without introducing a Git-style staging area.
 - **Project management:** keep multiple working copies in an ordered project list and switch projects without loading data for inactive views.
-- **Desktop integration:** use standalone Log, Update, Commit, Revert, Clean Up, Checkout, Blame, Info, and conflict windows from Windows Explorer or macOS Finder integrations.
+- **Desktop integration:** use standalone Log, Update, Commit, Revert, Clean Up, Checkout, Repo Browser, Blame, Info, and conflict windows from Windows Explorer or macOS Finder integrations.
 
 ## Requirements
 

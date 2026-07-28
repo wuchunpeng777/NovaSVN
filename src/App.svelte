@@ -13,6 +13,7 @@
   import StandaloneInfoWindow from "./components/StandaloneInfoWindow.svelte";
   import StandaloneLogWindow from "./components/StandaloneLogWindow.svelte";
   import StandaloneMergePreviewWindow from "./components/StandaloneMergePreviewWindow.svelte";
+  import StandaloneRepoBrowserWindow from "./components/StandaloneRepoBrowserWindow.svelte";
   import StandaloneRevertWindow from "./components/StandaloneRevertWindow.svelte";
   import StandaloneUpdateWindow from "./components/StandaloneUpdateWindow.svelte";
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
@@ -24,6 +25,7 @@
     configureSvnCertificateTrust,
     getStartupIntent,
     launchExternalTool,
+    launchRepoBrowserWindow,
     openFileLocation,
     openLocalPathLocation,
     openRepositoryTempFile,
@@ -72,10 +74,13 @@
 
   let backendMessage = "等待连接后端";
   let commandError: CommandError | null = null;
-  let startupSurface: "loading" | "main" | "blame" | "checkout" | "cleanup" | "commit" | "log" | "merge-preview" | "revert" | "update" | "resolve" | "info" =
+  let startupSurface: "loading" | "main" | "blame" | "browse" | "checkout" | "cleanup" | "commit" | "log" | "merge-preview" | "revert" | "update" | "resolve" | "info" =
     hasTauriRuntime() ? "loading" : "main";
   let standaloneBlamePath = "";
   let standaloneBlameReady = false;
+  let standaloneBrowsePath = "";
+  let standaloneBrowseRevision: string | undefined = undefined;
+  let standaloneBrowseReady = false;
   let standaloneCheckoutPath = "";
   let standaloneCheckoutReady = false;
   let standaloneCleanupPath = "";
@@ -2608,6 +2613,17 @@
       return;
     }
 
+    if (intent.action === "browse") {
+      standaloneBrowsePath = intent.path?.trim() ?? "";
+      standaloneBrowseRevision = intent.revision?.trim() || undefined;
+      startupSurface = "browse";
+      if ($svnStore.executableInput.trim()) {
+        void svnStore.detectWithInputFallback();
+      }
+      standaloneBrowseReady = true;
+      return;
+    }
+
     if (intent.action === "log") {
       standaloneLogPath = intent.path?.trim() ?? "";
       standaloneLogRepositoryRoot = intent.repository_root?.trim() || undefined;
@@ -2743,6 +2759,7 @@
   function startupSurfaceIsLoading() {
     return startupSurface === "loading" ||
       (startupSurface === "blame" && !standaloneBlameReady) ||
+      (startupSurface === "browse" && !standaloneBrowseReady) ||
       (startupSurface === "checkout" && !standaloneCheckoutReady) ||
       (startupSurface === "cleanup" && !standaloneCleanupReady) ||
       (startupSurface === "commit" && !standaloneCommitReady) ||
@@ -2752,6 +2769,29 @@
       (startupSurface === "update" && !standaloneUpdateReady) ||
       (startupSurface === "resolve" && !standaloneConflictReady) ||
       (startupSurface === "info" && !standaloneInfoReady);
+  }
+
+  async function openStandaloneRepoBrowser() {
+    const target =
+      $workspaceStore.repositoryList?.url?.trim() ||
+      $workspaceStore.repositoryUrlInput.trim() ||
+      $workspaceStore.current?.repository_url?.trim() ||
+      $workspaceStore.current?.repository_root?.trim() ||
+      "";
+    if (!target) {
+      workspaceStore.failRepositoryList("请输入仓库 URL 或先打开 SVN 工作副本");
+      return;
+    }
+    try {
+      await launchRepoBrowserWindow({
+        target_path: target,
+        revision: $workspaceStore.repositoryRevisionInput.trim() || undefined,
+      });
+    } catch (error) {
+      workspaceStore.failRepositoryList(
+        (error as CommandError)?.message ?? "无法打开独立 Repository Browser",
+      );
+    }
   }
 
   function handleStartupEscape(event: KeyboardEvent) {
@@ -2788,6 +2828,7 @@
 
 {#if startupSurface === "loading" ||
   (startupSurface === "blame" && !standaloneBlameReady) ||
+  (startupSurface === "browse" && !standaloneBrowseReady) ||
   (startupSurface === "checkout" && !standaloneCheckoutReady) ||
   (startupSurface === "cleanup" && !standaloneCleanupReady) ||
   (startupSurface === "commit" && !standaloneCommitReady) ||
@@ -2802,6 +2843,8 @@
     <p>
       {startupSurface === "blame"
         ? "正在准备 SVN Blame..."
+        : startupSurface === "browse"
+        ? "正在准备 Repository Browser..."
         : startupSurface === "checkout"
         ? "正在准备 SVN Checkout..."
         : startupSurface === "commit"
@@ -2826,6 +2869,18 @@
 {:else if startupSurface === "blame"}
   <StandaloneBlameWindow
     targetPath={standaloneBlamePath}
+    svnExecutable={currentSvnExecutable()}
+    themeMode={$appSettingsStore.themeMode}
+    svnAuthenticationUsername={$appSettingsStore.svnUsername}
+    svnRememberPassword={$appSettingsStore.svnRememberPassword}
+    {svnAuthenticationLoading}
+    {svnAuthenticationError}
+    onSvnAuthenticationSubmit={applyPromptedSvnAuthentication}
+  />
+{:else if startupSurface === "browse"}
+  <StandaloneRepoBrowserWindow
+    targetPath={standaloneBrowsePath}
+    repositoryRevision={standaloneBrowseRevision}
     svnExecutable={currentSvnExecutable()}
     themeMode={$appSettingsStore.themeMode}
     svnAuthenticationUsername={$appSettingsStore.svnUsername}
@@ -3184,6 +3239,7 @@
   onRepositoryUrlInput={workspaceStore.setRepositoryUrlInput}
   onRepositoryRevisionInput={workspaceStore.setRepositoryRevisionInput}
   onUseWorkspaceRepositoryRoot={workspaceStore.useWorkspaceRepositoryRoot}
+  onOpenStandaloneRepoBrowser={openStandaloneRepoBrowser}
   onLoadRepositoryUrl={loadRepositoryUrl}
   onOpenRepositoryFile={openRepositoryFile}
   onLoadRepositoryFileLog={loadRepositoryFileLog}

@@ -432,6 +432,7 @@ const windowsExplorerMenus = [
       ["06.Ignore", "Ignore", "ignore"],
       ["07.Cleanup", "Cleanup", "cleanup"],
       ["08.BranchWorkspace", "Branch Workspace", "branch-workspace"],
+      ["09.RepoBrowser", "Repo Browser", "browse"],
     ],
     checkout: true,
     direct: [
@@ -452,6 +453,7 @@ const windowsExplorerMenus = [
       ["06.Ignore", "Ignore", "ignore"],
       ["07.Cleanup", "Cleanup", "cleanup"],
       ["08.BranchWorkspace", "Branch Workspace", "branch-workspace"],
+      ["09.RepoBrowser", "Repo Browser", "browse"],
     ],
     checkout: true,
     background: true,
@@ -474,6 +476,7 @@ const windowsExplorerMenus = [
       ["07.Ignore", "Ignore", "ignore"],
       ["08.Cleanup", "Cleanup", "cleanup"],
       ["09.BranchWorkspace", "Branch Workspace", "branch-workspace"],
+      ["10.RepoBrowser", "Repo Browser", "browse"],
     ],
     direct: [
       ["Update", "NovaSVN Update", "update"],
@@ -1541,6 +1544,23 @@ if (
   !systemIntegrationRs.includes('"checkout"')
 ) {
   console.error("Windows Explorer Checkout 必须注册菜单 action 并加入后端启动白名单");
+  failed = true;
+}
+
+if (
+  !windowsExplorerScript.includes('Action = "browse"') ||
+  !windowsExplorerScript.includes('Label = "Repo Browser"') ||
+  !systemIntegrationRs.includes('"browse"') ||
+  !systemIntegrationRs.includes("launch_repo_browser_window") ||
+  !tauriLib.includes('Some("browse") => Some("NovaSVN Repository Browser")') ||
+  !tauriLib.includes("launch_repo_browser_window,") ||
+  !appSvelte.includes('if (intent.action === "browse")') ||
+  !appSvelte.includes('startupSurface = "browse"') ||
+  !appSvelte.includes("<StandaloneRepoBrowserWindow") ||
+  !frontendApi.includes("launchRepoBrowserWindow") ||
+  !nsisHooks.includes('09.RepoBrowser" "Repo Browser" "browse"')
+) {
+  console.error("Windows Explorer Repo Browser 必须注册菜单、独立窗口和后端启动白名单");
   failed = true;
 }
 

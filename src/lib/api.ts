@@ -52,10 +52,12 @@ import type {
   LaunchExternalToolRequest,
   LaunchLogWindowRequest,
   LaunchMergePreviewWindowRequest,
+  LaunchRepoBrowserWindowRequest,
   LaunchedMergePreviewWindow,
   LaunchedLogWindow,
   LaunchPathWindowRequest,
   LaunchedPathWindow,
+  LaunchedRepoBrowserWindow,
   ListWorkspaceFilesRequest,
   OpenFileLocation,
   OpenFileLocationRequest,
@@ -151,6 +153,14 @@ export function launchLogWindow(
   request: LaunchLogWindowRequest,
 ): Promise<LaunchedLogWindow> {
   return callBackend<LaunchedLogWindow>("launch_log_window", { request });
+}
+
+export function launchRepoBrowserWindow(
+  request: LaunchRepoBrowserWindowRequest,
+): Promise<LaunchedRepoBrowserWindow> {
+  return callBackend<LaunchedRepoBrowserWindow>("launch_repo_browser_window", {
+    request,
+  });
 }
 
 export function launchUpdateWindow(

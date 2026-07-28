@@ -1238,26 +1238,59 @@
     return normalizedPath === relativeTarget;
   }
 
-  function statusLabel(file: ChangedFile) {
-    const labels: Record<string, string> = {
+  /** 与 Log 窗口一致的单字母变更标记（A/M/D 等）。 */
+  function statusMark(file: ChangedFile): string {
+    if (isConflicted(file)) {
+      return "C";
+    }
+    const marks: Record<string, string> = {
+      modified: "M",
+      added: "A",
+      deleted: "D",
+      replaced: "R",
+      property_modified: "M",
+      unversioned: "?",
+      missing: "!",
+      obstructed: "~",
+      conflicted: "C",
+      ignored: "I",
+      external: "X",
+      normal: " ",
+      none: " ",
+    };
+    if (["normal", "none", "property_modified"].includes(file.status) && file.property_changed) {
+      return "M";
+    }
+    if (file.property_changed && !marks[file.status]) {
+      return "M";
+    }
+    return marks[file.status] ?? (file.status.slice(0, 1).toUpperCase() || "?");
+  }
+
+  function statusMarkTitle(file: ChangedFile): string {
+    if (isConflicted(file)) {
+      return file.conflict_kind === "property" ? "属性冲突" : "冲突";
+    }
+    const titles: Record<string, string> = {
       modified: "修改",
       added: "新增",
       deleted: "删除",
       replaced: "替换",
       property_modified: "属性修改",
       unversioned: "未版本控制",
+      missing: "丢失",
+      obstructed: "受阻",
       conflicted: "冲突",
+      ignored: "已忽略",
+      external: "外部",
     };
-    if (isConflicted(file)) {
-      return file.conflict_kind === "property" ? "属性冲突" : "冲突";
+    if (["normal", "none", "property_modified"].includes(file.status) && file.property_changed) {
+      return "属性修改";
     }
-    const textStatus = labels[file.status] ?? file.status;
-    if (!file.property_changed) {
-      return textStatus;
+    if (file.property_changed && titles[file.status]) {
+      return `${titles[file.status]} + 属性`;
     }
-    return ["normal", "none", "property_modified"].includes(file.status)
-      ? "属性修改"
-      : `${textStatus} + 属性`;
+    return titles[file.status] ?? file.status;
   }
 
   function logKind(message: string) {
@@ -1465,7 +1498,11 @@
                     aria-pressed={activeFilePath === file.path}
                     on:click={() => showFilePreview(file)}
                   >
-                    <span class="file-status">{statusLabel(file)}</span>
+                    <span
+                      class="file-status"
+                      data-action={statusMark(file)}
+                      title={statusMarkTitle(file)}
+                    >{statusMark(file)}</span>
                     <span class="file-path" title={file.path}>{file.path}</span>
                   </button>
                   {#if isConflicted(file)}
@@ -1989,10 +2026,37 @@
   .file-item.conflicted { background: color-mix(in srgb, #c64040 8%, var(--panel)); }
   .file-item input { width: 15px; height: 15px; accent-color: var(--accent); }
   .file-selection-placeholder { width: 15px; height: 15px; }
-  button.file-preview-trigger { display: grid; grid-template-columns: 72px minmax(0, 1fr); justify-content: stretch; gap: 8px; width: 100%; min-height: 35px; border: 0; border-radius: 0; padding: 5px 0; background: transparent; color: var(--text); text-align: left; }
+  button.file-preview-trigger { display: grid; grid-template-columns: 22px minmax(0, 1fr); justify-content: stretch; gap: 8px; width: 100%; min-height: 35px; border: 0; border-radius: 0; padding: 5px 0; background: transparent; color: var(--text); text-align: left; }
   button.file-preview-trigger:hover:not(:disabled) { border-color: transparent; color: var(--text); }
   button.file-preview-trigger:focus-visible { outline-offset: 0; }
-  .file-status { color: var(--accent); font-weight: 600; }
+  .file-status {
+    display: inline-grid;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    place-items: center;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: Consolas, "Courier New", monospace;
+    line-height: 1;
+    background: color-mix(in srgb, var(--accent) 12%, var(--panel-subtle));
+    color: var(--accent);
+  }
+  .file-status[data-action="A"] { background: #dff2e4; color: #24733a; }
+  .file-status[data-action="M"] { background: #fff0c7; color: #805900; }
+  .file-status[data-action="D"] { background: #fbe0df; color: #a12f2b; }
+  .file-status[data-action="R"] { background: #e4e9ff; color: #3b4db8; }
+  .file-status[data-action="C"] { background: #fbe0df; color: #a12f2b; }
+  .file-status[data-action="?"] { background: color-mix(in srgb, var(--secondary) 16%, var(--panel-subtle)); color: var(--secondary); }
+  .file-status[data-action="!"],
+  .file-status[data-action="~"] { background: #fff0c7; color: #805900; }
+  .standalone-commit[data-theme="dark"] .file-status[data-action="A"] { background: #1f4b2d; color: #8fdaa2; }
+  .standalone-commit[data-theme="dark"] .file-status[data-action="M"] { background: #4b3b16; color: #f6cf73; }
+  .standalone-commit[data-theme="dark"] .file-status[data-action="D"],
+  .standalone-commit[data-theme="dark"] .file-status[data-action="C"] { background: #522725; color: #ffaaa7; }
+  .standalone-commit[data-theme="dark"] .file-status[data-action="R"] { background: #2a3358; color: #a8b5ff; }
+  .standalone-commit[data-theme="dark"] .file-status[data-action="!"],
+  .standalone-commit[data-theme="dark"] .file-status[data-action="~"] { background: #4b3b16; color: #f6cf73; }
   .file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .file-add-action { min-height: 27px; padding: 3px 8px; }
   .file-conflict-action { min-height: 27px; border-color: color-mix(in srgb, #c64040 55%, var(--border)); color: #a12a2a; padding: 3px 8px; }

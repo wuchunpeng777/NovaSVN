@@ -84,7 +84,8 @@ $submenuActions = @(
   @{ Key = "Delete"; Label = "Delete"; Action = "delete" },
   @{ Key = "Ignore"; Label = "Ignore"; Action = "ignore" },
   @{ Key = "Cleanup"; Label = "Cleanup"; Action = "cleanup" },
-  @{ Key = "BranchWorkspace"; Label = "Branch Workspace"; Action = "branch-workspace" }
+  @{ Key = "BranchWorkspace"; Label = "Branch Workspace"; Action = "branch-workspace" },
+  @{ Key = "RepoBrowser"; Label = "Repo Browser"; Action = "browse" }
 )
 $checkoutAction = @{ Key = "Checkout"; Label = "NovaSVN Checkout"; Action = "checkout" }
 $directActions = @(

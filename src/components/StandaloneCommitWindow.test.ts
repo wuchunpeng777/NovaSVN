@@ -264,7 +264,9 @@ describe("StandaloneCommitWindow", () => {
 
     const pane = await screen.findByLabelText("选择提交文件");
     expect(await within(pane).findByText("src")).toBeInTheDocument();
-    expect(within(pane).getByText("属性修改")).toBeInTheDocument();
+    expect(within(pane).getByText("M")).toBeInTheDocument();
+    expect(within(pane).getByText("M")).toHaveAttribute("data-action", "M");
+    expect(within(pane).getByText("M")).toHaveAttribute("title", "属性修改");
     expect(within(pane).getByRole("checkbox", { name: "src" })).toBeChecked();
 
     await fireEvent.click(screen.getByRole("button", { name: "提交 1 个文件" }));
@@ -299,7 +301,8 @@ describe("StandaloneCommitWindow", () => {
 
     const pane = await screen.findByLabelText("选择提交文件");
     expect(await within(pane).findByText("src/conflict.ts")).toBeInTheDocument();
-    expect(within(pane).getByText("冲突")).toBeInTheDocument();
+    expect(within(pane).getByText("C")).toHaveAttribute("data-action", "C");
+    expect(within(pane).getByText("C")).toHaveAttribute("title", "冲突");
     expect(within(pane).queryByRole("checkbox", { name: "src/conflict.ts" })).not.toBeInTheDocument();
     await fireEvent.click(within(pane).getByRole("button", { name: "处理冲突 src/conflict.ts" }));
 

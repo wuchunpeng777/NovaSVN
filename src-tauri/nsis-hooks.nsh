@@ -61,6 +61,7 @@ Var NovaSvnActiveShellExtension
   WriteRegDWORD HKCU "${ROOT}\NovaSVN\shell\06.Ignore" "ImpliedSelectionModel" 1
   WriteRegDWORD HKCU "${ROOT}\NovaSVN\shell\07.Cleanup" "ImpliedSelectionModel" 1
   WriteRegDWORD HKCU "${ROOT}\NovaSVN\shell\08.BranchWorkspace" "ImpliedSelectionModel" 1
+  WriteRegDWORD HKCU "${ROOT}\NovaSVN\shell\09.RepoBrowser" "ImpliedSelectionModel" 1
 !macroend
 
 !macro NOVASVN_DELETE_LEGACY_ACTIONS ROOT
@@ -77,6 +78,7 @@ Var NovaSvnActiveShellExtension
   DeleteRegKey HKCU "${ROOT}\NovaSVN.Ignore"
   DeleteRegKey HKCU "${ROOT}\NovaSVN.Cleanup"
   DeleteRegKey HKCU "${ROOT}\NovaSVN.BranchWorkspace"
+  DeleteRegKey HKCU "${ROOT}\NovaSVN.RepoBrowser"
   DeleteRegKey HKCU "${ROOT}\NovaSVN.CheckoutOnly"
 !macroend
 
@@ -161,6 +163,7 @@ Var NovaSvnActiveShellExtension
   !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "06.Ignore" "Ignore" "ignore" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
   !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "07.Cleanup" "Cleanup" "cleanup" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
   !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "08.BranchWorkspace" "Branch Workspace" "branch-workspace" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\shell" "09.RepoBrowser" "Repo Browser" "browse" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
   !insertmacro NOVASVN_REGISTER_CHECKOUT_ACTION "Software\Classes\Directory\shell" "%1"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\Directory\shell" "Update" "NovaSVN Update" "update" "%1"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\Directory\shell" "Commit" "NovaSVN Commit" "commit" "%1"
@@ -175,6 +178,7 @@ Var NovaSvnActiveShellExtension
   !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "06.Ignore" "Ignore" "ignore" "%V" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
   !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "07.Cleanup" "Cleanup" "cleanup" "%V" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
   !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "08.BranchWorkspace" "Branch Workspace" "branch-workspace" "%V" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\Directory\Background\shell" "09.RepoBrowser" "Repo Browser" "browse" "%V" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
   !insertmacro NOVASVN_REGISTER_CHECKOUT_ACTION "Software\Classes\Directory\Background\shell" "%V"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\Directory\Background\shell" "Update" "NovaSVN Update" "update" "%V"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\Directory\Background\shell" "Commit" "NovaSVN Commit" "commit" "%V"
@@ -191,6 +195,7 @@ Var NovaSvnActiveShellExtension
   !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "07.Ignore" "Ignore" "ignore" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
   !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "08.Cleanup" "Cleanup" "cleanup" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
   !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "09.BranchWorkspace" "Branch Workspace" "branch-workspace" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
+  !insertmacro NOVASVN_REGISTER_ACTION "Software\Classes\*\shell" "10.RepoBrowser" "Repo Browser" "browse" "%1" "${NOVASVN_SVN_ONLY_STATE_CLSID}"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\*\shell" "Update" "NovaSVN Update" "update" "%1"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\*\shell" "Commit" "NovaSVN Commit" "commit" "%1"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\*\shell" "Log" "NovaSVN Log" "log" "%1"

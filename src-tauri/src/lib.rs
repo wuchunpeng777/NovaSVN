@@ -36,7 +36,8 @@ use svn::{
 };
 use system_integration::{
     LaunchLogWindowRequest, LaunchMergePreviewWindowRequest, LaunchPathWindowRequest,
-    LaunchedLogWindow, LaunchedMergePreviewWindow, LaunchedPathWindow, StartupIntent,
+    LaunchRepoBrowserWindowRequest, LaunchedLogWindow, LaunchedMergePreviewWindow,
+    LaunchedPathWindow, LaunchedRepoBrowserWindow, StartupIntent,
 };
 use task::{
     CreateApplyMergePreviewTaskRequest, CreateApplyPatchTaskRequest,
@@ -424,6 +425,16 @@ fn launch_log_window(request: LaunchLogWindowRequest) -> CommandResult<LaunchedL
     println!("[NovaSVN] launch_log_window command received");
     Ok(CommandResponse::success(
         system_integration::launch_log_window(request)?,
+    ))
+}
+
+#[tauri::command]
+fn launch_repo_browser_window(
+    request: LaunchRepoBrowserWindowRequest,
+) -> CommandResult<LaunchedRepoBrowserWindow> {
+    println!("[NovaSVN] launch_repo_browser_window command received");
+    Ok(CommandResponse::success(
+        system_integration::launch_repo_browser_window(request)?,
     ))
 }
 
@@ -1227,6 +1238,7 @@ pub fn run() {
             let startup_intent = system_integration::startup_intent();
             let window_surface = window_state::surface_name(startup_intent.action.as_deref());
             let standalone_title = match startup_intent.action.as_deref() {
+                Some("browse") => Some("NovaSVN Repository Browser"),
                 Some("checkout") => Some("NovaSVN Checkout"),
                 Some("cleanup") => Some("NovaSVN Clean Up"),
                 Some("info") => Some("NovaSVN Info"),
@@ -1279,6 +1291,7 @@ pub fn run() {
             sync_app_menu_state,
             get_startup_intent,
             launch_log_window,
+            launch_repo_browser_window,
             launch_update_window,
             launch_commit_window,
             launch_conflict_window,

@@ -29,6 +29,7 @@ struct ScreenRect {
 pub fn surface_name(action: Option<&str>) -> &'static str {
     match action {
         Some("blame") => "blame",
+        Some("browse") => "browse",
         Some("checkout") => "checkout",
         Some("cleanup") => "cleanup",
         Some("commit") => "commit",
@@ -185,6 +186,7 @@ mod tests {
     #[test]
     fn keeps_each_startup_surface_in_a_separate_state_slot() {
         assert_eq!(surface_name(None), "main");
+        assert_eq!(surface_name(Some("browse")), "browse");
         assert_eq!(surface_name(Some("checkout")), "checkout");
         assert_eq!(surface_name(Some("cleanup")), "cleanup");
         assert_eq!(surface_name(Some("commit")), "commit");

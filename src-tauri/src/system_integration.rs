@@ -26,6 +26,18 @@ pub struct LaunchedPathWindow {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct LaunchRepoBrowserWindowRequest {
+    pub target_path: String,
+    pub revision: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LaunchedRepoBrowserWindow {
+    pub target_path: String,
+    pub revision: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct LaunchLogWindowRequest {
     pub repository_url: String,
     pub repository_root: String,
@@ -118,6 +130,7 @@ fn normalize_action(action: String) -> Option<String> {
             | "cleanup"
             | "branch-workspace"
             | "merge-preview"
+            | "browse"
     ) {
         Some(value.to_string())
     } else {
@@ -204,6 +217,46 @@ pub fn launch_log_window(request: LaunchLogWindowRequest) -> Result<LaunchedLogW
         repository_url,
         repository_root,
         revision: revision.to_string(),
+    })
+}
+
+pub fn launch_repo_browser_window(
+    request: LaunchRepoBrowserWindowRequest,
+) -> Result<LaunchedRepoBrowserWindow, NovaError> {
+    let target_path = normalize_startup_path(request.target_path).ok_or_else(|| {
+        NovaError::command(
+            "REPO_BROWSER_WINDOW_TARGET_INVALID",
+            "无法启动 Repository Browser",
+            Some("目标路径或仓库 URL 不能为空。".to_string()),
+            true,
+        )
+    })?;
+    let revision = request
+        .revision
+        .and_then(normalize_startup_revision);
+    let executable = std::env::current_exe().map_err(|error| {
+        NovaError::command(
+            "REPO_BROWSER_WINDOW_EXECUTABLE_MISSING",
+            "无法启动 Repository Browser",
+            Some(error.to_string()),
+            true,
+        )
+    })?;
+    let arguments = repo_browser_window_arguments(&target_path, revision.as_deref());
+    Command::new(&executable)
+        .args(arguments)
+        .spawn()
+        .map_err(|error| {
+            NovaError::command(
+                "REPO_BROWSER_WINDOW_LAUNCH_FAILED",
+                "无法启动 Repository Browser",
+                Some(format!("执行 `{}` 失败：{error}", executable.display())),
+                true,
+            )
+        })?;
+    Ok(LaunchedRepoBrowserWindow {
+        target_path,
+        revision,
     })
 }
 
@@ -346,6 +399,20 @@ fn log_window_arguments(
     ]
 }
 
+fn repo_browser_window_arguments(target_path: &str, revision: Option<&str>) -> Vec<String> {
+    let mut arguments = vec![
+        "--novasvn-action".to_string(),
+        "browse".to_string(),
+        "--novasvn-path".to_string(),
+        target_path.to_string(),
+    ];
+    if let Some(revision) = revision {
+        arguments.push("--novasvn-revision".to_string());
+        arguments.push(revision.to_string());
+    }
+    arguments
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,6 +488,53 @@ mod tests {
 
         assert_eq!(intent.action.as_deref(), Some("checkout"));
         assert_eq!(intent.path.as_deref(), Some("C:\\checkouts\\project"));
+    }
+
+    #[test]
+    fn accepts_repo_browser_action_with_optional_revision() {
+        let intent = startup_intent_from_args([
+            "--novasvn-action",
+            "browse",
+            "--novasvn-path",
+            "https://example.com/svn/trunk",
+            "--novasvn-revision",
+            "42",
+        ]);
+
+        assert_eq!(intent.action.as_deref(), Some("browse"));
+        assert_eq!(
+            intent.path.as_deref(),
+            Some("https://example.com/svn/trunk")
+        );
+        assert_eq!(intent.revision.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn builds_repo_browser_window_arguments() {
+        let with_revision =
+            repo_browser_window_arguments("https://example.com/svn/trunk", Some("12"));
+        assert_eq!(
+            with_revision,
+            vec![
+                "--novasvn-action".to_string(),
+                "browse".to_string(),
+                "--novasvn-path".to_string(),
+                "https://example.com/svn/trunk".to_string(),
+                "--novasvn-revision".to_string(),
+                "12".to_string(),
+            ]
+        );
+
+        let without_revision = repo_browser_window_arguments("C:\\wc", None);
+        assert_eq!(
+            without_revision,
+            vec![
+                "--novasvn-action".to_string(),
+                "browse".to_string(),
+                "--novasvn-path".to_string(),
+                "C:\\wc".to_string(),
+            ]
+        );
     }
 
     #[test]

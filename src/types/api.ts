@@ -46,6 +46,16 @@ export interface LaunchedPathWindow {
   target_path: string;
 }
 
+export interface LaunchRepoBrowserWindowRequest {
+  target_path: string;
+  revision?: string;
+}
+
+export interface LaunchedRepoBrowserWindow {
+  target_path: string;
+  revision?: string | null;
+}
+
 export interface LaunchMergePreviewWindowRequest {
   preview_id: string;
 }
