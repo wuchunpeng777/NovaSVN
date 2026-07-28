@@ -52,7 +52,6 @@ const launchLogWindowMock = vi.mocked(launchLogWindow);
 
 beforeEach(() => {
   delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-  window.localStorage.removeItem("novasvn:repo-browser-compact-window-v1");
   windowApiMocks.close.mockReset();
   windowApiMocks.setMinSize.mockReset();
   windowApiMocks.setMinSize.mockResolvedValue(undefined);
@@ -96,7 +95,7 @@ beforeEach(() => {
 });
 
 describe("StandaloneRepoBrowserWindow", () => {
-  it("首次加载少量条目时收紧窗口高度", async () => {
+  it("每次加载少量条目时都收紧窗口高度", async () => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
       value: {},
@@ -114,9 +113,29 @@ describe("StandaloneRepoBrowserWindow", () => {
     expect(windowApiMocks.setSize).toHaveBeenCalledWith(
       expect.objectContaining({ height: 380 }),
     );
-    expect(window.localStorage.getItem("novasvn:repo-browser-compact-window-v1")).toBe(
-      "applied",
+
+    createRepositoryListTaskMock.mockResolvedValue(makeTask("pending", "list-task-2"));
+    getTaskMock.mockResolvedValue(
+      makeTask("success", "list-task-2", {
+        repository_list: {
+          url: "https://example.com/svn/trunk/src",
+          revision: "42",
+          entries: [
+            {
+              name: "main.ts",
+              kind: "file",
+              revision: "42",
+              author: "alice",
+              date: "2026-07-01T00:00:00.000Z",
+            },
+          ],
+        },
+      }),
     );
+
+    await fireEvent.doubleClick(screen.getByRole("button", { name: "打开仓库目录 src" }));
+    await screen.findByRole("button", { name: "打开仓库文件 main.ts" });
+    await waitFor(() => expect(windowApiMocks.setSize).toHaveBeenCalledTimes(2));
   });
 
   it("从工作副本路径解析仓库 URL 并加载目录", async () => {
@@ -215,6 +234,48 @@ describe("StandaloneRepoBrowserWindow", () => {
         revision: "42",
       });
     });
+  });
+
+  it("没有 peg revision 时仍在独立窗口中查看 HEAD 日志", async () => {
+    getTaskMock.mockResolvedValue(
+      makeTask("success", "list-task", {
+        repository_list: {
+          url: "https://example.com/svn/trunk",
+          revision: null,
+          entries: [
+            {
+              name: "README.md",
+              kind: "file",
+              revision: "",
+              author: "",
+              date: "",
+            },
+          ],
+        },
+      }),
+    );
+    launchLogWindowMock.mockResolvedValue({
+      repository_url: "https://example.com/svn/trunk/README.md",
+      repository_root: "https://example.com/svn",
+      revision: null,
+    });
+
+    render(StandaloneRepoBrowserWindow, {
+      props: { targetPath: "https://example.com/svn/trunk" },
+    });
+
+    const readme = await screen.findByRole("button", { name: "打开仓库文件 README.md" });
+    await fireEvent.contextMenu(readme, { clientX: 120, clientY: 160 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "查看日志" }));
+
+    await waitFor(() => {
+      expect(launchLogWindowMock).toHaveBeenCalledWith({
+        repository_url: "https://example.com/svn/trunk/README.md",
+        repository_root: "https://example.com/svn",
+        revision: undefined,
+      });
+    });
+    expect(screen.queryByText("文件日志")).not.toBeInTheDocument();
   });
 
   it("可通过创建目录表单执行 mkdir 并刷新", async () => {

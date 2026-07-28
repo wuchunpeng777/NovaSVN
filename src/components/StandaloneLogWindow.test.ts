@@ -148,6 +148,34 @@ describe("StandaloneLogWindow", () => {
     expect(screen.getByText("Add log window")).toBeInTheDocument();
   });
 
+  it("没有 peg revision 时使用 HEAD 读取新窗口中的仓库日志", async () => {
+    getRepositoryFileLogMock.mockResolvedValue(
+      makeLog({
+        target: "https://svn.example.test/repo/trunk/src/main.ts",
+        working_copy_root: null,
+        repository_root: null,
+      }),
+    );
+
+    render(StandaloneLogWindow, {
+      props: {
+        targetPath: "https://svn.example.test/repo/trunk/src/main.ts",
+        repositoryRoot: "https://svn.example.test/repo",
+      },
+    });
+
+    await waitFor(() => {
+      expect(getRepositoryFileLogMock).toHaveBeenCalledWith({
+        url: "https://svn.example.test/repo/trunk/src/main.ts",
+        revision: undefined,
+        svn_executable: undefined,
+        limit: 50,
+        start_revision: undefined,
+      });
+    });
+    expect(getPathSvnLogMock).not.toHaveBeenCalled();
+  });
+
   it("按关键字、作者和日期过滤日志", async () => {
     getPathSvnLogMock.mockResolvedValue(
       makeLog({

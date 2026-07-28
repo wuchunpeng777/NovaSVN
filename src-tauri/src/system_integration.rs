@@ -41,14 +41,14 @@ pub struct LaunchedRepoBrowserWindow {
 pub struct LaunchLogWindowRequest {
     pub repository_url: String,
     pub repository_root: String,
-    pub revision: String,
+    pub revision: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LaunchedLogWindow {
     pub repository_url: String,
     pub repository_root: String,
-    pub revision: String,
+    pub revision: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -182,15 +182,19 @@ pub fn launch_log_window(request: LaunchLogWindowRequest) -> Result<LaunchedLogW
             true,
         ));
     }
-    let revision = request.revision.trim();
-    if revision.is_empty() || !revision.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(NovaError::command(
-            "LOG_WINDOW_REVISION_INVALID",
-            "无法打开文件 Log",
-            Some("文件 Log 的 peg revision 必须是数字。".to_string()),
-            true,
-        ));
-    }
+    let revision = request
+        .revision
+        .map(|revision| {
+            normalize_startup_revision(revision).ok_or_else(|| {
+                NovaError::command(
+                    "LOG_WINDOW_REVISION_INVALID",
+                    "无法打开文件 Log",
+                    Some("文件 Log 的 peg revision 必须是数字。".to_string()),
+                    true,
+                )
+            })
+        })
+        .transpose()?;
 
     let executable = std::env::current_exe().map_err(|error| {
         NovaError::command(
@@ -200,7 +204,7 @@ pub fn launch_log_window(request: LaunchLogWindowRequest) -> Result<LaunchedLogW
             true,
         )
     })?;
-    let arguments = log_window_arguments(&repository_url, &repository_root, revision);
+    let arguments = log_window_arguments(&repository_url, &repository_root, revision.as_deref());
     Command::new(&executable)
         .args(arguments)
         .spawn()
@@ -216,7 +220,7 @@ pub fn launch_log_window(request: LaunchLogWindowRequest) -> Result<LaunchedLogW
     Ok(LaunchedLogWindow {
         repository_url,
         repository_root,
-        revision: revision.to_string(),
+        revision,
     })
 }
 
@@ -385,18 +389,21 @@ fn normalize_repository_argument(
 fn log_window_arguments(
     repository_url: &str,
     repository_root: &str,
-    revision: &str,
+    revision: Option<&str>,
 ) -> Vec<String> {
-    vec![
+    let mut arguments = vec![
         "--novasvn-action".to_string(),
         "log".to_string(),
         "--novasvn-path".to_string(),
         repository_url.to_string(),
         "--novasvn-repository-root".to_string(),
         repository_root.to_string(),
-        "--novasvn-revision".to_string(),
-        revision.to_string(),
-    ]
+    ];
+    if let Some(revision) = revision {
+        arguments.push("--novasvn-revision".to_string());
+        arguments.push(revision.to_string());
+    }
+    arguments
 }
 
 fn repo_browser_window_arguments(target_path: &str, revision: Option<&str>) -> Vec<String> {
@@ -433,7 +440,7 @@ mod tests {
         let arguments = log_window_arguments(
             "https://example.com/svn/trunk/src/main.rs",
             "https://example.com/svn",
-            "42",
+            Some("42"),
         );
         let intent = startup_intent_from_args(arguments);
 
@@ -447,6 +454,27 @@ mod tests {
             Some("https://example.com/svn")
         );
         assert_eq!(intent.revision.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn parses_repository_log_window_arguments_without_revision() {
+        let arguments = log_window_arguments(
+            "https://example.com/svn/trunk/src/main.rs",
+            "https://example.com/svn",
+            None,
+        );
+        let intent = startup_intent_from_args(arguments);
+
+        assert_eq!(intent.action.as_deref(), Some("log"));
+        assert_eq!(
+            intent.path.as_deref(),
+            Some("https://example.com/svn/trunk/src/main.rs")
+        );
+        assert_eq!(
+            intent.repository_root.as_deref(),
+            Some("https://example.com/svn")
+        );
+        assert_eq!(intent.revision, None);
     }
 
     #[test]

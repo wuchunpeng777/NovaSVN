@@ -212,10 +212,10 @@
   function currentRepositoryTarget(path: string) {
     const root = repositoryRoot?.trim();
     const revision = repositoryRevision?.trim();
-    if (!root || !revision || !/^\d+$/.test(revision)) {
+    if (!root || (revision && !/^\d+$/.test(revision))) {
       return null;
     }
-    return { url: path, root, revision };
+    return { url: path, root, revision: revision || undefined };
   }
 
   function mergeLogPage(current: SvnLog, page: SvnLog): SvnLog {

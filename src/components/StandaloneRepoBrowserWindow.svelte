@@ -44,7 +44,6 @@
     createRepositoryMkdirTask,
     createRepositoryMoveTask,
     getRepositoryFileBlame,
-    getRepositoryFileLog,
     getRepositoryFileProperties,
     getSvnInfo,
     getTask,
@@ -65,7 +64,6 @@
     RepositoryListEntry,
     RepositoryListResult,
     SvnBlame,
-    SvnLog,
     SvnProperties,
     Task,
     TaskStatus,
@@ -124,8 +122,6 @@
 
   const terminalStatuses: TaskStatus[] = ["success", "failed", "cancelled", "interrupted"];
   const pollIntervalMs = 350;
-  const compactWindowLayoutKey = "novasvn:repo-browser-compact-window-v1";
-
   let urlInput = "";
   let revisionInput = repositoryRevision?.trim() ?? "";
   let repositoryRoot: string | null = null;
@@ -141,8 +137,7 @@
   let searchInputElement: HTMLInputElement | null = null;
   let sortKey: SortKey = "name";
   let sortDirection: SortDirection = "asc";
-  let activePanel: "none" | "log" | "blame" | "properties" | WriteKind = "none";
-  let fileLog: SvnLog | null = null;
+  let activePanel: "none" | "blame" | "properties" | WriteKind = "none";
   let fileBlame: SvnBlame | null = null;
   let fileProperties: SvnProperties | null = null;
   let detailLoading = false;
@@ -167,7 +162,6 @@
   let generation = 0;
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
-  let compactWindowRequested = false;
 
   $: resolvedTheme =
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
@@ -643,7 +637,7 @@
         list = result;
         urlInput = result.url;
         commitNavigation(result.url, requestedRevision, navigationMode);
-        void compactWindowForInitialDirectory(result.entries.length);
+        void fitWindowToDirectory(result.entries.length);
         return;
       }
 
@@ -833,49 +827,17 @@
   async function showLogForUrl(url: string) {
     const root = repositoryRoot || deriveTreeRoot(url);
     const revision = list?.revision || revisionInput.trim();
-    if (!revision) {
-      // 无 peg revision 时仍可打开 log 窗口，使用 HEAD 信息查询。
-      detailLoading = true;
-      detailError = null;
-      activePanel = "log";
-      try {
-        fileLog = await getRepositoryFileLog({
-          url,
-          revision: undefined,
-          svn_executable: svnExecutable?.trim() || undefined,
-        });
-      } catch (caught) {
-        detailError = normalizeCommandError(caught);
-        fileLog = null;
-      } finally {
-        detailLoading = false;
-      }
-      return;
-    }
+    commandError = null;
     try {
       await launchLogWindow({
         repository_url: url,
         repository_root: root,
-        revision,
+        revision: revision || undefined,
       });
       statusMessage = "已打开 Log 窗口";
-    } catch {
-      // 回退到内嵌 log
-      detailLoading = true;
-      detailError = null;
-      activePanel = "log";
-      try {
-        fileLog = await getRepositoryFileLog({
-          url,
-          revision,
-          svn_executable: svnExecutable?.trim() || undefined,
-        });
-      } catch (caught) {
-        detailError = normalizeCommandError(caught);
-        fileLog = null;
-      } finally {
-        detailLoading = false;
-      }
+    } catch (caught) {
+      commandError = normalizeCommandError(caught);
+      statusMessage = null;
     }
   }
 
@@ -1198,16 +1160,11 @@
     }
   }
 
-  async function compactWindowForInitialDirectory(entryCount: number) {
-    if (
-      compactWindowRequested ||
-      !("__TAURI_INTERNALS__" in window) ||
-      window.localStorage.getItem(compactWindowLayoutKey) === "applied"
-    ) {
+  async function fitWindowToDirectory(entryCount: number) {
+    if (!("__TAURI_INTERNALS__" in window)) {
       return;
     }
 
-    compactWindowRequested = true;
     const visibleRows = Math.max(3, Math.min(entryCount, 11));
     const targetHeight = Math.max(380, Math.min(620, 240 + visibleRows * 34));
     const targetWidth = Math.max(960, window.outerWidth || window.innerWidth);
@@ -1216,7 +1173,6 @@
       const appWindow = getCurrentWindow();
       await appWindow.setMinSize(new LogicalSize(900, 380));
       await appWindow.setSize(new LogicalSize(targetWidth, targetHeight));
-      window.localStorage.setItem(compactWindowLayoutKey, "applied");
     } catch {
       // Window sizing is a presentation enhancement; browsing remains usable if it is unavailable.
     }
@@ -1691,9 +1647,7 @@
     <aside class="detail-pane" aria-label="仓库操作面板">
       <header>
         <h2>
-          {#if activePanel === "log"}
-            文件日志
-          {:else if activePanel === "blame"}
+          {#if activePanel === "blame"}
             逐行追溯
           {:else if activePanel === "properties"}
             SVN 属性
@@ -1729,24 +1683,7 @@
 
       <ErrorNotice error={detailError} />
 
-      {#if activePanel === "log"}
-        {#if detailLoading}
-          <article class="empty-state">正在读取 Log</article>
-        {:else if fileLog?.entries?.length}
-          <div class="detail-list">
-            {#each fileLog.entries as entry (entry.revision)}
-              <article>
-                <strong>r{entry.revision}</strong>
-                <span>{entry.author || "-"}</span>
-                <time>{formatDate(entry.date)}</time>
-                <p>{entry.message || "无提交信息"}</p>
-              </article>
-            {/each}
-          </div>
-        {:else if fileLog}
-          <article class="empty-state">没有日志</article>
-        {/if}
-      {:else if activePanel === "blame"}
+      {#if activePanel === "blame"}
         {#if detailLoading}
           <article class="empty-state">正在读取 Blame</article>
         {:else if fileBlame}

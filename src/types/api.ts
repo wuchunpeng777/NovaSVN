@@ -28,13 +28,13 @@ export interface StartupIntent {
 export interface LaunchLogWindowRequest {
   repository_url: string;
   repository_root: string;
-  revision: string;
+  revision?: string;
 }
 
 export interface LaunchedLogWindow {
   repository_url: string;
   repository_root: string;
-  revision: string;
+  revision: string | null;
 }
 
 export interface LaunchPathWindowRequest {
