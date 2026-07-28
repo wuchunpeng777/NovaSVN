@@ -77,6 +77,7 @@
   let startupSurface: "loading" | "main" | "blame" | "browse" | "checkout" | "cleanup" | "commit" | "log" | "merge-preview" | "revert" | "update" | "resolve" | "info" =
     hasTauriRuntime() ? "loading" : "main";
   let standaloneBlamePath = "";
+  let standaloneBlameRevision: string | undefined = undefined;
   let standaloneBlameReady = false;
   let standaloneBrowsePath = "";
   let standaloneBrowseRevision: string | undefined = undefined;
@@ -2605,6 +2606,7 @@
 
     if (intent.action === "blame") {
       standaloneBlamePath = intent.path?.trim() ?? "";
+      standaloneBlameRevision = intent.revision?.trim() || undefined;
       startupSurface = "blame";
       if ($svnStore.executableInput.trim()) {
         void svnStore.detectWithInputFallback();
@@ -2869,6 +2871,7 @@
 {:else if startupSurface === "blame"}
   <StandaloneBlameWindow
     targetPath={standaloneBlamePath}
+    repositoryRevision={standaloneBlameRevision}
     svnExecutable={currentSvnExecutable()}
     themeMode={$appSettingsStore.themeMode}
     svnAuthenticationUsername={$appSettingsStore.svnUsername}

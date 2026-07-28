@@ -38,6 +38,18 @@ pub struct LaunchedRepoBrowserWindow {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct LaunchBlameWindowRequest {
+    pub repository_url: String,
+    pub revision: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LaunchedBlameWindow {
+    pub repository_url: String,
+    pub revision: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct LaunchLogWindowRequest {
     pub repository_url: String,
     pub repository_root: String,
@@ -157,6 +169,54 @@ fn normalize_startup_revision(revision: String) -> Option<String> {
     let value = revision.trim();
     (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
         .then(|| value.to_string())
+}
+
+pub fn launch_blame_window(
+    request: LaunchBlameWindowRequest,
+) -> Result<LaunchedBlameWindow, NovaError> {
+    let repository_url = normalize_repository_argument(
+        &request.repository_url,
+        "BLAME_WINDOW_REPOSITORY_URL_INVALID",
+        "无法打开文件 Blame",
+    )?;
+    let revision = request
+        .revision
+        .map(|revision| {
+            normalize_startup_revision(revision).ok_or_else(|| {
+                NovaError::command(
+                    "BLAME_WINDOW_REVISION_INVALID",
+                    "无法打开文件 Blame",
+                    Some("文件 Blame 的 peg revision 必须是数字。".to_string()),
+                    true,
+                )
+            })
+        })
+        .transpose()?;
+    let executable = std::env::current_exe().map_err(|error| {
+        NovaError::command(
+            "BLAME_WINDOW_EXECUTABLE_MISSING",
+            "无法启动新的 Blame 窗口",
+            Some(error.to_string()),
+            true,
+        )
+    })?;
+    let arguments = blame_window_arguments(&repository_url, revision.as_deref());
+    Command::new(&executable)
+        .args(arguments)
+        .spawn()
+        .map_err(|error| {
+            NovaError::command(
+                "BLAME_WINDOW_LAUNCH_FAILED",
+                "无法启动新的 Blame 窗口",
+                Some(format!("执行 `{}` 失败：{error}", executable.display())),
+                true,
+            )
+        })?;
+
+    Ok(LaunchedBlameWindow {
+        repository_url,
+        revision,
+    })
 }
 
 pub fn launch_log_window(request: LaunchLogWindowRequest) -> Result<LaunchedLogWindow, NovaError> {
@@ -406,6 +466,20 @@ fn log_window_arguments(
     arguments
 }
 
+fn blame_window_arguments(repository_url: &str, revision: Option<&str>) -> Vec<String> {
+    let mut arguments = vec![
+        "--novasvn-action".to_string(),
+        "blame".to_string(),
+        "--novasvn-path".to_string(),
+        repository_url.to_string(),
+    ];
+    if let Some(revision) = revision {
+        arguments.push("--novasvn-revision".to_string());
+        arguments.push(revision.to_string());
+    }
+    arguments
+}
+
 fn repo_browser_window_arguments(target_path: &str, revision: Option<&str>) -> Vec<String> {
     let mut arguments = vec![
         "--novasvn-action".to_string(),
@@ -452,6 +526,22 @@ mod tests {
         assert_eq!(
             intent.repository_root.as_deref(),
             Some("https://example.com/svn")
+        );
+        assert_eq!(intent.revision.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn parses_repository_blame_window_arguments() {
+        let arguments = blame_window_arguments(
+            "https://example.com/svn/trunk/src/main.rs",
+            Some("42"),
+        );
+        let intent = startup_intent_from_args(arguments);
+
+        assert_eq!(intent.action.as_deref(), Some("blame"));
+        assert_eq!(
+            intent.path.as_deref(),
+            Some("https://example.com/svn/trunk/src/main.rs")
         );
         assert_eq!(intent.revision.as_deref(), Some("42"));
     }

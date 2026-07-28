@@ -24,11 +24,11 @@ vi.mock("../lib/api", () => ({
   createRepositoryListTask: vi.fn(),
   createRepositoryMkdirTask: vi.fn(),
   createRepositoryMoveTask: vi.fn(),
-  getRepositoryFileBlame: vi.fn(),
   getRepositoryFileLog: vi.fn(),
   getRepositoryFileProperties: vi.fn(),
   getSvnInfo: vi.fn(),
   getTask: vi.fn(),
+  launchBlameWindow: vi.fn(),
   launchLogWindow: vi.fn(),
   openLocalPathLocation: vi.fn(),
   openRepositoryTempFile: vi.fn(),
@@ -39,6 +39,7 @@ import {
   createRepositoryMkdirTask,
   getSvnInfo,
   getTask,
+  launchBlameWindow,
   launchLogWindow,
 } from "../lib/api";
 import type { Task, TaskStatus } from "../types/api";
@@ -48,6 +49,7 @@ const createRepositoryListTaskMock = vi.mocked(createRepositoryListTask);
 const createRepositoryMkdirTaskMock = vi.mocked(createRepositoryMkdirTask);
 const getSvnInfoMock = vi.mocked(getSvnInfo);
 const getTaskMock = vi.mocked(getTask);
+const launchBlameWindowMock = vi.mocked(launchBlameWindow);
 const launchLogWindowMock = vi.mocked(launchLogWindow);
 
 beforeEach(() => {
@@ -61,6 +63,11 @@ beforeEach(() => {
   createRepositoryMkdirTaskMock.mockReset();
   getSvnInfoMock.mockReset();
   getTaskMock.mockReset();
+  launchBlameWindowMock.mockReset();
+  launchBlameWindowMock.mockResolvedValue({
+    repository_url: "https://example.com/svn/trunk/README.md",
+    revision: "42",
+  });
   launchLogWindowMock.mockReset();
   launchLogWindowMock.mockResolvedValue({
     repository_url: "https://example.com/svn/trunk/README.md",
@@ -109,6 +116,7 @@ describe("StandaloneRepoBrowserWindow", () => {
     expect(windowApiMocks.setMinSize).not.toHaveBeenCalled();
     expect(windowApiMocks.setSize).not.toHaveBeenCalled();
     expect(container.querySelector(".browser-statusbar")).not.toBeInTheDocument();
+    expect(screen.queryByText("已连接")).not.toBeInTheDocument();
 
     createRepositoryListTaskMock.mockResolvedValue(makeTask("pending", "list-task-2"));
     getTaskMock.mockResolvedValue(
@@ -231,6 +239,24 @@ describe("StandaloneRepoBrowserWindow", () => {
         revision: "42",
       });
     });
+  });
+
+  it("从右键菜单在独立窗口中查看 Blame", async () => {
+    render(StandaloneRepoBrowserWindow, {
+      props: { targetPath: "https://example.com/svn/trunk" },
+    });
+
+    const readme = await screen.findByRole("button", { name: "打开仓库文件 README.md" });
+    await fireEvent.contextMenu(readme, { clientX: 120, clientY: 160 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "逐行追溯" }));
+
+    await waitFor(() => {
+      expect(launchBlameWindowMock).toHaveBeenCalledWith({
+        repository_url: "https://example.com/svn/trunk/README.md",
+        revision: "42",
+      });
+    });
+    expect(screen.queryByText("正在读取 Blame")).not.toBeInTheDocument();
   });
 
   it("没有 peg revision 时仍在独立窗口中查看 HEAD 日志", async () => {

@@ -2,7 +2,8 @@
   import { onDestroy, onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { RefreshCw, X } from "@lucide/svelte";
-  import { getSvnBlame, inspectUpdateTarget } from "../lib/api";
+  import { getRepositoryFileBlame, getSvnBlame, inspectUpdateTarget } from "../lib/api";
+  import { isRepositoryUrl } from "../lib/repository-url";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import type {
     CommandError,
@@ -16,6 +17,7 @@
   import SvnRevisionLogDialog from "./SvnRevisionLogDialog.svelte";
 
   export let targetPath: string;
+  export let repositoryRevision: string | undefined = undefined;
   export let svnExecutable: string | undefined = undefined;
   export let themeMode: "system" | "light" | "dark" = "system";
   export let svnAuthenticationUsername = "";
@@ -67,6 +69,7 @@
 
   $: resolvedTheme =
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
+  $: repositoryTarget = isRepositoryUrl(targetPath.trim());
   $: filteredLines = filterBlameLines(blame?.lines ?? [], filterText);
   $: revisionCount = new Set(blame?.lines.map((line) => line.revision).filter(Boolean)).size;
   $: authorCount = new Set(blame?.lines.map((line) => line.author).filter(Boolean)).size;
@@ -139,6 +142,21 @@
     error = null;
     blame = null;
     try {
+      if (repositoryTarget) {
+        const result = await getRepositoryFileBlame({
+          url: path,
+          revision: repositoryRevision?.trim() || undefined,
+          svn_executable: svnExecutable?.trim() || undefined,
+          max_lines: 5000,
+        });
+        if (generation !== requestGeneration) {
+          return;
+        }
+        target = null;
+        blame = result;
+        resetTableScroll();
+        return;
+      }
       const inspected = await inspectUpdateTarget({
         path,
         svn_executable: svnExecutable?.trim() || undefined,
@@ -306,7 +324,7 @@
   <header class="blame-titlebar">
     <div>
       <h1>NovaSVN Blame</h1>
-      <p title={targetPath}>{target?.target_path ?? targetPath}</p>
+      <p title={targetPath}>{target?.target_path ?? blame?.target ?? targetPath}</p>
     </div>
     <button
       type="button"
@@ -321,7 +339,7 @@
   </header>
 
   <section class="blame-summary" aria-label="Blame 摘要">
-    <span>Revision <strong>{target?.revision ?? "-"}</strong></span>
+    <span>Revision <strong>{target?.revision ?? (repositoryTarget ? repositoryRevision?.trim() || "HEAD" : "-")}</strong></span>
     <span>行数 <strong>{blame?.total_lines ?? 0}</strong></span>
     <span>Revision 数 <strong>{revisionCount}</strong></span>
     <span>作者 <strong>{authorCount}</strong></span>
@@ -469,6 +487,8 @@
     <SvnRevisionLogDialog
       revision={selectedLogRevision}
       {targetPath}
+      repositoryUrl={repositoryTarget ? targetPath : ""}
+      repositoryRevision={repositoryRevision ?? ""}
       {svnExecutable}
       theme={resolvedTheme}
       {svnAuthenticationUsername}

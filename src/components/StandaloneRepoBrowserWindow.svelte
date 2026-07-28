@@ -42,10 +42,10 @@
     createRepositoryListTask,
     createRepositoryMkdirTask,
     createRepositoryMoveTask,
-    getRepositoryFileBlame,
     getRepositoryFileProperties,
     getSvnInfo,
     getTask,
+    launchBlameWindow,
     launchLogWindow,
     openLocalPathLocation,
     openRepositoryTempFile,
@@ -62,14 +62,12 @@
     CommandError,
     RepositoryListEntry,
     RepositoryListResult,
-    SvnBlame,
     SvnProperties,
     Task,
     TaskStatus,
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
-  import SyntaxHighlightedCode from "./SyntaxHighlightedCode.svelte";
   import "./StandaloneRepoBrowserWindow.css";
 
   export let targetPath = "";
@@ -135,8 +133,7 @@
   let searchInputElement: HTMLInputElement | null = null;
   let sortKey: SortKey = "name";
   let sortDirection: SortDirection = "asc";
-  let activePanel: "none" | "blame" | "properties" | WriteKind = "none";
-  let fileBlame: SvnBlame | null = null;
+  let activePanel: "none" | "properties" | WriteKind = "none";
   let fileProperties: SvnProperties | null = null;
   let detailLoading = false;
   let detailError: CommandError | null = null;
@@ -825,20 +822,15 @@
   }
 
   async function showBlameForUrl(url: string) {
-    detailLoading = true;
-    detailError = null;
-    activePanel = "blame";
-    fileBlame = null;
+    const revision = list?.revision || revisionInput.trim();
+    commandError = null;
     try {
-      fileBlame = await getRepositoryFileBlame({
-        url,
-        revision: list?.revision ?? (revisionInput.trim() || undefined),
-        svn_executable: svnExecutable?.trim() || undefined,
+      await launchBlameWindow({
+        repository_url: url,
+        revision: revision || undefined,
       });
     } catch (caught) {
-      detailError = normalizeCommandError(caught);
-    } finally {
-      detailLoading = false;
+      commandError = normalizeCommandError(caught);
     }
   }
 
@@ -1335,12 +1327,6 @@
         <p>远程仓库</p>
       </div>
     </div>
-    <div class="browser-actions">
-      <span class="connection-state" class:busy data-status={listTask?.status ?? writeTask?.status ?? "idle"}>
-        {#if busy}<LoaderCircle class="spin" size={12} aria-hidden="true" />{/if}
-        {busy ? "正在处理" : "已连接"}
-      </span>
-    </div>
   </header>
 
   <section class="browser-urlbar" aria-label="仓库地址">
@@ -1611,9 +1597,7 @@
     <aside class="detail-pane" aria-label="仓库操作面板">
       <header>
         <h2>
-          {#if activePanel === "blame"}
-            逐行追溯
-          {:else if activePanel === "properties"}
+          {#if activePanel === "properties"}
             SVN 属性
           {:else if activePanel === "mkdir"}
             创建目录
@@ -1647,29 +1631,7 @@
 
       <ErrorNotice error={detailError} />
 
-      {#if activePanel === "blame"}
-        {#if detailLoading}
-          <article class="empty-state">正在读取 Blame</article>
-        {:else if fileBlame}
-          <p class="detail-summary">{fileBlame.total_lines} 行</p>
-          <div class="blame-table">
-            {#each fileBlame.lines as line (line.line_number)}
-              <div class="blame-row">
-                <span>r{line.revision || "-"}</span>
-                <span>{line.author || "-"}</span>
-                <span>{line.line_number}</span>
-                <span class="blame-content">
-                  <SyntaxHighlightedCode
-                    content={line.content}
-                    language={fileBlame.language ?? "plaintext"}
-                    theme={resolvedTheme}
-                  />
-                </span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      {:else if activePanel === "properties"}
+      {#if activePanel === "properties"}
         {#if detailLoading}
           <article class="empty-state">正在读取 Properties</article>
         {:else if fileProperties?.properties?.length}

@@ -51,10 +51,12 @@ import type {
   InspectUpdateTargetRequest,
   ExternalToolLaunch,
   LaunchExternalToolRequest,
+  LaunchBlameWindowRequest,
   LaunchLogWindowRequest,
   LaunchMergePreviewWindowRequest,
   LaunchRepoBrowserWindowRequest,
   LaunchedMergePreviewWindow,
+  LaunchedBlameWindow,
   LaunchedLogWindow,
   LaunchPathWindowRequest,
   LaunchedPathWindow,
@@ -158,6 +160,12 @@ export function launchLogWindow(
   request: LaunchLogWindowRequest,
 ): Promise<LaunchedLogWindow> {
   return callBackend<LaunchedLogWindow>("launch_log_window", { request });
+}
+
+export function launchBlameWindow(
+  request: LaunchBlameWindowRequest,
+): Promise<LaunchedBlameWindow> {
+  return callBackend<LaunchedBlameWindow>("launch_blame_window", { request });
 }
 
 export function launchRepoBrowserWindow(

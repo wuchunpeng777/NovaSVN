@@ -35,9 +35,10 @@ use svn::{
     SvnAuthenticationStatus, SvnCertificateTrustStatus, SvnClient, SvnDetection,
 };
 use system_integration::{
-    LaunchLogWindowRequest, LaunchMergePreviewWindowRequest, LaunchPathWindowRequest,
-    LaunchRepoBrowserWindowRequest, LaunchedLogWindow, LaunchedMergePreviewWindow,
-    LaunchedPathWindow, LaunchedRepoBrowserWindow, StartupIntent,
+    LaunchBlameWindowRequest, LaunchLogWindowRequest, LaunchMergePreviewWindowRequest,
+    LaunchPathWindowRequest, LaunchRepoBrowserWindowRequest, LaunchedBlameWindow,
+    LaunchedLogWindow, LaunchedMergePreviewWindow, LaunchedPathWindow,
+    LaunchedRepoBrowserWindow, StartupIntent,
 };
 use task::{
     CreateApplyMergePreviewTaskRequest, CreateApplyPatchTaskRequest,
@@ -425,6 +426,14 @@ fn launch_log_window(request: LaunchLogWindowRequest) -> CommandResult<LaunchedL
     println!("[NovaSVN] launch_log_window command received");
     Ok(CommandResponse::success(
         system_integration::launch_log_window(request)?,
+    ))
+}
+
+#[tauri::command]
+fn launch_blame_window(request: LaunchBlameWindowRequest) -> CommandResult<LaunchedBlameWindow> {
+    println!("[NovaSVN] launch_blame_window command received");
+    Ok(CommandResponse::success(
+        system_integration::launch_blame_window(request)?,
     ))
 }
 
@@ -1265,8 +1274,16 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 if let Some(title) = standalone_title {
                     let _ = window.set_title(title);
+                    if window_surface == "browse-v2" {
+                        let _ = window.set_min_size(Some(tauri::LogicalSize::new(900.0, 360.0)));
+                    }
                     if !window_state::restore_and_track(&window, &app_data_dir, window_surface) {
-                        let _ = window.set_size(tauri::LogicalSize::new(1120.0, 760.0));
+                        let initial_size = if window_surface == "browse-v2" {
+                            tauri::LogicalSize::new(1040.0, 380.0)
+                        } else {
+                            tauri::LogicalSize::new(1120.0, 760.0)
+                        };
+                        let _ = window.set_size(initial_size);
                     }
                 } else {
                     window_state::restore_and_track(&window, &app_data_dir, window_surface);
@@ -1292,6 +1309,7 @@ pub fn run() {
             sync_app_menu_state,
             get_startup_intent,
             launch_log_window,
+            launch_blame_window,
             launch_repo_browser_window,
             launch_update_window,
             launch_commit_window,

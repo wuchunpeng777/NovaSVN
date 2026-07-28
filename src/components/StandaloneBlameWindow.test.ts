@@ -3,22 +3,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/api", () => ({
   getPathSvnLog: vi.fn(),
+  getRepositoryFileBlame: vi.fn(),
   getRepositoryFileLog: vi.fn(),
   getSvnLog: vi.fn(),
   getSvnBlame: vi.fn(),
   inspectUpdateTarget: vi.fn(),
 }));
 
-import { getPathSvnLog, getSvnBlame, inspectUpdateTarget } from "../lib/api";
+import {
+  getPathSvnLog,
+  getRepositoryFileBlame,
+  getSvnBlame,
+  inspectUpdateTarget,
+} from "../lib/api";
 import StandaloneBlameWindow from "./StandaloneBlameWindow.svelte";
 
 const getSvnBlameMock = vi.mocked(getSvnBlame);
 const getPathSvnLogMock = vi.mocked(getPathSvnLog);
+const getRepositoryFileBlameMock = vi.mocked(getRepositoryFileBlame);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 
 beforeEach(() => {
   getSvnBlameMock.mockReset();
   getPathSvnLogMock.mockReset();
+  getRepositoryFileBlameMock.mockReset();
   inspectUpdateTargetMock.mockReset();
   inspectUpdateTargetMock.mockResolvedValue({
     target_path: "C:\\repo\\src\\main.ts",
@@ -50,9 +58,46 @@ beforeEach(() => {
       },
     ],
   });
+  getRepositoryFileBlameMock.mockResolvedValue({
+    target: "https://example.com/svn/trunk/src/main.ts",
+    total_lines: 1,
+    truncated: false,
+    lines: [
+      {
+        line_number: 1,
+        revision: "42",
+        author: "alice",
+        date: "2026-07-10T10:00:00Z",
+        content: "const answer = 42;",
+      },
+    ],
+  });
 });
 
 describe("StandaloneBlameWindow", () => {
+  it("使用仓库 URL 和 peg revision 读取独立窗口中的 Blame", async () => {
+    render(StandaloneBlameWindow, {
+      props: {
+        targetPath: "https://example.com/svn/trunk/src/main.ts",
+        repositoryRevision: "42",
+        svnExecutable: "C:\\Tools\\svn.exe",
+      },
+    });
+
+    await waitFor(() => {
+      expect(getRepositoryFileBlameMock).toHaveBeenCalledWith({
+        url: "https://example.com/svn/trunk/src/main.ts",
+        revision: "42",
+        svn_executable: "C:\\Tools\\svn.exe",
+        max_lines: 5000,
+      });
+    });
+    expect(inspectUpdateTargetMock).not.toHaveBeenCalled();
+    expect(getSvnBlameMock).not.toHaveBeenCalled();
+    expect(screen.getByText("const answer = 42;")).toBeInTheDocument();
+    expect(screen.getByLabelText("Blame 摘要")).toHaveTextContent("Revision 42");
+  });
+
   it("读取右键文件的逐行历史并支持过滤", async () => {
     render(StandaloneBlameWindow, {
       props: {

@@ -31,6 +31,16 @@ export interface LaunchLogWindowRequest {
   revision?: string;
 }
 
+export interface LaunchBlameWindowRequest {
+  repository_url: string;
+  revision?: string;
+}
+
+export interface LaunchedBlameWindow {
+  repository_url: string;
+  revision: string | null;
+}
+
 export interface LaunchedLogWindow {
   repository_url: string;
   repository_root: string;
