@@ -950,6 +950,10 @@ export interface FileContentDiff {
   modified_bytes_base64?: string | null;
   original_byte_size?: number;
   modified_byte_size?: number;
+  /** Detected text encoding for the original (left) side, e.g. UTF-8 / GB18030. */
+  original_encoding?: string | null;
+  /** Detected text encoding for the modified (right) side, e.g. UTF-8 / GB18030. */
+  modified_encoding?: string | null;
 }
 
 export interface SvnLog {

@@ -65,6 +65,8 @@ const contentDiff: FileContentDiff = {
   binary: false,
   too_large: false,
   max_bytes: 512 * 1024,
+  original_encoding: "UTF-8",
+  modified_encoding: "UTF-8",
 };
 
 describe("MonacoDiffViewer", () => {
@@ -114,5 +116,36 @@ describe("MonacoDiffViewer", () => {
       );
     });
     expect(container.querySelector(".monaco-diff-viewer")).not.toHaveClass("inline-mode");
+  });
+
+  it("shows original and modified file encodings for text diffs", async () => {
+    render(MonacoDiffViewer, {
+      props: {
+        contentDiff: {
+          ...contentDiff,
+          original_encoding: "GB18030",
+          modified_encoding: "UTF-8",
+        },
+      },
+    });
+
+    const labels = await screen.findByLabelText("文件编码");
+    expect(labels).toHaveTextContent("旧 · GB18030");
+    expect(labels).toHaveTextContent("新 · UTF-8");
+    expect(labels).toHaveClass("mismatch");
+  });
+
+  it("shows both encodings inline when inline mode is enabled", async () => {
+    render(MonacoDiffViewer, {
+      props: {
+        contentDiff,
+        inlineMode: true,
+      },
+    });
+
+    const labels = await screen.findByLabelText("文件编码");
+    expect(labels).toHaveTextContent("旧 UTF-8");
+    expect(labels).toHaveTextContent("新 UTF-8");
+    expect(labels).not.toHaveClass("mismatch");
   });
 });

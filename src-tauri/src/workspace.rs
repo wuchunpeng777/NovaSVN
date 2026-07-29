@@ -365,6 +365,8 @@ pub struct FileContentDiff {
     pub modified_bytes_base64: Option<String>,
     pub original_byte_size: u64,
     pub modified_byte_size: u64,
+    pub original_encoding: Option<String>,
+    pub modified_encoding: Option<String>,
 }
 
 impl FileContentDiff {
@@ -384,6 +386,8 @@ impl FileContentDiff {
             modified_bytes_base64: None,
             original_byte_size: 0,
             modified_byte_size: 0,
+            original_encoding: None,
+            modified_encoding: None,
         }
     }
 }
@@ -1378,6 +1382,16 @@ pub fn get_file_content_diff(
         modified_bytes_base64: None,
         original_byte_size: 0,
         modified_byte_size: 0,
+        original_encoding: if binary || too_large {
+            None
+        } else {
+            original.encoding
+        },
+        modified_encoding: if binary || too_large {
+            None
+        } else {
+            working.encoding
+        },
     })
 }
 
@@ -1647,6 +1661,16 @@ pub fn get_revision_file_content_diff(
         modified_bytes_base64: None,
         original_byte_size: 0,
         modified_byte_size: 0,
+        original_encoding: if binary || too_large {
+            None
+        } else {
+            original.encoding
+        },
+        modified_encoding: if binary || too_large {
+            None
+        } else {
+            modified.encoding
+        },
     })
 }
 
@@ -2741,6 +2765,7 @@ struct LimitedText {
     text: String,
     binary: bool,
     too_large: bool,
+    encoding: Option<String>,
 }
 
 impl LimitedText {
@@ -2749,6 +2774,7 @@ impl LimitedText {
             text: String::new(),
             binary: false,
             too_large: false,
+            encoding: None,
         }
     }
 }
@@ -2831,6 +2857,8 @@ fn build_image_content_diff(
         },
         original_byte_size: original.byte_size,
         modified_byte_size: modified.byte_size,
+        original_encoding: None,
+        modified_encoding: None,
     }
 }
 
@@ -2961,11 +2989,7 @@ fn read_repository_revision_bytes(
 
 fn read_limited_text_file(path: &Path, max_bytes: u64) -> Result<LimitedText, NovaError> {
     if !path.exists() {
-        return Ok(LimitedText {
-            text: String::new(),
-            binary: false,
-            too_large: false,
-        });
+        return Ok(LimitedText::empty());
     }
 
     let metadata = fs::metadata(path).map_err(|error| {
@@ -2982,6 +3006,7 @@ fn read_limited_text_file(path: &Path, max_bytes: u64) -> Result<LimitedText, No
             text: String::new(),
             binary: false,
             too_large: true,
+            encoding: None,
         });
     }
 
@@ -3030,11 +3055,7 @@ fn read_svn_base_text(
         })?;
 
     if !output.status.success() {
-        return Ok(LimitedText {
-            text: String::new(),
-            binary: false,
-            too_large: false,
-        });
+        return Ok(LimitedText::empty());
     }
 
     if output.stdout.len() as u64 > max_bytes {
@@ -3042,6 +3063,7 @@ fn read_svn_base_text(
             text: String::new(),
             binary: false,
             too_large: true,
+            encoding: None,
         });
     }
 
@@ -3083,6 +3105,7 @@ fn read_repository_revision_text(
             text: String::new(),
             binary: false,
             too_large: true,
+            encoding: None,
         });
     }
 
@@ -3126,28 +3149,126 @@ fn normalize_revision_diff_revision(revision: &str) -> Result<String, NovaError>
 }
 
 fn bytes_to_limited_text(bytes: Vec<u8>, too_large: bool) -> Result<LimitedText, NovaError> {
+    if bytes.is_empty() {
+        return Ok(LimitedText {
+            text: String::new(),
+            binary: false,
+            too_large,
+            encoding: Some("UTF-8".to_string()),
+        });
+    }
+
+    if let Some((text, encoding)) = decode_text_bytes(&bytes) {
+        return Ok(LimitedText {
+            text,
+            binary: false,
+            too_large,
+            encoding: Some(encoding),
+        });
+    }
+
     if bytes.contains(&0) {
         return Ok(LimitedText {
             text: String::new(),
             binary: true,
             too_large,
+            encoding: None,
         });
     }
 
-    let text = String::from_utf8(bytes).map_err(|error| {
-        NovaError::command(
-            "FILE_CONTENT_NOT_UTF8",
-            "文件不是 UTF-8 文本",
-            Some(error.to_string()),
-            true,
-        )
-    })?;
+    Err(NovaError::command(
+        "FILE_CONTENT_ENCODING_UNSUPPORTED",
+        "无法识别文件文本编码",
+        Some("Diff 目前支持 UTF-8、UTF-16 与 GB18030/GBK 文本文件。".to_string()),
+        true,
+    ))
+}
 
-    Ok(LimitedText {
-        text,
-        binary: false,
-        too_large,
-    })
+fn decode_text_bytes(bytes: &[u8]) -> Option<(String, String)> {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return match std::str::from_utf8(&bytes[3..]) {
+            Ok(text) => Some((text.to_string(), "UTF-8 BOM".to_string())),
+            Err(_) => None,
+        };
+    }
+
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        return decode_utf16_bytes(&bytes[2..], true, "UTF-16 LE BOM");
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        return decode_utf16_bytes(&bytes[2..], false, "UTF-16 BE BOM");
+    }
+
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return Some((text.to_string(), "UTF-8".to_string()));
+    }
+
+    if let Some(text) = decode_utf16_without_bom(bytes, true) {
+        return Some((text, "UTF-16 LE".to_string()));
+    }
+    if let Some(text) = decode_utf16_without_bom(bytes, false) {
+        return Some((text, "UTF-16 BE".to_string()));
+    }
+
+    // GB18030 covers GBK/GB2312. Skip payloads with NUL bytes — those are treated as binary.
+    if !bytes.contains(&0) {
+        let (decoded, _, had_errors) = encoding_rs::GB18030.decode(bytes);
+        if !had_errors {
+            return Some((decoded.into_owned(), "GB18030".to_string()));
+        }
+    }
+
+    None
+}
+
+fn decode_utf16_bytes(bytes: &[u8], little_endian: bool, label: &str) -> Option<(String, String)> {
+    if bytes.len() % 2 != 0 {
+        return None;
+    }
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|chunk| {
+            if little_endian {
+                u16::from_le_bytes([chunk[0], chunk[1]])
+            } else {
+                u16::from_be_bytes([chunk[0], chunk[1]])
+            }
+        })
+        .collect();
+    String::from_utf16(&units)
+        .ok()
+        .map(|text| (text, label.to_string()))
+}
+
+fn decode_utf16_without_bom(bytes: &[u8], little_endian: bool) -> Option<String> {
+    if bytes.len() < 4 || bytes.len() % 2 != 0 || !bytes.contains(&0) {
+        return None;
+    }
+
+    // Heuristic: most code units should look like ASCII/Latin-1 stored as UTF-16.
+    let pair_count = bytes.len() / 2;
+    let zero_side = bytes
+        .chunks_exact(2)
+        .filter(|chunk| {
+            if little_endian {
+                chunk[1] == 0
+            } else {
+                chunk[0] == 0
+            }
+        })
+        .count();
+    if zero_side * 2 < pair_count {
+        return None;
+    }
+
+    decode_utf16_bytes(bytes, little_endian, "")
+        .map(|(text, _)| text)
+        .filter(|text| {
+            !text.is_empty()
+                && text.chars().all(|ch| {
+                    matches!(ch, '\t' | '\n' | '\r') || (!ch.is_control() && ch != '\u{FFFD}')
+                })
+        })
 }
 
 fn language_for_path(path: &str) -> String {
@@ -4979,6 +5100,32 @@ mod tests {
         assert_eq!(oversized.modified_byte_size, png.len() as u64);
 
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn decodes_common_text_encodings_for_diff() {
+        let utf8 = bytes_to_limited_text(b"hello\n\xE4\xB8\xAD".to_vec(), false).expect("utf-8");
+        assert_eq!(utf8.encoding.as_deref(), Some("UTF-8"));
+        assert!(utf8.text.contains('中'));
+
+        let bom = bytes_to_limited_text(b"\xEF\xBB\xBFhello".to_vec(), false).expect("utf-8 bom");
+        assert_eq!(bom.encoding.as_deref(), Some("UTF-8 BOM"));
+        assert_eq!(bom.text, "hello");
+
+        // "中文" in GBK/GB18030.
+        let gbk = bytes_to_limited_text(vec![0xD6, 0xD0, 0xCE, 0xC4], false).expect("gb18030");
+        assert_eq!(gbk.encoding.as_deref(), Some("GB18030"));
+        assert_eq!(gbk.text, "中文");
+
+        let utf16_le =
+            bytes_to_limited_text(b"\xFF\xFEh\x00i\x00".to_vec(), false).expect("utf-16 le");
+        assert_eq!(utf16_le.encoding.as_deref(), Some("UTF-16 LE BOM"));
+        assert_eq!(utf16_le.text, "hi");
+
+        let binary =
+            bytes_to_limited_text(vec![0x00, 0x01, 0x02, 0xFF, 0x10, 0x20], false).expect("binary");
+        assert!(binary.binary);
+        assert!(binary.encoding.is_none());
     }
 
     #[test]

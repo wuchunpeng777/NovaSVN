@@ -34,6 +34,8 @@ export function buildPropertyContentDiff(diff: FileDiff | null): FileContentDiff
     modified_bytes_base64: null,
     original_byte_size: 0,
     modified_byte_size: 0,
+    original_encoding: "UTF-8",
+    modified_encoding: "UTF-8",
   };
 }
 

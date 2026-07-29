@@ -186,16 +186,49 @@
     originalModel = null;
     modifiedModel = null;
   }
+
+  function formatEncodingLabel(encoding: string | null | undefined): string {
+    const value = encoding?.trim();
+    return value ? value : "—";
+  }
+
+  $: originalEncodingLabel = formatEncodingLabel(contentDiff?.original_encoding);
+  $: modifiedEncodingLabel = formatEncodingLabel(contentDiff?.modified_encoding);
+  $: encodingMismatch =
+    Boolean(contentDiff?.original_encoding?.trim()) &&
+    Boolean(contentDiff?.modified_encoding?.trim()) &&
+    contentDiff?.original_encoding?.trim() !== contentDiff?.modified_encoding?.trim();
 </script>
 
 <div class="monaco-diff-viewer" class:inline-mode={inlineMode} data-theme={theme}>
-  <DiffNavigation
-    {differenceCount}
-    {currentDifference}
-    {theme}
-    onPrevious={() => goToDifference("previous")}
-    onNext={() => goToDifference("next")}
-  />
+  <div class="monaco-diff-toolbar">
+    <div
+      class="diff-encoding-labels"
+      class:mismatch={encodingMismatch}
+      class:side-by-side={!inlineMode}
+      aria-label="文件编码"
+    >
+      {#if inlineMode}
+        <span title={`旧版本编码：${originalEncodingLabel}`}>旧 {originalEncodingLabel}</span>
+        <span class="encoding-separator" aria-hidden="true">·</span>
+        <span title={`新版本编码：${modifiedEncodingLabel}`}>新 {modifiedEncodingLabel}</span>
+      {:else}
+        <span class="encoding-side original" title={`旧版本编码：${originalEncodingLabel}`}>
+          旧 · {originalEncodingLabel}
+        </span>
+        <span class="encoding-side modified" title={`新版本编码：${modifiedEncodingLabel}`}>
+          新 · {modifiedEncodingLabel}
+        </span>
+      {/if}
+    </div>
+    <DiffNavigation
+      {differenceCount}
+      {currentDifference}
+      {theme}
+      onPrevious={() => goToDifference("previous")}
+      onNext={() => goToDifference("next")}
+    />
+  </div>
   <div class="monaco-diff-editor" bind:this={container}></div>
 </div>
 
@@ -213,10 +246,64 @@
     overflow: hidden;
   }
 
+  .monaco-diff-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+    min-width: 0;
+    border-bottom: 1px solid var(--border, #d5d9de);
+    background: var(--panel-subtle, #f5f6f7);
+  }
+
+  .diff-encoding-labels {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 0 10px;
+    color: var(--secondary, #68737d);
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .diff-encoding-labels.side-by-side {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0;
+    padding: 0;
+  }
+
+  .diff-encoding-labels .encoding-side {
+    min-width: 0;
+    padding: 0 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .diff-encoding-labels .encoding-side.original {
+    border-right: 1px solid var(--border, #d5d9de);
+  }
+
+  .diff-encoding-labels.mismatch {
+    color: var(--warning-text, #9a6700);
+    font-weight: 600;
+  }
+
+  .encoding-separator {
+    opacity: 0.7;
+  }
+
   .monaco-diff-editor {
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .monaco-diff-viewer :global(.diff-navigation) {
+    border-bottom: none;
+    background: transparent;
   }
 
   .monaco-diff-viewer
@@ -272,6 +359,19 @@
     --inline-original-line-number-background: rgba(255, 138, 128, 0.075);
     --inline-modified-line-number-background: rgba(126, 231, 135, 0.065);
     --inline-line-number-divider: rgba(255, 138, 128, 0.46);
+  }
+
+  .monaco-diff-viewer[data-theme="dark"] .monaco-diff-toolbar {
+    border-color: var(--border, #454d55);
+    background: var(--panel-subtle, #252a2f);
+  }
+
+  .monaco-diff-viewer[data-theme="dark"] .diff-encoding-labels .encoding-side.original {
+    border-color: var(--border, #454d55);
+  }
+
+  .monaco-diff-viewer[data-theme="dark"] .diff-encoding-labels.mismatch {
+    color: var(--warning-text, #d4a72c);
   }
 
 </style>

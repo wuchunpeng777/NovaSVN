@@ -29,6 +29,8 @@ describe("buildPropertyContentDiff", () => {
       language: "plaintext",
       binary: false,
       too_large: false,
+      original_encoding: "UTF-8",
+      modified_encoding: "UTF-8",
     });
     expect(result?.original_text).toBe(
       "属性: svn:ignore\ndist\n\n属性: svn:externals\n<未设置>",

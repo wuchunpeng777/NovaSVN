@@ -127,6 +127,8 @@
         modified_bytes_base64: content.modified_bytes_base64,
         original_byte_size: content.original_byte_size,
         modified_byte_size: content.modified_byte_size,
+        original_encoding: content.binary || content.too_large ? null : "UTF-8",
+        modified_encoding: content.binary || content.too_large ? null : "UTF-8",
       };
     } catch (caught) {
       if (currentGeneration === generation) fileError = normalizeError(caught, "无法读取预览文件");
