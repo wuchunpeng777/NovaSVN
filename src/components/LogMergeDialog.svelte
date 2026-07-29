@@ -14,6 +14,7 @@
     launchMergePreviewWindow,
     scanWorkspaceStatus,
   } from "../lib/api";
+  import { shouldShowTextDiffViewer } from "../lib/file-content-diff";
   import { LOG_FILE_DIFF_MAX_BYTES } from "../lib/svn-log";
   import { buildPropertyContentDiff } from "../lib/svn-property-diff";
   import type {
@@ -903,7 +904,7 @@
                       <div class="review-empty">文件内容过大，无法在窗口中预览</div>
                     {:else if selectedReviewContentDiff?.binary || selectedReviewDiff?.binary}
                       <div class="review-empty">二进制文件无法显示文本 Diff</div>
-                    {:else if selectedReviewContentDiff && selectedReviewContentDiff.original_text !== selectedReviewContentDiff.modified_text}
+                    {:else if shouldShowTextDiffViewer(selectedReviewContentDiff)}
                       <MonacoDiffViewer contentDiff={selectedReviewContentDiff} theme={theme} />
                     {:else if selectedPropertyContentDiff}
                       <MonacoDiffViewer contentDiff={selectedPropertyContentDiff} theme={theme} />

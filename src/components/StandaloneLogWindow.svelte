@@ -17,6 +17,7 @@
     launchLogWindow,
   } from "../lib/api";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
+  import { shouldShowTextDiffViewer } from "../lib/file-content-diff";
   import {
     LOG_FILE_DIFF_MAX_BYTES,
     loadAllSvnLogPages,
@@ -937,7 +938,7 @@
           </div>
         {:else if revisionDiff?.binary}
           <div class="diff-empty">二进制文件无法预览文本修改</div>
-        {:else if revisionDiff && revisionDiff.original_text !== revisionDiff.modified_text}
+        {:else if shouldShowTextDiffViewer(revisionDiff)}
           <MonacoDiffViewer
             contentDiff={revisionDiff}
             inlineMode={diffMode === "inline"}

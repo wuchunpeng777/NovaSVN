@@ -24,6 +24,7 @@
     setPendingCommitMessage,
     writeCommitMessageSettings,
   } from "../lib/commit-message-history";
+  import { shouldShowTextDiffViewer } from "../lib/file-content-diff";
   import { LOG_FILE_DIFF_MAX_BYTES } from "../lib/svn-log";
   import { buildPropertyContentDiff } from "../lib/svn-property-diff";
   import type {
@@ -1605,7 +1606,7 @@
               </div>
             {:else if selectedFileContentDiff?.binary || selectedFileDiff?.binary}
               <div class="empty-diff">二进制文件无法预览文本修改</div>
-            {:else if selectedFileContentDiff && selectedFileContentDiff.original_text !== selectedFileContentDiff.modified_text}
+            {:else if shouldShowTextDiffViewer(selectedFileContentDiff)}
               <MonacoDiffViewer
                 contentDiff={selectedFileContentDiff}
                 inlineMode={diffMode === "inline"}

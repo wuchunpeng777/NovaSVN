@@ -148,4 +148,23 @@ describe("MonacoDiffViewer", () => {
     expect(labels).toHaveTextContent("新 UTF-8");
     expect(labels).not.toHaveClass("mismatch");
   });
+
+  it("notifies when only file encoding changed", async () => {
+    render(MonacoDiffViewer, {
+      props: {
+        contentDiff: {
+          ...contentDiff,
+          original_text: "same content\n",
+          modified_text: "same content\n",
+          original_encoding: "GB18030",
+          modified_encoding: "UTF-8",
+        },
+      },
+    });
+
+    expect(
+      await screen.findByText("文本内容相同，编码不同：GB18030 → UTF-8"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("文件编码")).toHaveClass("mismatch");
+  });
 });

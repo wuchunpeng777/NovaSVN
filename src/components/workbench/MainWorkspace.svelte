@@ -45,6 +45,7 @@
   import RawDiffViewer from "./RawDiffViewer.svelte";
   import SyntaxHighlightedCode from "../SyntaxHighlightedCode.svelte";
   import { getRevisionFileContentDiff } from "../../lib/api";
+  import { shouldShowTextDiffViewer } from "../../lib/file-content-diff";
   import { detectSvnAuthenticationFailure } from "../../lib/svn-authentication";
   import { buildPropertyContentDiff } from "../../lib/svn-property-diff";
   import {
@@ -3662,7 +3663,7 @@
                     </div>
                   {:else if revisionFileContentDiff?.binary}
                     <div class="revision-file-diff-empty">二进制文件无法预览文本修改</div>
-                  {:else if revisionFileContentDiff && revisionFileContentDiff.original_text !== revisionFileContentDiff.modified_text}
+                  {:else if shouldShowTextDiffViewer(revisionFileContentDiff)}
                     <MonacoDiffViewer
                       contentDiff={revisionFileContentDiff}
                       inlineMode={diffInline}
@@ -6049,7 +6050,7 @@
                 <ErrorNotice error={diffError} />
               {:else if selectedFileContentDiff?.is_image}
                 <ImageDiffViewer contentDiff={selectedFileContentDiff} />
-              {:else if selectedFileContentDiff && !selectedFileContentDiff.binary && !selectedFileContentDiff.too_large && selectedFileContentDiff.original_text !== selectedFileContentDiff.modified_text}
+              {:else if shouldShowTextDiffViewer(selectedFileContentDiff)}
                 <MonacoDiffViewer
                   contentDiff={selectedFileContentDiff}
                   inlineMode={diffInline}

@@ -3,6 +3,10 @@
   import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
   import type * as Monaco from "monaco-editor";
   import type { FileContentDiff } from "../../types/api";
+  import {
+    hasEncodingChange,
+    hasTextContentChange,
+  } from "../../lib/file-content-diff";
   import DiffNavigation from "./DiffNavigation.svelte";
 
   export let contentDiff: FileContentDiff | null = null;
@@ -194,10 +198,9 @@
 
   $: originalEncodingLabel = formatEncodingLabel(contentDiff?.original_encoding);
   $: modifiedEncodingLabel = formatEncodingLabel(contentDiff?.modified_encoding);
-  $: encodingMismatch =
-    Boolean(contentDiff?.original_encoding?.trim()) &&
-    Boolean(contentDiff?.modified_encoding?.trim()) &&
-    contentDiff?.original_encoding?.trim() !== contentDiff?.modified_encoding?.trim();
+  $: encodingMismatch = hasEncodingChange(contentDiff);
+  $: encodingOnlyChange =
+    encodingMismatch && !hasTextContentChange(contentDiff);
 </script>
 
 <div class="monaco-diff-viewer" class:inline-mode={inlineMode} data-theme={theme}>
@@ -229,6 +232,11 @@
       onNext={() => goToDifference("next")}
     />
   </div>
+  {#if encodingOnlyChange}
+    <div class="encoding-only-notice" role="status">
+      文本内容相同，编码不同：{originalEncodingLabel} → {modifiedEncodingLabel}
+    </div>
+  {/if}
   <div class="monaco-diff-editor" bind:this={container}></div>
 </div>
 
@@ -244,6 +252,20 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .monaco-diff-viewer:has(.encoding-only-notice) {
+    grid-template-rows: 34px auto minmax(0, 1fr);
+  }
+
+  .encoding-only-notice {
+    min-width: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--warning-text, #9a6700) 28%, var(--border, #d5d9de));
+    background: color-mix(in srgb, var(--warning-text, #9a6700) 12%, var(--panel-subtle, #f5f6f7));
+    padding: 5px 10px;
+    color: var(--warning-text, #9a6700);
+    font-size: 11px;
+    font-weight: 600;
   }
 
   .monaco-diff-toolbar {
@@ -371,6 +393,12 @@
   }
 
   .monaco-diff-viewer[data-theme="dark"] .diff-encoding-labels.mismatch {
+    color: var(--warning-text, #d4a72c);
+  }
+
+  .monaco-diff-viewer[data-theme="dark"] .encoding-only-notice {
+    border-color: color-mix(in srgb, var(--warning-text, #d4a72c) 32%, var(--border, #454d55));
+    background: color-mix(in srgb, var(--warning-text, #d4a72c) 14%, var(--panel-subtle, #252a2f));
     color: var(--warning-text, #d4a72c);
   }
 
