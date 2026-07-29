@@ -3222,7 +3222,7 @@ fn decode_text_bytes(bytes: &[u8]) -> Option<(String, String)> {
 }
 
 fn decode_utf16_bytes(bytes: &[u8], little_endian: bool, label: &str) -> Option<(String, String)> {
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return None;
     }
     let units: Vec<u16> = bytes
@@ -3241,7 +3241,7 @@ fn decode_utf16_bytes(bytes: &[u8], little_endian: bool, label: &str) -> Option<
 }
 
 fn decode_utf16_without_bom(bytes: &[u8], little_endian: bool) -> Option<String> {
-    if bytes.len() < 4 || bytes.len() % 2 != 0 || !bytes.contains(&0) {
+    if bytes.len() < 4 || !bytes.len().is_multiple_of(2) || !bytes.contains(&0) {
         return None;
     }
 
