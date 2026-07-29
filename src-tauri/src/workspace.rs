@@ -3199,8 +3199,13 @@ fn decode_text_bytes(bytes: &[u8]) -> Option<(String, String)> {
         return decode_utf16_bytes(&bytes[2..], false, "UTF-16 BE BOM");
     }
 
+    // NUL is valid in UTF-8, but for Diff we treat embedded NULs as binary
+    // (or as UTF-16 without BOM). Accepting them here would mark data.bin as text
+    // and also shadow the UTF-16-without-BOM heuristics below.
     if let Ok(text) = std::str::from_utf8(bytes) {
-        return Some((text.to_string(), "UTF-8".to_string()));
+        if !bytes.contains(&0) {
+            return Some((text.to_string(), "UTF-8".to_string()));
+        }
     }
 
     if let Some(text) = decode_utf16_without_bom(bytes, true) {
@@ -5126,6 +5131,19 @@ mod tests {
             bytes_to_limited_text(vec![0x00, 0x01, 0x02, 0xFF, 0x10, 0x20], false).expect("binary");
         assert!(binary.binary);
         assert!(binary.encoding.is_none());
+
+        // Valid UTF-8 with embedded NULs must still be treated as binary for Diff,
+        // and must not shadow UTF-16-without-BOM detection.
+        let nul_binary =
+            bytes_to_limited_text(vec![0x00, 0x01, 0x02, 0x00], false).expect("nul binary");
+        assert!(nul_binary.binary);
+        assert!(nul_binary.encoding.is_none());
+
+        let utf16_le_no_bom =
+            bytes_to_limited_text(b"h\x00i\x00".to_vec(), false).expect("utf-16 le no bom");
+        assert_eq!(utf16_le_no_bom.encoding.as_deref(), Some("UTF-16 LE"));
+        assert_eq!(utf16_le_no_bom.text, "hi");
+        assert!(!utf16_le_no_bom.binary);
     }
 
     #[test]
