@@ -2,7 +2,6 @@
 !define NOVASVN_SVN_ONLY_STATE_CLSID "{4D64F10A-B42A-45E5-9034-02F83A16F0AB}"
 !define NOVASVN_CHECKOUT_STATE_CLSID "{6A5EA9FB-A012-4F3D-BE8A-07C41CE53B1B}"
 
-Var NovaSvnRestartExplorer
 Var NovaSvnActiveShellExtension
 
 !macro NOVASVN_REGISTER_STATE_HANDLER CLSID LABEL
@@ -96,23 +95,19 @@ Var NovaSvnActiveShellExtension
   DeleteRegKey HKCU "Software\Classes\CLSID\${NOVASVN_CHECKOUT_STATE_CLSID}"
 !macroend
 
-!macro NOVASVN_STOP_EXPLORER_FOR_SHELL_EXTENSION
-  StrCpy $NovaSvnRestartExplorer "1"
-  Push $0
-  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM explorer.exe'
-  Pop $0
-  Pop $0
-  Sleep 500
-!macroend
-
-!macro NOVASVN_DELETE_INSTALLED_SHELL_EXTENSIONS
+; 不关闭 Explorer。扩展 DLL 用唯一 *.tmp.dll 旁路注册，避免覆盖仍被加载的旧文件。
+; 这里只尽力删除未锁定的旧 DLL；删不掉的留给下次安装/卸载再清理。
+!macro NOVASVN_TRY_DELETE_SHELL_EXTENSIONS
   ; 不使用 /REBOOTOK，避免安装完成页进入“重启电脑”流程。
-  ; Explorer 已在前置步骤停止，扩展 DLL 应可直接删除。
+  ClearErrors
   Delete "$INSTDIR\shell-extension\novasvn_shell_extension.dll"
+  ClearErrors
   Delete "$INSTDIR\shell-extension\*.tmp.dll"
+  ClearErrors
 !macroend
 
 !macro NOVASVN_PREPARE_ACTIVE_SHELL_EXTENSION
+  CreateDirectory "$INSTDIR\shell-extension"
   GetTempFileName $NovaSvnActiveShellExtension "$INSTDIR\shell-extension"
   Delete "$NovaSvnActiveShellExtension"
   StrCpy $NovaSvnActiveShellExtension "$NovaSvnActiveShellExtension.dll"
@@ -124,24 +119,15 @@ Var NovaSvnActiveShellExtension
   novasvn_shell_extension_ready:
 !macroend
 
-!macro NOVASVN_NOTIFY_AND_RESTART_EXPLORER
+!macro NOVASVN_NOTIFY_SHELL_CHANGE
   System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
-  StrCmp $NovaSvnRestartExplorer "1" 0 novasvn_explorer_restart_done
-  Exec '"$WINDIR\explorer.exe"'
-  novasvn_explorer_restart_done:
   ; 清除可能残留的重启标记，保留完成页“是否自动打开”选项。
   SetRebootFlag false
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
-  StrCpy $NovaSvnRestartExplorer "0"
-  IfFileExists "$INSTDIR\shell-extension\novasvn_shell_extension.dll" novasvn_preinstall_extension_found 0
-  IfFileExists "$INSTDIR\shell-extension\*.tmp.dll" novasvn_preinstall_extension_found novasvn_preinstall_done
-  novasvn_preinstall_extension_found:
-  !insertmacro NOVASVN_UNREGISTER_EXPLORER_INTEGRATION
-  !insertmacro NOVASVN_STOP_EXPLORER_FOR_SHELL_EXTENSION
-  !insertmacro NOVASVN_DELETE_INSTALLED_SHELL_EXTENSIONS
-  novasvn_preinstall_done:
+  ; 升级时尽力清理旧扩展；失败也不强制关闭 Explorer。
+  !insertmacro NOVASVN_TRY_DELETE_SHELL_EXTENSIONS
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
@@ -200,20 +186,14 @@ Var NovaSvnActiveShellExtension
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\*\shell" "Commit" "NovaSVN Commit" "commit" "%1"
   !insertmacro NOVASVN_REGISTER_DIRECT_ACTION "Software\Classes\*\shell" "Log" "NovaSVN Log" "log" "%1"
 
-  !insertmacro NOVASVN_NOTIFY_AND_RESTART_EXPLORER
+  !insertmacro NOVASVN_NOTIFY_SHELL_CHANGE
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  StrCpy $NovaSvnRestartExplorer "0"
   !insertmacro NOVASVN_UNREGISTER_EXPLORER_INTEGRATION
-  IfFileExists "$INSTDIR\shell-extension\novasvn_shell_extension.dll" novasvn_preuninstall_extension_found 0
-  IfFileExists "$INSTDIR\shell-extension\*.tmp.dll" novasvn_preuninstall_extension_found novasvn_preuninstall_done
-  novasvn_preuninstall_extension_found:
-  !insertmacro NOVASVN_STOP_EXPLORER_FOR_SHELL_EXTENSION
-  !insertmacro NOVASVN_DELETE_INSTALLED_SHELL_EXTENSIONS
-  novasvn_preuninstall_done:
+  !insertmacro NOVASVN_TRY_DELETE_SHELL_EXTENSIONS
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  !insertmacro NOVASVN_NOTIFY_AND_RESTART_EXPLORER
+  !insertmacro NOVASVN_NOTIFY_SHELL_CHANGE
 !macroend
