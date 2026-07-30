@@ -2720,9 +2720,10 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
                 }
             }
             let mut add_command = svn::command(&payload.svn_executable);
+            // Relative paths + current_dir(root): same as standalone Add, and keeps parents correct.
             add_command.arg("add").arg("--parents").arg("--");
             for relative_path in &unversioned {
-                add_command.arg(root.join(relative_path));
+                add_command.arg(relative_path);
             }
             add_command.current_dir(&root);
             match run_task_command(state, task_id, &mut add_command) {
@@ -2807,7 +2808,10 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
     }
 }
 
-/// Returns relative paths among `files` that are currently unversioned (or untracked).
+/// Returns **working-copy relative** paths among `files` that are currently unversioned.
+///
+/// Always returns the original relative path from `files` (never an absolute status path),
+/// so subsequent `svn add` / validation stay inside the working copy.
 fn collect_unversioned_commit_targets(
     executable: &str,
     root: &Path,
@@ -2817,10 +2821,11 @@ fn collect_unversioned_commit_targets(
         return Ok(Vec::new());
     }
 
+    // Prefer relative targets so status XML paths stay matchable to commit file list entries.
     let mut command = svn::command(executable);
     command.args(["status", "--xml", "--depth", "empty", "--"]);
     for file in files {
-        command.arg(root.join(file));
+        command.arg(file);
     }
     command.current_dir(root);
 
@@ -2838,46 +2843,56 @@ fn collect_unversioned_commit_targets(
         format!("解析提交目标 status XML 失败：{error}")
     })?;
 
-    let requested: std::collections::HashSet<String> = files
-        .iter()
-        .map(|file| normalize_status_path(file))
-        .collect();
+    let root_normalized = normalize_status_path(&root.display().to_string());
     let mut unversioned = Vec::new();
     for entry in document.descendants().filter(|node| node.has_tag_name("entry")) {
         let path = entry.attribute("path").unwrap_or("").trim();
         if path.is_empty() {
             continue;
         }
-        let normalized = normalize_status_path(path);
-        if !requested.contains(&normalized) {
-            // Also accept when svn reports path relative to root with different separators.
-            let matched = requested.iter().any(|candidate| {
-                candidate == &normalized
-                    || candidate.ends_with(&format!("/{normalized}"))
-                    || normalized.ends_with(&format!("/{candidate}"))
-            });
-            if !matched {
-                continue;
-            }
-        }
         let item = entry
             .descendants()
             .find(|node| node.has_tag_name("wc-status"))
             .and_then(|node| node.attribute("item"))
             .unwrap_or("");
-        if item == "unversioned" || item == "untracked" {
-            // Prefer the originally requested relative path when possible.
-            let original = files
-                .iter()
-                .find(|file| normalize_status_path(file) == normalized)
-                .cloned()
-                .unwrap_or_else(|| normalized.replace('\\', "/"));
-            if !unversioned.iter().any(|existing: &String| existing == &original) {
-                unversioned.push(original);
-            }
+        if item != "unversioned" && item != "untracked" {
+            continue;
+        }
+        let Some(original) = match_commit_file_path(files, path, &root_normalized) else {
+            continue;
+        };
+        if !unversioned.iter().any(|existing: &String| existing == &original) {
+            unversioned.push(original);
         }
     }
     Ok(unversioned)
+}
+
+/// Map a status XML path (relative or absolute) back to a path from the commit request.
+fn match_commit_file_path(files: &[String], status_path: &str, root_normalized: &str) -> Option<String> {
+    let mut normalized = normalize_status_path(status_path);
+    // Strip working-copy root prefix when svn reports absolute paths.
+    if !root_normalized.is_empty() {
+        if let Some(stripped) = normalized
+            .strip_prefix(root_normalized)
+            .map(|value| value.trim_start_matches('/'))
+        {
+            if !stripped.is_empty() {
+                normalized = stripped.to_string();
+            }
+        }
+    }
+
+    for file in files {
+        let candidate = normalize_status_path(file);
+        if candidate == normalized
+            || candidate.ends_with(&format!("/{normalized}"))
+            || normalized.ends_with(&format!("/{candidate}"))
+        {
+            return Some(file.clone());
+        }
+    }
+    None
 }
 
 fn normalize_status_path(path: &str) -> String {
@@ -11993,6 +12008,52 @@ mod tests {
         let files = normalize_commit_files(&["src/main.rs".to_string()]).expect("valid path");
 
         assert_eq!(files, vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn matches_status_paths_back_to_commit_relative_paths() {
+        let files = vec![
+            "src/main.ts".to_string(),
+            "src/nested/new.txt".to_string(),
+            "other.ts".to_string(),
+        ];
+        let root = "C:/repo";
+
+        assert_eq!(
+            match_commit_file_path(&files, "src/nested/new.txt", root).as_deref(),
+            Some("src/nested/new.txt")
+        );
+        assert_eq!(
+            match_commit_file_path(&files, r"C:\repo\src\nested\new.txt", root).as_deref(),
+            Some("src/nested/new.txt")
+        );
+        assert_eq!(
+            match_commit_file_path(&files, "C:/repo/src/main.ts", root).as_deref(),
+            Some("src/main.ts")
+        );
+        assert_eq!(
+            match_commit_file_path(&files, "missing.txt", root),
+            None
+        );
+    }
+
+    #[test]
+    fn collects_unversioned_commit_targets_from_status_xml_paths() {
+        // Simulate the matching half of auto-add: absolute status path must map to relative request.
+        let files = vec!["docs/readme.md".to_string(), "new-file.txt".to_string()];
+        assert_eq!(
+            match_commit_file_path(
+                &files,
+                "C:/work/wc/new-file.txt",
+                "C:/work/wc"
+            )
+            .as_deref(),
+            Some("new-file.txt")
+        );
+        assert_eq!(
+            match_commit_file_path(&files, "docs/readme.md", "C:/work/wc").as_deref(),
+            Some("docs/readme.md")
+        );
     }
 
     #[test]

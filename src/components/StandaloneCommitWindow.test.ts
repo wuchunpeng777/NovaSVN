@@ -304,13 +304,42 @@ describe("StandaloneCommitWindow", () => {
     const pane = await screen.findByLabelText("选择提交文件");
     expect(await within(pane).findByText("src/conflict.ts")).toBeInTheDocument();
     expect(within(pane).getByText("C")).toHaveAttribute("data-action", "C");
-    expect(within(pane).getByText("C")).toHaveAttribute("title", "冲突");
+    expect(within(pane).getByText("C")).toHaveAttribute("title", "文本冲突");
+    expect(within(pane).getByText("文本冲突")).toBeInTheDocument();
     expect(within(pane).queryByRole("checkbox", { name: "src/conflict.ts" })).not.toBeInTheDocument();
     await fireEvent.click(within(pane).getByRole("button", { name: "处理冲突 src/conflict.ts" }));
 
     expect(launchConflictWindowMock).toHaveBeenCalledWith({
       target_path: "C:\\repo\\src\\conflict.ts",
     });
+    expect(screen.getByRole("button", { name: "提交 1 个文件" })).toBeInTheDocument();
+  });
+
+  it("展示树冲突并标记为不可提交", async () => {
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({
+        files: [
+          makeFile("src/main.ts", "modified"),
+          makeFile("src/tree.ts", "conflicted", {
+            abnormal: true,
+            conflict_kind: "tree:update",
+          }),
+        ],
+        total: 2,
+        returned: 2,
+        local_changes: 2,
+        modified: 1,
+        conflicted: 1,
+      }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    const pane = await screen.findByLabelText("选择提交文件");
+    expect(await within(pane).findByText("src/tree.ts")).toBeInTheDocument();
+    expect(within(pane).getByText("树冲突 (update)")).toBeInTheDocument();
+    expect(within(pane).getByText("C")).toHaveAttribute("title", "树冲突 (update)");
+    expect(within(pane).queryByRole("checkbox", { name: "src/tree.ts" })).not.toBeInTheDocument();
+    expect(within(pane).getByText(/1 个冲突待处理（含树冲突）/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "提交 1 个文件" })).toBeInTheDocument();
   });
 
@@ -349,7 +378,9 @@ describe("StandaloneCommitWindow", () => {
     expect(unversioned).not.toBeChecked();
     await fireEvent.click(unversioned);
     expect(unversioned).toBeChecked();
-    expect(screen.getByText(/含 1 个未版本控制，提交时自动 Add/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/含 1 个未版本控制，点提交时会自动 svn add，无需手动 Add/),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "提交 4 个文件" })).toBeEnabled();
 
     await fireEvent.click(screen.getByRole("button", { name: "提交 4 个文件" }));
@@ -398,8 +429,9 @@ describe("StandaloneCommitWindow", () => {
     await fireEvent.click(within(pane).getByRole("button", { name: "清除" }));
     expect(within(pane).getByRole("checkbox", { name: "a.ts" })).not.toBeChecked();
 
+    // Same as Log/Timeline: click sets anchor; Shift+click applies range to the new checked state.
     await fireEvent.click(within(pane).getByRole("checkbox", { name: "a.ts" }));
-    // Use click + shiftKey so the change handler sees event.shiftKey.
+    expect(within(pane).getByRole("checkbox", { name: "a.ts" })).toBeChecked();
     await fireEvent.click(within(pane).getByRole("checkbox", { name: "c.ts" }), {
       shiftKey: true,
     });
@@ -407,6 +439,7 @@ describe("StandaloneCommitWindow", () => {
     expect(within(pane).getByRole("checkbox", { name: "b.ts" })).toBeChecked();
     expect(within(pane).getByRole("checkbox", { name: "c.ts" })).toBeChecked();
     expect(within(pane).getByRole("checkbox", { name: "d.ts" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "提交 3 个文件" })).toBeEnabled();
   });
 
   it("为已选文件加入和移出 Changelist 后刷新并保留选择", async () => {

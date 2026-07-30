@@ -25,6 +25,7 @@
     writeCommitMessageSettings,
   } from "../lib/commit-message-history";
   import { shouldShowTextDiffViewer } from "../lib/file-content-diff";
+  import { conflictKindLabel, isConflictedFile } from "../lib/svn-conflict";
   import { LOG_FILE_DIFF_MAX_BYTES } from "../lib/svn-log";
   import { buildPropertyContentDiff } from "../lib/svn-property-diff";
   import type {
@@ -375,14 +376,12 @@
       const defaultSelected = nextStatus.files
         .filter((file) => isCommittable(file) && isPathInCommitTarget(file.path))
         .map((file) => file.path);
-      selectedPaths = preserveSelection
-        ? new Set(selectableInScope.filter((path) => selectedPaths.has(path)))
-        : new Set(defaultSelected);
-      if (
-        selectionAnchorPath &&
-        !selectableInScope.includes(selectionAnchorPath)
-      ) {
-        selectionAnchorPath = null;
+      if (preserveSelection) {
+        // Drop vanished paths and force a new Set so checkbox/summary UI refreshes.
+        pruneSelectionTo(selectableInScope);
+      } else {
+        selectedPaths = new Set(defaultSelected);
+        selectionAnchorPath = defaultSelected[0] ?? null;
       }
       if (activeFilePath) {
         const activeFile = nextStatus.files.find(
@@ -410,34 +409,49 @@
     return fileGroups.flatMap((group) => group.files.filter(isSelectable));
   }
 
-  function toggleFileSelection(path: string, checked: boolean, extendRange = false) {
-    const ordered = orderedSelectableFiles();
-    const next = new Set(selectedPaths);
-    const currentIndex = ordered.findIndex((file) => file.path === path);
-    const anchorIndex = selectionAnchorPath
-      ? ordered.findIndex((file) => file.path === selectionAnchorPath)
-      : -1;
+  /**
+   * Match Log/Timeline checkbox multi-select:
+   * - normal click follows the checkbox's new checked state
+   * - Shift+click applies that state to the inclusive range from the selection anchor
+   * - always updates the anchor (same as Log merge selection)
+   */
+  function handleFileCheckboxClick(event: MouseEvent, path: string) {
+    if (operationRunning || scanning || initializing) {
+      event.preventDefault();
+      return;
+    }
 
-    if (extendRange && currentIndex >= 0 && anchorIndex >= 0) {
-      const start = Math.min(currentIndex, anchorIndex);
-      const end = Math.max(currentIndex, anchorIndex);
-      for (const file of ordered.slice(start, end + 1)) {
-        if (checked) {
-          next.add(file.path);
-        } else {
-          next.delete(file.path);
+    const checkbox = event.currentTarget as HTMLInputElement;
+    const next = new Set(selectedPaths);
+    const ordered = orderedSelectableFiles();
+
+    if (event.shiftKey && selectionAnchorPath) {
+      const anchorIndex = ordered.findIndex((file) => file.path === selectionAnchorPath);
+      const targetIndex = ordered.findIndex((file) => file.path === path);
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const start = Math.min(anchorIndex, targetIndex);
+        const end = Math.max(anchorIndex, targetIndex);
+        for (const file of ordered.slice(start, end + 1)) {
+          if (checkbox.checked) {
+            next.add(file.path);
+          } else {
+            next.delete(file.path);
+          }
         }
+      } else if (checkbox.checked) {
+        next.add(path);
+      } else {
+        next.delete(path);
       }
-    } else if (checked) {
+    } else if (checkbox.checked) {
       next.add(path);
     } else {
       next.delete(path);
     }
 
-    selectedPaths = next;
-    if (!extendRange || anchorIndex < 0) {
-      selectionAnchorPath = path;
-    }
+    // Always reassign a new Set so Svelte refreshes checked UI and summary counts.
+    selectedPaths = new Set(next);
+    selectionAnchorPath = path;
   }
 
   function selectAll() {
@@ -448,6 +462,14 @@
   function clearSelection() {
     selectedPaths = new Set();
     selectionAnchorPath = null;
+  }
+
+  function pruneSelectionTo(paths: Iterable<string>) {
+    const allowed = new Set(paths);
+    selectedPaths = new Set([...selectedPaths].filter((path) => allowed.has(path)));
+    if (selectionAnchorPath && !allowed.has(selectionAnchorPath)) {
+      selectionAnchorPath = null;
+    }
   }
 
   function groupFilesByChangelist(files: ChangedFile[]) {
@@ -494,7 +516,7 @@
         next.add(file.path);
       }
     }
-    selectedPaths = next;
+    selectedPaths = new Set(next);
     selectionAnchorPath = candidates.at(-1)?.path ?? selectionAnchorPath;
   }
 
@@ -896,6 +918,8 @@
       const deleted = [...deletingPaths];
       deletingPaths = [];
       pendingDeleteQueue = [];
+      // Immediately clear deleted paths from selection so counts refresh before rescan.
+      pruneSelectionTo([...selectedPaths].filter((path) => !deleted.includes(path)));
       deleteNotice =
         deleted.length === 1 ? `已 Delete ${deleted[0]}` : `已 Delete ${deleted.length} 个项目`;
       await refreshStatus(generation, true);
@@ -1234,6 +1258,7 @@
           const deleted = [...deletingPaths];
           deletingPaths = [];
           pendingDeleteQueue = [];
+          pruneSelectionTo([...selectedPaths].filter((path) => !deleted.includes(path)));
           deleteNotice =
             deleted.length === 1 ? `已 Delete ${deleted[0]}` : `已 Delete ${deleted.length} 个项目`;
           await refreshStatus(currentGeneration, true);
@@ -1249,14 +1274,15 @@
         if (task.status === "success") {
           const actionLabel = addAction === "unadd" ? "Unadd" : "Add";
           addNotice = addedPath ? `已 ${actionLabel} ${addedPath}` : `${actionLabel} 完成`;
-          await refreshStatus(currentGeneration);
+          // Keep current multi-select; only drop paths that disappeared after Add/Unadd.
+          await refreshStatus(currentGeneration, true);
         }
         return;
       }
       if (task.status === "success" && recordedTaskId !== task.task_id) {
         recordedTaskId = task.task_id;
         recordCommitHistory(commitMessage);
-        await refreshStatus(currentGeneration);
+        await refreshStatus(currentGeneration, true);
         await maybeCloseCompletedCommit();
       }
     } catch (caught) {
@@ -1363,7 +1389,7 @@
   }
 
   function isConflicted(file: ChangedFile) {
-    return file.status === "conflicted" || Boolean(file.conflict_kind);
+    return isConflictedFile(file);
   }
 
   function isRevertableFile(file: ChangedFile) {
@@ -1445,8 +1471,9 @@
   }
 
   function statusMarkTitle(file: ChangedFile): string {
-    if (isConflicted(file)) {
-      return file.conflict_kind === "property" ? "属性冲突" : "冲突";
+    const conflictLabel = conflictKindLabel(file);
+    if (conflictLabel) {
+      return conflictLabel;
     }
     const titles: Record<string, string> = {
       modified: "修改",
@@ -1538,7 +1565,9 @@
         {selectedCount} / {selectableFiles.length}
       </strong>
       {#if selectedUnversionedFiles.length > 0}
-        <small class="selection-hint">（含 {selectedUnversionedFiles.length} 个未版本控制，提交时自动 Add）</small>
+        <small class="selection-hint">
+          （含 {selectedUnversionedFiles.length} 个未版本控制，点提交时会自动 svn add，无需手动 Add）
+        </small>
       {/if}
     </span>
     <OperationMetrics
@@ -1599,7 +1628,7 @@
             <h2>提交文件</h2>
             <p>
               {committableFiles.length} 个可提交文件{conflictFiles.length > 0
-                ? ` · ${conflictFiles.length} 个冲突待处理`
+                ? ` · ${conflictFiles.length} 个冲突待处理（含树冲突）`
                 : ""}{unversionedFiles.length > 0
                 ? ` · ${unversionedFiles.length} 个未版本控制（可勾选，提交时自动 Add）`
                 : ""}
@@ -1684,21 +1713,11 @@
                   {#if isSelectable(file)}
                     <input
                       type="checkbox"
+                      class="file-selection-checkbox"
                       aria-label={file.path}
                       checked={selectedPaths.has(file.path)}
                       disabled={operationRunning || scanning || initializing}
-                      on:click={(event) => {
-                        // Controlled checkbox: handle selection ourselves so Shift range works.
-                        event.preventDefault();
-                        if (operationRunning || scanning || initializing) {
-                          return;
-                        }
-                        toggleFileSelection(
-                          file.path,
-                          !selectedPaths.has(file.path),
-                          event.shiftKey,
-                        );
-                      }}
+                      on:click={(event) => handleFileCheckboxClick(event, file.path)}
                     />
                   {:else}
                     <span class="file-selection-placeholder" aria-hidden="true"></span>
@@ -1719,6 +1738,9 @@
                     <span class="file-path" title={file.path}>{file.path}</span>
                   </button>
                   {#if isConflicted(file)}
+                    <span class="file-conflict-kind" title={conflictKindLabel(file) ?? "冲突"}>
+                      {conflictKindLabel(file) ?? "冲突"}
+                    </span>
                     <button
                       type="button"
                       class="file-conflict-action"
@@ -2298,7 +2320,17 @@
   .file-add-action { min-height: 27px; padding: 3px 8px; }
   .file-delete-action, .selection-delete-action { min-height: 27px; border-color: color-mix(in srgb, #c64040 55%, var(--border)); color: #a12a2a; padding: 3px 8px; }
   .selection-delete-action { min-height: 30px; padding: 5px 10px; }
+  .file-conflict-kind {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #a12a2a;
+    font-size: 11px;
+    font-weight: 600;
+  }
   .file-conflict-action { min-height: 27px; border-color: color-mix(in srgb, #c64040 55%, var(--border)); color: #a12a2a; padding: 3px 8px; }
+  .standalone-commit[data-theme="dark"] .file-conflict-kind { color: #ffaaa7; }
   .delete-path-list { display: grid; gap: 6px; max-height: 180px; overflow: auto; padding: 8px 10px; border: 1px solid var(--border); background: var(--panel-subtle); }
   .delete-path-list code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
   .diff-content { min-width: 0; min-height: 0; overflow: hidden; }

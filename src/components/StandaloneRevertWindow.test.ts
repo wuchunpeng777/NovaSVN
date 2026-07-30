@@ -115,6 +115,28 @@ describe("StandaloneRevertWindow", () => {
     });
   });
 
+  it("展示树冲突并允许纳入 Revert 选择", async () => {
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus([
+        makeFile("src/main.ts", "modified"),
+        // Tree conflicts often keep a normal item; backend now maps normal+tree to conflicted,
+        // but the UI must also accept conflict_kind even when status is still normal.
+        makeFile("src/tree.ts", "normal", {
+          abnormal: true,
+          conflict_kind: "tree:update",
+        }),
+      ]),
+    );
+    render(StandaloneRevertWindow, { props: { targetPath: "C:\\repo\\src" } });
+
+    const pane = await screen.findByLabelText("选择 Revert 项目");
+    expect(await within(pane).findByText("src/tree.ts")).toBeInTheDocument();
+    expect(within(pane).getByText("树冲突 (update)")).toBeInTheDocument();
+    expect(within(pane).getByText(/1 个冲突（含树冲突）/)).toBeInTheDocument();
+    expect(within(pane).getByRole("checkbox", { name: "src/tree.ts" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Revert 2 个项目" })).toBeEnabled();
+  });
+
   it("展示并 Revert 文件夹的 SVN 属性变更", async () => {
     scanWorkspaceStatusMock.mockResolvedValue(
       makeStatus([

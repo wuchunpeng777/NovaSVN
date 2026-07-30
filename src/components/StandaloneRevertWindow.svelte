@@ -9,6 +9,7 @@
     inspectUpdateTarget,
     scanWorkspaceStatus,
   } from "../lib/api";
+  import { conflictKindLabel, isConflictedFile } from "../lib/svn-conflict";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import type {
     ChangedFile,
@@ -57,9 +58,11 @@
 
   $: resolvedTheme =
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
-  $: revertableFiles = (status?.files ?? []).filter(
-    (file) => isRevertableFile(file) && isPathInTarget(file.path),
+  $: visibleFiles = (status?.files ?? []).filter(
+    (file) => isVisibleFile(file) && isPathInTarget(file.path),
   );
+  $: revertableFiles = visibleFiles.filter(isRevertableFile);
+  $: conflictFiles = visibleFiles.filter(isConflictedFile);
   $: selectedFiles = revertableFiles.filter((file) => selectedPaths.has(file.path));
   $: allSelected = revertableFiles.length > 0 && selectedFiles.length === revertableFiles.length;
   $: revertRunning = isTaskRunning(revertTask);
@@ -310,8 +313,19 @@
     return task?.status === "pending" || task?.status === "running";
   }
 
+  function isVisibleFile(file: ChangedFile) {
+    return isRevertableFile(file) || isConflictedFile(file);
+  }
+
   function isRevertableFile(file: ChangedFile) {
-    if (["unversioned", "external", "ignored", "obstructed"].includes(file.status)) {
+    if (["unversioned", "external", "ignored"].includes(file.status)) {
+      return false;
+    }
+    // Tree conflicts often keep a normal item status; still allow Revert to clear them.
+    if (isConflictedFile(file)) {
+      return true;
+    }
+    if (file.status === "obstructed") {
       return false;
     }
     return file.property_changed || !["normal", "none"].includes(file.status);
@@ -329,6 +343,10 @@
   }
 
   function statusLabel(file: ChangedFile) {
+    const conflictLabel = conflictKindLabel(file);
+    if (conflictLabel) {
+      return conflictLabel;
+    }
     const labels: Record<string, string> = {
       modified: "修改",
       added: "新增",
@@ -337,6 +355,7 @@
       property_modified: "属性修改",
       missing: "缺失",
       conflicted: "冲突",
+      obstructed: "受阻",
     };
     const textStatus = labels[file.status] ?? file.status;
     if (!file.property_changed) {
@@ -406,7 +425,11 @@
     <header>
       <div>
         <h2>本地修改</h2>
-        <p>{revertableFiles.length} 个可 Revert 项目</p>
+        <p>
+          {revertableFiles.length} 个可 Revert 项目{conflictFiles.length > 0
+            ? ` · ${conflictFiles.length} 个冲突（含树冲突）`
+            : ""}
+        </p>
       </div>
       <div class="selection-actions">
         <button type="button" on:click={selectAll} disabled={operationRunning || allSelected || revertableFiles.length === 0}>
@@ -416,21 +439,32 @@
       </div>
     </header>
     <div class="file-list">
-      {#each revertableFiles as file (file.path)}
-        <label class:running={pendingPaths.includes(file.path)}>
-          <input
-            type="checkbox"
-            aria-label={file.path}
-            checked={selectedPaths.has(file.path)}
-            disabled={operationRunning || scanning || initializing}
-            on:change={() => togglePath(file.path)}
-          />
-          <span class="file-status">{statusLabel(file)}</span>
+      {#each visibleFiles as file (file.path)}
+        <label
+          class:running={pendingPaths.includes(file.path)}
+          class:conflicted={isConflictedFile(file)}
+        >
+          {#if isRevertableFile(file)}
+            <input
+              type="checkbox"
+              aria-label={file.path}
+              checked={selectedPaths.has(file.path)}
+              disabled={operationRunning || scanning || initializing}
+              on:change={() => togglePath(file.path)}
+            />
+          {:else}
+            <span class="file-selection-placeholder" aria-hidden="true"></span>
+          {/if}
+          <span
+            class="file-status"
+            class:conflict={isConflictedFile(file)}
+            title={statusLabel(file)}
+          >{statusLabel(file)}</span>
           <span class="file-path" title={file.path}>{file.path}</span>
         </label>
       {:else}
         <div class="empty-files" role="status">
-          {initializing || scanning ? "正在扫描工作副本..." : "目标范围内没有可 Revert 的本地修改"}
+          {initializing || scanning ? "正在扫描工作副本..." : "目标范围内没有可 Revert 的本地修改或冲突"}
         </div>
       {/each}
     </div>
@@ -561,11 +595,16 @@
   .revert-files > header p { margin-top: 4px; color: var(--secondary); font-size: 12px; }
   .task-output > header span { color: var(--secondary); font-size: 11px; }
   .file-list, .output-lines { min-height: 0; overflow: auto; padding: 6px; }
-  .file-list label { display: grid; grid-template-columns: 18px 78px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); font-size: 12px; }
+  .file-list label { display: grid; grid-template-columns: 18px minmax(72px, auto) minmax(0, 1fr); align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); font-size: 12px; }
   .file-list label:hover { background: var(--panel-subtle); }
   .file-list label.running { background: color-mix(in srgb, #b93d3d 8%, var(--panel)); }
+  .file-list label.conflicted { background: color-mix(in srgb, #c64040 8%, var(--panel)); }
   .file-list input { width: 15px; height: 15px; accent-color: var(--accent); }
+  .file-selection-placeholder { width: 15px; height: 15px; }
   .file-status { color: var(--accent); font-weight: 600; }
+  .file-status.conflict { color: #a12a2a; }
+  .standalone-revert[data-theme="dark"] .file-status.conflict { color: #ffaaa7; }
+  .standalone-revert[data-theme="dark"] .file-list label.conflicted { background: color-mix(in srgb, #c64040 14%, var(--panel)); }
   .file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .empty-files, .output-lines > div { display: grid; min-height: 80px; color: var(--secondary); font-size: 12px; place-items: center; }
   .output-lines { padding: 8px 12px; }

@@ -3403,14 +3403,15 @@ fn parse_svn_status_xml(
             .as_deref()
             .map(|value| value != "none" && value != "normal")
             .unwrap_or(false);
-        let local_changed = local_status_has_change(&item) || property_changed;
+        let (lock_state, lock_owner, lock_comment) = parse_lock_info(entry, wc_status);
+        let conflict_kind = parse_conflict_kind(entry, wc_status, &item, props.as_deref());
+        let local_changed =
+            local_status_has_change(&item) || property_changed || conflict_kind.is_some();
         let remote_changed = remote_status
             .as_deref()
             .is_some_and(repository_status_has_update)
             || remote_property_changed;
         let change_scope = ChangeScope::from_changes(local_changed, remote_changed);
-        let (lock_state, lock_owner, lock_comment) = parse_lock_info(entry, wc_status);
-        let conflict_kind = parse_conflict_kind(entry, wc_status, &item, props.as_deref());
         if matches!(item.as_str(), "normal" | "none")
             && props.as_deref().unwrap_or("none") == "none"
             && !remote_changed
@@ -3425,10 +3426,21 @@ fn parse_svn_status_xml(
 
         let display_path = display_status_path(raw_path, working_copy_root);
         let target_path = status_target_path(raw_path, working_copy_root);
+        // Tree conflicts often keep item="normal"/"none" while carrying <tree-conflict>.
+        // Surface them as conflicted so commit/revert UIs and conflict counts include them.
+        let mut status = normalize_status(&item, wc_status);
+        if conflict_kind
+            .as_deref()
+            .is_some_and(|kind| kind == "tree" || kind.starts_with("tree:"))
+            && matches!(status.as_str(), "normal" | "none")
+        {
+            status = "conflicted".to_string();
+        }
+        let abnormal = is_abnormal_status(&status) || conflict_kind.is_some();
 
         files.push(ChangedFile {
             path: display_path,
-            status: normalize_status(&item, wc_status),
+            status,
             changelist,
             revision: wc_status.attribute("revision").map(ToString::to_string),
             property_status: props,
@@ -3436,7 +3448,7 @@ fn parse_svn_status_xml(
             remote_status,
             remote_property_status,
             change_scope,
-            abnormal: is_abnormal_status(&item),
+            abnormal,
             lock_state,
             lock_owner,
             lock_comment,
@@ -3487,7 +3499,16 @@ fn parse_svn_status_xml(
         deleted: count_status(&files, "deleted"),
         missing: count_status(&files, "missing"),
         unversioned: count_status(&files, "unversioned"),
-        conflicted: count_status(&files, "conflicted"),
+        conflicted: files
+            .iter()
+            .filter(|file| {
+                file.status == "conflicted"
+                    || file
+                        .conflict_kind
+                        .as_deref()
+                        .is_some_and(|kind| !kind.trim().is_empty())
+            })
+            .count(),
         obstructed: count_status(&files, "obstructed"),
         property_changed: files.iter().filter(|file| file.property_changed).count(),
         files: paged_files,
@@ -3523,6 +3544,7 @@ fn local_status_has_change(status: &str) -> bool {
             | "obstructed"
             | "incomplete"
             | "replaced"
+            | "renamed"
     )
 }
 
@@ -5970,6 +5992,9 @@ line two</property>
             status.files[1].conflict_kind.as_deref(),
             Some("tree:update")
         );
+        // Tree conflicts are surfaced as conflicted for commit/revert UIs.
+        assert_eq!(status.files[1].status, "conflicted");
+        assert!(status.files[1].abnormal);
         assert!(status.files[2].abnormal);
         let locked = status
             .files
