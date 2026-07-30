@@ -9,12 +9,15 @@
     X,
   } from "@lucide/svelte";
   import {
+    chooseExportDirectory,
+    createRepositoryExportTask,
     createRevertRevisionTask,
     getPathSvnLog,
     getRepositoryFileLog,
     getRevisionFileContentDiff,
     getTask,
     launchLogWindow,
+    openLocalPathLocation,
   } from "../lib/api";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import { shouldShowTextDiffViewer } from "../lib/file-content-diff";
@@ -26,6 +29,7 @@
     repositoryPathUrlAtRevision,
     resolveWorkingCopyLogRevision,
     revisionBefore,
+    suggestExportLocalPath,
   } from "../lib/svn-log";
   import type {
     CommandError,
@@ -92,6 +96,12 @@
   let revertNotice: string | null = null;
   let revertError: CommandError | null = null;
   let revertPollTimer: number | null = null;
+  let exportTask: Task | null = null;
+  let exportTargetRevision: string | null = null;
+  let exportLocalPath: string | null = null;
+  let exportNotice: string | null = null;
+  let exportError: CommandError | null = null;
+  let exportPollTimer: number | null = null;
   const terminalTaskStatuses: TaskStatus[] = [
     "success",
     "failed",
@@ -139,6 +149,8 @@
   $: effectiveRevision = resolveWorkingCopyLogRevision(log?.entries ?? [], workingCopyRevision);
   $: revertRunning = !!revertTask && !terminalTaskStatuses.includes(revertTask.status);
   $: revertRevisionLabel = revisionSelectionLabel(revertTargetRevisions);
+  $: exportRunning = !!exportTask && !terminalTaskStatuses.includes(exportTask.status);
+  $: logExportUrl = log?.repository_url?.trim() || "";
 
   onMount(() => {
     if (typeof window.matchMedia === "function") {
@@ -157,6 +169,7 @@
     requestGeneration += 1;
     diffRequestGeneration += 1;
     clearRevertPollTimer();
+    clearExportPollTimer();
     stopDiffPaneResize();
     themeMediaQuery?.removeEventListener("change", handleThemeChange);
     window.removeEventListener("click", closeFileContextMenu);
@@ -429,6 +442,117 @@
     return revertRevisions([revision], wholeWorkspace);
   }
 
+  async function exportRevision(entry: SvnLogEntry) {
+    const url = logExportUrl;
+    const revision = entry.revision.trim();
+    if (!url || !revision || exportRunning || loading) {
+      return;
+    }
+
+    exportNotice = null;
+    exportError = null;
+    const parentDirectory = await chooseExportDirectory();
+    if (!parentDirectory) {
+      return;
+    }
+
+    const localPath = suggestExportLocalPath(url, parentDirectory, revision);
+    if (!localPath) {
+      exportError = {
+        code: "LOG_EXPORT_PATH_INVALID",
+        message: "无法生成 Export 本地路径",
+        detail: "请重新选择父目录。",
+        recoverable: true,
+      };
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `确定 Export r${revision} 吗？\n\n源：${url}\n目标：${localPath}\n\n导出结果不含 .svn 元数据。`,
+      )
+    ) {
+      return;
+    }
+
+    clearExportPollTimer();
+    exportTargetRevision = revision;
+    exportLocalPath = localPath;
+    try {
+      handleExportTask(
+        await createRepositoryExportTask({
+          url,
+          local_path: localPath,
+          revision,
+          svn_executable: svnExecutable?.trim() || undefined,
+        }),
+      );
+    } catch (caught) {
+      exportTask = null;
+      exportError = normalizeCommandError(caught, `无法 Export r${revision}`);
+    }
+  }
+
+  function handleExportTask(task: Task) {
+    exportTask = task;
+    if (!terminalTaskStatuses.includes(task.status)) {
+      scheduleExportPoll();
+      return;
+    }
+
+    clearExportPollTimer();
+    if (task.status === "success") {
+      const localPath =
+        task.result?.repository_export?.local_path?.trim() || exportLocalPath || "";
+      exportNotice = localPath
+        ? `已 Export r${exportTargetRevision || "-"} 到 ${localPath}`
+        : `已 Export r${exportTargetRevision || "-"}`;
+      exportError = null;
+      if (localPath) {
+        void openLocalPathLocation({ path: localPath }).catch((caught) => {
+          exportError = normalizeCommandError(
+            caught,
+            "Export 成功，但无法打开本地路径位置",
+          );
+        });
+      }
+      return;
+    }
+    exportNotice = null;
+    exportError = {
+      code: "LOG_EXPORT_FAILED",
+      message: `Export r${exportTargetRevision || "-"} 失败`,
+      detail: task.error ?? `任务状态：${task.status}`,
+      recoverable: true,
+    };
+  }
+
+  function scheduleExportPoll() {
+    clearExportPollTimer();
+    exportPollTimer = window.setTimeout(() => void pollExportTask(), 400);
+  }
+
+  async function pollExportTask() {
+    const taskId = exportTask?.task_id;
+    if (!taskId) {
+      return;
+    }
+    try {
+      handleExportTask(await getTask(taskId));
+    } catch (caught) {
+      clearExportPollTimer();
+      exportTask = null;
+      exportError = normalizeCommandError(caught, "无法读取 Export 任务状态");
+    }
+  }
+
+  function clearExportPollTimer() {
+    if (exportPollTimer !== null) {
+      window.clearTimeout(exportPollTimer);
+      exportPollTimer = null;
+    }
+  }
+
   function revisionSelectionLabel(revisions: string[]) {
     return revisions.map((revision) => `r${revision}`).join("、");
   }
@@ -623,7 +747,7 @@
       clearRevisionDiff();
     } else if (selectedMergeRevisions.length > 0) {
       clearMergeSelection();
-    } else if (!revertRunning) {
+    } else if (!revertRunning && !exportRunning) {
       void closeLogWindow();
     } else {
       return;
@@ -827,7 +951,7 @@
   </section>
 
   <div class="log-error">
-    <ErrorNotice error={error ?? launchWindowError ?? revertError} />
+    <ErrorNotice error={error ?? launchWindowError ?? revertError ?? exportError} />
     {#if revertRunning}
       <p class="revert-status" role="status">
         {revertWholeWorkspace
@@ -838,6 +962,13 @@
       </p>
     {:else if revertNotice}
       <p class="revert-status success" role="status">{revertNotice}</p>
+    {/if}
+    {#if exportRunning}
+      <p class="revert-status" role="status">
+        正在 Export r{exportTargetRevision || "-"}...
+      </p>
+    {:else if exportNotice}
+      <p class="revert-status success" role="status">{exportNotice}</p>
     {/if}
   </div>
 
@@ -863,7 +994,7 @@
       {effectiveRevision}
       theme={resolvedTheme}
       {formatDate}
-      revertDisabled={() => !log?.working_copy_root || loading || revertRunning}
+      revertDisabled={() => !log?.working_copy_root || loading || revertRunning || exportRunning}
       revertTitle={(entry) => log?.working_copy_root
         ? `撤销提交 r${entry.revision}`
         : "仅本地工作副本日志支持撤销提交"}
@@ -872,12 +1003,17 @@
       onOpenDiff={openChangedPathDiff}
       onOpenContextMenu={openChangedPathContextMenu}
       onRevert={(entry) => revertToRevision(entry.revision)}
-      workspaceRevertDisabled={() => !log?.working_copy_root || loading || revertRunning}
+      workspaceRevertDisabled={() => !log?.working_copy_root || loading || revertRunning || exportRunning}
       workspaceRevertLabel={(entry) => `回退当前日志目标到 r${entry.revision}`}
       workspaceRevertTitle={(entry) => log?.working_copy_root
         ? `回退 ${log.target} 到 r${entry.revision}`
         : "仅本地工作副本日志支持回退目标"}
       onRevertWorkspace={(entry) => revertToRevision(entry.revision, true)}
+      exportDisabled={() => !logExportUrl || loading || exportRunning || revertRunning}
+      exportTitle={(entry) => logExportUrl
+        ? `Export r${entry.revision} 到本地（不含 .svn）`
+        : "当前日志没有可用的仓库 URL"}
+      onExport={exportRevision}
     />
   {#if selectedDiff || selectedMergeRevisions.length > 0}
     <div

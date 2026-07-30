@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronDown, ChevronUp, FolderClock, Undo2 } from "@lucide/svelte";
+  import { ChevronDown, ChevronUp, Download, FolderClock, Undo2 } from "@lucide/svelte";
   import { summarizeSvnChangeActions } from "../lib/svn-log";
   import type { SvnChangedPath, SvnLogEntry } from "../types/api";
 
@@ -27,6 +27,9 @@
     `回退工作区到 r${entry.revision}`;
   export let workspaceRevertTitle: (entry: SvnLogEntry) => string = (entry) =>
     `回退工作区到 r${entry.revision}`;
+  export let exportDisabled: (entry: SvnLogEntry) => boolean = () => true;
+  export let exportTitle: (entry: SvnLogEntry) => string = (entry) =>
+    `Export r${entry.revision}`;
   export let onTogglePaths: (revision: string) => void = () => {};
   export let onToggleMerge: (event: MouseEvent, revision: string) => void = () => {};
   export let onOpenDiff: (entry: SvnLogEntry, path: SvnChangedPath) => void = () => {};
@@ -37,6 +40,7 @@
   ) => void = () => {};
   export let onRevert: (entry: SvnLogEntry) => void = () => {};
   export let onRevertWorkspace: (entry: SvnLogEntry) => void = () => {};
+  export let onExport: (entry: SvnLogEntry) => void = () => {};
 
   $: normalizedBaselineRevision = normalizeRevision(currentRevision);
   $: normalizedEffectiveRevision = normalizeRevision(effectiveRevision ?? currentRevision);
@@ -165,6 +169,17 @@
                 {/if}
               </button>
             {/if}
+            <button
+              type="button"
+              class="svn-log-revert svn-log-export"
+              aria-label={`Export r${entry.revision}`}
+              title={fastRevertTooltips ? undefined : exportTitle(entry)}
+              data-tooltip={fastRevertTooltips ? exportTitle(entry) : undefined}
+              disabled={exportDisabled(entry)}
+              on:click={() => onExport(entry)}
+            >
+              <Download size={15} strokeWidth={2} aria-hidden="true" />
+            </button>
             <button
               type="button"
               class="svn-log-revert"
@@ -582,6 +597,18 @@
     opacity: 1;
     transform: translateY(0);
     transition-delay: 100ms;
+  }
+
+  .svn-log-export {
+    border-color: #5a8fbf;
+    background: #e8f2fb;
+    color: #1f5f8f;
+  }
+
+  .svn-log-list[data-theme="dark"] .svn-log-export {
+    border-color: #3d6a8f;
+    background: #1a3348;
+    color: #8ec4ef;
   }
 
   .svn-log-revert-workspace {

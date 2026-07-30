@@ -35,6 +35,7 @@
 - Timeline 可勾选任意两个已加载的 Revision，按旧到新准备比较范围，并通过真实 Revision Diff 任务执行比较。
 - Timeline 可将当前选中的版本化文件与任意 Revision 比较，后端把真实 `svn diff` 限定到该工作副本文件。
 - Timeline 可将干净且已 Update 到 HEAD 的工作副本恢复到指定旧 Revision，通过反向 Merge 生成可审查、可提交的本地改动。
+- Timeline 与独立 Log 窗口可将指定 Revision 的日志目标 Export 到本地空路径，导出结果不含 `.svn`，成功后在文件管理器中显示。
 - Revision Diff 可导出完整 Patch；预览截断时显示完整文件名和路径，完整文件写入失败会使任务失败。
 - Apply Patch 显示成功偏移的 hunk 数；命令输出预览限制为 256 KiB，任务日志限制为 64 KiB/500 行并明确标记截断。
 - Merge 支持单源 URL、revision 范围、dry-run 结构化预览，以及 Record only、Ignore ancestry 和 Force 常用参数；Log 可将选中 Revision 直接合并到包含本地改动的目标，并在执行后审阅目标 status 与逐文件 diff。

@@ -5,8 +5,31 @@ import {
   repositoryPathLogTarget,
   resolveWorkingCopyLogRevision,
   repositoryPathUrlAtRevision,
+  suggestExportLocalPath,
   summarizeSvnChangeActions,
 } from "./svn-log";
+
+describe("suggestExportLocalPath", () => {
+  it("builds a revision-scoped local path under the selected parent", () => {
+    expect(
+      suggestExportLocalPath(
+        "https://svn.example.test/repo/trunk/src/main.ts",
+        "C:\\exports",
+        "42",
+      ),
+    ).toBe("C:\\exports\\main.ts-r42");
+    expect(
+      suggestExportLocalPath("https://svn.example.test/repo/trunk/", "/tmp/exports", "r10"),
+    ).toBe("/tmp/exports/trunk-r10");
+  });
+
+  it("falls back to a safe leaf name without revision when needed", () => {
+    expect(suggestExportLocalPath("https://svn.example.test/repo/", "C:\\exports")).toBe(
+      "C:\\exports\\repo",
+    );
+    expect(suggestExportLocalPath("", "C:\\exports", "3")).toBe("C:\\exports\\export-r3");
+  });
+});
 
 describe("resolveWorkingCopyLogRevision", () => {
   it("maps a working-copy baseline to the newest loaded path revision", () => {

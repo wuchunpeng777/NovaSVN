@@ -97,6 +97,34 @@ export function summarizeSvnChangeActions(
     .filter((summary) => summary.count > 0);
 }
 
+/** Suggest a local export path under parentDirectory based on the repository URL leaf name. */
+export function suggestExportLocalPath(
+  repositoryUrl: string,
+  parentDirectory: string,
+  revision?: string | null,
+) {
+  const parent = parentDirectory.trim().replace(/[\\/]+$/, "");
+  if (!parent) {
+    return "";
+  }
+
+  const pathSegments = repositoryUrl
+    .trim()
+    .replace(/[?#].*$/, "")
+    .replace(/\/+$/, "")
+    .split("/")
+    .filter(Boolean);
+  const leaf = pathSegments.at(-1) ?? "export";
+  const safeLeaf = leaf.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "export";
+  const normalizedRevision = revision?.trim().replace(/^r/i, "") ?? "";
+  const directoryName =
+    normalizedRevision && /^\d+$/.test(normalizedRevision)
+      ? `${safeLeaf}-r${normalizedRevision}`
+      : safeLeaf;
+  const separator = parent.includes("\\") && !parent.includes("/") ? "\\" : "/";
+  return `${parent}${separator}${directoryName}`;
+}
+
 export function repositoryPathUrl(
   repositoryRoot: string | null | undefined,
   repositoryPath: string,

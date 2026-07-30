@@ -19,6 +19,7 @@
   import MainWorkspace from "./components/workbench/MainWorkspace.svelte";
   import {
     callBackend,
+    chooseExportDirectory,
     choosePatchFile,
     clearSvnCertificateTrust,
     configureSvnAuthentication,
@@ -33,6 +34,7 @@
     resolveTextConflict,
     setWorkspaceChangelist,
   } from "./lib/api";
+  import { suggestExportLocalPath } from "./lib/svn-log";
   import {
     consumePendingSvnOperationCompletion,
     createSvnOperationCreationCoordinator,
@@ -1250,6 +1252,61 @@
     }
 
     workspaceStore.markRepositoryExportTask(task.task_id, form.localPath);
+  }
+
+  async function exportLogRevision(revision: string) {
+    const url = $workspaceStore.svnLog?.repository_url?.trim() ?? "";
+    const selectedRevision = revision.trim();
+    if (!url) {
+      workspaceStore.failRepositoryExportTask("当前日志没有可用的仓库 URL，无法 Export");
+      return;
+    }
+    if (!selectedRevision) {
+      workspaceStore.failRepositoryExportTask("请选择要 Export 的 Revision");
+      return;
+    }
+    if ($workspaceStore.pendingRepositoryExportTaskId !== null) {
+      return;
+    }
+
+    const parentDirectory = await chooseExportDirectory();
+    if (!parentDirectory) {
+      return;
+    }
+
+    const localPath = suggestExportLocalPath(url, parentDirectory, selectedRevision);
+    if (!localPath) {
+      workspaceStore.failRepositoryExportTask("无法生成 Export 本地路径");
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `确定 Export r${selectedRevision} 吗？\n\n源：${url}\n目标：${localPath}\n\n导出结果不含 .svn 元数据。`,
+      )
+    ) {
+      return;
+    }
+
+    workspaceStore.setRepositoryExportForm("url", url);
+    workspaceStore.setRepositoryExportForm("localPath", localPath);
+    workspaceStore.setRepositoryExportForm("revision", selectedRevision);
+
+    const task = await taskStore.createRepositoryExport({
+      url,
+      localPath,
+      revision: selectedRevision,
+      svnExecutable: currentSvnExecutable(),
+    });
+
+    if (!task) {
+      workspaceStore.failRepositoryExportTask(
+        $taskStore.error?.message ?? "仓库 Export 任务创建失败",
+      );
+      return;
+    }
+
+    workspaceStore.markRepositoryExportTask(task.task_id, localPath);
   }
 
   async function startRepositoryEntryDrag(result: RepositoryExportResult) {
@@ -3292,6 +3349,7 @@
   onRevertToRevision={revertWorkspaceToRevision}
   onRevertWorkspaceToRevision={revertWholeWorkspaceToRevision}
   onRevertSelectedRevisions={revertSelectedWorkspaceRevisions}
+  onExportRevision={exportLogRevision}
   onCommitMessageInput={workspaceStore.setCommitMessage}
   onCommitTemplateInput={workspaceStore.setCommitTemplate}
   onUseCommitHistoryMessage={workspaceStore.useCommitHistoryMessage}

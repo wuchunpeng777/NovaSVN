@@ -40,7 +40,8 @@ describe("SvnLogRevisionList", () => {
     expect(time).toHaveTextContent("2026/07/22 18:30");
   });
 
-  it("highlights the local revision and visually distinguishes both revert actions", async () => {
+  it("highlights the local revision and visually distinguishes export and revert actions", async () => {
+    const onExport = vi.fn();
     const onRevert = vi.fn();
     const onRevertWorkspace = vi.fn();
     render(SvnLogRevisionList, {
@@ -58,8 +59,10 @@ describe("SvnLogRevisionList", () => {
         currentRevision: "r100M",
         effectiveRevision: "42",
         fastRevertTooltips: true,
+        exportDisabled: () => false,
         revertDisabled: () => false,
         workspaceRevertDisabled: () => false,
+        onExport,
         onRevert,
         onRevertWorkspace,
       },
@@ -78,18 +81,25 @@ describe("SvnLogRevisionList", () => {
     expect(screen.getByLabelText("当前路径版本 r42")).toHaveTextContent(
       "当前路径版本",
     );
+    const exportButton = screen.getByRole("button", { name: "Export r42" });
     const revert = screen.getByRole("button", { name: "撤销提交 r42" });
     const workspaceRevert = screen.getByRole("button", { name: "回退工作区到 r42" });
+    expect(exportButton.querySelector(".lucide-download")).toBeInTheDocument();
+    expect(exportButton).toHaveClass("svn-log-export");
+    expect(exportButton).toHaveAttribute("data-tooltip", "Export r42");
     expect(revert.querySelector(".lucide-undo-2")).toBeInTheDocument();
     expect(workspaceRevert.querySelector(".lucide-folder-clock")).toBeInTheDocument();
     expect(workspaceRevert).toHaveClass("svn-log-revert-workspace");
     expect(revert).toHaveAttribute("data-tooltip", "撤销提交 r42");
     expect(workspaceRevert).toHaveAttribute("data-tooltip", "回退工作区到 r42");
+    expect(exportButton).not.toHaveAttribute("title");
     expect(revert).not.toHaveAttribute("title");
     expect(workspaceRevert).not.toHaveAttribute("title");
 
+    await fireEvent.click(exportButton);
     await fireEvent.click(revert);
     await fireEvent.click(workspaceRevert);
+    expect(onExport).toHaveBeenCalledOnce();
     expect(onRevert).toHaveBeenCalledOnce();
     expect(onRevertWorkspace).toHaveBeenCalledOnce();
   });

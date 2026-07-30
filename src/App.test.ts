@@ -19,6 +19,7 @@ vi.mock("./lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/api")>();
   return {
     ...actual,
+    chooseExportDirectory: vi.fn(),
     chooseWorkspaceDirectory: vi.fn(),
     clearSvnCertificateTrust: vi.fn(),
     configureSvnAuthentication: vi.fn(),
@@ -64,6 +65,7 @@ vi.mock("./lib/api", async (importOriginal) => {
 import { get } from "svelte/store";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import {
+  chooseExportDirectory,
   chooseWorkspaceDirectory,
   clearSvnCertificateTrust,
   configureSvnAuthentication,
@@ -124,6 +126,7 @@ import type {
 import App from "./App.svelte";
 
 const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
+const chooseExportDirectoryMock = vi.mocked(chooseExportDirectory);
 const chooseWorkspaceDirectoryMock = vi.mocked(chooseWorkspaceDirectory);
 const clearSvnCertificateTrustMock = vi.mocked(clearSvnCertificateTrust);
 const configureSvnAuthenticationMock = vi.mocked(configureSvnAuthentication);
@@ -165,6 +168,7 @@ const setWorkspaceChangelistMock = vi.mocked(setWorkspaceChangelist);
 const startDragMock = vi.mocked(startDrag);
 
 beforeEach(async () => {
+  chooseExportDirectoryMock.mockReset();
   chooseWorkspaceDirectoryMock.mockReset();
   clearSvnCertificateTrustMock.mockReset();
   configureSvnAuthenticationMock.mockReset();
@@ -836,6 +840,50 @@ Certificate information:
       pendingSvnOperationTaskId: "revert-revision-10",
       pendingSvnOperationKind: "revert_to_revision",
       pendingSvnOperationWorkingCopyRoot: "C:/repo/wc",
+    });
+  });
+
+  it("从 Timeline Export 指定 Revision 到本地", async () => {
+    getSvnLogMock.mockResolvedValue({
+      target: "C:/repo/wc",
+      working_copy_root: "C:/repo/wc",
+      repository_url: "https://example.com/svn/trunk",
+      entries: [
+        {
+          revision: "10",
+          author: "alice",
+          date: "2026-07-11T10:00:00Z",
+          message: "export target",
+          changed_paths: [],
+        },
+      ],
+      has_more: false,
+      next_start_revision: null,
+    });
+    await workspaceStore.refreshSvnLog(undefined);
+    setCurrentView("history");
+    chooseExportDirectoryMock.mockResolvedValue("C:/exports");
+    createRepositoryExportTaskMock.mockResolvedValue(
+      makeTask({ task_id: "log-export-10", status: "pending" }),
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Export r10" }));
+
+    expect(chooseExportDirectoryMock).toHaveBeenCalledOnce();
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Export r10"));
+    await waitFor(() => {
+      expect(createRepositoryExportTaskMock).toHaveBeenCalledWith({
+        url: "https://example.com/svn/trunk",
+        local_path: "C:/exports/trunk-r10",
+        revision: "10",
+        svn_executable: undefined,
+      });
+      expect(get(workspaceStore).pendingRepositoryExportTaskId).toBe("log-export-10");
+      expect(get(workspaceStore).pendingRepositoryExportLocalPath).toBe(
+        "C:/exports/trunk-r10",
+      );
     });
   });
 

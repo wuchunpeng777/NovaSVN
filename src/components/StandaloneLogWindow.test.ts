@@ -11,8 +11,10 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 vi.mock("../lib/api", () => ({
   cancelTask: vi.fn(),
+  chooseExportDirectory: vi.fn(),
   chooseWorkspaceDirectory: vi.fn(),
   createMergeTask: vi.fn(),
+  createRepositoryExportTask: vi.fn(),
   createRevertRevisionTask: vi.fn(),
   getPathSvnLog: vi.fn(),
   getRepositoryFileLog: vi.fn(),
@@ -20,6 +22,7 @@ vi.mock("../lib/api", () => ({
   getTask: vi.fn(),
   inspectUpdateTarget: vi.fn(),
   launchLogWindow: vi.fn(),
+  openLocalPathLocation: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
 }));
 
@@ -34,17 +37,25 @@ vi.mock("./workbench/MonacoDiffViewer.svelte", () => ({
 }));
 
 import {
+  chooseExportDirectory,
+  createRepositoryExportTask,
   createRevertRevisionTask,
   getPathSvnLog,
   getRepositoryFileLog,
   getRevisionFileContentDiff,
+  getTask,
   launchLogWindow,
+  openLocalPathLocation,
 } from "../lib/api";
 import type { SvnLog, Task } from "../types/api";
 import StandaloneLogWindow from "./StandaloneLogWindow.svelte";
 
 const getPathSvnLogMock = vi.mocked(getPathSvnLog);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
+const createRepositoryExportTaskMock = vi.mocked(createRepositoryExportTask);
+const chooseExportDirectoryMock = vi.mocked(chooseExportDirectory);
+const getTaskMock = vi.mocked(getTask);
+const openLocalPathLocationMock = vi.mocked(openLocalPathLocation);
 const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const getRevisionFileContentDiffMock = vi.mocked(getRevisionFileContentDiff);
 const launchLogWindowMock = vi.mocked(launchLogWindow);
@@ -55,6 +66,10 @@ beforeEach(() => {
   closeWindowMock.mockResolvedValue(undefined);
   getPathSvnLogMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
+  createRepositoryExportTaskMock.mockReset();
+  chooseExportDirectoryMock.mockReset();
+  getTaskMock.mockReset();
+  openLocalPathLocationMock.mockReset();
   getRepositoryFileLogMock.mockReset();
   getRevisionFileContentDiffMock.mockReset();
   launchLogWindowMock.mockReset();
@@ -378,6 +393,63 @@ describe("StandaloneLogWindow", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "已撤销提交 r20，本地修改已生成",
     );
+    confirmMock.mockRestore();
+  });
+
+  it("从独立 Log Export 指定 Revision 到本地", async () => {
+    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
+    getPathSvnLogMock.mockResolvedValue(makeLog());
+    chooseExportDirectoryMock.mockResolvedValue("C:\\exports");
+    createRepositoryExportTaskMock.mockResolvedValue(
+      makeTask({
+        task_id: "export-revision-1",
+        status: "success",
+        title: "Export main.ts",
+        result: {
+          repository_list: null,
+          repository_file: null,
+          repository_export: {
+            url: "https://svn.example.test/repo/trunk/src/main.ts",
+            revision: "20",
+            local_path: "C:\\exports\\main.ts-r20",
+            file_name: "main.ts-r20",
+          },
+          revision_diff: null,
+          merge_result: null,
+          apply_patch_result: null,
+        },
+      }),
+    );
+    openLocalPathLocationMock.mockResolvedValue({
+      target_path: "C:\\exports\\main.ts-r20",
+    });
+
+    render(StandaloneLogWindow, {
+      props: {
+        targetPath: "C:\\repo\\src\\main.ts",
+        svnExecutable: "C:\\Tools\\svn.exe",
+      },
+    });
+    await screen.findByText("Add log window");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Export r20" }));
+
+    expect(chooseExportDirectoryMock).toHaveBeenCalledOnce();
+    expect(createRepositoryExportTaskMock).toHaveBeenCalledWith({
+      url: "https://svn.example.test/repo/trunk/src/main.ts",
+      local_path: "C:\\exports\\main.ts-r20",
+      revision: "20",
+      svn_executable: "C:\\Tools\\svn.exe",
+    });
+    expect(confirmMock).toHaveBeenCalledOnce();
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "已 Export r20 到 C:\\exports\\main.ts-r20",
+    );
+    await waitFor(() => {
+      expect(openLocalPathLocationMock).toHaveBeenCalledWith({
+        path: "C:\\exports\\main.ts-r20",
+      });
+    });
     confirmMock.mockRestore();
   });
 

@@ -550,6 +550,7 @@
   export let onRevertWorkspaceToRevision: (revision: string) => void = () => {};
   export let onRevertSelectedRevisions: (revisions: string[]) => Promise<boolean> = async () =>
     false;
+  export let onExportRevision: (revision: string) => void = () => {};
 
   export let onCommitMessageInput: (value: string) => void = () => {};
   export let onCommitTemplateInput: (value: string) => void = () => {};
@@ -1250,6 +1251,14 @@
 
   function revertTimelineEntry(entry: SvnLogEntry) {
     onRevertToRevision(entry.revision);
+  }
+
+  function exportTimelineEntry(entry: SvnLogEntry) {
+    onExportRevision(entry.revision);
+  }
+
+  function timelineExportDisabled() {
+    return !svnLog?.repository_url?.trim() || toolbarLocked || repositoryExportRunning;
   }
 
   function selectInspectorTab(tab: InspectorTab, focus = false) {
@@ -3595,11 +3604,16 @@
               workspace
                 ? `${svnLogFileOnly ? "回退当前文件" : "回退整个工作区"}到 r${entry.revision}`
                 : "请先打开 SVN 工作副本"}
+            exportDisabled={timelineExportDisabled}
+            exportTitle={(entry) => svnLog?.repository_url?.trim()
+              ? `Export r${entry.revision} 到本地（不含 .svn）`
+              : "当前日志没有可用的仓库 URL"}
             onTogglePaths={toggleTimelineEntryPaths}
             onToggleMerge={toggleTimelineMerge}
             onOpenDiff={openTimelineEntryDiff}
             onRevert={revertTimelineEntry}
             onRevertWorkspace={(entry) => onRevertWorkspaceToRevision(entry.revision)}
+            onExport={exportTimelineEntry}
           />
 
           {#if selectedRevisionFileDiff || selectedTimelineMergeRevisions.length > 0}
