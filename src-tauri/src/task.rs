@@ -2688,6 +2688,84 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
     );
 
     let root = PathBuf::from(&payload.working_copy_root);
+
+    // Auto-add unversioned selections so commit can include new files (Tortoise-style).
+    match collect_unversioned_commit_targets(
+        &payload.svn_executable,
+        &root,
+        &payload.files,
+    ) {
+        Ok(unversioned) if !unversioned.is_empty() => {
+            append_task_log(
+                state,
+                task_id,
+                &format!(
+                    "自动 Add {} 个未版本控制文件：{}",
+                    unversioned.len(),
+                    unversioned.join(", ")
+                ),
+            );
+            for relative_path in &unversioned {
+                if let Err(error) =
+                    validate_add_target(&payload.svn_executable, &root, relative_path)
+                {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "提交前自动 Add 安全校验失败",
+                        Some(nova_error_text(&error)),
+                    );
+                    return;
+                }
+            }
+            let mut add_command = svn::command(&payload.svn_executable);
+            add_command.arg("add").arg("--parents").arg("--");
+            for relative_path in &unversioned {
+                add_command.arg(root.join(relative_path));
+            }
+            add_command.current_dir(&root);
+            match run_task_command(state, task_id, &mut add_command) {
+                Ok(output) if output.status.success() => {
+                    append_command_output(state, task_id, &output);
+                    append_task_log(state, task_id, "自动 Add 完成");
+                }
+                Ok(output) => {
+                    append_command_output(state, task_id, &output);
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "提交前自动 Add 失败",
+                        Some(command_error_detail(&payload.svn_executable, &output)),
+                    );
+                    return;
+                }
+                Err(error) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "提交前自动 Add 启动失败",
+                        Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+                    );
+                    return;
+                }
+            }
+        }
+        Ok(_) => {}
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "无法检查提交目标版本状态",
+                Some(error),
+            );
+            return;
+        }
+    }
+
     let targets: Vec<PathBuf> = payload.files.iter().map(|file| root.join(file)).collect();
     let mut command = svn::command(&payload.svn_executable);
     command.arg("commit");
@@ -2727,6 +2805,87 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
             );
         }
     }
+}
+
+/// Returns relative paths among `files` that are currently unversioned (or untracked).
+fn collect_unversioned_commit_targets(
+    executable: &str,
+    root: &Path,
+    files: &[String],
+) -> Result<Vec<String>, String> {
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut command = svn::command(executable);
+    command.args(["status", "--xml", "--depth", "empty", "--"]);
+    for file in files {
+        command.arg(root.join(file));
+    }
+    command.current_dir(root);
+
+    let output = command.output().map_err(|error| {
+        format!(
+            "执行 `{executable} status --xml` 检查提交目标失败：{error}"
+        )
+    })?;
+    if !output.status.success() {
+        return Err(command_error_detail(executable, &output));
+    }
+
+    let xml = String::from_utf8_lossy(&output.stdout);
+    let document = Document::parse(xml.as_ref()).map_err(|error| {
+        format!("解析提交目标 status XML 失败：{error}")
+    })?;
+
+    let requested: std::collections::HashSet<String> = files
+        .iter()
+        .map(|file| normalize_status_path(file))
+        .collect();
+    let mut unversioned = Vec::new();
+    for entry in document.descendants().filter(|node| node.has_tag_name("entry")) {
+        let path = entry.attribute("path").unwrap_or("").trim();
+        if path.is_empty() {
+            continue;
+        }
+        let normalized = normalize_status_path(path);
+        if !requested.contains(&normalized) {
+            // Also accept when svn reports path relative to root with different separators.
+            let matched = requested.iter().any(|candidate| {
+                candidate == &normalized
+                    || candidate.ends_with(&format!("/{normalized}"))
+                    || normalized.ends_with(&format!("/{candidate}"))
+            });
+            if !matched {
+                continue;
+            }
+        }
+        let item = entry
+            .descendants()
+            .find(|node| node.has_tag_name("wc-status"))
+            .and_then(|node| node.attribute("item"))
+            .unwrap_or("");
+        if item == "unversioned" || item == "untracked" {
+            // Prefer the originally requested relative path when possible.
+            let original = files
+                .iter()
+                .find(|file| normalize_status_path(file) == normalized)
+                .cloned()
+                .unwrap_or_else(|| normalized.replace('\\', "/"));
+            if !unversioned.iter().any(|existing: &String| existing == &original) {
+                unversioned.push(original);
+            }
+        }
+    }
+    Ok(unversioned)
+}
+
+fn normalize_status_path(path: &str) -> String {
+    path.trim()
+        .trim_start_matches("./")
+        .replace('\\', "/")
+        .trim_matches('/')
+        .to_string()
 }
 
 fn run_svn_operation_task(

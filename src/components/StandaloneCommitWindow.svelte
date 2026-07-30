@@ -70,14 +70,17 @@
   let revertTask: Task | null = null;
   let addingPath: string | null = null;
   let addAction: "add" | "unadd" | null = null;
-  let deletingPath: string | null = null;
+  let deletingPaths: string[] = [];
   let revertingPaths: string[] = [];
   let deleteNotice: string | null = null;
   let revertNotice: string | null = null;
   let addNotice: string | null = null;
-  let deleteCandidate: ChangedFile | null = null;
+  let deleteCandidateFiles: ChangedFile[] = [];
+  let deleteCandidateIsBatch = false;
   let revertCandidatePaths: string[] = [];
   let revertCandidateIsBatch = false;
+  /** Remaining unversioned/versioned paths for sequential multi-delete after the current task. */
+  let pendingDeleteQueue: ChangedFile[] = [];
   let changelistRunning = false;
   let changelistNotice: string | null = null;
   let fileContextMenu: { file: ChangedFile; x: number; y: number } | null = null;
@@ -85,6 +88,8 @@
   let deleteDialogElement: HTMLDivElement | null = null;
   let revertDialogElement: HTMLDivElement | null = null;
   let selectedPaths = new Set<string>();
+  /** Anchor path for Shift+click range selection in the commit file list. */
+  let selectionAnchorPath: string | null = null;
   let activeFilePath: string | null = null;
   let selectedFileDiff: FileDiff | null = null;
   let selectedFileContentDiff: FileContentDiff | null = null;
@@ -130,22 +135,25 @@
     (file) => isCommittable(file) && isPathInCommitTarget(file.path),
   );
   $: unversionedFiles = visibleFiles.filter((file) => file.status === "unversioned");
+  $: selectableFiles = visibleFiles.filter(isSelectable);
   $: conflictFiles = visibleFiles.filter(isConflicted);
   $: fileGroups = groupFilesByChangelist(visibleFiles);
   $: selectedPropertyContentDiff = buildPropertyContentDiff(selectedFileDiff);
-  $: selectedCount = committableFiles.filter((file) => selectedPaths.has(file.path)).length;
-  $: selectedRevertableFiles = committableFiles.filter(
-    (file) => selectedPaths.has(file.path) && isRevertableFile(file),
+  $: selectedSelectableFiles = selectableFiles.filter((file) => selectedPaths.has(file.path));
+  $: selectedCount = selectedSelectableFiles.length;
+  $: selectedUnversionedFiles = selectedSelectableFiles.filter(
+    (file) => file.status === "unversioned",
   );
-  $: selectedChangelistFiles = committableFiles.filter(
-    (file) => selectedPaths.has(file.path) && canUseChangelist(file),
-  );
+  $: selectedDeletableFiles = selectedSelectableFiles.filter(isDeletableFile);
+  $: selectedRevertableFiles = selectedSelectableFiles.filter(isRevertableFile);
+  $: selectedChangelistFiles = selectedSelectableFiles.filter(canUseChangelist);
   $: selectedAssignedChangelistFiles = selectedChangelistFiles.filter((file) =>
     Boolean(file.changelist?.trim()),
   );
-  $: selectedBytes = committableFiles
-    .filter((file) => selectedPaths.has(file.path))
-    .reduce((total, file) => total + (file.file_size ?? 0), 0);
+  $: selectedBytes = selectedSelectableFiles.reduce(
+    (total, file) => total + (file.file_size ?? 0),
+    0,
+  );
   $: displayedCommitBytes = commitTask ? committedBytes : selectedBytes;
   $: commitRunning = isTaskRunning(commitTask);
   $: addRunning = isTaskRunning(addTask);
@@ -156,7 +164,7 @@
     addRunning ||
     addingPath !== null ||
     deleteRunning ||
-    deletingPath !== null ||
+    deletingPaths.length > 0 ||
     revertRunning ||
     revertingPaths.length > 0 ||
     changelistRunning;
@@ -168,7 +176,7 @@
         ? taskStatusLabel(revertTask, initializing, "revert")
         : addTask
           ? taskStatusLabel(addTask, initializing, addAction ?? "add")
-          : deletingPath
+          : deletingPaths.length > 0
             ? "正在准备 Delete"
             : addingPath
               ? addAction === "unadd" ? "正在准备 Unadd" : "正在准备 Add"
@@ -177,7 +185,8 @@
                 : changelistRunning
                   ? "正在更新 Changelist"
                 : taskStatusLabel(null, initializing);
-  $: allSelected = committableFiles.length > 0 && selectedCount === committableFiles.length;
+  $: allSelected =
+    selectableFiles.length > 0 && selectedCount === selectableFiles.length;
   $: commitDisabled =
     initializing ||
     scanning ||
@@ -287,12 +296,14 @@
     revertTask = null;
     addingPath = null;
     addAction = null;
-    deletingPath = null;
+    deletingPaths = [];
+    pendingDeleteQueue = [];
     revertingPaths = [];
     deleteNotice = null;
     revertNotice = null;
     addNotice = null;
-    deleteCandidate = null;
+    deleteCandidateFiles = [];
+    deleteCandidateIsBatch = false;
     revertCandidatePaths = [];
     revertCandidateIsBatch = false;
     changelistRunning = false;
@@ -356,12 +367,23 @@
         return;
       }
       status = nextStatus;
-      const inScope = nextStatus.files
+      const selectableInScope = nextStatus.files
+        .filter((file) => isSelectable(file) && isPathInCommitTarget(file.path))
+        .map((file) => file.path);
+      // Default selection only includes already versioned (committable) files.
+      // Unversioned paths stay available for explicit multi-select / commit.
+      const defaultSelected = nextStatus.files
         .filter((file) => isCommittable(file) && isPathInCommitTarget(file.path))
         .map((file) => file.path);
       selectedPaths = preserveSelection
-        ? new Set(inScope.filter((path) => selectedPaths.has(path)))
-        : new Set(inScope);
+        ? new Set(selectableInScope.filter((path) => selectedPaths.has(path)))
+        : new Set(defaultSelected);
+      if (
+        selectionAnchorPath &&
+        !selectableInScope.includes(selectionAnchorPath)
+      ) {
+        selectionAnchorPath = null;
+      }
       if (activeFilePath) {
         const activeFile = nextStatus.files.find(
           (file) =>
@@ -384,22 +406,48 @@
     }
   }
 
-  function toggleFile(path: string) {
+  function orderedSelectableFiles() {
+    return fileGroups.flatMap((group) => group.files.filter(isSelectable));
+  }
+
+  function toggleFileSelection(path: string, checked: boolean, extendRange = false) {
+    const ordered = orderedSelectableFiles();
     const next = new Set(selectedPaths);
-    if (next.has(path)) {
-      next.delete(path);
-    } else {
+    const currentIndex = ordered.findIndex((file) => file.path === path);
+    const anchorIndex = selectionAnchorPath
+      ? ordered.findIndex((file) => file.path === selectionAnchorPath)
+      : -1;
+
+    if (extendRange && currentIndex >= 0 && anchorIndex >= 0) {
+      const start = Math.min(currentIndex, anchorIndex);
+      const end = Math.max(currentIndex, anchorIndex);
+      for (const file of ordered.slice(start, end + 1)) {
+        if (checked) {
+          next.add(file.path);
+        } else {
+          next.delete(file.path);
+        }
+      }
+    } else if (checked) {
       next.add(path);
+    } else {
+      next.delete(path);
     }
+
     selectedPaths = next;
+    if (!extendRange || anchorIndex < 0) {
+      selectionAnchorPath = path;
+    }
   }
 
   function selectAll() {
-    selectedPaths = new Set(committableFiles.map((file) => file.path));
+    selectedPaths = new Set(selectableFiles.map((file) => file.path));
+    selectionAnchorPath = selectableFiles.at(-1)?.path ?? null;
   }
 
   function clearSelection() {
     selectedPaths = new Set();
+    selectionAnchorPath = null;
   }
 
   function groupFilesByChangelist(files: ChangedFile[]) {
@@ -426,16 +474,16 @@
       }));
   }
 
-  function groupCommittableFiles(files: ChangedFile[]) {
-    return files.filter(isCommittable);
+  function groupSelectableFiles(files: ChangedFile[]) {
+    return files.filter(isSelectable);
   }
 
   function groupSelectedCount(files: ChangedFile[]) {
-    return groupCommittableFiles(files).filter((file) => selectedPaths.has(file.path)).length;
+    return groupSelectableFiles(files).filter((file) => selectedPaths.has(file.path)).length;
   }
 
   function toggleGroupSelection(files: ChangedFile[]) {
-    const candidates = groupCommittableFiles(files);
+    const candidates = groupSelectableFiles(files);
     if (candidates.length === 0) return;
     const next = new Set(selectedPaths);
     const allGroupSelected = candidates.every((file) => next.has(file.path));
@@ -447,6 +495,7 @@
       }
     }
     selectedPaths = next;
+    selectionAnchorPath = candidates.at(-1)?.path ?? selectionAnchorPath;
   }
 
   async function applyChangelist(files: ChangedFile[], changelist: string | null) {
@@ -748,42 +797,124 @@
   async function requestContextFileDelete() {
     const file = fileContextMenu?.file ?? null;
     closeFileContextMenu();
-    if (!file || file.status === "deleted") {
+    if (!file || !isDeletableFile(file)) {
       return;
     }
-    deleteCandidate = file;
+    deleteCandidateFiles = [file];
+    deleteCandidateIsBatch = false;
     await tick();
     deleteDialogElement?.focus();
   }
 
+  async function requestSelectedDelete() {
+    if (operationRunning || scanning || initializing || selectedDeletableFiles.length === 0) {
+      return;
+    }
+    deleteCandidateFiles = [...selectedDeletableFiles];
+    deleteCandidateIsBatch = true;
+    await tick();
+    deleteDialogElement?.focus();
+  }
+
+  function requestInlineDelete(file: ChangedFile) {
+    if (operationRunning || scanning || initializing || !isDeletableFile(file)) {
+      return;
+    }
+    deleteCandidateFiles = [file];
+    deleteCandidateIsBatch = false;
+    void tick().then(() => deleteDialogElement?.focus());
+  }
+
   function cancelDelete() {
-    if (!deleteRunning) {
-      deleteCandidate = null;
+    if (!deleteRunning && deletingPaths.length === 0) {
+      deleteCandidateFiles = [];
+      deleteCandidateIsBatch = false;
+      pendingDeleteQueue = [];
     }
   }
 
   async function confirmDelete() {
-    if (!target || !deleteCandidate || operationRunning) {
+    if (!target || deleteCandidateFiles.length === 0 || operationRunning) {
       return;
     }
-    const file = deleteCandidate;
-    deleteCandidate = null;
-    deletingPath = file.path;
+    const files = [...deleteCandidateFiles];
+    deleteCandidateFiles = [];
+    deleteCandidateIsBatch = false;
     deleteNotice = null;
     deleteTask = null;
     error = null;
     statusError = null;
+    deletingPaths = files.map((file) => file.path);
+    pendingDeleteQueue = [];
+
+    const versioned = files.filter((file) => file.status !== "unversioned");
+    const unversioned = files.filter((file) => file.status === "unversioned");
+
+    try {
+      if (versioned.length > 1) {
+        const task = await createSvnBatchOperationTask({
+          working_copy_root: target.working_copy_root,
+          kind: "delete_paths",
+          file_paths: versioned.map((file) => file.path),
+          svn_executable: svnExecutable?.trim() || undefined,
+        });
+        deleteTask = task;
+        pendingDeleteQueue = unversioned;
+        schedulePoll(task.task_id, "delete", generation, 0);
+        return;
+      }
+
+      if (versioned.length === 1) {
+        const task = await createSvnOperationTask({
+          working_copy_root: target.working_copy_root,
+          kind: "delete_path",
+          file_path: versioned[0].path,
+          svn_executable: svnExecutable?.trim() || undefined,
+        });
+        deleteTask = task;
+        pendingDeleteQueue = unversioned;
+        schedulePoll(task.task_id, "delete", generation, 0);
+        return;
+      }
+
+      // Unversioned only (one or many): start sequential disk deletes.
+      await startNextPendingDelete(unversioned);
+    } catch (caught) {
+      deletingPaths = [];
+      pendingDeleteQueue = [];
+      error = caught as CommandError;
+    }
+  }
+
+  async function startNextPendingDelete(queue: ChangedFile[]) {
+    if (!target) {
+      deletingPaths = [];
+      pendingDeleteQueue = [];
+      return;
+    }
+    if (queue.length === 0) {
+      const deleted = [...deletingPaths];
+      deletingPaths = [];
+      pendingDeleteQueue = [];
+      deleteNotice =
+        deleted.length === 1 ? `已 Delete ${deleted[0]}` : `已 Delete ${deleted.length} 个项目`;
+      await refreshStatus(generation, true);
+      return;
+    }
+    const [next, ...rest] = queue;
+    pendingDeleteQueue = rest;
     try {
       const task = await createSvnOperationTask({
         working_copy_root: target.working_copy_root,
-        kind: file.status === "unversioned" ? "delete_unversioned_file" : "delete_path",
-        file_path: file.path,
+        kind: next.status === "unversioned" ? "delete_unversioned_file" : "delete_path",
+        file_path: next.path,
         svn_executable: svnExecutable?.trim() || undefined,
       });
       deleteTask = task;
       schedulePoll(task.task_id, "delete", generation, 0);
     } catch (caught) {
-      deletingPath = null;
+      deletingPaths = [];
+      pendingDeleteQueue = [];
       error = caught as CommandError;
     }
   }
@@ -869,7 +1000,7 @@
     }
     if (outOfDateDialogOpen) {
       outOfDateDialogOpen = false;
-    } else if (deleteCandidate) {
+    } else if (deleteCandidateFiles.length > 0) {
       cancelDelete();
     } else if (revertCandidatePaths.length > 0) {
       cancelRevert();
@@ -893,16 +1024,23 @@
     }
     error = null;
     statusError = null;
-    const nextCommittedBytes = selectedBytes;
+    const selectedForCommit = orderedSelectableFiles().filter((file) =>
+      selectedPaths.has(file.path),
+    );
+    if (selectedForCommit.length === 0) {
+      return;
+    }
+    const nextCommittedBytes = selectedForCommit.reduce(
+      (total, file) => total + (file.file_size ?? 0),
+      0,
+    );
     closeCurrentCommitAfterCompletion = closeAfterCompletion;
     submittedCommitTaskId = null;
     try {
       const task = await createCommitTask({
         working_copy_root: target.working_copy_root,
         message: commitMessage.trim(),
-        files: committableFiles
-          .filter((file) => selectedPaths.has(file.path))
-          .map((file) => file.path),
+        files: selectedForCommit.map((file) => file.path),
         svn_executable: svnExecutable?.trim() || undefined,
       });
       commitTask = task;
@@ -1008,10 +1146,12 @@
         schedulePoll(deleteTask.task_id, "delete", generation, 200);
       } else {
         clearPollTimer();
-        const deletedPath = deletingPath;
-        deletingPath = null;
+        pendingDeleteQueue = [];
+        const deleted = [...deletingPaths];
+        deletingPaths = [];
         if (deleteTask.status === "success") {
-          deleteNotice = deletedPath ? `已 Delete ${deletedPath}` : "Delete 完成";
+          deleteNotice =
+            deleted.length === 1 ? `已 Delete ${deleted[0]}` : `已 Delete ${deleted.length} 个项目`;
           await refreshStatus(generation, true);
         }
       }
@@ -1086,12 +1226,21 @@
         return;
       }
       if (role === "delete") {
-        const deletedPath = deletingPath;
-        deletingPath = null;
         if (task.status === "success") {
-          deleteNotice = deletedPath ? `已 Delete ${deletedPath}` : "Delete 完成";
+          if (pendingDeleteQueue.length > 0) {
+            await startNextPendingDelete(pendingDeleteQueue);
+            return;
+          }
+          const deleted = [...deletingPaths];
+          deletingPaths = [];
+          pendingDeleteQueue = [];
+          deleteNotice =
+            deleted.length === 1 ? `已 Delete ${deleted[0]}` : `已 Delete ${deleted.length} 个项目`;
           await refreshStatus(currentGeneration, true);
+          return;
         }
+        deletingPaths = [];
+        pendingDeleteQueue = [];
         return;
       }
       if (role === "add") {
@@ -1204,8 +1353,13 @@
     return file.property_changed || !["normal", "none"].includes(file.status);
   }
 
+  /** Files that can be checked for this commit (versioned changes + unversioned to auto-Add). */
+  function isSelectable(file: ChangedFile) {
+    return isCommittable(file) || file.status === "unversioned";
+  }
+
   function isVisibleFile(file: ChangedFile) {
-    return isCommittable(file) || file.status === "unversioned" || isConflicted(file);
+    return isSelectable(file) || isConflicted(file);
   }
 
   function isConflicted(file: ChangedFile) {
@@ -1216,8 +1370,30 @@
     return isCommittable(file);
   }
 
+  function isDeletableFile(file: ChangedFile) {
+    return file.status !== "deleted" && (isCommittable(file) || file.status === "unversioned");
+  }
+
   function canUseChangelist(file: ChangedFile) {
     return !["unversioned", "external"].includes(file.status);
+  }
+
+  function deleteDialogSummary(files: ChangedFile[]) {
+    const unversionedCount = files.filter((file) => file.status === "unversioned").length;
+    const versionedCount = files.length - unversionedCount;
+    if (files.length === 1) {
+      return files[0].status === "unversioned"
+        ? "未版本控制文件将从磁盘永久删除，NovaSVN 无法撤销此操作。"
+        : "文件将被标记为 SVN 删除，并保留为待提交变更。";
+    }
+    const parts: string[] = [];
+    if (versionedCount > 0) {
+      parts.push(`${versionedCount} 个版本化项目将标记为 SVN 删除`);
+    }
+    if (unversionedCount > 0) {
+      parts.push(`${unversionedCount} 个未版本控制文件将从磁盘永久删除且无法撤销`);
+    }
+    return `${parts.join("；")}。`;
   }
 
   function revertCompletionNotice(paths: string[]) {
@@ -1356,7 +1532,15 @@
   <section class="commit-summary" aria-label="提交摘要">
     <span>目标 <strong>{target?.relative_path ?? "工作副本根目录"}</strong></span>
     <span>Revision <strong>{status?.revision_range ?? target?.revision ?? "-"}</strong></span>
-    <span>已选择 <strong>{selectedCount} / {committableFiles.length}</strong></span>
+    <span>
+      已选择
+      <strong>
+        {selectedCount} / {selectableFiles.length}
+      </strong>
+      {#if selectedUnversionedFiles.length > 0}
+        <small class="selection-hint">（含 {selectedUnversionedFiles.length} 个未版本控制，提交时自动 Add）</small>
+      {/if}
+    </span>
     <OperationMetrics
       task={commitTask}
       totalBytes={displayedCommitBytes}
@@ -1416,7 +1600,9 @@
             <p>
               {committableFiles.length} 个可提交文件{conflictFiles.length > 0
                 ? ` · ${conflictFiles.length} 个冲突待处理`
-                : ""}{unversionedFiles.length > 0 ? ` · ${unversionedFiles.length} 个未版本控制` : ""}
+                : ""}{unversionedFiles.length > 0
+                ? ` · ${unversionedFiles.length} 个未版本控制（可勾选，提交时自动 Add）`
+                : ""}
             </p>
           </div>
           <div class="selection-actions">
@@ -1442,7 +1628,21 @@
             >
               <RotateCcw size={15} aria-hidden="true" /> Revert 已选
             </button>
-            <button type="button" on:click={selectAll} disabled={operationRunning || committableFiles.length === 0 || allSelected}>
+            <button
+              type="button"
+              class="selection-delete-action"
+              on:click={requestSelectedDelete}
+              disabled={operationRunning || scanning || initializing || selectedDeletableFiles.length === 0}
+              title="删除已选文件（未版本控制将从磁盘删除）"
+            >
+              <Trash2 size={15} aria-hidden="true" /> Delete 已选
+            </button>
+            <button
+              type="button"
+              on:click={selectAll}
+              disabled={operationRunning || selectableFiles.length === 0 || allSelected}
+              title="全选可勾选文件（含未版本控制）"
+            >
               <CheckSquare size={15} aria-hidden="true" /> 全选
             </button>
             <button type="button" on:click={clearSelection} disabled={operationRunning || selectedCount === 0}>
@@ -1450,43 +1650,55 @@
             </button>
           </div>
         </header>
-        <div class="file-list">
+        <div class="file-list" aria-label="提交文件列表，按住 Shift 可范围多选">
           {#each fileGroups as group (group.name)}
-            {@const selectableFiles = groupCommittableFiles(group.files)}
+            {@const groupSelectable = groupSelectableFiles(group.files)}
             {@const groupSelectionCount = groupSelectedCount(group.files)}
             <section class="file-group" aria-label={`Changelist ${group.label}`}>
               <header class="file-group-header">
                 <input
                   type="checkbox"
                   aria-label={`选择 Changelist ${group.label}`}
-                  checked={selectableFiles.length > 0 && groupSelectionCount === selectableFiles.length}
-                  indeterminate={groupSelectionCount > 0 && groupSelectionCount < selectableFiles.length}
-                  disabled={operationRunning || scanning || initializing || selectableFiles.length === 0}
+                  checked={groupSelectable.length > 0 && groupSelectionCount === groupSelectable.length}
+                  indeterminate={groupSelectionCount > 0 && groupSelectionCount < groupSelectable.length}
+                  disabled={operationRunning || scanning || initializing || groupSelectable.length === 0}
                   on:change={() => toggleGroupSelection(group.files)}
                 />
                 <strong title={group.name || undefined}>{group.label}</strong>
-                <span>{groupSelectionCount} / {selectableFiles.length} 个可提交</span>
+                <span>{groupSelectionCount} / {groupSelectable.length} 个可勾选</span>
               </header>
               {#each group.files as file (file.path)}
                 <div
                   class="file-item"
                   class:active={activeFilePath === file.path}
+                  class:selected={selectedPaths.has(file.path)}
                   class:unversioned={file.status === "unversioned"}
                   class:conflicted={isConflicted(file)}
                   class:reverting={revertingPaths.includes(file.path)}
                   class:adding={addingPath === file.path}
-                  class:deleting={deletingPath === file.path}
+                  class:deleting={deletingPaths.includes(file.path)}
                   role="group"
                   aria-label={`提交文件 ${file.path}`}
                   on:contextmenu={(event) => openFileContextMenu(event, file)}
                 >
-                  {#if isCommittable(file)}
+                  {#if isSelectable(file)}
                     <input
                       type="checkbox"
                       aria-label={file.path}
                       checked={selectedPaths.has(file.path)}
-                      on:change={() => toggleFile(file.path)}
                       disabled={operationRunning || scanning || initializing}
+                      on:click={(event) => {
+                        // Controlled checkbox: handle selection ourselves so Shift range works.
+                        event.preventDefault();
+                        if (operationRunning || scanning || initializing) {
+                          return;
+                        }
+                        toggleFileSelection(
+                          file.path,
+                          !selectedPaths.has(file.path),
+                          event.shiftKey,
+                        );
+                      }}
                     />
                   {:else}
                     <span class="file-selection-placeholder" aria-hidden="true"></span>
@@ -1517,15 +1729,26 @@
                       <GitMergeConflict size={14} aria-hidden="true" /> 处理冲突
                     </button>
                   {:else if file.status === "unversioned"}
-                    <button
-                      type="button"
-                      class="file-add-action"
-                      aria-label={`Add ${file.path}`}
-                      disabled={operationRunning || scanning || initializing}
-                      on:click={() => addFile(file)}
-                    >
-                      <Plus size={14} aria-hidden="true" /> Add
-                    </button>
+                    <div class="file-row-actions">
+                      <button
+                        type="button"
+                        class="file-add-action"
+                        aria-label={`Add ${file.path}`}
+                        disabled={operationRunning || scanning || initializing}
+                        on:click={() => addFile(file)}
+                      >
+                        <Plus size={14} aria-hidden="true" /> Add
+                      </button>
+                      <button
+                        type="button"
+                        class="file-delete-action"
+                        aria-label={`Delete ${file.path}`}
+                        disabled={operationRunning || scanning || initializing}
+                        on:click={() => requestInlineDelete(file)}
+                      >
+                        <Trash2 size={14} aria-hidden="true" /> Delete
+                      </button>
+                    </div>
                   {:else if file.status === "added"}
                     <button
                       type="button"
@@ -1806,7 +2029,7 @@
   </div>
 {/if}
 
-{#if deleteCandidate}
+{#if deleteCandidateFiles.length > 0}
   <div class="revert-backdrop" role="presentation" on:click|self={cancelDelete}>
     <div
       bind:this={deleteDialogElement}
@@ -1819,21 +2042,30 @@
       <header>
         <div>
           <h2 id="delete-dialog-title">确认 Delete</h2>
-          <p>
-            {deleteCandidate.status === "unversioned"
-              ? "未版本控制文件将从磁盘永久删除，NovaSVN 无法撤销此操作。"
-              : "文件将被标记为 SVN 删除，并保留为待提交变更。"}
-          </p>
+          <p>{deleteDialogSummary(deleteCandidateFiles)}</p>
         </div>
         <button type="button" class="dialog-close" aria-label="关闭 Delete 确认" title="关闭" on:click={cancelDelete}>
           <X size={16} aria-hidden="true" />
         </button>
       </header>
-      <code title={deleteCandidate.path}>{deleteCandidate.path}</code>
+      {#if deleteCandidateFiles.length === 1}
+        <code title={deleteCandidateFiles[0].path}>{deleteCandidateFiles[0].path}</code>
+      {:else}
+        <div class="delete-path-list" aria-label="待删除路径">
+          {#each deleteCandidateFiles as file (file.path)}
+            <code title={file.path}>
+              {file.status === "unversioned" ? "[?] " : ""}{file.path}
+            </code>
+          {/each}
+        </div>
+      {/if}
       <footer>
         <button type="button" on:click={cancelDelete}>取消</button>
         <button type="button" class="danger-primary" on:click={confirmDelete}>
-          <Trash2 size={15} aria-hidden="true" /> 确认 Delete
+          <Trash2 size={15} aria-hidden="true" />
+          {deleteCandidateIsBatch || deleteCandidateFiles.length > 1
+            ? `确认 Delete ${deleteCandidateFiles.length} 个项目`
+            : "确认 Delete"}
         </button>
       </footer>
     </div>
@@ -1980,8 +2212,9 @@
   button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
   button:disabled { cursor: default; opacity: .55; }
   button.primary { min-height: 36px; border-color: var(--accent); background: var(--accent); color: white; font-weight: 600; }
-  .commit-summary { display: flex; flex-wrap: wrap; gap: 20px; padding: 10px 22px; border-bottom: 1px solid var(--border); color: var(--secondary); font-size: 12px; background: var(--panel-subtle); }
+  .commit-summary { display: flex; flex-wrap: wrap; gap: 20px; align-items: baseline; padding: 10px 22px; border-bottom: 1px solid var(--border); color: var(--secondary); font-size: 12px; background: var(--panel-subtle); }
   .commit-summary strong { color: var(--text); font-weight: 600; }
+  .selection-hint { margin-left: 6px; color: var(--accent); font-size: 11px; }
   .commit-notices { display: grid; gap: 8px; padding: 0 22px; background: var(--background); }
   .commit-notices.has-notices { padding-top: 10px; }
   .inline-error { border: 1px solid #df8b8b; background: #fff1f1; color: #a12a2a; padding: 8px 10px; font-size: 12px; }
@@ -2020,7 +2253,9 @@
   .file-item { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); font-size: 12px; }
   .file-item:last-child { border-bottom: 0; }
   .file-item:hover { background: var(--panel-subtle); }
+  .file-item.selected { background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
   .file-item.active { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+  .file-item.selected.active { background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
   .file-item.reverting { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
   .file-item.adding { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
   .file-item.deleting { background: color-mix(in srgb, #b93d3d 12%, var(--panel)); }
@@ -2059,8 +2294,13 @@
   .standalone-commit[data-theme="dark"] .file-status[data-action="!"],
   .standalone-commit[data-theme="dark"] .file-status[data-action="~"] { background: #4b3b16; color: #f6cf73; }
   .file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-row-actions { display: inline-flex; align-items: center; gap: 4px; }
   .file-add-action { min-height: 27px; padding: 3px 8px; }
+  .file-delete-action, .selection-delete-action { min-height: 27px; border-color: color-mix(in srgb, #c64040 55%, var(--border)); color: #a12a2a; padding: 3px 8px; }
+  .selection-delete-action { min-height: 30px; padding: 5px 10px; }
   .file-conflict-action { min-height: 27px; border-color: color-mix(in srgb, #c64040 55%, var(--border)); color: #a12a2a; padding: 3px 8px; }
+  .delete-path-list { display: grid; gap: 6px; max-height: 180px; overflow: auto; padding: 8px 10px; border: 1px solid var(--border); background: var(--panel-subtle); }
+  .delete-path-list code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
   .diff-content { min-width: 0; min-height: 0; overflow: hidden; }
   .diff-content :global(.monaco-diff-viewer), .diff-content :global(.raw-diff-viewer) { width: 100%; height: 100%; border: 0; border-radius: 0; }
   .empty-files, .empty-diff, .empty-output { padding: 28px 16px; color: var(--secondary); text-align: center; font-size: 12px; }

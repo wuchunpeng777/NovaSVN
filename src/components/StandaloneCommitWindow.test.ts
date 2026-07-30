@@ -236,6 +236,8 @@ describe("StandaloneCommitWindow", () => {
     expect(within(pane).getByRole("button", { name: "Add src/ignored.ts" })).toBeInTheDocument();
     expect(within(pane).getByRole("checkbox", { name: "src/main.ts" })).toBeChecked();
     expect(within(pane).getByRole("checkbox", { name: "src/nested.ts" })).toBeChecked();
+    // Unversioned is selectable but not selected by default.
+    expect(within(pane).getByRole("checkbox", { name: "src/ignored.ts" })).not.toBeChecked();
     const metrics = screen.getByLabelText("操作指标");
     expect(metrics).toHaveTextContent("总提交量 200 B");
     expect(metrics).not.toHaveTextContent("项/秒");
@@ -331,12 +333,80 @@ describe("StandaloneCommitWindow", () => {
     const urgentGroup = await screen.findByRole("region", { name: "Changelist 紧急修复" });
     expect(screen.getByRole("region", { name: "Changelist 新功能" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Changelist 未分组" })).toBeInTheDocument();
-    expect(within(urgentGroup).getByText("2 / 2 个可提交")).toBeInTheDocument();
+    expect(within(urgentGroup).getByText("2 / 2 个可勾选")).toBeInTheDocument();
 
     await fireEvent.click(within(urgentGroup).getByRole("checkbox", { name: "选择 Changelist 紧急修复" }));
     expect(within(urgentGroup).getByRole("checkbox", { name: "src/fix-a.ts" })).not.toBeChecked();
     expect(within(urgentGroup).getByRole("checkbox", { name: "src/fix-b.ts" })).not.toBeChecked();
     expect(screen.getByRole("button", { name: "提交 2 个文件" })).toBeInTheDocument();
+  });
+
+  it("未版本控制文件可勾选，提交时一并传给 commit 任务", async () => {
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const pane = await screen.findByLabelText("选择提交文件");
+    const unversioned = await within(pane).findByRole("checkbox", { name: "src/ignored.ts" });
+
+    expect(unversioned).not.toBeChecked();
+    await fireEvent.click(unversioned);
+    expect(unversioned).toBeChecked();
+    expect(screen.getByText(/含 1 个未版本控制，提交时自动 Add/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "提交 4 个文件" })).toBeEnabled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "提交 4 个文件" }));
+    await waitFor(() => {
+      expect(createCommitTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        message: "",
+        files: expect.arrayContaining([
+          "src/main.ts",
+          "src/nested.ts",
+          "other.ts",
+          "src/ignored.ts",
+        ]),
+        svn_executable: undefined,
+      });
+      const files = createCommitTaskMock.mock.calls.at(-1)?.[0]?.files ?? [];
+      expect(files).toHaveLength(4);
+    });
+  });
+
+  it("全选包含未版本控制文件，Shift 可范围多选", async () => {
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({
+        files: [
+          makeFile("a.ts", "modified"),
+          makeFile("b.ts", "modified"),
+          makeFile("c.ts", "unversioned"),
+          makeFile("d.ts", "modified"),
+        ],
+        total: 4,
+        returned: 4,
+        local_changes: 4,
+        modified: 3,
+        unversioned: 1,
+      }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const pane = await screen.findByLabelText("选择提交文件");
+    await within(pane).findByRole("checkbox", { name: "a.ts" });
+
+    await fireEvent.click(within(pane).getByRole("button", { name: "全选" }));
+    expect(within(pane).getByRole("checkbox", { name: "a.ts" })).toBeChecked();
+    expect(within(pane).getByRole("checkbox", { name: "c.ts" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "提交 4 个文件" })).toBeEnabled();
+
+    await fireEvent.click(within(pane).getByRole("button", { name: "清除" }));
+    expect(within(pane).getByRole("checkbox", { name: "a.ts" })).not.toBeChecked();
+
+    await fireEvent.click(within(pane).getByRole("checkbox", { name: "a.ts" }));
+    // Use click + shiftKey so the change handler sees event.shiftKey.
+    await fireEvent.click(within(pane).getByRole("checkbox", { name: "c.ts" }), {
+      shiftKey: true,
+    });
+    expect(within(pane).getByRole("checkbox", { name: "a.ts" })).toBeChecked();
+    expect(within(pane).getByRole("checkbox", { name: "b.ts" })).toBeChecked();
+    expect(within(pane).getByRole("checkbox", { name: "c.ts" })).toBeChecked();
+    expect(within(pane).getByRole("checkbox", { name: "d.ts" })).not.toBeChecked();
   });
 
   it("为已选文件加入和移出 Changelist 后刷新并保留选择", async () => {
@@ -748,6 +818,71 @@ describe("StandaloneCommitWindow", () => {
     });
     await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("status")).toHaveTextContent("已 Delete src/ignored.ts");
+  });
+
+  it("未版本控制文件行内 Delete 与 Delete 已选批量删除", async () => {
+    createSvnOperationTaskMock
+      .mockResolvedValueOnce(
+        makeTask("pending", [], { task_id: "delete-u1", title: "删除未版本控制文件 a" }),
+      )
+      .mockResolvedValueOnce(
+        makeTask("pending", [], { task_id: "delete-u2", title: "删除未版本控制文件 b" }),
+      );
+    getTaskMock
+      .mockResolvedValueOnce(makeTask("success", [], { task_id: "delete-u1" }))
+      .mockResolvedValueOnce(makeTask("success", [], { task_id: "delete-u2" }));
+
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({
+        files: [
+          makeFile("new-a.txt", "unversioned"),
+          makeFile("new-b.txt", "unversioned"),
+          makeFile("keep.ts", "modified"),
+        ],
+        total: 3,
+        returned: 3,
+        local_changes: 3,
+        modified: 1,
+        unversioned: 2,
+      }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const pane = await screen.findByLabelText("选择提交文件");
+    await within(pane).findByRole("button", { name: "Delete new-a.txt" });
+
+    await fireEvent.click(within(pane).getByRole("button", { name: "Delete new-a.txt" }));
+    let dialog = screen.getByRole("dialog", { name: "确认 Delete" });
+    expect(within(dialog).getByText("未版本控制文件将从磁盘永久删除，NovaSVN 无法撤销此操作。")).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+
+    // keep.ts is selected by default; clear first so only unversioned are deleted.
+    await fireEvent.click(within(pane).getByRole("button", { name: "清除" }));
+    await fireEvent.click(within(pane).getByRole("checkbox", { name: "new-a.txt" }));
+    await fireEvent.click(within(pane).getByRole("checkbox", { name: "new-b.txt" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Delete 已选" }));
+    dialog = screen.getByRole("dialog", { name: "确认 Delete" });
+    expect(within(dialog).getByText(/2 个未版本控制文件将从磁盘永久删除/)).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "确认 Delete 2 个项目" }));
+
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "delete_unversioned_file",
+        file_path: "new-a.txt",
+        svn_executable: undefined,
+      });
+    });
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "delete_unversioned_file",
+        file_path: "new-b.txt",
+        svn_executable: undefined,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("已 Delete 2 个项目");
+    });
   });
 
   it("已删除文件的 Delete 菜单项不可用", async () => {
