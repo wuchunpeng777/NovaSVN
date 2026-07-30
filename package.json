@@ -2,6 +2,16 @@
   "name": "novasvn",
   "private": true,
   "version": "0.1.0",
+  "description": "Open-source desktop Subversion client for Windows and macOS",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wuchunpeng777/NovaSVN.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wuchunpeng777/NovaSVN/issues"
+  },
+  "homepage": "https://github.com/wuchunpeng777/NovaSVN#readme",
   "type": "module",
   "scripts": {
     "check": "npm run test:components && npm run test:scripts && npm run build && npm run lint:rust && npm run test:rust",

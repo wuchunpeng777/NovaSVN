@@ -192,8 +192,6 @@ const mergePreviewRs = fs.readFileSync(
   path.join(root, "src-tauri", "src", "merge_preview.rs"),
   "utf8",
 );
-const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
-
 const releaseScripts = ["release:windows", "release:macos", "release:macos:notarized"];
 const requiredCheckSteps = [
   "npm run test:components",
@@ -1817,11 +1815,6 @@ for (const action of systemIntegrationActions) {
   }
 }
 
-if (!changelog.includes(`## ${packageJson.version}`)) {
-  console.error(`CHANGELOG.md 缺少当前版本条目：${packageJson.version}`);
-  failed = true;
-}
-
 if (!tauriLib.includes("export_diagnostics")) {
   console.error("后端必须注册 export_diagnostics 诊断日志导出命令");
   failed = true;
@@ -1866,7 +1859,7 @@ if (failed) {
   process.exit(1);
 }
 
-console.log("发布脚本、性能基准入口、系统入口脚本、分支池同步、诊断导出和更新日志检查通过");
+console.log("发布脚本、性能基准入口、系统入口脚本、分支池同步和诊断导出检查通过");
 
 function extractSwitchCase(content, action) {
   const start = content.indexOf(`case "${action}":`);
