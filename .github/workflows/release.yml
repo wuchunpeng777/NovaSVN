@@ -1,0 +1,200 @@
+name: Release
+
+# 版本号提升后的发布入口：
+# 1. npm run version:sync -- --set x.y.z
+# 2. 提交并推送 main
+# 3. git tag vX.Y.Z && git push origin vX.Y.Z
+# 也可在 Actions 里手动 workflow_dispatch。
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: 校验版本
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 安装项目依赖
+        run: npm ci
+
+      - name: 校验工程内版本一致
+        run: npm run version:check
+
+      - name: 解析发布版本
+        id: version
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            EXPECTED="${TAG#v}"
+            if [[ "${EXPECTED}" != "${VERSION}" ]]; then
+              echo "Tag ${TAG} 与 package.json 版本 ${VERSION} 不一致" >&2
+              exit 1
+            fi
+          else
+            TAG="v${VERSION}"
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "将发布 ${TAG}（工程版本 ${VERSION}）"
+
+  windows:
+    name: Windows 安装包
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 配置 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Rust 构建
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: release-windows
+
+      - name: 安装项目依赖
+        run: npm ci
+
+      - name: 编译 Windows NSIS 安装包
+        run: npm run release:windows
+
+      - name: 上传 Windows 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-nsis
+          path: src-tauri/target/release/bundle/nsis/NovaSVN_*_x64-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    name: macOS 安装包
+    needs: prepare
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 配置 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Rust 构建
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: release-macos
+
+      - name: 安装项目依赖
+        run: npm ci
+
+      - name: 编译 macOS DMG
+        # 当前走本地签名路径（ad-hoc / 无公证）。
+        # 若配置了 Apple Developer 证书与 notary 凭据，可改为 npm run release:macos:notarized。
+        run: npm run release:macos
+
+      - name: 上传 macOS 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: src-tauri/target/release/bundle/dmg/NovaSVN_*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: 发布到 GitHub Releases
+    needs:
+      - prepare
+      - windows
+      - macos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 安装项目依赖
+        run: npm ci
+
+      - name: 下载 Windows 产物
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-nsis
+          path: release-assets
+
+      - name: 下载 macOS 产物
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-dmg
+          path: release-assets
+
+      - name: 生成校验清单
+        run: |
+          mkdir -p src-tauri/target/release/bundle/nsis src-tauri/target/release/bundle/dmg
+          shopt -s nullglob
+          for file in release-assets/*.exe; do
+            cp "${file}" src-tauri/target/release/bundle/nsis/
+          done
+          for file in release-assets/*.dmg; do
+            cp "${file}" src-tauri/target/release/bundle/dmg/
+          done
+          npm run release:manifest -- --require windows,macos
+          cp src-tauri/target/release/bundle/release-manifest.json release-assets/
+          ls -lah release-assets
+
+      - name: 创建或更新 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: NovaSVN ${{ needs.prepare.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(needs.prepare.outputs.version, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

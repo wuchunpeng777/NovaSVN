@@ -183,7 +183,34 @@ scripts/             Release, SVN workflow, and benchmark helpers
 
 ## Packaging
 
-### Windows (NSIS)
+### Automated release (recommended)
+
+CI builds installers and publishes a [GitHub Release](https://github.com/wuchunpeng777/NovaSVN/releases) when a version tag is pushed.
+
+```bash
+# 1) Bump and sync version across package.json / Cargo / tauri / Finder Sync
+npm run version:sync -- --set 0.2.0
+
+# 2) Commit the version bump on main
+git add -A
+git commit -m "chore: release 0.2.0"
+git push origin main
+
+# 3) Tag and push — this starts .github/workflows/release.yml
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The tag **must** match `package.json` (e.g. tag `v0.2.0` ↔ version `0.2.0`).  
+Artifacts: Windows NSIS installer + macOS DMG (+ `release-manifest.json` with SHA-256).
+
+You can also run the **Release** workflow manually from the Actions tab (`workflow_dispatch`).
+
+> **Note:** CI macOS builds currently use the local/unsigned packaging path. Notarized distribution still needs Apple Developer credentials (`npm run release:macos:notarized` or future CI secrets).
+
+### Local packaging
+
+#### Windows (NSIS)
 
 ```powershell
 npm run release:windows
@@ -191,7 +218,7 @@ npm run release:windows
 
 Produces an installer under `src-tauri/target/release/bundle/nsis/`.
 
-### macOS
+#### macOS
 
 ```bash
 # Local DMG
@@ -205,7 +232,7 @@ Version strings are kept in sync via:
 
 ```bash
 npm run version:check
-npm run version:sync   # if you need to align versions after a bump
+npm run version:sync -- --set 0.2.0
 ```
 
 ---

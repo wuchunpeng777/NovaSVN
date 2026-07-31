@@ -183,7 +183,34 @@ scripts/             发布、SVN 流程与性能脚本
 
 ## 打包
 
-### Windows（NSIS）
+### 自动发布（推荐）
+
+推送版本 tag 后，CI 会编译安装包并发布到 [GitHub Releases](https://github.com/wuchunpeng777/NovaSVN/releases)。
+
+```bash
+# 1) 提升并同步版本（package.json / Cargo / tauri / Finder Sync）
+npm run version:sync -- --set 0.2.0
+
+# 2) 在 main 上提交版本变更
+git add -A
+git commit -m "chore: release 0.2.0"
+git push origin main
+
+# 3) 打 tag 并推送 — 触发 .github/workflows/release.yml
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+tag **必须**与 `package.json` 一致（例如 tag `v0.2.0` ↔ 版本 `0.2.0`）。  
+产物：Windows NSIS 安装包 + macOS DMG（以及带 SHA-256 的 `release-manifest.json`）。
+
+也可在 Actions 页手动运行 **Release** 工作流（`workflow_dispatch`）。
+
+> **说明：** CI 上的 macOS 目前走本地/未公证打包路径。若要正式公证分发，仍需配置 Apple Developer 证书（`npm run release:macos:notarized` 或后续接入 CI Secrets）。
+
+### 本地打包
+
+#### Windows（NSIS）
 
 ```powershell
 npm run release:windows
@@ -191,7 +218,7 @@ npm run release:windows
 
 安装包输出在 `src-tauri/target/release/bundle/nsis/`。
 
-### macOS
+#### macOS
 
 ```bash
 # 本地 DMG
@@ -205,7 +232,7 @@ npm run release:macos:notarized
 
 ```bash
 npm run version:check
-npm run version:sync   # 升版后对齐各处版本字符串
+npm run version:sync -- --set 0.2.0
 ```
 
 ---
