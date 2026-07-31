@@ -221,7 +221,16 @@ export async function installWorkbenchBackendMock(page: Page) {
         case "get_file_diff":
           data = {
             path: ((args.request as Record<string, unknown>)?.file_path as string) ?? "",
-            text: "--- before\n+++ after",
+            text: [
+              "--- src/modified.txt\t(revision 12)",
+              "+++ src/modified.txt\t(working copy)",
+              "@@ -1,3 +1,4 @@",
+              " line one",
+              "-before",
+              "+after",
+              "+extra line",
+              " line three",
+            ].join("\n"),
             binary: false,
             empty: false,
           };
@@ -230,11 +239,14 @@ export async function installWorkbenchBackendMock(page: Page) {
           data = {
             path: ((args.request as Record<string, unknown>)?.file_path as string) ?? "",
             language: "plaintext",
-            base_text: "before\n",
-            working_text: "after\n",
+            original_text: "line one\nbefore\nline three\n",
+            modified_text: "line one\nafter\nextra line\nline three\n",
             binary: false,
             too_large: false,
             max_bytes: 512 * 1024,
+            is_image: false,
+            original_encoding: "UTF-8",
+            modified_encoding: "UTF-8",
           };
           break;
         case "parse_unified_diff":

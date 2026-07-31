@@ -8,6 +8,14 @@ English | [简体中文](README.zh-CN.md)
 
 **NovaSVN** is an open-source desktop Subversion client for **Windows** and **macOS**.
 
+<p align="center">
+  <img src="docs/screenshot-workbench.png" alt="NovaSVN workbench — working copy status, file tree, and inspector" width="960" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshot-diff.png" alt="NovaSVN Monaco Diff — side-by-side text comparison with encoding labels" width="960" />
+</p>
+
 It is a full workbench for day-to-day SVN work — not a pile of one-off dialogs. Browse local changes, review history, open the repository, merge with a preview, apply patches, and still launch focused windows from the system shell when that is faster.
 
 **On macOS, this gap is especially clear:** the platform has long lacked a polished, actively maintained desktop SVN client with a modern workbench. Teams often end up juggling the command line, half-finished GUIs, or remote Windows-only workflows. NovaSVN is built so macOS users get a first-class client — not a second-class port.

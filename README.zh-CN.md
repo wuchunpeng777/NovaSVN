@@ -8,6 +8,14 @@
 
 **NovaSVN** 是面向 **Windows** 与 **macOS** 的开源桌面 Subversion 客户端。
 
+<p align="center">
+  <img src="docs/screenshot-workbench.png" alt="NovaSVN 工作台 — 工作副本状态、文件树与检查器" width="960" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshot-diff.png" alt="NovaSVN Monaco Diff — 双栏文本对比与编码标注" width="960" />
+</p>
+
 它首先是一个**完整的工作台**，而不是一串互不关联的弹窗：在同一界面里查看本地改动、审阅历史、浏览仓库、带预览地合并、处理 Patch；需要时，也可以从系统右键菜单打开专注的小窗口。
 
 **在 macOS 上，这个空白尤其明显：** 长期以来，Mac 端缺少体验完整、持续维护的现代桌面 SVN 客户端。团队往往只能在命令行、半成品 GUI，或「远程用 Windows 工具」之间折中。NovaSVN 把 macOS 当作一等公民来做——不是勉强能跑的移植版。
