@@ -8,41 +8,56 @@ English | [简体中文](README.zh-CN.md)
 
 **NovaSVN** is an open-source desktop Subversion client for **Windows** and **macOS**.
 
-It brings everyday SVN work into one native app: working-copy status, timeline/history, repository browser, merge preview, patches, and shell integrations — powered by the real `svn` CLI rather than a reimplemented protocol stack.
+It is a full workbench for day-to-day SVN work — not a pile of one-off dialogs. Browse local changes, review history, open the repository, merge with a preview, apply patches, and still launch focused windows from the system shell when that is faster.
+
+**On macOS, this gap is especially clear:** the platform has long lacked a polished, actively maintained desktop SVN client with a modern workbench. Teams often end up juggling the command line, half-finished GUIs, or remote Windows-only workflows. NovaSVN is built so macOS users get a first-class client — not a second-class port.
+
+Under the hood it drives the real `svn` CLI you already configure and trust, instead of reimplementing the protocol stack.
 
 > **Status:** `0.1.0` is a **development preview**. NovaSVN runs real SVN commands against local working copies and remote repositories. Always review paths, revisions, and pending changes before destructive operations.
 
 ---
 
-## Why NovaSVN?
+## What makes NovaSVN different
 
-| | |
+Most mature SVN tools grew up as **shell extensions** or **single-purpose dialogs**: right-click a folder, fill a form, close the window. That workflow is reliable for quick ops, but it rarely gives you a place to *live* while reviewing a working copy.
+
+NovaSVN takes a different approach:
+
+| Focus | What you get |
 | --- | --- |
-| **Native desktop** | Built with [Tauri](https://tauri.app/) + Rust + Svelte for a lightweight, native feel |
-| **Real SVN** | Wraps the official Subversion CLI you already trust and configure |
-| **Daily workflow** | Status, commit, update, log, diff, blame, merge, patch, export, and more |
-| **Shell integration** | Standalone windows from Windows Explorer / macOS Finder |
-| **Open source** | MIT licensed — inspect, fork, and contribute |
+| **Workbench first** | One main window for status, multi-select, tree navigation, bulk commit / revert / move / delete — closer to a modern IDE workspace than to a stack of modal dialogs |
+| **Shell when you want it** | Still open Log, Commit, Update, Checkout, Repo Browser, and more from Explorer / Finder; use the full app when the job needs context |
+| **macOS as a first-class platform** | Not an afterthought: same workbench and shell integration path on Mac, where usable desktop SVN software has been scarce for years |
+| **Cross-platform by design** | Same product direction on **Windows and macOS** — keep one client and one workflow across the team |
+| **Review-oriented UI** | Monaco-powered text Diff, encoding-aware comparison, image Diff, Blame, revision log with WC highlight, one-click copy of a revision number |
+| **Preview before risk** | Merge dry-run and a dedicated merge-preview window so you can inspect the plan before writing the working copy |
+| **Real `svn`, not a clone** | Official Subversion CLI for auth, servers, and edge cases you already rely on — NovaSVN orchestrates, it does not replace the toolchain |
+| **Lightweight & open** | Tauri + Rust + Svelte, MIT licensed — inspect, fork, and contribute |
 
-If you maintain SVN projects and want a modern UI without leaving the `svn` toolchain, NovaSVN is for you.
+**In short:** keep the reliability of the official `svn` tool, add a modern multi-surface desktop app, and avoid treating every task as “open a dialog, close a dialog.” On Mac in particular, it aims to be the desktop SVN client that was simply missing.
+
+If you still maintain SVN repositories — especially on macOS, or across mixed Windows/Mac teams — and want a UI that feels current without inventing a new VCS, NovaSVN is built for that middle ground.
 
 ---
 
 ## Features
 
-### Working copy
+### Working copy workbench
 
-- Scan local and remote changes with a compact file table (status, revision, author, size, …)
-- Multi-select, tree navigation, and bulk commit / revert / move / delete
+- Scan local and remote changes in a compact file table (status, revision, author, size, …)
+- Multi-select and tree navigation; bulk commit / revert / move / delete
+- Partial commit of selected paths without a Git-style staging area
 - Diff (text, encoding-aware, image), Blame, Properties, and changelists
-- Themes: light, dark, or follow system
+- Light / dark / system themes
 
 ### History & timeline
 
 - Load, filter, and paginate repository logs
-- Highlight the current working-copy revision
-- Diff changed paths, compare revisions, revert selected revisions
-- **Export a path at a given revision** (no `.svn` metadata)
+- Highlight the current working-copy revision in the timeline
+- Diff changed paths, compare revisions, reverse / revert selected revisions
+- Export a path at a given revision (no `.svn` metadata)
+- Copy a single revision number for pasting into commands or forms
 
 ### Repository browser
 
@@ -50,20 +65,22 @@ If you maintain SVN projects and want a modern UI without leaving the `svn` tool
 - Log, Blame, Properties, Checkout, Export, Import, Mkdir, Copy, Move, Rename, Delete
 - Drag entries out to the file manager after a real export
 
-### Merge, patch & partial commit
+### Merge, patch & conflicts
 
-- Merge with dry-run preview and a dedicated merge-preview window
-- Apply / generate patches; commit selected files without a Git-style staging area
+- Configurable merge with cancelable dry-run and a standalone preview window
+- Generate / apply patches
 - Text conflict resolution helpers
 
 ### Desktop integration
 
-Standalone windows (Log, Update, Commit, Revert, Clean Up, Checkout, Repo Browser, Blame, Info, conflict tools) from:
+Use the full workbench, or launch focused windows from the shell:
 
-- Windows Explorer context menus (installer-registered)
-- macOS Finder Quick Actions / Finder Sync (see packaging scripts)
-
-CLI-style launches are also supported, e.g. `--novasvn-action browse`.
+| Surface | Examples |
+| --- | --- |
+| Main app | Status workbench, multi-file review, repository browsing |
+| Standalone windows | Log, Update, Commit, Revert, Clean Up, Checkout, Repo Browser, Blame, Info, conflict tools |
+| System entry points | Windows Explorer context menus (installer-registered); macOS Finder Quick Actions / Finder Sync |
+| CLI-style launch | e.g. `--novasvn-action browse` |
 
 ---
 
@@ -157,10 +174,10 @@ scripts/             Release, SVN workflow, and benchmark helpers
 
 ### Tech stack
 
-- **UI:** Svelte 5, TypeScript, Vite, Monaco Editor  
-- **Desktop:** Tauri 2  
-- **Backend:** Rust (`svn` process orchestration, tasks, workspace logic)  
-- **Tests:** Vitest, Playwright, Cargo tests, PowerShell SVN workflow scripts  
+- **UI:** Svelte 5, TypeScript, Vite, Monaco Editor
+- **Desktop:** Tauri 2
+- **Backend:** Rust (`svn` process orchestration, tasks, workspace logic)
+- **Tests:** Vitest, Playwright, Cargo tests, PowerShell SVN workflow scripts
 
 ---
 
@@ -206,10 +223,10 @@ Contributions are welcome.
 
 Please include:
 
-- OS and NovaSVN version  
-- `svn --version`  
-- What you were doing (steps to reproduce)  
-- Relevant logs or error text  
+- OS and NovaSVN version
+- `svn --version`
+- What you were doing (steps to reproduce)
+- Relevant logs or error text
 
 **Do not paste passwords, tokens, or private repository URLs.** Redact secrets before posting.
 
@@ -217,9 +234,9 @@ Please include:
 
 ## Safety notes
 
-- NovaSVN executes **real** `svn` commands (commit, delete, merge, switch, export, …).  
-- Double-check **target path**, **URL**, and **revision** before confirming.  
-- Prefer dry-run / preview flows for merge when available.  
+- NovaSVN executes **real** `svn` commands (commit, delete, merge, switch, export, …).
+- Double-check **target path**, **URL**, and **revision** before confirming.
+- Prefer dry-run / preview flows for merge when available.
 - Development preview software may still change behavior between releases — check `git log` for recent changes.
 
 ---
