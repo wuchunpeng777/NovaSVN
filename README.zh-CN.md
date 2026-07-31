@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/wuchunpeng777/NovaSVN/actions/workflows/ci.yml/badge.svg)](https://github.com/wuchunpeng777/NovaSVN/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.0-informational.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-0.2.0-informational.svg)](package.json)
 
 **NovaSVN** 是面向 **Windows** 与 **macOS** 的开源桌面 Subversion 客户端。
 
@@ -14,7 +14,7 @@
 
 底层通过真实的 `svn` 命令行驱动——沿用你已配置、已信任的官方工具链，而不是自研一套协议栈。
 
-> **状态说明：** `0.1.0` 为**开发预览**版本。应用会对本地工作副本和远端仓库执行真实 SVN 操作。执行破坏性操作前，请仔细确认路径、Revision 与未提交改动。
+> **状态说明：** `0.2.0` 为**开发预览**版本。应用会对本地工作副本和远端仓库执行真实 SVN 操作。执行破坏性操作前，请仔细确认路径、Revision 与未提交改动。
 
 ---
 

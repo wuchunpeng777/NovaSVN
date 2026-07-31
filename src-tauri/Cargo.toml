@@ -1,6 +1,6 @@
 [package]
 name = "novasvn"
-version = "0.1.0"
+version = "0.2.0"
 description = "Open-source desktop Subversion client for Windows and macOS"
 authors = ["NovaSVN Contributors"]
 license = "MIT"
