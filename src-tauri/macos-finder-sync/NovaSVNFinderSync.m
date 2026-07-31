@@ -87,7 +87,58 @@
                                          keyEquivalent:@""];
   item.target = self;
   item.representedObject = actionName;
+  // 与 Windows Explorer 菜单共用同一套 action 图标资源
+  NSImage *icon = [self menuIconForAction:actionName];
+  if (icon) {
+    item.image = icon;
+  }
   [menu addItem:item];
+}
+
+/// 从 appex Resources 加载菜单图标（export-macos-menu-icons.py 从 .ico 导出）
+- (NSImage *)menuIconForAction:(NSString *)actionName {
+  if (actionName.length == 0) {
+    return nil;
+  }
+
+  NSBundle *bundle = [NSBundle mainBundle];
+  // 优先多分辨率：@1x(16) + @2x(32)；否则回退单文件 action.png
+  NSString *path1x = [bundle pathForResource:[NSString stringWithFormat:@"%@@1x", actionName]
+                                     ofType:@"png"];
+  NSString *path2x = [bundle pathForResource:[NSString stringWithFormat:@"%@@2x", actionName]
+                                     ofType:@"png"];
+  NSString *pathDefault = [bundle pathForResource:actionName ofType:@"png"];
+
+  NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(16.0, 16.0)];
+  BOOL hasRepresentation = NO;
+
+  if (path1x) {
+    NSImage *repImage = [[NSImage alloc] initWithContentsOfFile:path1x];
+    NSBitmapImageRep *rep = (NSBitmapImageRep *)repImage.representations.firstObject;
+    if ([rep isKindOfClass:[NSBitmapImageRep class]]) {
+      rep.size = NSMakeSize(16.0, 16.0);
+      [image addRepresentation:rep];
+      hasRepresentation = YES;
+    }
+  }
+  if (path2x) {
+    NSImage *repImage = [[NSImage alloc] initWithContentsOfFile:path2x];
+    NSBitmapImageRep *rep = (NSBitmapImageRep *)repImage.representations.firstObject;
+    if ([rep isKindOfClass:[NSBitmapImageRep class]]) {
+      rep.size = NSMakeSize(16.0, 16.0);
+      [image addRepresentation:rep];
+      hasRepresentation = YES;
+    }
+  }
+  if (!hasRepresentation && pathDefault) {
+    NSImage *fallback = [[NSImage alloc] initWithContentsOfFile:pathDefault];
+    if (fallback) {
+      fallback.size = NSMakeSize(16.0, 16.0);
+      return fallback;
+    }
+  }
+
+  return hasRepresentation ? image : nil;
 }
 
 - (void)runAction:(NSMenuItem *)sender {

@@ -1522,6 +1522,30 @@ if (
   failed = true;
 }
 
+// 菜单项必须加载与 Windows 同源的 action 图标
+if (
+  !macosFinderSyncSource.includes("menuIconForAction") ||
+  !macosFinderSyncSource.includes("item.image") ||
+  !macosFinderSyncBuildScript.includes("export-macos-menu-icons.py") ||
+  !macosFinderSyncBuildScript.includes('RESOURCES_DIR="${CONTENTS_DIR}/Resources"')
+) {
+  console.error("macOS Finder Sync 菜单必须嵌入并显示 Explorer 同源图标");
+  failed = true;
+}
+
+const exportMenuIconsScript = fs.readFileSync(
+  path.join(root, "scripts", "export-macos-menu-icons.py"),
+  "utf8",
+);
+if (
+  !exportMenuIconsScript.includes("write_png") ||
+  !exportMenuIconsScript.includes("branch-workspace") ||
+  !exportMenuIconsScript.includes("checkout")
+) {
+  console.error("macOS 菜单图标导出脚本必须覆盖全部 Explorer action");
+  failed = true;
+}
+
 // 层级对齐 Windows：顶层 Update/Commit/Log，其余进 More 子菜单；非 WC 目录提供 Checkout
 if (
   !macosFinderSyncSource.includes("rootItem.submenu = submenu") ||

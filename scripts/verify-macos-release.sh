@@ -75,6 +75,15 @@ if ! lipo -archs "${APPEX_EXECUTABLE}" | tr ' ' '\n' | grep -Fx "$(uname -m)" >/
   exit 1
 fi
 
+# Finder 菜单图标（与 Windows explorer-icons 同源）
+APPEX_RESOURCES="${APPEX_PATH}/Contents/Resources"
+for action in open info diff blame revert delete ignore cleanup branch-workspace browse update commit log checkout; do
+  if [[ ! -f "${APPEX_RESOURCES}/${action}.png" && ! -f "${APPEX_RESOURCES}/${action}@2x.png" ]]; then
+    echo "Finder Sync 扩展缺少菜单图标：${action}.png" >&2
+    exit 1
+  fi
+done
+
 HOME="${TEMP_HOME}" bash "${ROOT_DIR}/scripts/macos-finder-quick-actions.sh" install >/dev/null
 find "${TEMP_HOME}/Library/Services" -name Info.plist -print0 | xargs -0 -n1 plutil -lint >/dev/null
 find "${TEMP_HOME}/Library/Services" -name document.wflow -print0 | xargs -0 -n1 plutil -lint >/dev/null

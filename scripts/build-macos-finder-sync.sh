@@ -31,6 +31,14 @@ xcodebuild \
 
 cp -R "${XCODE_PRODUCTS_DIR}/NovaSVNFinderSync.appex" "${APP_EXT_DIR}"
 
+# 将与 Windows 共用的 Explorer 菜单图标嵌入 appex Resources
+RESOURCES_DIR="${CONTENTS_DIR}/Resources"
+mkdir -p "${RESOURCES_DIR}"
+python3 "${ROOT_DIR}/scripts/export-macos-menu-icons.py" \
+  --source "${ROOT_DIR}/src-tauri/icons/explorer" \
+  --dest "${RESOURCES_DIR}" \
+  --size 32
+
 chmod +x "${EXECUTABLE}"
 if [[ "${SIGNING_IDENTITY}" == "-" ]]; then
   codesign --force --sign - \
