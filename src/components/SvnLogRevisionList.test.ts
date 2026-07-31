@@ -81,9 +81,13 @@ describe("SvnLogRevisionList", () => {
     expect(screen.getByLabelText("当前路径版本 r42")).toHaveTextContent(
       "当前路径版本",
     );
+    const copyRevision = screen.getByRole("button", { name: "复制版本号 r42" });
     const exportButton = screen.getByRole("button", { name: "Export r42" });
     const revert = screen.getByRole("button", { name: "撤销提交 r42" });
     const workspaceRevert = screen.getByRole("button", { name: "回退工作区到 r42" });
+    expect(copyRevision.querySelector(".lucide-clipboard")).toBeInTheDocument();
+    expect(copyRevision).toHaveClass("svn-log-copy-revision");
+    expect(copyRevision).toHaveAttribute("data-tooltip", "复制版本号 r42");
     expect(exportButton.querySelector(".lucide-download")).toBeInTheDocument();
     expect(exportButton).toHaveClass("svn-log-export");
     expect(exportButton).toHaveAttribute("data-tooltip", "Export r42");
@@ -92,6 +96,7 @@ describe("SvnLogRevisionList", () => {
     expect(workspaceRevert).toHaveClass("svn-log-revert-workspace");
     expect(revert).toHaveAttribute("data-tooltip", "撤销提交 r42");
     expect(workspaceRevert).toHaveAttribute("data-tooltip", "回退工作区到 r42");
+    expect(copyRevision).not.toHaveAttribute("title");
     expect(exportButton).not.toHaveAttribute("title");
     expect(revert).not.toHaveAttribute("title");
     expect(workspaceRevert).not.toHaveAttribute("title");
@@ -102,6 +107,37 @@ describe("SvnLogRevisionList", () => {
     expect(onExport).toHaveBeenCalledOnce();
     expect(onRevert).toHaveBeenCalledOnce();
     expect(onRevertWorkspace).toHaveBeenCalledOnce();
+  });
+
+  it("copies the selected log revision number to the clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(SvnLogRevisionList, {
+      props: {
+        entries: [
+          {
+            revision: "42",
+            author: "alice",
+            date: "2026-07-22T10:30:00Z",
+            message: "Copy me",
+            changed_paths: [],
+          },
+        ],
+        totalEntries: 1,
+        fastRevertTooltips: true,
+      },
+    });
+
+    const copyButton = screen.getByRole("button", { name: "复制版本号 r42" });
+    await fireEvent.click(copyButton);
+
+    expect(writeText).toHaveBeenCalledWith("42");
+    expect(copyButton).toHaveClass("copied");
+    expect(copyButton.querySelector(".lucide-check")).toBeInTheDocument();
   });
 
   it("shows the local revision boundary when the exact revision is absent", () => {

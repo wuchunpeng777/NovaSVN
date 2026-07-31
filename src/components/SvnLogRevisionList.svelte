@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { ChevronDown, ChevronUp, Download, FolderClock, Undo2 } from "@lucide/svelte";
+  import { Check, ChevronDown, ChevronUp, Clipboard, Download, FolderClock, Undo2 } from "@lucide/svelte";
+  import { onDestroy } from "svelte";
   import { summarizeSvnChangeActions } from "../lib/svn-log";
   import type { SvnChangedPath, SvnLogEntry } from "../types/api";
 
@@ -42,11 +43,20 @@
   export let onRevertWorkspace: (entry: SvnLogEntry) => void = () => {};
   export let onExport: (entry: SvnLogEntry) => void = () => {};
 
+  let copiedRevision: string | null = null;
+  let copiedTimer: number | null = null;
+
   $: normalizedBaselineRevision = normalizeRevision(currentRevision);
   $: normalizedEffectiveRevision = normalizeRevision(effectiveRevision ?? currentRevision);
   $: hasBaselineRevisionEntry = entries.some(
     (entry) => normalizeRevision(entry.revision) === normalizedBaselineRevision,
   );
+
+  onDestroy(() => {
+    if (copiedTimer !== null) {
+      window.clearTimeout(copiedTimer);
+    }
+  });
 
   function normalizeRevision(value: string | null) {
     const normalized = value?.trim().replace(/^r/i, "") ?? "";
@@ -72,6 +82,30 @@
       return false;
     }
     return current > entry && (index === 0 || (Number.isFinite(previous) && current < previous));
+  }
+
+  function copyRevisionTitle(entry: SvnLogEntry) {
+    return `复制版本号 r${entry.revision}`;
+  }
+
+  async function copyRevision(entry: SvnLogEntry) {
+    const revision = entry.revision.trim();
+    if (!revision || !navigator.clipboard?.writeText) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(revision);
+      copiedRevision = revision;
+      if (copiedTimer !== null) {
+        window.clearTimeout(copiedTimer);
+      }
+      copiedTimer = window.setTimeout(() => {
+        copiedRevision = null;
+        copiedTimer = null;
+      }, 1600);
+    } catch {
+      copiedRevision = null;
+    }
   }
 </script>
 
@@ -169,6 +203,21 @@
                 {/if}
               </button>
             {/if}
+            <button
+              type="button"
+              class="svn-log-revert svn-log-copy-revision"
+              class:copied={copiedRevision === entry.revision}
+              aria-label={copyRevisionTitle(entry)}
+              title={fastRevertTooltips ? undefined : copyRevisionTitle(entry)}
+              data-tooltip={fastRevertTooltips ? copyRevisionTitle(entry) : undefined}
+              on:click={() => copyRevision(entry)}
+            >
+              {#if copiedRevision === entry.revision}
+                <Check size={15} strokeWidth={2} aria-hidden="true" />
+              {:else}
+                <Clipboard size={15} strokeWidth={2} aria-hidden="true" />
+              {/if}
+            </button>
             <button
               type="button"
               class="svn-log-revert svn-log-export"
@@ -352,14 +401,14 @@
 
   .svn-log-entry-header {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(150px, auto);
+    grid-template-columns: minmax(0, 1fr) minmax(186px, auto);
     align-items: center;
     gap: 10px;
     min-width: 0;
   }
 
   .svn-log-entry-header.with-merge {
-    grid-template-columns: 24px minmax(0, 1fr) minmax(150px, auto);
+    grid-template-columns: 24px minmax(0, 1fr) minmax(186px, auto);
   }
 
   .svn-log-revision-checkbox {
@@ -597,6 +646,30 @@
     opacity: 1;
     transform: translateY(0);
     transition-delay: 100ms;
+  }
+
+  .svn-log-copy-revision {
+    border-color: #7a8896;
+    background: color-mix(in srgb, var(--log-secondary) 12%, var(--log-panel));
+    color: var(--log-secondary);
+  }
+
+  .svn-log-copy-revision.copied {
+    border-color: #16834f;
+    background: #e1f5e9;
+    color: #16834f;
+  }
+
+  .svn-log-list[data-theme="dark"] .svn-log-copy-revision {
+    border-color: #6a6a70;
+    background: #2d2d30;
+    color: #c0c0c6;
+  }
+
+  .svn-log-list[data-theme="dark"] .svn-log-copy-revision.copied {
+    border-color: #55cf8a;
+    background: #153b2a;
+    color: #55cf8a;
   }
 
   .svn-log-export {
