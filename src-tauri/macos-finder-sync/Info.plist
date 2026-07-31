@@ -5,7 +5,7 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>zh_CN</string>
   <key>CFBundleDisplayName</key>
-  <string>NovaSVN Finder</string>
+  <string>NovaSVN</string>
   <key>CFBundleExecutable</key>
   <string>NovaSVNFinderSync</string>
   <key>CFBundleIdentifier</key>
@@ -13,15 +13,23 @@
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>NovaSVN Finder</string>
+  <string>NovaSVN</string>
   <key>CFBundlePackageType</key>
   <string>XPC!</string>
   <key>CFBundleShortVersionString</key>
   <string>0.2.0</string>
   <key>CFBundleVersion</key>
   <string>0.2.0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>10.13</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
   <key>NSExtension</key>
   <dict>
+    <key>NSExtensionAttributes</key>
+    <dict/>
     <key>NSExtensionPointIdentifier</key>
     <string>com.apple.FinderSync</string>
     <key>NSExtensionPrincipalClass</key>

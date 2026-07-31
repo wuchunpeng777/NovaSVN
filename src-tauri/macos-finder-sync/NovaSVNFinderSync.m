@@ -1,6 +1,9 @@
 #import <Cocoa/Cocoa.h>
 #import <FinderSync/FinderSync.h>
 
+// Finder 会把本扩展返回的菜单收进以 CFBundleDisplayName（NovaSVN）命名的上级项中。
+// 内部层级对齐 Windows：顶层 Update / Commit / Log，其余进子菜单。
+
 @interface NovaSVNFinderSync : FIFinderSync
 @end
 
@@ -26,22 +29,55 @@
     return nil;
   }
 
+  NSURL *targetURL = [self selectedTargetURL];
+  if (!targetURL) {
+    return nil;
+  }
+
+  NSString *path = targetURL.path;
+  BOOL isDirectory = [self pathIsDirectory:path];
+  BOOL inWorkingCopy = [self pathIsInWorkingCopy:path];
+
+  // 与 Windows shell 扩展一致：非工作副本仅对目录提供 Checkout
+  if (!inWorkingCopy) {
+    if (!isDirectory) {
+      return nil;
+    }
+    NSMenu *checkoutMenu = [[NSMenu alloc] initWithTitle:@"NovaSVN"];
+    [self addMenuItem:@"Checkout" actionName:@"checkout" toMenu:checkoutMenu];
+    return checkoutMenu;
+  }
+
+  // 工作副本：与 Windows 相同的顶层常用项 + 子菜单
+  // Finder 外层已显示「NovaSVN」，故顶层用短标签（Update / Commit / Log）
   NSMenu *menu = [[NSMenu alloc] initWithTitle:@"NovaSVN"];
-  NSMenuItem *rootItem = [[NSMenuItem alloc] initWithTitle:@"NovaSVN"
+
+  [self addMenuItem:@"Update" actionName:@"update" toMenu:menu];
+  [self addMenuItem:@"Commit" actionName:@"commit" toMenu:menu];
+  [self addMenuItem:@"Log" actionName:@"log" toMenu:menu];
+
+  NSMenuItem *rootItem = [[NSMenuItem alloc] initWithTitle:@"More"
                                                     action:nil
                                              keyEquivalent:@""];
-  NSMenu *submenu = [[NSMenu alloc] initWithTitle:@"NovaSVN"];
+  NSMenu *submenu = [[NSMenu alloc] initWithTitle:@"More"];
   rootItem.submenu = submenu;
   [menu addItem:rootItem];
 
-  [self addMenuItem:@"打开工作副本" actionName:@"open" toMenu:submenu];
-  [self addMenuItem:@"提交" actionName:@"commit" toMenu:submenu];
-  [self addMenuItem:@"更新" actionName:@"update" toMenu:submenu];
+  // 子菜单项顺序与 windows-explorer-menu.ps1 中 $submenuActions 一致
+  [self addMenuItem:@"Open" actionName:@"open" toMenu:submenu];
+  [self addMenuItem:@"SVN Info" actionName:@"info" toMenu:submenu];
   [self addMenuItem:@"Diff" actionName:@"diff" toMenu:submenu];
-  [self addMenuItem:@"日志" actionName:@"log" toMenu:submenu];
-  [self addMenuItem:@"撤销" actionName:@"revert" toMenu:submenu];
-  [self addMenuItem:@"清理" actionName:@"cleanup" toMenu:submenu];
-  [self addMenuItem:@"分支工作区" actionName:@"branch-workspace" toMenu:submenu];
+  // Blame 仅对文件（Windows 仅注册在 *\shell）
+  if (!isDirectory) {
+    [self addMenuItem:@"Blame" actionName:@"blame" toMenu:submenu];
+  }
+  [self addMenuItem:@"Revert" actionName:@"revert" toMenu:submenu];
+  [self addMenuItem:@"Delete" actionName:@"delete" toMenu:submenu];
+  [self addMenuItem:@"Ignore" actionName:@"ignore" toMenu:submenu];
+  [self addMenuItem:@"Cleanup" actionName:@"cleanup" toMenu:submenu];
+  [self addMenuItem:@"Branch Workspace" actionName:@"branch-workspace" toMenu:submenu];
+  [self addMenuItem:@"Repo Browser" actionName:@"browse" toMenu:submenu];
+
   return menu;
 }
 
@@ -86,6 +122,40 @@
     return selectedURLs.firstObject;
   }
   return controller.targetedURL;
+}
+
+- (BOOL)pathIsDirectory:(NSString *)path {
+  BOOL isDirectory = NO;
+  [[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDirectory];
+  return isDirectory;
+}
+
+/// 自路径向上查找 .svn，与 Windows shell extension 的 classify_path 一致
+- (BOOL)pathIsInWorkingCopy:(NSString *)path {
+  if (path.length == 0) {
+    return NO;
+  }
+
+  NSFileManager *fileManager = [NSFileManager defaultManager];
+  BOOL isDirectory = NO;
+  [fileManager fileExistsAtPath:path isDirectory:&isDirectory];
+
+  NSString *current = isDirectory ? path : [path stringByDeletingLastPathComponent];
+  while (current.length > 0) {
+    NSString *svnMetadata = [current stringByAppendingPathComponent:@".svn"];
+    BOOL svnIsDirectory = NO;
+    if ([fileManager fileExistsAtPath:svnMetadata isDirectory:&svnIsDirectory] &&
+        svnIsDirectory) {
+      return YES;
+    }
+
+    NSString *parent = [current stringByDeletingLastPathComponent];
+    if ([parent isEqualToString:current] || parent.length == 0) {
+      break;
+    }
+    current = parent;
+  }
+  return NO;
 }
 
 - (NSURL *)novaSVNApplicationURL {

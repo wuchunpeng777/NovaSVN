@@ -4,6 +4,120 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::NovaError;
 
+/// Finder Sync 扩展 Bundle ID，须与 Info.plist 一致。
+#[cfg(target_os = "macos")]
+const FINDER_SYNC_BUNDLE_ID: &str = "com.novasvn.client.finder-sync";
+
+/// 应用启动时确保 macOS 右键走 Finder Sync，而不是「服务」里的旧 Quick Actions。
+pub fn ensure_macos_shell_integration() {
+    #[cfg(target_os = "macos")]
+    {
+        remove_legacy_finder_services();
+        enable_finder_sync_extension();
+    }
+}
+
+/// 卸载历史遗留的 Automator Services / Quick Actions，避免菜单出现在「服务」子菜单。
+#[cfg(target_os = "macos")]
+fn remove_legacy_finder_services() {
+    use std::path::PathBuf;
+
+    let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) else {
+        return;
+    };
+    let services_dir = PathBuf::from(home).join("Library/Services");
+    if !services_dir.is_dir() {
+        return;
+    }
+
+    let Ok(entries) = std::fs::read_dir(&services_dir) else {
+        return;
+    };
+
+    let mut removed = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !is_legacy_novasvn_service(name) {
+            continue;
+        }
+        if std::fs::remove_dir_all(&path).is_ok() || std::fs::remove_file(&path).is_ok() {
+            removed = true;
+            eprintln!("[NovaSVN] 已移除旧 Finder 服务菜单：{}", path.display());
+        }
+    }
+
+    if removed {
+        // 刷新 Services 缓存，避免 Finder 仍显示已删除项
+        let _ = Command::new("/System/Library/CoreServices/pbs")
+            .arg("-flush")
+            .status();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn is_legacy_novasvn_service(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    (lower.starts_with("novasvn") || lower.starts_with("open in novasvn"))
+        && (lower.ends_with(".workflow") || lower.ends_with(".service"))
+}
+
+/// 注册并启用随应用分发的 Finder Sync 扩展。
+#[cfg(target_os = "macos")]
+fn enable_finder_sync_extension() {
+    let Some(appex_path) = finder_sync_appex_path() else {
+        eprintln!("[NovaSVN] 未找到 Finder Sync 扩展，跳过启用（请从 DMG 完整安装应用）");
+        return;
+    };
+
+    let add_status = Command::new("pluginkit")
+        .args(["-a", &appex_path])
+        .status();
+    if let Err(error) = add_status {
+        eprintln!("[NovaSVN] pluginkit 注册 Finder Sync 失败：{error}");
+        return;
+    }
+
+    let enable_status = Command::new("pluginkit")
+        .args(["-e", "use", "-i", FINDER_SYNC_BUNDLE_ID])
+        .status();
+    if let Err(error) = enable_status {
+        eprintln!("[NovaSVN] pluginkit 启用 Finder Sync 失败：{error}");
+        return;
+    }
+
+    eprintln!(
+        "[NovaSVN] 已启用 Finder Sync 右键菜单：{} ({FINDER_SYNC_BUNDLE_ID})",
+        appex_path
+    );
+}
+
+/// 解析主程序同级 PlugIns 中的 appex 路径。
+#[cfg(target_os = "macos")]
+fn finder_sync_appex_path() -> Option<String> {
+    use std::path::Path;
+
+    let executable = std::env::current_exe().ok()?;
+    // .../NovaSVN.app/Contents/MacOS/novasvn → .../NovaSVN.app/Contents/PlugIns/NovaSVNFinderSync.appex
+    let macos_dir = executable.parent()?;
+    let contents_dir = macos_dir.parent()?;
+    let appex = contents_dir
+        .join("PlugIns")
+        .join("NovaSVNFinderSync.appex");
+    if !appex.is_dir() {
+        // 开发态或错误安装时尝试 Applications 固定路径
+        let fallback =
+            Path::new("/Applications/NovaSVN.app/Contents/PlugIns/NovaSVNFinderSync.appex");
+        if fallback.is_dir() {
+            return Some(fallback.to_string_lossy().into_owned());
+        }
+        return None;
+    }
+    Some(appex.to_string_lossy().into_owned())
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct StartupIntent {
     pub action: Option<String>,
@@ -497,6 +611,16 @@ fn repo_browser_window_arguments(target_path: &str, revision: Option<&str>) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn recognizes_legacy_finder_service_workflow_names() {
+        assert!(is_legacy_novasvn_service("NovaSVN Commit.workflow"));
+        assert!(is_legacy_novasvn_service("Open in NovaSVN.workflow"));
+        assert!(is_legacy_novasvn_service("novasvn update.workflow"));
+        assert!(!is_legacy_novasvn_service("Other App.workflow"));
+        assert!(!is_legacy_novasvn_service("NovaSVN Notes.txt"));
+    }
 
     #[test]
     fn parses_explicit_action_and_path_flags() {

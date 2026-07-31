@@ -1522,11 +1522,37 @@ if (
   failed = true;
 }
 
+// 层级对齐 Windows：顶层 Update/Commit/Log，其余进 More 子菜单；非 WC 目录提供 Checkout
 if (
   !macosFinderSyncSource.includes("rootItem.submenu = submenu") ||
-  !macosFinderSyncSource.includes('addMenuItem:@"提交"')
+  !macosFinderSyncSource.includes('addMenuItem:@"Update"') ||
+  !macosFinderSyncSource.includes('addMenuItem:@"Commit"') ||
+  !macosFinderSyncSource.includes('addMenuItem:@"Log"') ||
+  !macosFinderSyncSource.includes('initWithTitle:@"More"') ||
+  !macosFinderSyncSource.includes('addMenuItem:@"Checkout"') ||
+  !macosFinderSyncSource.includes("pathIsInWorkingCopy")
 ) {
-  console.error("macOS Finder Sync 扩展必须把操作收进 NovaSVN 统一上级菜单");
+  console.error("macOS Finder Sync 扩展菜单层级必须与 Windows 一致（顶层常用项 + 子菜单 + Checkout）");
+  failed = true;
+}
+
+// 主程序启动时必须启用 Finder Sync，并清理会落入「服务」的旧 Quick Actions
+if (
+  !systemIntegrationRs.includes("ensure_macos_shell_integration") ||
+  !systemIntegrationRs.includes("remove_legacy_finder_services") ||
+  !systemIntegrationRs.includes("enable_finder_sync_extension") ||
+  !systemIntegrationRs.includes("pluginkit") ||
+  !tauriLib.includes("ensure_macos_shell_integration")
+) {
+  console.error("macOS 启动必须注册 Finder Sync 并卸载 Library/Services 中的旧菜单");
+  failed = true;
+}
+
+if (
+  !macosFinderSyncInfo.includes("<string>NovaSVN</string>") ||
+  macosFinderSyncInfo.includes("NovaSVN Finder")
+) {
+  console.error("Finder Sync CFBundleDisplayName 必须为 NovaSVN，避免菜单名多余后缀");
   failed = true;
 }
 

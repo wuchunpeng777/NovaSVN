@@ -1244,6 +1244,9 @@ pub fn run() {
             let _ = app.emit("novasvn-menu", id.to_string());
         })
         .setup(|app| {
+            // macOS：启用 Finder Sync 原生右键菜单，并移除落在「服务」里的旧 Quick Actions
+            system_integration::ensure_macos_shell_integration();
+
             let startup_intent = system_integration::startup_intent();
             let window_surface = window_state::surface_name(startup_intent.action.as_deref());
             let standalone_title = match startup_intent.action.as_deref() {
