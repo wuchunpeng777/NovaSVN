@@ -11354,12 +11354,10 @@ mod tests {
     fn slow_test_command(root: &Path) -> Command {
         let path = root.join("slow-task-command.sh");
         fs::write(&path, "#!/bin/sh\nsleep 0.3\nprintf tracked\n").expect("慢速测试脚本应能写入");
-        let mut permissions = fs::metadata(&path)
-            .expect("慢速测试脚本元数据应可读取")
-            .permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&path, permissions).expect("慢速测试脚本应可执行");
-        Command::new(path)
+        // 通过 sh 解释执行，避免 Linux 上对刚写入脚本直接 exec 时偶发 ETXTBSY
+        let mut command = Command::new("sh");
+        command.arg(path);
+        command
     }
 
     #[cfg(windows)]
@@ -11380,12 +11378,9 @@ mod tests {
             ),
         )
         .expect("进程树测试脚本应能写入");
-        let mut permissions = fs::metadata(&path)
-            .expect("进程树测试脚本元数据应可读取")
-            .permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&path, permissions).expect("进程树测试脚本应可执行");
-        Command::new(path)
+        let mut command = Command::new("sh");
+        command.arg(path);
+        command
     }
 
     #[cfg(unix)]
@@ -11393,15 +11388,13 @@ mod tests {
         let path = root.join("active-output-task.sh");
         fs::write(
             &path,
-            "#!/bin/sh\nfor value in 1 2 3 4 5; do printf tick; sleep 0.08; done\n",
+            "#!/bin/sh\nfor value in 1 2 3 4 5 6 7 8; do printf tick; sleep 0.05; done\n",
         )
         .expect("活动输出测试脚本应能写入");
-        let mut permissions = fs::metadata(&path)
-            .expect("活动输出测试脚本元数据应可读取")
-            .permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&path, permissions).expect("活动输出测试脚本应可执行");
-        Command::new(path)
+        // 经 sh 启动，规避「写入脚本后立刻 exec」在 CI 上触发 ExecutableFileBusy
+        let mut command = Command::new("sh");
+        command.arg(path);
+        command
     }
 
     fn running_process_test_queue(task_id: &str) -> (TaskQueue, Arc<Mutex<TaskQueueState>>) {
@@ -11696,7 +11689,8 @@ mod tests {
         assert!(output.status.success());
         assert_eq!(
             String::from_utf8_lossy(&output.stdout),
-            "tickticktickticktick"
+            "tick".repeat(8),
+            "活动输出脚本应完整输出全部 tick"
         );
         fs::remove_dir_all(root).ok();
     }
@@ -11818,19 +11812,27 @@ mod tests {
         let root = test_temp_dir("task-total-timeout");
         let state = Arc::new(Mutex::new(TaskQueueState::default()));
         let mut command = active_output_test_command(&root);
+        // 总时限略宽于 idle，且脚本持续输出，确保命中「总运行超时」而非「无输出超时」
         let error = run_task_command_with_limits(
             &state,
             "task-total-timeout",
             &mut command,
             TaskCommandLimits {
-                timeout: Duration::from_millis(180),
-                idle_timeout: Some(Duration::from_millis(150)),
+                timeout: Duration::from_millis(280),
+                idle_timeout: Some(Duration::from_millis(220)),
             },
         )
         .expect_err("持续输出命令仍应受总时限约束");
 
-        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-        assert!(error.to_string().contains("运行超过"));
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::TimedOut,
+            "期望总时限 TimedOut，实际：{error:?}"
+        );
+        assert!(
+            error.to_string().contains("运行超过"),
+            "超时信息应说明总运行时限：{error}"
+        );
         fs::remove_dir_all(root).ok();
     }
 
