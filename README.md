@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/wuchunpeng777/NovaSVN/actions/workflows/ci.yml/badge.svg)](https://github.com/wuchunpeng777/NovaSVN/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.2.0-informational.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-0.3.0-informational.svg)](package.json)
 
 **NovaSVN** is an open-source desktop Subversion client for **Windows** and **macOS**.
 
@@ -14,7 +14,7 @@ It is a full workbench for day-to-day SVN work — not a pile of one-off dialogs
 
 Under the hood it drives the real `svn` CLI you already configure and trust, instead of reimplementing the protocol stack.
 
-> **Status:** `0.2.0` is a **development preview**. NovaSVN runs real SVN commands against local working copies and remote repositories. Always review paths, revisions, and pending changes before destructive operations.
+> **Status:** `0.3.0` is a **development preview**. NovaSVN runs real SVN commands against local working copies and remote repositories. Always review paths, revisions, and pending changes before destructive operations.
 
 ---
 
