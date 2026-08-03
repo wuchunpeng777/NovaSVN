@@ -371,11 +371,14 @@
       const selectableInScope = nextStatus.files
         .filter((file) => isSelectable(file) && isPathInCommitTarget(file.path))
         .map((file) => file.path);
-      // Default selection only includes already versioned (committable) files.
-      // Unversioned paths stay available for explicit multi-select / commit.
-      const defaultSelected = nextStatus.files
+      // Prefer versioned (committable) changes by default. When the scope has only
+      // unversioned paths (e.g. Explorer Commit on a newly created folder), select
+      // those so Add/Commit is immediately usable.
+      const versionedSelected = nextStatus.files
         .filter((file) => isCommittable(file) && isPathInCommitTarget(file.path))
         .map((file) => file.path);
+      const defaultSelected =
+        versionedSelected.length > 0 ? versionedSelected : selectableInScope;
       if (preserveSelection) {
         // Drop vanished paths and force a new Set so checkbox/summary UI refreshes.
         pruneSelectionTo(selectableInScope);

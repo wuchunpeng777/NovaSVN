@@ -475,7 +475,9 @@ pub fn inspect_update_target(
 ) -> Result<UpdateTargetSummary, NovaError> {
     let target = normalize_update_target_path(&request.path)?;
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
-    let summary = read_workspace_summary(&target, &executable)?;
+    // Unversioned paths (e.g. a newly created folder inside a WC) fail `svn info`
+    // directly. Walk ancestors so Explorer Commit/Update on those paths still works.
+    let summary = read_workspace_summary_from_path_or_ancestor(&target, &executable)?;
     let canonical_target = fs::canonicalize(&target).map_err(|error| {
         NovaError::command(
             "UPDATE_TARGET_RESOLVE_FAILED",
@@ -604,6 +606,47 @@ fn read_workspace_summary(path: &Path, executable: &str) -> Result<WorkspaceSumm
 
     let xml = String::from_utf8_lossy(&output.stdout);
     parse_svn_info_xml(&xml, path)
+}
+
+/// Resolve workspace info for `path`, walking parent directories when the path itself
+/// is unversioned (or otherwise not a direct `svn info` target) but still lives
+/// inside a working copy. Used by standalone Commit/Update windows opened from
+/// Explorer on newly created folders/files.
+fn read_workspace_summary_from_path_or_ancestor(
+    path: &Path,
+    executable: &str,
+) -> Result<WorkspaceSummary, NovaError> {
+    match read_workspace_summary(path, executable) {
+        Ok(summary) => return Ok(summary),
+        Err(first_error) => {
+            let mut current = path.parent();
+            while let Some(ancestor) = current {
+                if ancestor.as_os_str().is_empty() {
+                    break;
+                }
+                if let Ok(summary) = read_workspace_summary(ancestor, executable) {
+                    // Ensure the original path is still under this working copy root.
+                    if let (Ok(canonical_path), Ok(canonical_root)) = (
+                        fs::canonicalize(path),
+                        fs::canonicalize(&summary.working_copy_root),
+                    ) {
+                        if canonical_path.starts_with(&canonical_root) {
+                            return Ok(summary);
+                        }
+                    } else {
+                        return Ok(summary);
+                    }
+                }
+                // Stop once we leave paths that could contain a WC (drive root / empty).
+                let parent = ancestor.parent();
+                if parent == Some(ancestor) {
+                    break;
+                }
+                current = parent;
+            }
+            Err(first_error)
+        }
+    }
 }
 
 pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
@@ -7144,6 +7187,110 @@ line two</property>
                 assert!(message.contains("Update 目标"));
             }
         }
+    }
+
+    #[test]
+    fn inspects_unversioned_directory_inside_working_copy() {
+        if !svn_test_tools_available() {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-unversioned-inspect-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        let unversioned_dir = working_copy.join("new-folder");
+        let nested_file = unversioned_dir.join("nested.txt");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create fixture root");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::create_dir_all(&unversioned_dir).expect("create unversioned directory");
+        fs::write(&nested_file, "new content").expect("write nested unversioned file");
+
+        let summary = inspect_update_target(InspectUpdateTargetRequest {
+            path: unversioned_dir.display().to_string(),
+            svn_executable: None,
+        })
+        .expect("unversioned directory inside WC should resolve via parent");
+
+        let expected_root = fs::canonicalize(&working_copy)
+            .expect("canonicalize working copy")
+            .display()
+            .to_string();
+        // working_copy_root may differ only by Windows extended-path prefix / separators.
+        let normalized_summary_root = summary
+            .working_copy_root
+            .trim_start_matches(r"\\?\")
+            .replace('\\', "/");
+        let normalized_expected_root = expected_root
+            .trim_start_matches(r"\\?\")
+            .replace('\\', "/");
+        assert_eq!(normalized_summary_root, normalized_expected_root);
+        assert_eq!(
+            summary
+                .relative_path
+                .as_deref()
+                .map(|path| path.replace('\\', "/"))
+                .as_deref(),
+            Some("new-folder")
+        );
+        assert_eq!(summary.kind, "dir");
+
+        let nested_summary = inspect_update_target(InspectUpdateTargetRequest {
+            path: nested_file.display().to_string(),
+            svn_executable: None,
+        })
+        .expect("unversioned nested file inside WC should resolve via parent");
+        assert_eq!(
+            nested_summary
+                .relative_path
+                .as_deref()
+                .map(|path| path.replace('\\', "/"))
+                .as_deref(),
+            Some("new-folder/nested.txt")
+        );
+        assert_eq!(nested_summary.kind, "file");
+
+        let scoped = scan_workspace_status(ScanWorkspaceStatusRequest {
+            working_copy_root: summary.working_copy_root.clone(),
+            scope_path: summary.relative_path.clone(),
+            include_content_digests: Some(false),
+            include_revision_summary: Some(false),
+            include_unversioned: Some(true),
+            svn_executable: None,
+            offset: Some(0),
+            limit: Some(100),
+            check_remote_updates: Some(false),
+        })
+        .expect("scoped status for unversioned directory");
+        assert!(
+            scoped.files.iter().any(|file| {
+                file.status == "unversioned"
+                    && file.path.replace('\\', "/") == "new-folder"
+            }),
+            "expected unversioned new-folder in status, got {:?}",
+            scoped
+                .files
+                .iter()
+                .map(|file| (&file.path, &file.status))
+                .collect::<Vec<_>>()
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

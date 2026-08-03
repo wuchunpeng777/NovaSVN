@@ -401,6 +401,58 @@ describe("StandaloneCommitWindow", () => {
     });
   });
 
+  it("范围内只有未版本控制路径时默认勾选，可直接提交新增目录", async () => {
+    inspectUpdateTargetMock.mockResolvedValue(
+      makeTarget({
+        target_path: "C:\\repo\\new-folder",
+        relative_path: "new-folder",
+        kind: "dir",
+      }),
+    );
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({
+        files: [
+          makeFile("new-folder", "unversioned", { file_size: null }),
+          makeFile("other.ts", "modified"),
+        ],
+        total: 2,
+        returned: 2,
+        local_changes: 2,
+        modified: 1,
+        unversioned: 1,
+      }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo\\new-folder" } });
+
+    await waitFor(() => {
+      expect(scanWorkspaceStatusMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        scope_path: "new-folder",
+        include_content_digests: false,
+        svn_executable: undefined,
+        offset: 0,
+        limit: 5000,
+        check_remote_updates: false,
+      });
+    });
+    const pane = screen.getByLabelText("选择提交文件");
+    expect(await within(pane).findByText("new-folder")).toBeInTheDocument();
+    expect(within(pane).queryByText("other.ts")).not.toBeInTheDocument();
+    expect(within(pane).getByRole("checkbox", { name: "new-folder" })).toBeChecked();
+    expect(within(pane).getByRole("button", { name: "Add new-folder" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "提交 1 个文件" })).toBeEnabled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "提交 1 个文件" }));
+    await waitFor(() => {
+      expect(createCommitTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        message: "",
+        files: ["new-folder"],
+        svn_executable: undefined,
+      });
+    });
+  });
+
   it("全选包含未版本控制文件，Shift 可范围多选", async () => {
     scanWorkspaceStatusMock.mockResolvedValue(
       makeStatus({
