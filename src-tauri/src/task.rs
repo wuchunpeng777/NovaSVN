@@ -2705,9 +2705,24 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
                     unversioned.join(", ")
                 ),
             );
+            // Match standalone Add: validate_add_target expects a canonical WC root
+            // (Windows canonicalize uses \\?\ prefixes; non-canonical roots fail the safety check).
+            let add_root = match canonicalize_add_working_copy_root(&root) {
+                Ok(canonical) => canonical,
+                Err(error) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "提交前自动 Add 安全校验失败",
+                        Some(nova_error_text(&error)),
+                    );
+                    return;
+                }
+            };
             for relative_path in &unversioned {
                 if let Err(error) =
-                    validate_add_target(&payload.svn_executable, &root, relative_path)
+                    validate_add_target(&payload.svn_executable, &add_root, relative_path)
                 {
                     update_task(
                         state,
@@ -2720,12 +2735,12 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
                 }
             }
             let mut add_command = svn::command(&payload.svn_executable);
-            // Relative paths + current_dir(root): same as standalone Add, and keeps parents correct.
+            // Relative paths + current_dir(add_root): same as standalone Add, and keeps parents correct.
             add_command.arg("add").arg("--parents").arg("--");
             for relative_path in &unversioned {
                 add_command.arg(relative_path);
             }
-            add_command.current_dir(&root);
+            add_command.current_dir(&add_root);
             match run_task_command(state, task_id, &mut add_command) {
                 Ok(output) if output.status.success() => {
                     append_command_output(state, task_id, &output);
@@ -13141,6 +13156,108 @@ mod tests {
         }
 
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn auto_adds_unversioned_files_before_commit_in_real_working_copy() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-commit-auto-add-integration");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = test_file_repository_url(&repository);
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("tracked.txt"), "base\n").expect("write tracked file");
+        run_test_command(
+            Command::new("svn")
+                .arg("add")
+                .arg(working_copy.join("tracked.txt")),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .args(["-m", "init"])
+                .arg(&working_copy),
+        );
+
+        fs::write(working_copy.join("tracked.txt"), "changed\n").expect("modify tracked file");
+        fs::create_dir_all(working_copy.join("nested")).expect("create nested directory");
+        fs::write(working_copy.join("nested/new.txt"), "brand new\n").expect("write unversioned file");
+        fs::write(working_copy.join("root-new.txt"), "root new\n").expect("write root unversioned");
+
+        let queue = TaskQueue::new();
+        // Intentionally pass a non-canonical WC root (as the UI does) so auto-add must
+        // canonicalize before validate_add_target — this used to fail on Windows.
+        let commit_task = queue
+            .create_commit_task(CreateCommitTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                message: "commit with auto-add".to_string(),
+                files: vec![
+                    "tracked.txt".to_string(),
+                    "root-new.txt".to_string(),
+                    "nested/new.txt".to_string(),
+                ],
+                svn_executable: None,
+            })
+            .expect("commit task with unversioned files should be created");
+        let commit_task = wait_for_test_task(&queue, &commit_task.task_id);
+        assert!(
+            matches!(commit_task.status, TaskStatus::Success),
+            "提交前自动 Add 后应提交成功：{:?}",
+            commit_task.error
+        );
+        assert!(
+            commit_task
+                .logs
+                .iter()
+                .any(|log| log.message.contains("自动 Add")),
+            "任务日志应包含自动 Add：{:?}",
+            commit_task.logs
+        );
+
+        let root_new = run_test_command(
+            Command::new("svn")
+                .arg("cat")
+                .arg(format!("{repository_url}/root-new.txt")),
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&root_new.stdout),
+            "root new\n"
+        );
+        let nested_new = run_test_command(
+            Command::new("svn")
+                .arg("cat")
+                .arg(format!("{repository_url}/nested/new.txt")),
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&nested_new.stdout),
+            "brand new\n"
+        );
+        let tracked = run_test_command(
+            Command::new("svn")
+                .arg("cat")
+                .arg(format!("{repository_url}/tracked.txt")),
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&tracked.stdout),
+            "changed\n"
+        );
+
+        let clean_status = run_test_command(Command::new("svn").arg("status").arg(&working_copy));
+        assert!(
+            clean_status.stdout.is_empty(),
+            "提交后工作副本应干净：{}",
+            String::from_utf8_lossy(&clean_status.stdout)
+        );
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]
