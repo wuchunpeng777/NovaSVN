@@ -14,6 +14,7 @@ describe("SVN authentication failures", () => {
       signature: "svn.example.test|alice@example.com|authentication",
       hostname: "svn.example.test",
       username: "alice@example.com",
+      repositoryUrl: "https://alice%40example.com@svn.example.test/repo",
     });
     expect(JSON.stringify(detected)).not.toContain("secret");
   });
@@ -23,6 +24,7 @@ describe("SVN authentication failures", () => {
       signature: "unknown-host|unknown-user|authentication",
       hostname: null,
       username: null,
+      repositoryUrl: null,
     });
   });
 

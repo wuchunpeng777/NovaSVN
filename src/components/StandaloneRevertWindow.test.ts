@@ -10,13 +10,16 @@ vi.mock("@tauri-apps/api/window", () => ({
 vi.mock("../lib/api", () => ({
   cancelTask: vi.fn(),
   createSvnBatchOperationTask: vi.fn(),
+  createSvnOperationTask: vi.fn(),
   getTask: vi.fn(),
   inspectUpdateTarget: vi.fn(),
+  launchConflictWindow: vi.fn(),
   scanWorkspaceStatus: vi.fn(),
 }));
 
 import {
   createSvnBatchOperationTask,
+  createSvnOperationTask,
   getTask,
   inspectUpdateTarget,
   scanWorkspaceStatus,
@@ -25,6 +28,7 @@ import type { ChangedFile, Task, WorkingCopyStatus } from "../types/api";
 import StandaloneRevertWindow from "./StandaloneRevertWindow.svelte";
 
 const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
+const createSvnOperationTaskMock = vi.mocked(createSvnOperationTask);
 const getTaskMock = vi.mocked(getTask);
 const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
@@ -33,9 +37,11 @@ beforeEach(() => {
   closeWindowMock.mockReset();
   closeWindowMock.mockResolvedValue(undefined);
   createSvnBatchOperationTaskMock.mockReset();
+  createSvnOperationTaskMock.mockReset();
   getTaskMock.mockReset();
   inspectUpdateTargetMock.mockReset();
   scanWorkspaceStatusMock.mockReset();
+  createSvnOperationTaskMock.mockResolvedValue(makeTask("pending"));
 
   inspectUpdateTargetMock.mockResolvedValue({
     target_path: "C:\\repo\\src",
@@ -115,7 +121,7 @@ describe("StandaloneRevertWindow", () => {
     });
   });
 
-  it("展示树冲突并允许纳入 Revert 选择", async () => {
+  it("展示树冲突原因与解决操作，并允许纳入 Revert 选择", async () => {
     scanWorkspaceStatusMock.mockResolvedValue(
       makeStatus([
         makeFile("src/main.ts", "modified"),
@@ -123,18 +129,33 @@ describe("StandaloneRevertWindow", () => {
         // but the UI must also accept conflict_kind even when status is still normal.
         makeFile("src/tree.ts", "normal", {
           abnormal: true,
-          conflict_kind: "tree:update",
+          conflict_kind: "tree:update|delete|edit",
         }),
       ]),
     );
+    getTaskMock.mockResolvedValue(makeTask("success"));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(StandaloneRevertWindow, { props: { targetPath: "C:\\repo\\src" } });
 
     const pane = await screen.findByLabelText("选择 Revert 项目");
     expect(await within(pane).findByText("src/tree.ts")).toBeInTheDocument();
-    expect(within(pane).getByText("树冲突 (update)")).toBeInTheDocument();
+    expect(within(pane).getByText("树冲突 (更新)")).toBeInTheDocument();
+    expect(within(pane).getByText(/本地已删除/)).toBeInTheDocument();
     expect(within(pane).getByText(/1 个冲突（含树冲突）/)).toBeInTheDocument();
     expect(within(pane).getByRole("checkbox", { name: "src/tree.ts" })).toBeChecked();
     expect(screen.getByRole("button", { name: "Revert 2 个项目" })).toBeEnabled();
+    expect(within(pane).getByRole("button", { name: "保持删除 src/tree.ts" })).toBeEnabled();
+    expect(within(pane).getByRole("button", { name: "恢复仓库版本 src/tree.ts" })).toBeEnabled();
+
+    await fireEvent.click(within(pane).getByRole("button", { name: "恢复仓库版本 src/tree.ts" }));
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "resolve_theirs_full",
+        file_path: "src/tree.ts",
+        svn_executable: undefined,
+      });
+    });
   });
 
   it("展示并 Revert 文件夹的 SVN 属性变更", async () => {

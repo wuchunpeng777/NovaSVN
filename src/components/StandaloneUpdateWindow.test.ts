@@ -399,7 +399,7 @@ describe("StandaloneUpdateWindow", () => {
       });
     });
     expect(window.confirm).toHaveBeenCalledWith(
-      "采用仓库完整版本处理冲突吗？\nsrc/conflict.ts",
+      "完整采用仓库文件版本并解决冲突？\nsrc/conflict.ts",
     );
     expect(await screen.findByText("工作副本没有未解决冲突")).toBeInTheDocument();
     expect(screen.getByLabelText("冲突处理记录")).toHaveTextContent("完成");
@@ -508,6 +508,62 @@ describe("StandaloneUpdateWindow", () => {
     expect(alert).toHaveTextContent("该目录不是可用的 SVN 工作副本");
     expect(alert).toHaveTextContent("svn info 失败");
     expect(createSvnOperationTaskMock).not.toHaveBeenCalled();
+  });
+
+  it("展示树冲突原因并提供删除相关操作", async () => {
+    const treeConflict = makeConflict({
+      path: "src/conflict.ts",
+      conflict_kind: "tree:update|delete|edit",
+    });
+    inspectUpdateTargetMock.mockResolvedValue(
+      makeTarget({
+        target_path: "C:\\repo\\src",
+        relative_path: "src",
+        repository_url: "https://example.com/svn/trunk/src",
+        kind: "dir",
+      }),
+    );
+    createSvnOperationTaskMock
+      .mockResolvedValueOnce(makeTask("pending"))
+      .mockResolvedValueOnce(
+        makeTask("pending", [], { task_id: "resolve-tree", title: "解决树冲突" }),
+      );
+    getTaskMock
+      .mockResolvedValueOnce(makeTask("success", ["C    src/conflict.ts"]))
+      .mockResolvedValueOnce(
+        makeTask("success", [], { task_id: "resolve-tree", title: "解决树冲突" }),
+      );
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce(
+        makeStatus({
+          conflicted: 1,
+          total: 1,
+          returned: 1,
+          files: [treeConflict],
+        }),
+      )
+      .mockResolvedValueOnce(makeStatus());
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo\\src" } });
+
+    const pane = await screen.findByLabelText("冲突处理");
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalled());
+    expect(await within(pane).findByText("src/conflict.ts")).toBeInTheDocument();
+    expect(within(pane).getByText("树冲突 (更新)")).toBeInTheDocument();
+    expect(within(pane).getByText(/本地已删除/)).toBeInTheDocument();
+    expect(within(pane).queryByRole("button", { name: "编辑冲突" })).not.toBeInTheDocument();
+    expect(within(pane).getByRole("button", { name: "保持删除" })).toBeEnabled();
+    expect(within(pane).getByRole("button", { name: "恢复仓库版本" })).toBeEnabled();
+
+    await fireEvent.click(within(pane).getByRole("button", { name: "恢复仓库版本" }));
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenLastCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "resolve_theirs_full",
+        file_path: "src/conflict.ts",
+        svn_executable: undefined,
+      });
+    });
   });
 });
 

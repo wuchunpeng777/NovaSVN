@@ -3612,10 +3612,32 @@ fn parse_conflict_kind<'a, 'input>(
         .descendants()
         .find(|node| node.has_tag_name("tree-conflict"))
     {
-        return tree_conflict
+        // Encode as tree:{operation}|{reason}|{action} so the UI can explain the
+        // cause (e.g. local delete vs incoming edit) and offer matching actions.
+        // Pipe separators avoid ambiguity when reason/action are missing.
+        let operation = tree_conflict
             .attribute("operation")
-            .map(|operation| format!("tree:{operation}"))
-            .or_else(|| Some("tree".to_string()));
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("");
+        let reason = tree_conflict
+            .attribute("reason")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("");
+        let action = tree_conflict
+            .attribute("action")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("");
+
+        if operation.is_empty() && reason.is_empty() && action.is_empty() {
+            return Some("tree".to_string());
+        }
+        if reason.is_empty() && action.is_empty() {
+            return Some(format!("tree:{operation}"));
+        }
+        return Some(format!("tree:{operation}|{reason}|{action}"));
     }
 
     if item == "conflicted" {
@@ -5982,7 +6004,7 @@ line two</property>
     </entry>
     <entry path="C:\wc\src\feature.ts">
       <wc-status item="conflicted" props="none" />
-      <tree-conflict operation="update" />
+      <tree-conflict operation="update" action="edit" reason="delete" />
     </entry>
     <entry path="C:\wc\src\blocked.ts">
       <wc-status item="obstructed" props="none" />
@@ -6033,7 +6055,7 @@ line two</property>
         assert_eq!(status.files[0].lock_owner.as_deref(), Some("alice"));
         assert_eq!(
             status.files[1].conflict_kind.as_deref(),
-            Some("tree:update")
+            Some("tree:update|delete|edit")
         );
         // Tree conflicts are surfaced as conflicted for commit/revert UIs.
         assert_eq!(status.files[1].status, "conflicted");

@@ -1,15 +1,27 @@
 <script lang="ts">
-  import { ArrowDown, ArrowUp } from "@lucide/svelte";
+  import { ArrowDown, ArrowUp, Search } from "@lucide/svelte";
 
   export let differenceCount = 0;
   export let currentDifference = 0;
   export let theme: "light" | "dark" = "light";
+  export let searchEnabled = false;
   export let onPrevious: () => void = () => {};
   export let onNext: () => void = () => {};
+  export let onSearch: () => void = () => {};
 </script>
 
 <div class="diff-navigation" data-theme={theme} role="toolbar" aria-label="Diff 差异导航">
   <span aria-live="polite">{currentDifference} / {differenceCount} 处差异</span>
+  {#if searchEnabled}
+    <button
+      type="button"
+      aria-label="搜索 Diff"
+      title="搜索 (Ctrl/Cmd+F)"
+      on:click={onSearch}
+    >
+      <Search size={15} strokeWidth={2} aria-hidden="true" />
+    </button>
+  {/if}
   <button
     type="button"
     aria-label="上一处差异"

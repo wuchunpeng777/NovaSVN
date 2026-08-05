@@ -5,6 +5,10 @@
   import ErrorNotice from "./ErrorNotice.svelte";
 
   export let failure: DetectedSvnAuthenticationFailure | null = null;
+  /** 工作副本本地路径，打开主界面时帮助用户确认是哪个库 */
+  export let localPath = "";
+  /** 已知仓库 URL（工作副本或目标），优先于 failure 中提取的 URL */
+  export let repositoryUrl = "";
   export let savedUsername = "";
   export let rememberPassword = true;
   export let loading = false;
@@ -15,6 +19,10 @@
     password: string,
     rememberPassword: boolean,
   ) => Promise<boolean> = async () => false;
+
+  $: displayRepositoryUrl = (repositoryUrl || failure?.repositoryUrl || "").trim();
+  $: displayLocalPath = localPath.trim();
+  $: displayHostname = failure?.hostname?.trim() || "";
 
   let preparedSignature: string | null = null;
   let dismissedSignature: string | null = null;
@@ -75,6 +83,14 @@
       void submit();
     }
   }
+
+  function hostFromUrl(value: string) {
+    try {
+      return new URL(value).hostname || null;
+    } catch {
+      return null;
+    }
+  }
 </script>
 
 {#if open && failure}
@@ -91,7 +107,11 @@
       <header>
         <div>
           <h2 id="svn-auth-dialog-title">登录 SVN</h2>
-          <p>{failure.hostname ?? "SVN 仓库"}</p>
+          <p>
+            {displayHostname ||
+              (displayRepositoryUrl ? hostFromUrl(displayRepositoryUrl) : null) ||
+              "SVN 仓库"}
+          </p>
         </div>
         <button
           type="button"
@@ -104,6 +124,23 @@
           <X size={16} aria-hidden="true" />
         </button>
       </header>
+
+      {#if displayRepositoryUrl || displayLocalPath}
+        <div class="svn-auth-target" aria-label="认证目标仓库">
+          {#if displayRepositoryUrl}
+            <div>
+              <span>仓库 URL</span>
+              <code title={displayRepositoryUrl}>{displayRepositoryUrl}</code>
+            </div>
+          {/if}
+          {#if displayLocalPath}
+            <div>
+              <span>本地路径</span>
+              <code title={displayLocalPath}>{displayLocalPath}</code>
+            </div>
+          {/if}
+        </div>
+      {/if}
 
       <div class="svn-auth-fields">
         <label>
@@ -183,9 +220,37 @@
   }
 
   header p,
-  .svn-auth-fields > label:not(.checkbox-row) > span {
+  .svn-auth-fields > label:not(.checkbox-row) > span,
+  .svn-auth-target span {
     color: #687482;
     font-size: 12px;
+  }
+
+  .svn-auth-target {
+    display: grid;
+    gap: 8px;
+    border: 1px solid #d7dde4;
+    border-radius: 6px;
+    background: #f5f7f9;
+    padding: 10px 12px;
+  }
+
+  .svn-auth-target > div {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .svn-auth-target code {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    color: #17202a;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    user-select: text;
   }
 
   .svn-auth-fields {
@@ -263,8 +328,18 @@
   }
 
   :global([data-theme="dark"]) header p,
-  :global([data-theme="dark"]) .svn-auth-fields > label:not(.checkbox-row) > span {
+  :global([data-theme="dark"]) .svn-auth-fields > label:not(.checkbox-row) > span,
+  :global([data-theme="dark"]) .svn-auth-target span {
     color: #a9a9ae;
+  }
+
+  :global([data-theme="dark"]) .svn-auth-target {
+    border-color: #505054;
+    background: #222225;
+  }
+
+  :global([data-theme="dark"]) .svn-auth-target code {
+    color: #f2f2f4;
   }
 
   :global([data-theme="dark"]) input[type="text"],

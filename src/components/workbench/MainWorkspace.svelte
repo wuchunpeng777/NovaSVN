@@ -938,6 +938,18 @@
     return null;
   }
 
+  function hostFromRepositoryUrl(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    try {
+      return new URL(trimmed).hostname || null;
+    } catch {
+      return null;
+    }
+  }
+
   function dismissAuthenticationDialog() {
     if (svnAuthenticationLoading || !detectedAuthenticationFailure) {
       return;
@@ -6493,6 +6505,14 @@
   {/if}
 
   {#if authenticationDialogOpen && detectedAuthenticationFailure}
+    {@const authRepositoryUrl =
+      detectedAuthenticationFailure.repositoryUrl?.trim() ||
+      workspace?.repository_url?.trim() ||
+      ""}
+    {@const authLocalPath =
+      workspace?.working_copy_root?.trim() ||
+      workspace?.local_path?.trim() ||
+      ""}
     <div class="patch-dialog-backdrop authentication-dialog-backdrop">
       <div
         class="patch-dialog authentication-dialog"
@@ -6506,7 +6526,11 @@
         <header>
           <div>
             <h2 id="authentication-dialog-title">登录 SVN</h2>
-            <p>{detectedAuthenticationFailure.hostname ?? "SVN 仓库"}</p>
+            <p>
+              {detectedAuthenticationFailure.hostname ??
+                hostFromRepositoryUrl(authRepositoryUrl) ??
+                "SVN 仓库"}
+            </p>
           </div>
           <button
             type="button"
@@ -6519,6 +6543,23 @@
             <X size={16} aria-hidden="true" />
           </button>
         </header>
+
+        {#if authRepositoryUrl || authLocalPath}
+          <div class="authentication-target" aria-label="认证目标仓库">
+            {#if authRepositoryUrl}
+              <div>
+                <span>仓库 URL</span>
+                <code title={authRepositoryUrl}>{authRepositoryUrl}</code>
+              </div>
+            {/if}
+            {#if authLocalPath}
+              <div>
+                <span>本地路径</span>
+                <code title={authLocalPath}>{authLocalPath}</code>
+              </div>
+            {/if}
+          </div>
+        {/if}
 
         <div class="authentication-fields">
           <label>

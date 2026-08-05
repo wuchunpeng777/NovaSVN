@@ -314,6 +314,10 @@ describe("App SVN operation completion", () => {
     await fireEvent.click(screen.getByRole("button", { name: "刷新工作副本状态" }));
     const dialog = await screen.findByRole("dialog", { name: "登录 SVN" });
     expect(within(dialog).getByLabelText("用户名")).toHaveValue("alice@example.com");
+    // 打开主界面时展示目标仓库，避免用户不知道该输入哪套凭据
+    expect(within(dialog).getByLabelText("认证目标仓库")).toHaveTextContent(
+      "https://alice%40example.com@svn.example.test/repo",
+    );
     await fireEvent.input(within(dialog).getByLabelText("密码"), {
       target: { value: "current-secret" },
     });

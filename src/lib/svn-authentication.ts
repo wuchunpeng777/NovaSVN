@@ -2,6 +2,8 @@ export interface DetectedSvnAuthenticationFailure {
   signature: string;
   hostname: string | null;
   username: string | null;
+  /** 从错误信息中提取的仓库 URL（已剥离密码），便于用户确认目标仓库 */
+  repositoryUrl: string | null;
 }
 
 const authenticationMarkers = [
@@ -39,27 +41,37 @@ export function detectSvnAuthenticationFailure(
     return null;
   }
 
-  const identity = extractHttpsIdentity(value);
+  const identity = extractRepositoryIdentity(value);
   return {
     signature: `${identity.hostname ?? "unknown-host"}|${identity.username ?? "unknown-user"}|authentication`,
     hostname: identity.hostname,
     username: identity.username,
+    repositoryUrl: identity.repositoryUrl,
   };
 }
 
-function extractHttpsIdentity(value: string) {
-  const match = value.match(/https:\/\/[^\s'"<>]+/i);
+function extractRepositoryIdentity(value: string) {
+  // 优先匹配 URL 字面量（含 http / https / svn / svn+ssh）
+  const match = value.match(
+    /(?:https?|svn(?:\+ssh)?):\/\/[^\s'"<>]+/i,
+  );
   if (!match) {
-    return { hostname: null, username: null };
+    return { hostname: null, username: null, repositoryUrl: null };
   }
   try {
-    const url = new URL(match[0]);
+    const raw = match[0].replace(/[.,;]+$/, "");
+    const url = new URL(raw);
+    const username = decodeUrlComponent(url.username);
+    // 绝不把密码带回 UI
+    url.password = "";
+    const repositoryUrl = url.toString().replace(/\/$/, "") || null;
     return {
       hostname: url.hostname || null,
-      username: decodeUrlComponent(url.username),
+      username,
+      repositoryUrl,
     };
   } catch {
-    return { hostname: null, username: null };
+    return { hostname: null, username: null, repositoryUrl: null };
   }
 }
 

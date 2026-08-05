@@ -2169,6 +2169,8 @@
 {/if}
 <SvnAuthenticationDialog
   failure={authenticationFailure}
+  localPath={target?.working_copy_root ?? targetPath}
+  repositoryUrl={target?.repository_url ?? ""}
   savedUsername={svnAuthenticationUsername}
   rememberPassword={svnRememberPassword}
   loading={svnAuthenticationLoading}

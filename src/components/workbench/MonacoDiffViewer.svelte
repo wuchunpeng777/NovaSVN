@@ -87,6 +87,12 @@
     editor = monacoEditor.createDiffEditor(container, {
       automaticLayout: true,
       readOnly: true,
+      // 只读 Diff 仍允许查找高亮，便于在大 diff 中定位关键字
+      find: {
+        addExtraSpaceOnTop: false,
+        autoFindInSelection: "never",
+        seedSearchStringFromSelection: "always",
+      },
       minimap: { enabled: false },
       renderSideBySide: !inlineMode,
       renderWhitespace: showWhitespace ? "all" : "none",
@@ -173,6 +179,28 @@
     editor.getModifiedEditor().focus();
   }
 
+  function openSearch() {
+    const modified = editor?.getModifiedEditor();
+    if (!modified) {
+      return;
+    }
+    modified.focus();
+    // Monaco 内置查找：在 modified 侧搜索，覆盖左右对照内容
+    void modified.getAction("actions.find")?.run();
+  }
+
+  function handleViewerKeydown(event: KeyboardEvent) {
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f") {
+      return;
+    }
+    if (!editor) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    openSearch();
+  }
+
   function lineNumberMinimumCharacters(
     original: import("monaco-editor").editor.ITextModel | null,
     modified: import("monaco-editor").editor.ITextModel | null,
@@ -203,7 +231,13 @@
     encodingMismatch && !hasTextContentChange(contentDiff);
 </script>
 
-<div class="monaco-diff-viewer" class:inline-mode={inlineMode} data-theme={theme}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="monaco-diff-viewer"
+  class:inline-mode={inlineMode}
+  data-theme={theme}
+  on:keydown={handleViewerKeydown}
+>
   <div class="monaco-diff-toolbar">
     <div
       class="diff-encoding-labels"
@@ -228,8 +262,10 @@
       {differenceCount}
       {currentDifference}
       {theme}
+      searchEnabled={true}
       onPrevious={() => goToDifference("previous")}
       onNext={() => goToDifference("next")}
+      onSearch={openSearch}
     />
   </div>
   {#if encodingOnlyChange}

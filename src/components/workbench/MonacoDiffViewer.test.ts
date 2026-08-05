@@ -4,8 +4,10 @@ import type { FileContentDiff } from "../../types/api";
 
 const mocks = vi.hoisted(() => {
   const state: { onDidUpdateDiff: (() => void) | null } = { onDidUpdateDiff: null };
+  const findAction = { run: vi.fn() };
   return {
     state,
+    findAction,
     goToDiff: vi.fn(),
     focus: vi.fn(),
     getLineChanges: vi.fn(() => [{ originalStartLineNumber: 1 }, { originalStartLineNumber: 4 }]),
@@ -30,6 +32,7 @@ vi.mock("monaco-editor/esm/vs/editor/editor.api", () => ({
       getModifiedEditor: () => ({
         focus: mocks.focus,
         onDidChangeCursorPosition: mocks.onDidChangeCursorPosition,
+        getAction: (id: string) => (id === "actions.find" ? mocks.findAction : null),
       }),
       goToDiff: mocks.goToDiff,
       onDidUpdateDiff: (callback: () => void) => {
@@ -95,6 +98,15 @@ describe("MonacoDiffViewer", () => {
     expect(mocks.goToDiff).toHaveBeenNthCalledWith(2, "next");
     expect(mocks.goToDiff).toHaveBeenNthCalledWith(3, "previous");
     expect(mocks.focus).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens Monaco find when search is requested", async () => {
+    render(MonacoDiffViewer, { props: { contentDiff } });
+    await waitFor(() => expect(mocks.state.onDidUpdateDiff).not.toBeNull());
+
+    await fireEvent.click(screen.getByRole("button", { name: "搜索 Diff" }));
+    expect(mocks.focus).toHaveBeenCalled();
+    expect(mocks.findAction.run).toHaveBeenCalledOnce();
   });
 
   it("reserves line number separation when side-by-side mode automatically collapses", async () => {

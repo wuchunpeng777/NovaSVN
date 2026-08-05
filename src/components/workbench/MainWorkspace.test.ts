@@ -777,6 +777,9 @@ describe("MainWorkspace", () => {
 
     const dialog = screen.getByRole("dialog", { name: "登录 SVN" });
     expect(within(dialog).getByText("svn.example.test")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("认证目标仓库")).toHaveTextContent(
+      "https://alice%40example.com@svn.example.test/repo",
+    );
     expect(within(dialog).getByLabelText("用户名")).toHaveValue("alice@example.com");
 
     await fireEvent.input(within(dialog).getByLabelText("密码"), {

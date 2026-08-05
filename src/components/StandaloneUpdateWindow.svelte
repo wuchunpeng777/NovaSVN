@@ -14,6 +14,12 @@
     scanWorkspaceStatus,
   } from "../lib/api";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
+  import {
+    conflictKindLabel,
+    conflictReasonDescription,
+    conflictResolutionActions,
+    type ConflictResolutionAction,
+  } from "../lib/svn-conflict";
   import { extractSvnFileChanges, normalizeSvnOutputPath } from "../lib/svn-operation-output";
   import type {
     ChangedFile,
@@ -536,26 +542,28 @@
     }).format(date);
   }
 
-  async function resolveConflict(file: ChangedFile, kind: SvnOperationKind) {
+  async function runConflictAction(file: ChangedFile, action: ConflictResolutionAction) {
     if (!target || updateRunning || resolutionRunning) {
       return;
     }
+    if (action.kind === "edit") {
+      await openConflict(file);
+      return;
+    }
     if (
-      kind !== "resolve_working" &&
-      !window.confirm(
-        `${kind === "resolve_mine_full" ? "采用我的完整版本" : "采用仓库完整版本"}处理冲突吗？\n${file.path}`,
-      )
+      action.confirm &&
+      !window.confirm(`${action.description}？\n${file.path}`)
     ) {
       return;
     }
 
     actionError = null;
     resolutionPath = file.path;
-    resolutionKind = kind;
+    resolutionKind = action.kind;
     try {
       const task = await createSvnOperationTask({
         working_copy_root: target.working_copy_root,
-        kind,
+        kind: action.kind,
         file_path: file.path,
         svn_executable: svnExecutable?.trim() || undefined,
       });
@@ -809,19 +817,6 @@
     return [...next.values()];
   }
 
-  function conflictKindLabel(file: ChangedFile) {
-    switch (file.conflict_kind) {
-      case "text":
-        return "文本冲突";
-      case "property":
-        return "属性冲突";
-      case "tree":
-        return "树冲突";
-      default:
-        return "冲突";
-    }
-  }
-
   function isPathInUpdateTarget(path: string) {
     const relativeTarget = target?.relative_path?.replaceAll("\\", "/").replace(/\/+$/, "");
     if (!relativeTarget) {
@@ -1020,41 +1015,31 @@
           </article>
         {/each}
         {#each conflicts as file (file.path)}
+          {@const reason = conflictReasonDescription(file)}
+          {@const actions = conflictResolutionActions(file)}
           <article class="conflict-item">
             <header>
               <strong title={file.path}>{file.path}</strong>
-              <span>{conflictKindLabel(file)}</span>
+              <span>{conflictKindLabel(file) ?? "冲突"}</span>
             </header>
-            <div class="conflict-actions">
-              <button
-                type="button"
-                aria-label="编辑冲突"
-                disabled={resolutionRunning}
-                on:click={() => openConflict(file)}
-              >
-                <FilePenLine size={15} aria-hidden="true" /> 编辑
-              </button>
-              <button
-                type="button"
-                disabled={resolutionRunning}
-                on:click={() => resolveConflict(file, "resolve_working")}
-              >
-                保留当前内容
-              </button>
-              <button
-                type="button"
-                disabled={resolutionRunning}
-                on:click={() => resolveConflict(file, "resolve_mine_full")}
-              >
-                采用我的版本
-              </button>
-              <button
-                type="button"
-                disabled={resolutionRunning}
-                on:click={() => resolveConflict(file, "resolve_theirs_full")}
-              >
-                采用仓库版本
-              </button>
+            {#if reason}
+              <p class="conflict-reason" title={reason}>{reason}</p>
+            {/if}
+            <div class="conflict-actions" role="group" aria-label={`冲突操作 ${file.path}`}>
+              {#each actions as action (action.kind + action.label)}
+                <button
+                  type="button"
+                  aria-label={action.label}
+                  title={action.description}
+                  disabled={resolutionRunning}
+                  on:click={() => runConflictAction(file, action)}
+                >
+                  {#if action.kind === "edit"}
+                    <FilePenLine size={15} aria-hidden="true" />
+                  {/if}
+                  {action.label}
+                </button>
+              {/each}
             </div>
             {#if resolutionPath === file.path && resolutionRunning}
               <p class="resolving" role="status">正在处理...</p>
@@ -1154,6 +1139,8 @@
   {/if}
   <SvnAuthenticationDialog
     failure={authenticationFailure}
+    localPath={target?.working_copy_root ?? targetPath}
+    repositoryUrl={target?.repository_url ?? ""}
     savedUsername={svnAuthenticationUsername}
     rememberPassword={svnRememberPassword}
     loading={svnAuthenticationLoading}
@@ -1586,6 +1573,13 @@
     flex: 0 0 auto;
     color: #bc3f39;
     font-size: 11px;
+  }
+
+  .conflict-reason {
+    margin: 6px 0 0;
+    color: var(--secondary);
+    font-size: 11px;
+    line-height: 1.45;
   }
 
   .conflict-actions {

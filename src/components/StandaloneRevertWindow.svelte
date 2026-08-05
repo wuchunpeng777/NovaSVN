@@ -1,19 +1,28 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { CheckSquare, RefreshCw, RotateCcw, Square, X } from "@lucide/svelte";
+  import { CheckSquare, FilePenLine, RefreshCw, RotateCcw, Square, X } from "@lucide/svelte";
   import {
     cancelTask,
     createSvnBatchOperationTask,
+    createSvnOperationTask,
     getTask,
     inspectUpdateTarget,
+    launchConflictWindow,
     scanWorkspaceStatus,
   } from "../lib/api";
-  import { conflictKindLabel, isConflictedFile } from "../lib/svn-conflict";
+  import {
+    conflictKindLabel,
+    conflictReasonDescription,
+    conflictResolutionActions,
+    isConflictedFile,
+    type ConflictResolutionAction,
+  } from "../lib/svn-conflict";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import type {
     ChangedFile,
     CommandError,
+    SvnOperationKind,
     Task,
     TaskStatus,
     UpdateTargetSummary,
@@ -40,6 +49,8 @@
   let target: UpdateTargetSummary | null = null;
   let status: WorkingCopyStatus | null = null;
   let revertTask: Task | null = null;
+  let resolutionTask: Task | null = null;
+  let resolutionPath: string | null = null;
   let selectedPaths = new Set<string>();
   let pendingPaths: string[] = [];
   let revertedCount = 0;
@@ -50,6 +61,7 @@
   let creatingTask = false;
   let error: CommandError | null = null;
   let statusError: CommandError | null = null;
+  let actionError: string | null = null;
   let notice: string | null = null;
   let pollTimer: number | null = null;
   let generation = 0;
@@ -66,11 +78,14 @@
   $: selectedFiles = revertableFiles.filter((file) => selectedPaths.has(file.path));
   $: allSelected = revertableFiles.length > 0 && selectedFiles.length === revertableFiles.length;
   $: revertRunning = isTaskRunning(revertTask);
-  $: operationRunning = revertRunning || creatingTask;
+  $: resolutionRunning = isTaskRunning(resolutionTask);
+  $: operationRunning = revertRunning || resolutionRunning || creatingTask;
   $: authenticationFailure =
     detectSvnAuthenticationFailure(commandErrorText(statusError)) ??
     detectSvnAuthenticationFailure(commandErrorText(error)) ??
-    detectSvnAuthenticationFailure(revertTask?.error);
+    detectSvnAuthenticationFailure(actionError) ??
+    detectSvnAuthenticationFailure(revertTask?.error) ??
+    detectSvnAuthenticationFailure(resolutionTask?.error);
   $: authenticationRetry = statusError
     ? () => refreshStatus(generation, true)
     : error
@@ -106,12 +121,15 @@
     target = null;
     status = null;
     revertTask = null;
+    resolutionTask = null;
+    resolutionPath = null;
     selectedPaths = new Set();
     pendingPaths = [];
     revertedCount = 0;
     confirmationOpen = false;
     error = null;
     statusError = null;
+    actionError = null;
     notice = null;
 
     try {
@@ -236,7 +254,7 @@
       });
       revertTask = task;
       revertedCount = paths.length;
-      schedulePoll(task.task_id, generation, 0);
+      schedulePoll(task.task_id, "revert", generation, 0);
     } catch (caught) {
       error = caught as CommandError;
     } finally {
@@ -252,7 +270,7 @@
     try {
       revertTask = await cancelTask(revertTask.task_id);
       if (isTaskRunning(revertTask)) {
-        schedulePoll(revertTask.task_id, generation, 200);
+        schedulePoll(revertTask.task_id, "revert", generation, 200);
       } else {
         clearPollTimer();
       }
@@ -261,30 +279,100 @@
     }
   }
 
-  function schedulePoll(taskId: string, currentGeneration: number, delay: number) {
-    clearPollTimer();
-    pollTimer = window.setTimeout(() => void pollTask(taskId, currentGeneration), delay);
+  async function runConflictAction(file: ChangedFile, action: ConflictResolutionAction) {
+    if (!target || operationRunning || scanning || initializing) {
+      return;
+    }
+    if (action.kind === "edit") {
+      actionError = null;
+      try {
+        const root = target.working_copy_root.replace(/[\\/]+$/, "");
+        const relativePath = file.path.replaceAll("/", "\\").replace(/^[\\/]+/, "");
+        await launchConflictWindow({ target_path: `${root}\\${relativePath}` });
+      } catch (caught) {
+        const commandError = caught as CommandError;
+        actionError = commandError.detail
+          ? `${commandError.message}：${commandError.detail}`
+          : commandError.message;
+      }
+      return;
+    }
+    if (action.confirm && !window.confirm(`${action.description}？\n${file.path}`)) {
+      return;
+    }
+
+    actionError = null;
+    resolutionPath = file.path;
+    try {
+      const task = await createSvnOperationTask({
+        working_copy_root: target.working_copy_root,
+        kind: action.kind as SvnOperationKind,
+        file_path: file.path,
+        svn_executable: svnExecutable?.trim() || undefined,
+      });
+      resolutionTask = task;
+      schedulePoll(task.task_id, "resolution", generation, 0);
+    } catch (caught) {
+      const commandError = caught as CommandError;
+      actionError = commandError.detail
+        ? `${commandError.message}：${commandError.detail}`
+        : commandError.message;
+      resolutionPath = null;
+    }
   }
 
-  async function pollTask(taskId: string, currentGeneration: number) {
+  function schedulePoll(
+    taskId: string,
+    role: "revert" | "resolution",
+    currentGeneration: number,
+    delay: number,
+  ) {
+    clearPollTimer();
+    pollTimer = window.setTimeout(
+      () => void pollTask(taskId, role, currentGeneration),
+      delay,
+    );
+  }
+
+  async function pollTask(
+    taskId: string,
+    role: "revert" | "resolution",
+    currentGeneration: number,
+  ) {
     try {
       const task = await getTask(taskId);
       if (currentGeneration !== generation) {
         return;
       }
-      revertTask = task;
+      if (role === "revert") {
+        revertTask = task;
+      } else {
+        resolutionTask = task;
+      }
       if (!terminalStatuses.includes(task.status)) {
-        schedulePoll(taskId, currentGeneration, 350);
+        schedulePoll(taskId, role, currentGeneration, 350);
         return;
       }
       clearPollTimer();
       if (task.status === "success") {
-        notice = `已 Revert ${revertedCount} 个项目`;
-        await refreshStatus(currentGeneration);
+        if (role === "revert") {
+          notice = `已 Revert ${revertedCount} 个项目`;
+        } else {
+          notice = resolutionPath
+            ? `已解决冲突：${resolutionPath}`
+            : "冲突已解决";
+          resolutionPath = null;
+        }
+        await refreshStatus(currentGeneration, true);
+      } else if (role === "resolution") {
+        resolutionPath = null;
       }
     } catch (caught) {
       if (currentGeneration === generation) {
         error = caught as CommandError;
+        if (role === "resolution") {
+          resolutionPath = null;
+        }
       }
     }
   }
@@ -414,10 +502,15 @@
     <span>已选择 <strong>{selectedFiles.length} / {revertableFiles.length}</strong></span>
   </section>
 
-  <section class="revert-notices" class:has-notices={Boolean(error || statusError || revertTask?.error || notice)}>
+  <section
+    class="revert-notices"
+    class:has-notices={Boolean(error || statusError || actionError || revertTask?.error || resolutionTask?.error || notice)}
+  >
     <ErrorNotice {error} />
     <ErrorNotice error={statusError} />
+    {#if actionError}<div class="inline-error" role="alert">{actionError}</div>{/if}
     {#if revertTask?.error}<div class="inline-error" role="alert">{revertTask.error}</div>{/if}
+    {#if resolutionTask?.error}<div class="inline-error" role="alert">{resolutionTask.error}</div>{/if}
     {#if notice}<div class="success-notice" role="status">{notice}</div>{/if}
   </section>
 
@@ -440,28 +533,58 @@
     </header>
     <div class="file-list">
       {#each visibleFiles as file (file.path)}
-        <label
-          class:running={pendingPaths.includes(file.path)}
-          class:conflicted={isConflictedFile(file)}
+        {@const conflicted = isConflictedFile(file)}
+        {@const reason = conflicted ? conflictReasonDescription(file) : null}
+        {@const actions = conflicted ? conflictResolutionActions(file) : []}
+        <div
+          class="file-row"
+          class:running={pendingPaths.includes(file.path) || resolutionPath === file.path}
+          class:conflicted
         >
-          {#if isRevertableFile(file)}
-            <input
-              type="checkbox"
-              aria-label={file.path}
-              checked={selectedPaths.has(file.path)}
-              disabled={operationRunning || scanning || initializing}
-              on:change={() => togglePath(file.path)}
-            />
-          {:else}
-            <span class="file-selection-placeholder" aria-hidden="true"></span>
+          <label class="file-main">
+            {#if isRevertableFile(file)}
+              <input
+                type="checkbox"
+                aria-label={file.path}
+                checked={selectedPaths.has(file.path)}
+                disabled={operationRunning || scanning || initializing}
+                on:change={() => togglePath(file.path)}
+              />
+            {:else}
+              <span class="file-selection-placeholder" aria-hidden="true"></span>
+            {/if}
+            <span
+              class="file-status"
+              class:conflict={conflicted}
+              title={statusLabel(file)}
+            >{statusLabel(file)}</span>
+            <span class="file-path" title={file.path}>{file.path}</span>
+          </label>
+          {#if conflicted}
+            {#if reason}
+              <p class="conflict-reason" title={reason}>{reason}</p>
+            {/if}
+            <div class="conflict-actions" role="group" aria-label={`冲突操作 ${file.path}`}>
+              {#each actions as action (action.kind + action.label)}
+                <button
+                  type="button"
+                  aria-label={`${action.label} ${file.path}`}
+                  title={action.description}
+                  disabled={operationRunning || scanning || initializing}
+                  on:click={() => runConflictAction(file, action)}
+                >
+                  {#if action.kind === "edit"}
+                    <FilePenLine size={14} aria-hidden="true" />
+                  {/if}
+                  {action.label}
+                </button>
+              {/each}
+            </div>
+            {#if resolutionPath === file.path && resolutionRunning}
+              <p class="resolving" role="status">正在处理冲突...</p>
+            {/if}
           {/if}
-          <span
-            class="file-status"
-            class:conflict={isConflictedFile(file)}
-            title={statusLabel(file)}
-          >{statusLabel(file)}</span>
-          <span class="file-path" title={file.path}>{file.path}</span>
-        </label>
+        </div>
       {:else}
         <div class="empty-files" role="status">
           {initializing || scanning ? "正在扫描工作副本..." : "目标范围内没有可 Revert 的本地修改或冲突"}
@@ -530,6 +653,8 @@
 
   <SvnAuthenticationDialog
     failure={authenticationFailure}
+    localPath={target?.working_copy_root ?? targetPath}
+    repositoryUrl={target?.repository_url ?? ""}
     savedUsername={svnAuthenticationUsername}
     rememberPassword={svnRememberPassword}
     loading={svnAuthenticationLoading}
@@ -595,17 +720,23 @@
   .revert-files > header p { margin-top: 4px; color: var(--secondary); font-size: 12px; }
   .task-output > header span { color: var(--secondary); font-size: 11px; }
   .file-list, .output-lines { min-height: 0; overflow: auto; padding: 6px; }
-  .file-list label { display: grid; grid-template-columns: 18px minmax(72px, auto) minmax(0, 1fr); align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); font-size: 12px; }
-  .file-list label:hover { background: var(--panel-subtle); }
-  .file-list label.running { background: color-mix(in srgb, #b93d3d 8%, var(--panel)); }
-  .file-list label.conflicted { background: color-mix(in srgb, #c64040 8%, var(--panel)); }
+  .file-row { display: grid; gap: 6px; padding: 8px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); font-size: 12px; }
+  .file-row:hover { background: var(--panel-subtle); }
+  .file-row.running { background: color-mix(in srgb, #b93d3d 8%, var(--panel)); }
+  .file-row.conflicted { background: color-mix(in srgb, #c64040 8%, var(--panel)); }
+  .file-main { display: grid; grid-template-columns: 18px minmax(72px, auto) minmax(0, 1fr); align-items: center; gap: 8px; min-height: 28px; }
   .file-list input { width: 15px; height: 15px; accent-color: var(--accent); }
   .file-selection-placeholder { width: 15px; height: 15px; }
   .file-status { color: var(--accent); font-weight: 600; }
   .file-status.conflict { color: #a12a2a; }
   .standalone-revert[data-theme="dark"] .file-status.conflict { color: #ffaaa7; }
-  .standalone-revert[data-theme="dark"] .file-list label.conflicted { background: color-mix(in srgb, #c64040 14%, var(--panel)); }
+  .standalone-revert[data-theme="dark"] .file-row.conflicted { background: color-mix(in srgb, #c64040 14%, var(--panel)); }
   .file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conflict-reason { margin: 0; color: var(--secondary); font-size: 11px; line-height: 1.45; }
+  .conflict-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .conflict-actions button { min-height: 27px; padding: 3px 8px; border-color: color-mix(in srgb, #c64040 55%, var(--border)); color: #a12a2a; }
+  .standalone-revert[data-theme="dark"] .conflict-actions button { color: #ffaaa7; }
+  .resolving { margin: 0; color: var(--accent); font-size: 11px; }
   .empty-files, .output-lines > div { display: grid; min-height: 80px; color: var(--secondary); font-size: 12px; place-items: center; }
   .output-lines { padding: 8px 12px; }
   .output-lines code { display: block; padding: 3px 0; font-size: 11px; }
