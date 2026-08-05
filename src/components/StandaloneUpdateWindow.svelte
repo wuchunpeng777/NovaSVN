@@ -54,7 +54,6 @@
   export let autoStart = true;
   export let minimized = false;
   export let onToggleMinimized: () => void = () => {};
-  export let onCloseCompleted: () => void = () => {};
   export let onSvnAuthenticationSubmit: (
     username: string,
     password: string,
@@ -95,6 +94,9 @@
   let themeMediaQuery: MediaQueryList | null = null;
   let returningToCommit = false;
   let updatedFileSizes = new Map<string, number>();
+  /** 累计已见文件，避免后端日志截断后列表倒退/看似卡住 */
+  let accumulatedUpdateFiles = new Map<string, { action: string; path: string }>();
+  let sizeRefreshGeneration = 0;
   let closeAfterCompletion = readCloseAfterCompletionSetting();
   let closeCurrentUpdateAfterCompletion = closeAfterCompletion;
   let autoCloseTriggered = false;
@@ -130,8 +132,27 @@
   $: resolutionRunning = isTaskRunning(resolutionTask);
   $: updateComplete =
     updateTask?.status === "success" && conflictScanCompleted && !scanning;
+  // 合并日志中的新文件到累计表，后端裁剪旧日志时也不丢已展示项
+  $: {
+    const latest = extractSvnFileChanges(
+      updateTask?.logs ?? [],
+      target?.working_copy_root,
+    );
+    let changed = false;
+    const next = new Map(accumulatedUpdateFiles);
+    for (const file of latest) {
+      const previous = next.get(file.path);
+      if (!previous || previous.action !== file.action) {
+        next.set(file.path, file);
+        changed = true;
+      }
+    }
+    if (changed) {
+      accumulatedUpdateFiles = next;
+    }
+  }
   $: updatedFiles = applyResolvedUpdateActions(
-    extractSvnFileChanges(updateTask?.logs ?? [], target?.working_copy_root),
+    [...accumulatedUpdateFiles.values()],
     resolvedUpdateActions,
   );
   $: updatedBytes = updatedFiles.reduce(
@@ -202,6 +223,8 @@
     resolvedUpdateActions = new Map();
     resolvedConflictPaths = new Set();
     updatedFileSizes = new Map();
+    accumulatedUpdateFiles = new Map();
+    sizeRefreshGeneration += 1;
     closeCurrentUpdateAfterCompletion = closeAfterCompletion;
     autoCloseTriggered = false;
     autoFollowOutput = true;
@@ -266,18 +289,18 @@
     role: "update" | "resolution",
     currentGeneration: number,
   ) {
+    let taskStatus: TaskStatus | null = null;
     try {
       const task = await getTask(taskId);
       if (currentGeneration !== generation) {
         return;
       }
+      taskStatus = task.status;
       if (role === "update") {
-        await refreshUpdatedFileSizes(task.logs, currentGeneration);
-        if (currentGeneration !== generation) {
-          return;
-        }
+        // 先刷新界面，体积查询放到后台，避免大项目卡死轮询
         updateTask = task;
         void followUpdateOutput();
+        void refreshUpdatedFileSizes(task.logs, currentGeneration);
       } else {
         resolutionTask = task;
       }
@@ -310,6 +333,16 @@
     } catch (caught) {
       if (currentGeneration === generation) {
         error = caught as CommandError;
+        // 轮询失败时继续重试，避免大项目偶发 IPC 失败后界面永久停更
+        const stillRunning =
+          taskStatus === "pending" ||
+          taskStatus === "running" ||
+          (role === "update"
+            ? isTaskRunning(updateTask)
+            : isTaskRunning(resolutionTask));
+        if (stillRunning) {
+          schedulePoll(taskId, role, currentGeneration, 800);
+        }
       }
     }
   }
@@ -383,6 +416,8 @@
     resolvedUpdateActions = new Map();
     resolvedConflictPaths = new Set();
     updatedFileSizes = new Map();
+    accumulatedUpdateFiles = new Map();
+    sizeRefreshGeneration += 1;
     closeCurrentUpdateAfterCompletion = closeAfterCompletion;
     autoCloseTriggered = false;
     autoFollowOutput = true;
@@ -681,16 +716,20 @@
     if (!target) {
       return;
     }
-    const paths = extractSvnFileChanges(logs, target.working_copy_root).map((file) => file.path);
+    // 只补查尚未有体积的路径，避免每轮对全量路径做 metadata
+    const paths = extractSvnFileChanges(logs, target.working_copy_root)
+      .map((file) => file.path)
+      .filter((path) => !updatedFileSizes.has(path));
     if (paths.length === 0) {
       return;
     }
+    const requestId = ++sizeRefreshGeneration;
     try {
       const sizes = await getWorkspacePathSizes({
         working_copy_root: target.working_copy_root,
         paths,
       });
-      if (currentGeneration !== generation) {
+      if (currentGeneration !== generation || requestId !== sizeRefreshGeneration) {
         return;
       }
       const next = new Map(updatedFileSizes);
@@ -737,14 +776,11 @@
       }
       return;
     }
-    if (!closeCurrentUpdateAfterCompletion) {
+    // 主界面内嵌 Update 不提供「完成后关闭」，也不执行该逻辑
+    if (embedded || !closeCurrentUpdateAfterCompletion) {
       return;
     }
     autoCloseTriggered = true;
-    if (embedded) {
-      onCloseCompleted();
-      return;
-    }
     try {
       await getCurrentWindow().close();
     } catch (caught) {
@@ -1068,17 +1104,19 @@
     </aside>
   </div>
 
-  <footer class="update-footer" aria-hidden={embedded && minimized ? "true" : undefined}>
-    <label>
-      <input
-        type="checkbox"
-        checked={closeAfterCompletion}
-        disabled={autoCloseTriggered}
-        on:change={handleCloseAfterCompletionChange}
-      />
-      <span>更新完成且所有冲突解决后自动关闭</span>
-    </label>
-  </footer>
+  {#if !embedded}
+    <footer class="update-footer">
+      <label>
+        <input
+          type="checkbox"
+          checked={closeAfterCompletion}
+          disabled={autoCloseTriggered}
+          on:change={handleCloseAfterCompletionChange}
+        />
+        <span>更新完成且所有冲突解决后自动关闭</span>
+      </label>
+    </footer>
+  {/if}
 
   {#if fileContextMenu}
     <div
@@ -1198,8 +1236,7 @@
 
   .standalone-update.embedded.minimized .update-summary,
   .standalone-update.embedded.minimized .update-notices,
-  .standalone-update.embedded.minimized .update-layout,
-  .standalone-update.embedded.minimized .update-footer {
+  .standalone-update.embedded.minimized .update-layout {
     display: none;
   }
 

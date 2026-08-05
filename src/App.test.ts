@@ -762,13 +762,13 @@ Certificate information:
     expect(expandUpdate).toBeInTheDocument();
     await fireEvent.click(expandUpdate);
     const restoredUpdatePanel = screen.getByLabelText("主界面 Update");
-    await fireEvent.click(
-      within(restoredUpdatePanel).getByRole("checkbox", {
+    // 主界面内嵌 Update 不展示「完成后关闭」选项
+    expect(
+      within(restoredUpdatePanel).queryByRole("checkbox", {
         name: "更新完成且所有冲突解决后自动关闭",
       }),
-    );
+    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("主界面 Update")).toBeInTheDocument();
-    expect(localStorage.getItem("novasvn:update-close-after-completion")).toBe("true");
   });
 
   it("远端变化文件使用真实文件级 Update 任务", async () => {

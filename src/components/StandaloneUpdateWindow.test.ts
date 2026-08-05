@@ -178,6 +178,39 @@ describe("StandaloneUpdateWindow", () => {
     ).toBeChecked();
   });
 
+  it("主界面内嵌 Update 不显示也不执行完成后关闭", async () => {
+    localStorage.setItem("novasvn:update-close-after-completion", "true");
+    render(StandaloneUpdateWindow, {
+      props: {
+        targetPath: "C:\\repo",
+        embedded: true,
+        autoStart: false,
+        initialTask: makeTask("success", [
+          "SVN 操作开始执行",
+          "U    src/main.ts",
+          "Updated to revision 21.",
+        ]),
+        initialTarget: makeTarget({
+          target_path: "C:\\repo",
+          relative_path: "",
+          kind: "dir",
+        }),
+      },
+    });
+
+    await screen.findByRole("status", { name: "更新完成" });
+    expect(
+      screen.queryByRole("checkbox", { name: "更新完成且所有冲突解决后自动关闭" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("主界面 Update")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(scanWorkspaceStatusMock).toHaveBeenCalled();
+    });
+    // 即使偏好为 true，内嵌模式也不关闭当前面板/窗口
+    expect(closeWindowMock).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("主界面 Update")).toBeInTheDocument();
+  });
+
   it("主界面模式完成更新后可以返回工作台", async () => {
     const onReturnToMain = vi.fn();
     render(StandaloneUpdateWindow, {

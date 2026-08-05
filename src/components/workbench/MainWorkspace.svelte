@@ -401,7 +401,6 @@
   export let onUpdatePath: (path: string) => void = () => {};
   export let onCleanupWorkspace: () => void = () => {};
   export let onToggleInlineUpdate: () => void = () => {};
-  export let onCloseInlineUpdate: () => void = () => {};
   export let onDismissSvnOperationFeedback: () => void = () => {};
   export let onChooseApplyPatch: () => void = () => {};
   export let onRunApplyPatch: (dryRun: boolean) => void = () => {};
@@ -3463,7 +3462,6 @@
           initialTarget={inlineUpdateTarget}
           minimized={inlineUpdateMinimized}
           onToggleMinimized={onToggleInlineUpdate}
-          onCloseCompleted={onCloseInlineUpdate}
         />
       {:else if view.id === "history"}
         <section class="pane-header">

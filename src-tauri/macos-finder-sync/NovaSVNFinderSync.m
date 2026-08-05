@@ -29,12 +29,13 @@
     return nil;
   }
 
-  NSURL *targetURL = [self selectedTargetURL];
-  if (!targetURL) {
+  // 必须在构建菜单时固化路径：点击菜单项时 selectedItemURLs 常已清空，
+  // 若再查询会回退到 targetedURL（上层容器目录），导致打开错误路径。
+  NSString *path = [self targetPathForMenuKind:menuKind];
+  if (path.length == 0) {
     return nil;
   }
 
-  NSString *path = targetURL.path;
   BOOL isDirectory = [self pathIsDirectory:path];
   BOOL inWorkingCopy = [self pathIsInWorkingCopy:path];
 
@@ -44,7 +45,7 @@
       return nil;
     }
     NSMenu *checkoutMenu = [[NSMenu alloc] initWithTitle:@"NovaSVN"];
-    [self addMenuItem:@"Checkout" actionName:@"checkout" toMenu:checkoutMenu];
+    [self addMenuItem:@"Checkout" actionName:@"checkout" targetPath:path toMenu:checkoutMenu];
     return checkoutMenu;
   }
 
@@ -52,9 +53,9 @@
   // Finder 外层已显示「NovaSVN」，故顶层用短标签（Update / Commit / Log）
   NSMenu *menu = [[NSMenu alloc] initWithTitle:@"NovaSVN"];
 
-  [self addMenuItem:@"Update" actionName:@"update" toMenu:menu];
-  [self addMenuItem:@"Commit" actionName:@"commit" toMenu:menu];
-  [self addMenuItem:@"Log" actionName:@"log" toMenu:menu];
+  [self addMenuItem:@"Update" actionName:@"update" targetPath:path toMenu:menu];
+  [self addMenuItem:@"Commit" actionName:@"commit" targetPath:path toMenu:menu];
+  [self addMenuItem:@"Log" actionName:@"log" targetPath:path toMenu:menu];
 
   NSMenuItem *rootItem = [[NSMenuItem alloc] initWithTitle:@"More"
                                                     action:nil
@@ -64,29 +65,36 @@
   [menu addItem:rootItem];
 
   // 子菜单项顺序与 windows-explorer-menu.ps1 中 $submenuActions 一致
-  [self addMenuItem:@"Open" actionName:@"open" toMenu:submenu];
-  [self addMenuItem:@"SVN Info" actionName:@"info" toMenu:submenu];
-  [self addMenuItem:@"Diff" actionName:@"diff" toMenu:submenu];
+  [self addMenuItem:@"Open" actionName:@"open" targetPath:path toMenu:submenu];
+  [self addMenuItem:@"SVN Info" actionName:@"info" targetPath:path toMenu:submenu];
+  [self addMenuItem:@"Diff" actionName:@"diff" targetPath:path toMenu:submenu];
   // Blame 仅对文件（Windows 仅注册在 *\shell）
   if (!isDirectory) {
-    [self addMenuItem:@"Blame" actionName:@"blame" toMenu:submenu];
+    [self addMenuItem:@"Blame" actionName:@"blame" targetPath:path toMenu:submenu];
   }
-  [self addMenuItem:@"Revert" actionName:@"revert" toMenu:submenu];
-  [self addMenuItem:@"Delete" actionName:@"delete" toMenu:submenu];
-  [self addMenuItem:@"Ignore" actionName:@"ignore" toMenu:submenu];
-  [self addMenuItem:@"Cleanup" actionName:@"cleanup" toMenu:submenu];
-  [self addMenuItem:@"Branch Workspace" actionName:@"branch-workspace" toMenu:submenu];
-  [self addMenuItem:@"Repo Browser" actionName:@"browse" toMenu:submenu];
+  [self addMenuItem:@"Revert" actionName:@"revert" targetPath:path toMenu:submenu];
+  [self addMenuItem:@"Delete" actionName:@"delete" targetPath:path toMenu:submenu];
+  [self addMenuItem:@"Ignore" actionName:@"ignore" targetPath:path toMenu:submenu];
+  [self addMenuItem:@"Cleanup" actionName:@"cleanup" targetPath:path toMenu:submenu];
+  [self addMenuItem:@"Branch Workspace" actionName:@"branch-workspace" targetPath:path toMenu:submenu];
+  [self addMenuItem:@"Repo Browser" actionName:@"browse" targetPath:path toMenu:submenu];
 
   return menu;
 }
 
-- (void)addMenuItem:(NSString *)title actionName:(NSString *)actionName toMenu:(NSMenu *)menu {
+- (void)addMenuItem:(NSString *)title
+         actionName:(NSString *)actionName
+         targetPath:(NSString *)targetPath
+             toMenu:(NSMenu *)menu {
   NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title
                                                 action:@selector(runAction:)
                                          keyEquivalent:@""];
   item.target = self;
-  item.representedObject = actionName;
+  // 把 action 与路径一并写入菜单项，避免点击时再解析选中项
+  item.representedObject = @{
+    @"action" : actionName ?: @"",
+    @"path" : targetPath ?: @"",
+  };
   // 与 Windows Explorer 菜单共用同一套 action 图标资源
   NSImage *icon = [self menuIconForAction:actionName];
   if (icon) {
@@ -142,9 +150,21 @@
 }
 
 - (void)runAction:(NSMenuItem *)sender {
-  NSString *actionName = (NSString *)sender.representedObject;
-  NSURL *targetURL = [self selectedTargetURL];
-  if (!actionName || !targetURL) {
+  id payload = sender.representedObject;
+  NSString *actionName = nil;
+  NSString *targetPath = nil;
+
+  if ([payload isKindOfClass:[NSDictionary class]]) {
+    NSDictionary *info = (NSDictionary *)payload;
+    actionName = info[@"action"];
+    targetPath = info[@"path"];
+  } else if ([payload isKindOfClass:[NSString class]]) {
+    // 兼容旧菜单项结构
+    actionName = (NSString *)payload;
+    targetPath = [self targetPathForMenuKind:FIMenuKindContextualMenuForItems];
+  }
+
+  if (actionName.length == 0 || targetPath.length == 0) {
     return;
   }
 
@@ -154,25 +174,81 @@
   }
 
   NSWorkspaceOpenConfiguration *configuration = [NSWorkspaceOpenConfiguration configuration];
+  // 必须新开进程：已有主窗口时若复用实例，命令行参数不会生效
+  configuration.createsNewApplicationInstance = YES;
+  configuration.activates = YES;
   configuration.arguments = @[
     @"--novasvn-action",
     actionName,
     @"--novasvn-path",
-    targetURL.path
+    targetPath,
   ];
 
   [[NSWorkspace sharedWorkspace] openApplicationAtURL:applicationURL
                                        configuration:configuration
-                                   completionHandler:nil];
+                                   completionHandler:^(NSRunningApplication *_Nullable app,
+                                                       NSError *_Nullable error) {
+                                     if (error) {
+                                       NSLog(@"[NovaSVN FinderSync] 启动失败 action=%@ path=%@ error=%@",
+                                             actionName, targetPath, error);
+                                     } else if (!app) {
+                                       NSLog(@"[NovaSVN FinderSync] 启动未返回进程 action=%@ path=%@",
+                                             actionName, targetPath);
+                                     }
+                                   }];
 }
 
-- (NSURL *)selectedTargetURL {
+/// 按菜单类型解析目标路径。
+/// - 文件/文件夹条目：优先 selectedItemURLs（右键选中的项）
+/// - 容器空白处：使用 targetedURL（当前文件夹）
+- (NSString *)targetPathForMenuKind:(FIMenuKind)menuKind {
   FIFinderSyncController *controller = [FIFinderSyncController defaultController];
-  NSArray<NSURL *> *selectedURLs = controller.selectedItemURLs;
-  if (selectedURLs.count > 0) {
-    return selectedURLs.firstObject;
+  NSURL *url = nil;
+
+  if (menuKind == FIMenuKindContextualMenuForItems) {
+    NSArray<NSURL *> *selectedURLs = controller.selectedItemURLs;
+    if (selectedURLs.count > 0) {
+      url = selectedURLs.firstObject;
+    }
+    // 部分 Finder 版本在条目菜单里 selected 为空，再回退 targeted
+    if (!url) {
+      url = controller.targetedURL;
+    }
+  } else {
+    // 容器菜单：空白处右键，目标就是当前目录
+    url = controller.targetedURL;
+    if (!url) {
+      NSArray<NSURL *> *selectedURLs = controller.selectedItemURLs;
+      if (selectedURLs.count > 0) {
+        url = selectedURLs.firstObject;
+      }
+    }
   }
-  return controller.targetedURL;
+
+  return [self fileSystemPathFromURL:url];
+}
+
+/// 将 Finder 可能给出的 file reference / 安全作用域 URL 规范为本地路径字符串
+- (NSString *)fileSystemPathFromURL:(NSURL *)url {
+  if (!url) {
+    return nil;
+  }
+
+  NSURL *fileURL = url;
+  if ([fileURL respondsToSelector:@selector(filePathURL)]) {
+    NSURL *resolved = fileURL.filePathURL;
+    if (resolved) {
+      fileURL = resolved;
+    }
+  }
+
+  // 尽量拿到稳定的本地路径（解析符号链接）
+  NSURL *standardized = fileURL.URLByResolvingSymlinksInPath ?: fileURL;
+  NSString *path = standardized.path;
+  if (path.length == 0) {
+    path = fileURL.path;
+  }
+  return path.length > 0 ? path : nil;
 }
 
 - (BOOL)pathIsDirectory:(NSString *)path {

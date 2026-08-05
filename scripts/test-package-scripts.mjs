@@ -1516,9 +1516,14 @@ if (!macosFinderScript.includes('--novasvn-path "\\$f"')) {
 if (
   !macosFinderSyncSource.includes('"NovaSVN"') ||
   !macosFinderSyncSource.includes('"--novasvn-path"') ||
-  !macosFinderSyncSource.includes("FIMenuKind")
+  !macosFinderSyncSource.includes("FIMenuKind") ||
+  !macosFinderSyncSource.includes("targetPathForMenuKind") ||
+  !macosFinderSyncSource.includes('@"path"') ||
+  !macosFinderSyncSource.includes("createsNewApplicationInstance")
 ) {
-  console.error("macOS Finder Sync 扩展必须提供 Finder 右键菜单并传递选中路径");
+  console.error(
+    "macOS Finder Sync 扩展必须提供 Finder 右键菜单、在菜单构建时固化选中路径，并强制新开应用实例",
+  );
   failed = true;
 }
 

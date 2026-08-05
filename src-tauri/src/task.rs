@@ -60,11 +60,14 @@ const MAX_REPOSITORY_LIST_XML_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_REPOSITORY_LIST_ENTRIES: usize = 100_000;
 const MAX_REPOSITORY_LIST_FIELD_BYTES: usize = 32 * 1024;
 const MAX_REPOSITORY_LIST_TEXT_BYTES: usize = 32 * 1024 * 1024;
-const MAX_RUNTIME_TASK_LOGS: usize = 500;
-const MAX_RUNTIME_TASK_LOG_BYTES: usize = 64 * 1024;
-const TASK_LOG_TRUNCATION_MARKER: &str = "任务日志已截断：仅保留最近 500 行和 64 KiB";
+const MAX_RUNTIME_TASK_LOGS: usize = 2000;
+const MAX_RUNTIME_TASK_LOG_BYTES: usize = 256 * 1024;
+const TASK_LOG_TRUNCATION_MARKER: &str = "任务日志已截断：仅保留最近输出";
 const TASK_COMMAND_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+/// 通用命令空闲超时：长时间无 stdout/stderr 则终止（避免假死）。
 const TASK_COMMAND_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Update 可能长时间传输大文件且几乎无行输出，不使用空闲超时（仍受总时限约束）。
+const TASK_UPDATE_IDLE_TIMEOUT: Option<Duration> = None;
 static APPLY_PATCH_SNAPSHOT_NONCE: AtomicU64 = AtomicU64::new(1);
 static TASK_COMMAND_OUTPUT_NONCE: AtomicU64 = AtomicU64::new(1);
 
@@ -6658,6 +6661,7 @@ fn run_task_command_streaming_output(
     task_id: &str,
     command: &mut Command,
 ) -> std::io::Result<Output> {
+    // Update 流式输出：关闭空闲超时，避免大文件传输静默期被误杀。
     run_task_command_inner(
         state,
         task_id,
@@ -6665,7 +6669,7 @@ fn run_task_command_streaming_output(
         true,
         TaskCommandLimits {
             timeout: TASK_COMMAND_TIMEOUT,
-            idle_timeout: Some(TASK_COMMAND_IDLE_TIMEOUT),
+            idle_timeout: TASK_UPDATE_IDLE_TIMEOUT,
         },
         true,
         Some(MAX_TASK_COMMAND_OUTPUT_BYTES),
@@ -6761,6 +6765,8 @@ fn run_task_command_inner(
         ));
     }
 
+    // 避免子进程因等待 stdin 而挂起（macOS GUI 下尤为常见）。
+    command.stdin(Stdio::null());
     if capture_stdout {
         command.stdout(Stdio::piped());
     }
@@ -6814,6 +6820,7 @@ fn run_task_command_inner(
 
     let mut status = None;
     let mut execution_error = None;
+    let mut last_heartbeat_at = started_at;
     loop {
         let result = child.lock().expect("SVN 子进程锁已损坏").try_wait();
         match result {
@@ -6830,6 +6837,23 @@ fn run_task_command_inner(
         }
 
         let now = Instant::now();
+        // 流式 Update 长时间无行输出时写心跳，避免界面像卡死。
+        if stream_output_lines && now.duration_since(last_heartbeat_at) >= Duration::from_secs(15) {
+            let last_output = *last_output_at.lock().expect("命令输出活动锁已损坏");
+            let silent_for = now.duration_since(last_output);
+            if silent_for >= Duration::from_secs(15) {
+                append_task_log(
+                    state,
+                    task_id,
+                    &format!(
+                        "仍在执行中…已运行{}，最近{}无新输出（大文件传输时属正常）",
+                        format_task_command_duration(now.duration_since(started_at)),
+                        format_task_command_duration(silent_for)
+                    ),
+                );
+            }
+            last_heartbeat_at = now;
+        }
         let timeout_message = if now.duration_since(started_at) >= limits.timeout {
             Some(format!(
                 "SVN 命令运行超过{}，已终止进程树",
@@ -6983,8 +7007,20 @@ impl TaskOutputStreamer {
     fn append_line(&self, bytes: &[u8]) {
         let message = String::from_utf8_lossy(bytes).trim().to_string();
         if !message.is_empty() {
-            append_task_log(&self.state, &self.task_id, &message);
+            append_task_logs(&self.state, &self.task_id, std::iter::once(message));
         }
+    }
+
+    /// 批量写入，降低大项目 Update 时的锁竞争与日志裁剪开销。
+    fn append_lines(&self, lines: &[Vec<u8>]) {
+        if lines.is_empty() {
+            return;
+        }
+        let messages = lines.iter().filter_map(|bytes| {
+            let message = String::from_utf8_lossy(bytes).trim().to_string();
+            (!message.is_empty()).then_some(message)
+        });
+        append_task_logs(&self.state, &self.task_id, messages);
     }
 }
 
@@ -6999,6 +7035,8 @@ fn read_child_pipe_with_streamer(
     let mut total_bytes = 0usize;
     let mut truncated = false;
     let mut streamed_line = Vec::new();
+    // 每个 read 块内先攒行，再一次加锁写入，避免数万次 remove(0)/扫全表。
+    let mut pending_lines: Vec<Vec<u8>> = Vec::new();
     if let Some(pipe) = pipe.as_mut() {
         let mut buffer = [0_u8; 8 * 1024];
         loop {
@@ -7010,11 +7048,14 @@ fn read_child_pipe_with_streamer(
             if let Some(streamer) = streamer.as_ref() {
                 for byte in &buffer[..read] {
                     if *byte == b'\n' {
-                        streamer.append_line(&streamed_line);
-                        streamed_line.clear();
+                        pending_lines.push(std::mem::take(&mut streamed_line));
                     } else if streamed_line.len() < MAX_STREAMED_LINE_BYTES {
                         streamed_line.push(*byte);
                     }
+                }
+                if !pending_lines.is_empty() {
+                    streamer.append_lines(&pending_lines);
+                    pending_lines.clear();
                 }
             }
             if let Some(max_bytes) = max_bytes {
@@ -7568,56 +7609,95 @@ fn update_task(
 }
 
 fn append_task_log(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, message: &str) {
-    let message = redact_credentials(message);
+    append_task_logs(state, task_id, std::iter::once(message.to_string()));
+}
+
+fn append_task_logs<I>(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, messages: I)
+where
+    I: IntoIterator<Item = String>,
+{
     let mut state = state.lock().expect("任务队列锁已损坏");
-    if let Some(task) = state.tasks.iter_mut().find(|task| task.task_id == task_id) {
-        let now = timestamp_millis();
+    let Some(task) = state.tasks.iter_mut().find(|task| task.task_id == task_id) else {
+        return;
+    };
+    let now = timestamp_millis();
+    let mut appended = false;
+    for message in messages {
+        let message = redact_credentials(&message);
+        if message.is_empty() {
+            continue;
+        }
+        push_task_log_without_trim(
+            task,
+            message,
+            now,
+        );
+        appended = true;
+    }
+    if appended {
         task.updated_at = now;
-        push_task_log(task, message, now);
+        trim_task_logs(&mut task.logs);
     }
 }
 
 fn push_task_log(task: &mut Task, message: String, created_at: u64) {
+    push_task_log_without_trim(task, message, created_at);
+    trim_task_logs(&mut task.logs);
+}
+
+fn push_task_log_without_trim(task: &mut Task, message: String, created_at: u64) {
     task.logs.push(TaskLog {
         message: bounded_text_preview(message, MAX_RUNTIME_TASK_LOG_BYTES, "任务日志内容已截断"),
         created_at,
     });
-    trim_task_logs(&mut task.logs);
 }
 
+/// 高效裁剪任务日志：先算总字节，再一次性 drain 前缀，避免每行 O(n²) 的 remove(0)。
 fn trim_task_logs(logs: &mut Vec<TaskLog>) {
-    let mut removed = false;
-    while logs.len() > MAX_RUNTIME_TASK_LOGS
-        || logs.iter().map(|log| log.message.len()).sum::<usize>() > MAX_RUNTIME_TASK_LOG_BYTES
-    {
-        if logs.is_empty() {
-            break;
-        }
-        logs.remove(0);
-        removed = true;
+    if logs.is_empty() {
+        return;
     }
 
-    if removed
-        && !logs
-            .iter()
-            .any(|log| log.message == TASK_LOG_TRUNCATION_MARKER)
-    {
-        logs.insert(
-            0,
-            TaskLog {
-                message: TASK_LOG_TRUNCATION_MARKER.to_string(),
-                created_at: timestamp_millis(),
-            },
-        );
-        while logs.len() > MAX_RUNTIME_TASK_LOGS
-            || logs.iter().map(|log| log.message.len()).sum::<usize>() > MAX_RUNTIME_TASK_LOG_BYTES
-        {
-            if logs.len() <= 1 {
-                break;
-            }
-            logs.remove(1);
-        }
+    let mut total_bytes: usize = logs.iter().map(|log| log.message.len()).sum();
+    if logs.len() <= MAX_RUNTIME_TASK_LOGS && total_bytes <= MAX_RUNTIME_TASK_LOG_BYTES {
+        return;
     }
+
+    let mut drop_count = 0usize;
+    while drop_count < logs.len()
+        && (logs.len() - drop_count > MAX_RUNTIME_TASK_LOGS
+            || total_bytes > MAX_RUNTIME_TASK_LOG_BYTES)
+    {
+        total_bytes = total_bytes.saturating_sub(logs[drop_count].message.len());
+        drop_count += 1;
+    }
+    if drop_count > 0 {
+        logs.drain(0..drop_count);
+    }
+
+    let has_marker = logs
+        .first()
+        .is_some_and(|log| log.message == TASK_LOG_TRUNCATION_MARKER);
+    if has_marker {
+        return;
+    }
+
+    let marker_len = TASK_LOG_TRUNCATION_MARKER.len();
+    // 为截断标记腾出一行与字节空间
+    while !logs.is_empty()
+        && (logs.len() >= MAX_RUNTIME_TASK_LOGS
+            || total_bytes.saturating_add(marker_len) > MAX_RUNTIME_TASK_LOG_BYTES)
+    {
+        total_bytes = total_bytes.saturating_sub(logs[0].message.len());
+        logs.remove(0);
+    }
+    logs.insert(
+        0,
+        TaskLog {
+            message: TASK_LOG_TRUNCATION_MARKER.to_string(),
+            created_at: timestamp_millis(),
+        },
+    );
 }
 
 fn set_task_result(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, result: TaskResult) {
