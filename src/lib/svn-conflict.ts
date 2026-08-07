@@ -203,6 +203,64 @@ export function conflictResolutionActions(
   ];
 }
 
+/**
+ * Intersection of non-edit resolution actions across multiple conflicts.
+ * Labels use neutral batch wording so mixed tree/text/property selections stay clear.
+ */
+export function commonConflictResolutionActions(
+  files: Array<Pick<ChangedFile, "status" | "conflict_kind">>,
+): ConflictResolutionAction[] {
+  if (files.length === 0) {
+    return [];
+  }
+
+  const actionLists = files.map((file) =>
+    conflictResolutionActions(file).filter((action) => action.kind !== "edit"),
+  );
+  if (actionLists.some((list) => list.length === 0)) {
+    return [];
+  }
+
+  const firstKinds = actionLists[0].map((action) => action.kind);
+  const commonKinds = firstKinds.filter((kind) =>
+    actionLists.every((list) => list.some((action) => action.kind === kind)),
+  );
+
+  return commonKinds
+    .map((kind) => batchResolutionAction(kind))
+    .filter((action): action is ConflictResolutionAction => action !== null);
+}
+
+function batchResolutionAction(
+  kind: ConflictResolutionAction["kind"],
+): ConflictResolutionAction | null {
+  switch (kind) {
+    case "resolve_working":
+      return {
+        kind,
+        label: "保留当前内容",
+        description: "将选中路径的当前工作副本状态标记为已解决",
+        confirm: false,
+      };
+    case "resolve_mine_full":
+      return {
+        kind,
+        label: "采用我的版本",
+        description: "完整采用本地版本并解决选中冲突",
+        confirm: true,
+      };
+    case "resolve_theirs_full":
+      return {
+        kind,
+        label: "采用仓库版本",
+        description: "完整采用仓库版本并解决选中冲突",
+        confirm: true,
+      };
+    default:
+      return null;
+  }
+}
+
 /** Single-letter status mark for conflict rows (always C). */
 export function conflictStatusMark(_file: Pick<ChangedFile, "status" | "conflict_kind">) {
   return "C";

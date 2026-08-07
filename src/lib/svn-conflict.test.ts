@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  commonConflictResolutionActions,
   conflictKindLabel,
   conflictReasonDescription,
   conflictResolutionActions,
@@ -99,5 +100,31 @@ describe("svn-conflict helpers", () => {
       conflict_kind: "text",
     });
     expect(text.some((action) => action.kind === "edit")).toBe(true);
+  });
+
+  it("computes common batch resolution actions without edit", () => {
+    const batch = commonConflictResolutionActions([
+      { status: "conflicted", conflict_kind: "text" },
+      { status: "conflicted", conflict_kind: "property" },
+    ]);
+    expect(batch.map((action) => action.kind)).toEqual([
+      "resolve_working",
+      "resolve_mine_full",
+      "resolve_theirs_full",
+    ]);
+    expect(batch.every((action) => action.kind !== "edit")).toBe(true);
+    expect(batch.find((action) => action.kind === "resolve_mine_full")?.label).toBe(
+      "采用我的版本",
+    );
+
+    const treeMixed = commonConflictResolutionActions([
+      { status: "conflicted", conflict_kind: "tree:update|delete|edit" },
+      { status: "conflicted", conflict_kind: "text" },
+    ]);
+    expect(treeMixed.map((action) => action.kind).sort()).toEqual(
+      ["resolve_mine_full", "resolve_theirs_full", "resolve_working"].sort(),
+    );
+
+    expect(commonConflictResolutionActions([])).toEqual([]);
   });
 });

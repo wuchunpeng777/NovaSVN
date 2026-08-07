@@ -1,7 +1,19 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { ArrowLeft, ChevronDown, ChevronUp, CircleCheck, FilePenLine, History, RefreshCw, RotateCw, Square, X } from "@lucide/svelte";
+  import {
+    ArrowLeft,
+    CheckSquare,
+    ChevronDown,
+    ChevronUp,
+    CircleCheck,
+    FilePenLine,
+    History,
+    RefreshCw,
+    RotateCw,
+    Square,
+    X,
+  } from "@lucide/svelte";
   import {
     cancelTask,
     createSvnOperationTask,
@@ -15,6 +27,7 @@
   } from "../lib/api";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import {
+    commonConflictResolutionActions,
     conflictKindLabel,
     conflictReasonDescription,
     conflictResolutionActions,
@@ -66,10 +79,14 @@
   let resolutionHistory: Task[] = [];
   let resolutionPath: string | null = null;
   let resolutionKind: SvnOperationKind | null = null;
+  /** Remaining resolve targets after the current one (sequential batch). */
+  let resolutionQueue: Array<{ path: string; kind: SvnOperationKind }> = [];
   let resolvedUpdateActions = new Map<string, "L" | "U">();
   let resolvedConflictPaths = new Set<string>();
   let status: WorkingCopyStatus | null = null;
   let conflicts: ChangedFile[] = [];
+  let selectedConflictPaths = new Set<string>();
+  let conflictSelectionAnchorPath: string | null = null;
   let conflictScanCompleted = false;
   let fileContextMenu: { path: string; x: number; y: number } | null = null;
   let fileContextMenuElement: HTMLDivElement | null = null;
@@ -129,7 +146,15 @@
       ? () => showFileLog(fileLogPath!)
       : null;
   $: updateRunning = isTaskRunning(updateTask);
-  $: resolutionRunning = isTaskRunning(resolutionTask);
+  // Include queue + in-flight path so sequential batch cannot be double-started.
+  $: resolutionRunning =
+    isTaskRunning(resolutionTask) ||
+    resolutionQueue.length > 0 ||
+    (resolutionPath !== null && resolutionKind !== null);
+  $: selectedConflicts = conflicts.filter((file) => selectedConflictPaths.has(file.path));
+  $: allConflictsSelected =
+    conflicts.length > 0 && conflicts.every((file) => selectedConflictPaths.has(file.path));
+  $: batchConflictActions = commonConflictResolutionActions(selectedConflicts);
   $: updateComplete =
     updateTask?.status === "success" && conflictScanCompleted && !scanning;
   // 合并日志中的新文件到累计表，后端裁剪旧日志时也不丢已展示项
@@ -220,8 +245,11 @@
     resolutionHistory = [];
     resolutionPath = null;
     resolutionKind = null;
+    resolutionQueue = [];
     resolvedUpdateActions = new Map();
     resolvedConflictPaths = new Set();
+    selectedConflictPaths = new Set();
+    conflictSelectionAnchorPath = null;
     updatedFileSizes = new Map();
     accumulatedUpdateFiles = new Map();
     sizeRefreshGeneration += 1;
@@ -318,8 +346,15 @@
           resolvedUpdateActions = new Map(resolvedUpdateActions).set(resolvedPath, action);
           resolvedConflictPaths = new Set(resolvedConflictPaths).add(resolvedPath);
           conflicts = conflicts.filter((file) => file.path !== resolvedPath);
+          pruneConflictSelection(conflicts.map((file) => file.path));
+          // Continue sequential batch without intermediate full status scans.
+          if (resolutionQueue.length > 0) {
+            await startNextQueuedResolution(currentGeneration);
+            return;
+          }
         } else if (task.status !== "success") {
           actionError = task.error ?? "冲突处理失败";
+          resolutionQueue = [];
         }
       }
       await refreshConflicts(currentGeneration);
@@ -379,10 +414,11 @@
           isPathInUpdateTarget(file.path) &&
           !resolvedConflictPaths.has(file.path),
       );
+      pruneConflictSelection(conflicts.map((file) => file.path));
       if (showScanning) {
         conflictScanCompleted = true;
       }
-      if (!isTaskRunning(resolutionTask)) {
+      if (!isTaskRunning(resolutionTask) && resolutionQueue.length === 0) {
         resolutionPath = null;
       }
     } catch (caught) {
@@ -413,8 +449,11 @@
     resolutionHistory = [];
     resolutionPath = null;
     resolutionKind = null;
+    resolutionQueue = [];
     resolvedUpdateActions = new Map();
     resolvedConflictPaths = new Set();
+    selectedConflictPaths = new Set();
+    conflictSelectionAnchorPath = null;
     updatedFileSizes = new Map();
     accumulatedUpdateFiles = new Map();
     sizeRefreshGeneration += 1;
@@ -578,39 +617,155 @@
   }
 
   async function runConflictAction(file: ChangedFile, action: ConflictResolutionAction) {
-    if (!target || updateRunning || resolutionRunning) {
+    await runConflictActions([file], action);
+  }
+
+  async function runBatchConflictAction(action: ConflictResolutionAction) {
+    await runConflictActions(selectedConflicts, action);
+  }
+
+  async function runConflictActions(files: ChangedFile[], action: ConflictResolutionAction) {
+    if (!target || updateRunning || resolutionRunning || files.length === 0) {
       return;
     }
     if (action.kind === "edit") {
-      await openConflict(file);
-      return;
-    }
-    if (
-      action.confirm &&
-      !window.confirm(`${action.description}？\n${file.path}`)
-    ) {
+      if (files.length === 1) {
+        await openConflict(files[0]);
+      }
       return;
     }
 
+    const paths = files.map((file) => file.path);
+    if (action.confirm) {
+      const message =
+        paths.length === 1
+          ? `${action.description}？\n${paths[0]}`
+          : `${action.description}？\n将处理 ${paths.length} 个冲突路径`;
+      if (!window.confirm(message)) {
+        return;
+      }
+    }
+
     actionError = null;
-    resolutionPath = file.path;
-    resolutionKind = action.kind;
+    resolutionQueue = paths.map((path) => ({
+      path,
+      kind: action.kind as SvnOperationKind,
+    }));
+    await startNextQueuedResolution(generation);
+  }
+
+  async function startNextQueuedResolution(currentGeneration = generation) {
+    if (!target || currentGeneration !== generation) {
+      return;
+    }
+    const next = resolutionQueue[0];
+    if (!next) {
+      resolutionPath = null;
+      resolutionKind = null;
+      return;
+    }
+    resolutionQueue = resolutionQueue.slice(1);
+    resolutionPath = next.path;
+    resolutionKind = next.kind;
     try {
       const task = await createSvnOperationTask({
         working_copy_root: target.working_copy_root,
-        kind: action.kind,
-        file_path: file.path,
+        kind: next.kind,
+        file_path: next.path,
         svn_executable: svnExecutable?.trim() || undefined,
       });
+      if (currentGeneration !== generation) {
+        return;
+      }
       resolutionTask = task;
-      schedulePoll(task.task_id, "resolution", generation, 0);
+      schedulePoll(task.task_id, "resolution", currentGeneration, 0);
     } catch (caught) {
+      if (currentGeneration !== generation) {
+        return;
+      }
       const commandError = caught as CommandError;
       actionError = commandError.detail
         ? `${commandError.message}：${commandError.detail}`
         : commandError.message;
       resolutionPath = null;
       resolutionKind = null;
+      resolutionQueue = [];
+      resolutionTask = null;
+    }
+  }
+
+  /**
+   * Checkbox multi-select for conflicts:
+   * - normal click follows the checkbox checked state
+   * - Shift+click applies that state to the inclusive range from the selection anchor
+   */
+  function handleConflictCheckboxClick(event: MouseEvent, path: string) {
+    if (updateRunning || resolutionRunning || scanning || initializing) {
+      event.preventDefault();
+      return;
+    }
+
+    const checkbox = event.currentTarget as HTMLInputElement;
+    const next = new Set(selectedConflictPaths);
+    const ordered = conflicts.map((file) => file.path);
+
+    if (event.shiftKey && conflictSelectionAnchorPath) {
+      const anchorIndex = ordered.indexOf(conflictSelectionAnchorPath);
+      const targetIndex = ordered.indexOf(path);
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const start = Math.min(anchorIndex, targetIndex);
+        const end = Math.max(anchorIndex, targetIndex);
+        for (const item of ordered.slice(start, end + 1)) {
+          if (checkbox.checked) {
+            next.add(item);
+          } else {
+            next.delete(item);
+          }
+        }
+      } else if (checkbox.checked) {
+        next.add(path);
+      } else {
+        next.delete(path);
+      }
+    } else if (checkbox.checked) {
+      next.add(path);
+    } else {
+      next.delete(path);
+    }
+
+    selectedConflictPaths = new Set(next);
+    conflictSelectionAnchorPath = path;
+  }
+
+  function selectAllConflicts() {
+    if (conflicts.length === 0 || resolutionRunning) {
+      return;
+    }
+    selectedConflictPaths = new Set(conflicts.map((file) => file.path));
+    conflictSelectionAnchorPath = conflicts.at(-1)?.path ?? null;
+  }
+
+  function clearConflictSelection() {
+    selectedConflictPaths = new Set();
+    conflictSelectionAnchorPath = null;
+  }
+
+  function toggleSelectAllConflicts() {
+    if (allConflictsSelected) {
+      clearConflictSelection();
+    } else {
+      selectAllConflicts();
+    }
+  }
+
+  function pruneConflictSelection(paths: Iterable<string>) {
+    const allowed = new Set(paths);
+    const next = new Set([...selectedConflictPaths].filter((path) => allowed.has(path)));
+    if (next.size !== selectedConflictPaths.size) {
+      selectedConflictPaths = next;
+    }
+    if (conflictSelectionAnchorPath && !allowed.has(conflictSelectionAnchorPath)) {
+      conflictSelectionAnchorPath = null;
     }
   }
 
@@ -1036,9 +1191,64 @@
       <header>
         <div>
           <h2>冲突处理</h2>
-          <p>{conflictCount > 0 ? `${conflictCount} 个路径待处理` : "没有待处理冲突"}</p>
+          <p>
+            {#if conflictCount > 0}
+              {conflictCount} 个路径待处理
+              {#if selectedConflicts.length > 0}
+                · 已选 {selectedConflicts.length}
+              {/if}
+            {:else}
+              没有待处理冲突
+            {/if}
+          </p>
         </div>
+        {#if conflicts.length > 0}
+          <div class="conflict-selection-toolbar" role="toolbar" aria-label="冲突选择">
+            <button
+              type="button"
+              class="conflict-select-all"
+              aria-label={allConflictsSelected ? "取消全选冲突" : "全选冲突"}
+              title={allConflictsSelected ? "取消全选" : "全选"}
+              disabled={resolutionRunning || scanning}
+              on:click={toggleSelectAllConflicts}
+            >
+              <CheckSquare size={15} aria-hidden="true" />
+              {allConflictsSelected ? "取消全选" : "全选"}
+            </button>
+            {#if selectedConflicts.length > 0}
+              <button
+                type="button"
+                disabled={resolutionRunning || scanning}
+                on:click={clearConflictSelection}
+              >
+                取消选择
+              </button>
+            {/if}
+          </div>
+        {/if}
       </header>
+
+      {#if selectedConflicts.length > 0}
+        <div class="conflict-batch-bar" role="toolbar" aria-label="批量冲突操作">
+          <span>批量处理 {selectedConflicts.length} 项</span>
+          <div class="conflict-batch-actions">
+            {#if batchConflictActions.length > 0}
+              {#each batchConflictActions as action (action.kind)}
+                <button
+                  type="button"
+                  title={action.description}
+                  disabled={resolutionRunning || scanning}
+                  on:click={() => runBatchConflictAction(action)}
+                >
+                  {action.label}
+                </button>
+              {/each}
+            {:else}
+              <span class="conflict-batch-empty">所选冲突没有共同批量操作</span>
+            {/if}
+          </div>
+        </div>
+      {/if}
 
       <div class="conflict-list">
         {#each provisionalConflictPaths as path (path)}
@@ -1053,9 +1263,19 @@
         {#each conflicts as file (file.path)}
           {@const reason = conflictReasonDescription(file)}
           {@const actions = conflictResolutionActions(file)}
-          <article class="conflict-item">
+          {@const selected = selectedConflictPaths.has(file.path)}
+          <article class="conflict-item" class:selected data-selected={selected ? "true" : undefined}>
             <header>
-              <strong title={file.path}>{file.path}</strong>
+              <label class="conflict-select" title={file.path}>
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  disabled={resolutionRunning || scanning}
+                  aria-label={`选择冲突 ${file.path}`}
+                  on:click={(event) => handleConflictCheckboxClick(event, file.path)}
+                />
+                <strong>{file.path}</strong>
+              </label>
               <span>{conflictKindLabel(file) ?? "冲突"}</span>
             </header>
             {#if reason}
@@ -1266,7 +1486,11 @@
   .update-summary,
   .update-actions,
   .update-actions button,
-  .conflict-actions button {
+  .conflict-actions button,
+  .conflict-selection-toolbar,
+  .conflict-batch-bar,
+  .conflict-batch-actions,
+  .conflict-select {
     display: flex;
     align-items: center;
   }
@@ -1352,7 +1576,9 @@
   }
 
   .update-actions button,
-  .conflict-actions button {
+  .conflict-actions button,
+  .conflict-selection-toolbar button,
+  .conflict-batch-actions button {
     gap: 5px;
   }
 
@@ -1416,10 +1642,17 @@
     border-right: 1px solid var(--border);
   }
 
-  .update-output,
-  .conflict-pane {
+  .update-output {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    background: var(--panel);
+  }
+
+  .conflict-pane {
+    display: flex;
+    flex-direction: column;
     min-width: 0;
     min-height: 0;
     background: var(--panel);
@@ -1571,11 +1804,61 @@
   }
 
   .conflict-pane {
-    grid-template-rows: auto minmax(0, 1fr) auto;
     background: var(--background);
   }
 
+  .conflict-pane > header {
+    flex: 0 0 auto;
+    gap: 8px;
+  }
+
+  .conflict-selection-toolbar {
+    flex: 0 0 auto;
+    gap: 6px;
+  }
+
+  .conflict-selection-toolbar button,
+  .conflict-batch-actions button {
+    min-height: 28px;
+    padding: 3px 8px;
+    font-size: 11px;
+  }
+
+  .conflict-select-all {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .conflict-batch-bar {
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+    padding: 7px 12px;
+  }
+
+  .conflict-batch-bar > span {
+    color: var(--secondary);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .conflict-batch-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .conflict-batch-empty {
+    color: var(--secondary);
+    font-size: 11px;
+  }
+
   .conflict-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
     padding: 10px;
   }
 
@@ -1590,6 +1873,11 @@
     margin-top: 8px;
   }
 
+  .conflict-item.selected {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+    background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  }
+
   .conflict-item > header {
     display: flex;
     align-items: center;
@@ -1597,6 +1885,21 @@
     gap: 8px;
   }
 
+  .conflict-select {
+    min-width: 0;
+    gap: 8px;
+    cursor: pointer;
+  }
+
+  .conflict-select input {
+    flex: 0 0 auto;
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: var(--accent);
+  }
+
+  .conflict-select strong,
   .conflict-item > header strong {
     min-width: 0;
     overflow: hidden;
@@ -1639,6 +1942,7 @@
   }
 
   .resolution-history {
+    flex: 0 0 auto;
     border-top: 1px solid var(--border);
     background: var(--panel);
     padding: 9px 12px;

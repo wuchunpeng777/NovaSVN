@@ -598,6 +598,115 @@ describe("StandaloneUpdateWindow", () => {
       });
     });
   });
+
+  it("冲突支持全选与批量采用仓库版本", async () => {
+    const first = makeConflict({ path: "src/a.ts" });
+    const second = makeConflict({ path: "src/b.ts" });
+    inspectUpdateTargetMock.mockResolvedValue(
+      makeTarget({ target_path: "C:\\repo\\src", relative_path: "src", kind: "dir" }),
+    );
+    createSvnOperationTaskMock
+      .mockResolvedValueOnce(makeTask("pending"))
+      .mockResolvedValueOnce(
+        makeTask("pending", [], { task_id: "resolve-batch-1", title: "批量解决 a" }),
+      )
+      .mockResolvedValueOnce(
+        makeTask("pending", [], { task_id: "resolve-batch-2", title: "批量解决 b" }),
+      );
+    getTaskMock
+      .mockResolvedValueOnce(makeTask("success", ["C    src/a.ts", "C    src/b.ts"]))
+      .mockResolvedValueOnce(
+        makeTask("success", [], { task_id: "resolve-batch-1", title: "批量解决 a" }),
+      )
+      .mockResolvedValueOnce(
+        makeTask("success", [], { task_id: "resolve-batch-2", title: "批量解决 b" }),
+      );
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce(
+        makeStatus({
+          conflicted: 2,
+          total: 2,
+          returned: 2,
+          files: [first, second],
+        }),
+      )
+      .mockResolvedValueOnce(makeStatus());
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo\\src" } });
+
+    const pane = await screen.findByLabelText("冲突处理");
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalled());
+    expect(await within(pane).findByText("src/a.ts")).toBeInTheDocument();
+    expect(within(pane).getByText("src/b.ts")).toBeInTheDocument();
+
+    await fireEvent.click(within(pane).getByRole("button", { name: "全选冲突" }));
+    expect(within(pane).getByRole("checkbox", { name: "选择冲突 src/a.ts" })).toBeChecked();
+    expect(within(pane).getByRole("checkbox", { name: "选择冲突 src/b.ts" })).toBeChecked();
+    expect(within(pane).getByText(/已选 2/)).toBeInTheDocument();
+    expect(within(pane).getByText(/批量处理 2 项/)).toBeInTheDocument();
+
+    const batchBar = within(pane).getByLabelText("批量冲突操作");
+    await fireEvent.click(within(batchBar).getByRole("button", { name: "采用仓库版本" }));
+    expect(window.confirm).toHaveBeenCalledWith(
+      "完整采用仓库版本并解决选中冲突？\n将处理 2 个冲突路径",
+    );
+
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "resolve_theirs_full",
+        file_path: "src/a.ts",
+        svn_executable: undefined,
+      });
+    });
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "resolve_theirs_full",
+        file_path: "src/b.ts",
+        svn_executable: undefined,
+      });
+    });
+    expect(await screen.findByText("工作副本没有未解决冲突")).toBeInTheDocument();
+  });
+
+  it("Shift 勾选可范围多选冲突", async () => {
+    const files = [
+      makeConflict({ path: "src/a.ts" }),
+      makeConflict({ path: "src/b.ts" }),
+      makeConflict({ path: "src/c.ts" }),
+    ];
+    inspectUpdateTargetMock.mockResolvedValue(
+      makeTarget({ target_path: "C:\\repo\\src", relative_path: "src", kind: "dir" }),
+    );
+    createSvnOperationTaskMock.mockResolvedValueOnce(makeTask("pending"));
+    getTaskMock.mockResolvedValueOnce(
+      makeTask("success", ["C    src/a.ts", "C    src/b.ts", "C    src/c.ts"]),
+    );
+    scanWorkspaceStatusMock.mockResolvedValueOnce(
+      makeStatus({
+        conflicted: 3,
+        total: 3,
+        returned: 3,
+        files,
+      }),
+    );
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo\\src" } });
+
+    const pane = await screen.findByLabelText("冲突处理");
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalled());
+    const first = within(pane).getByRole("checkbox", { name: "选择冲突 src/a.ts" });
+    const third = within(pane).getByRole("checkbox", { name: "选择冲突 src/c.ts" });
+
+    await fireEvent.click(first);
+    await fireEvent.click(third, { shiftKey: true });
+
+    expect(first).toBeChecked();
+    expect(within(pane).getByRole("checkbox", { name: "选择冲突 src/b.ts" })).toBeChecked();
+    expect(third).toBeChecked();
+    expect(within(pane).getByText(/已选 3/)).toBeInTheDocument();
+    expect(within(pane).getByText(/批量处理 3 项/)).toBeInTheDocument();
+  });
 });
 
 function makeTarget(overrides = {}) {
