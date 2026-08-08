@@ -70,6 +70,7 @@ const TASK_COMMAND_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const TASK_UPDATE_IDLE_TIMEOUT: Option<Duration> = None;
 static APPLY_PATCH_SNAPSHOT_NONCE: AtomicU64 = AtomicU64::new(1);
 static TASK_COMMAND_OUTPUT_NONCE: AtomicU64 = AtomicU64::new(1);
+static SVN_TARGETS_FILE_NONCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -2705,7 +2706,7 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
                 &format!(
                     "自动 Add {} 个未版本控制文件：{}",
                     unversioned.len(),
-                    unversioned.join(", ")
+                    format_paths_for_task_log(&unversioned)
                 ),
             );
             // Match standalone Add: validate_add_target expects a canonical WC root
@@ -2737,13 +2738,29 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
                     return;
                 }
             }
+            // Use --targets so large selections stay under Windows CreateProcess limits
+            // (os error 206: "文件名或扩展名太长").
+            let add_targets = match SvnTargetsFile::create(task_id, "add", &unversioned) {
+                Ok(targets) => targets,
+                Err(error) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "提交前自动 Add 启动失败",
+                        Some(error),
+                    );
+                    return;
+                }
+            };
             let mut add_command = svn::command(&payload.svn_executable);
             // Relative paths + current_dir(add_root): same as standalone Add, and keeps parents correct.
-            add_command.arg("add").arg("--parents").arg("--");
-            for relative_path in &unversioned {
-                add_command.arg(relative_path);
-            }
-            add_command.current_dir(&add_root);
+            add_command
+                .arg("add")
+                .arg("--parents")
+                .arg("--targets")
+                .arg(add_targets.path())
+                .current_dir(&add_root);
             match run_task_command(state, task_id, &mut add_command) {
                 Ok(output) if output.status.success() => {
                     append_command_output(state, task_id, &output);
@@ -2785,18 +2802,36 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
         }
     }
 
-    let targets: Vec<PathBuf> = payload.files.iter().map(|file| root.join(file)).collect();
+    let commit_targets = match SvnTargetsFile::create(task_id, "commit", &payload.files) {
+        Ok(targets) => targets,
+        Err(error) => {
+            update_task(
+                state,
+                task_id,
+                TaskStatus::Failed,
+                "提交命令启动失败",
+                Some(error),
+            );
+            return;
+        }
+    };
     let mut command = svn::command(&payload.svn_executable);
-    command.arg("commit");
-    for target in &targets {
-        command.arg(target);
-    }
-    command.arg("-m").arg(&payload.message).current_dir(&root);
+    // Relative paths + --targets: avoids Windows command-line length limits for large commits.
+    command
+        .arg("commit")
+        .arg("--targets")
+        .arg(commit_targets.path())
+        .arg("-m")
+        .arg(&payload.message)
+        .current_dir(&root);
 
     append_task_log(
         state,
         task_id,
-        &format!("执行 svn commit：{}", payload.files.join(", ")),
+        &format!(
+            "执行 svn commit：{}",
+            format_paths_for_task_log(&payload.files)
+        ),
     );
 
     match run_task_command(state, task_id, &mut command) {
@@ -2840,12 +2875,13 @@ fn collect_unversioned_commit_targets(
     }
 
     // Prefer relative targets so status XML paths stay matchable to commit file list entries.
+    // Use --targets to avoid Windows command-line length limits with large selections.
+    let targets = SvnTargetsFile::create("commit-status", "status", files)?;
     let mut command = svn::command(executable);
-    command.args(["status", "--xml", "--depth", "empty", "--"]);
-    for file in files {
-        command.arg(file);
-    }
-    command.current_dir(root);
+    command
+        .args(["status", "--xml", "--depth", "empty", "--targets"])
+        .arg(targets.path())
+        .current_dir(root);
 
     let output = command.output().map_err(|error| {
         format!(
@@ -2884,6 +2920,93 @@ fn collect_unversioned_commit_targets(
         }
     }
     Ok(unversioned)
+}
+
+/// Temporary file listing one SVN target path per line for `svn --targets`.
+///
+/// Keeps large multi-path operations under Windows CreateProcess limits
+/// (command line / path length errors such as os error 206).
+#[derive(Debug)]
+struct SvnTargetsFile {
+    path: PathBuf,
+}
+
+impl SvnTargetsFile {
+    fn create(task_id: &str, purpose: &str, paths: &[String]) -> Result<Self, String> {
+        if paths.is_empty() {
+            return Err("SVN targets 列表不能为空。".to_string());
+        }
+
+        let directory = std::env::temp_dir();
+        let safe_task = sanitize_patch_file_part(task_id);
+        let safe_purpose = sanitize_patch_file_part(purpose);
+        for _ in 0..128 {
+            let nonce = SVN_TARGETS_FILE_NONCE.fetch_add(1, Ordering::Relaxed);
+            let name = format!(
+                "novasvn-svn-targets-{}-{}-{}-{nonce}.txt",
+                std::process::id(),
+                safe_task,
+                safe_purpose
+            );
+            let path = directory.join(name);
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            let mut file = match options.open(&path) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(format!(
+                        "无法创建 SVN targets 临时文件 `{}`：{error}",
+                        path.display()
+                    ));
+                }
+            };
+
+            // One path per line, UTF-8. Keep WC-relative paths as provided by the caller.
+            let mut content = String::with_capacity(paths.iter().map(|path| path.len() + 1).sum());
+            for path in paths {
+                content.push_str(path);
+                content.push('\n');
+            }
+            if let Err(error) = file.write_all(content.as_bytes()) {
+                drop(file);
+                let _ = fs::remove_file(&path);
+                return Err(format!(
+                    "无法写入 SVN targets 临时文件 `{}`：{error}",
+                    path.display()
+                ));
+            }
+            drop(file);
+            return Ok(Self { path });
+        }
+
+        Err(format!(
+            "无法创建唯一的 SVN targets 临时文件（目录：{}）",
+            directory.display()
+        ))
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for SvnTargetsFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// Compact path list for task logs so huge selections do not bloat history.
+fn format_paths_for_task_log(paths: &[String]) -> String {
+    const MAX_LISTED: usize = 20;
+    if paths.len() <= MAX_LISTED {
+        return paths.join(", ");
+    }
+    let listed = paths[..MAX_LISTED].join(", ");
+    format!("{listed} …（共 {} 个）", paths.len())
 }
 
 /// Map a status XML path (relative or absolute) back to a path from the commit request.
@@ -12154,6 +12277,45 @@ mod tests {
     }
 
     #[test]
+    fn writes_svn_targets_file_with_one_path_per_line() {
+        let paths = vec![
+            "src/a.txt".to_string(),
+            "nested/b.txt".to_string(),
+            "unicode-文件.txt".to_string(),
+        ];
+        let targets = SvnTargetsFile::create("task-1", "add", &paths)
+            .expect("targets file should be created");
+        let content = fs::read_to_string(targets.path()).expect("read targets file");
+        assert_eq!(content, "src/a.txt\nnested/b.txt\nunicode-文件.txt\n");
+        let path = targets.path().to_path_buf();
+        drop(targets);
+        assert!(
+            !path.exists(),
+            "targets file should be removed on drop"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_svn_targets_file() {
+        let error = SvnTargetsFile::create("task-1", "add", &[])
+            .expect_err("empty targets must be rejected");
+        assert!(error.contains("不能为空"));
+    }
+
+    #[test]
+    fn truncates_large_path_lists_in_task_logs() {
+        let short = vec!["a.txt".to_string(), "b.txt".to_string()];
+        assert_eq!(format_paths_for_task_log(&short), "a.txt, b.txt");
+
+        let many: Vec<String> = (0..25).map(|index| format!("f{index}.txt")).collect();
+        let rendered = format_paths_for_task_log(&many);
+        assert!(rendered.contains("f0.txt"));
+        assert!(rendered.contains("f19.txt"));
+        assert!(!rendered.contains("f20.txt"));
+        assert!(rendered.contains("共 25 个"));
+    }
+
+    #[test]
     fn accepts_paths_that_look_like_status_names() {
         let files = normalize_commit_files(&[
             "missing".to_string(),
@@ -13337,6 +13499,91 @@ mod tests {
             "提交后工作副本应干净：{}",
             String::from_utf8_lossy(&clean_status.stdout)
         );
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn auto_adds_many_unversioned_files_via_targets_file_before_commit() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        // Enough paths that a naive argv join would exceed Windows CreateProcess limits.
+        const FILE_COUNT: usize = 400;
+        let root = test_temp_dir("svn-commit-auto-add-many");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = test_file_repository_url(&repository);
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("tracked.txt"), "base\n").expect("write tracked file");
+        run_test_command(
+            Command::new("svn")
+                .arg("add")
+                .arg(working_copy.join("tracked.txt")),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .args(["-m", "init"])
+                .arg(&working_copy),
+        );
+
+        let bulk_dir = working_copy.join("bulk");
+        fs::create_dir_all(&bulk_dir).expect("create bulk directory");
+        let mut files = Vec::with_capacity(FILE_COUNT + 1);
+        files.push("tracked.txt".to_string());
+        for index in 0..FILE_COUNT {
+            let relative = format!("bulk/file-{index:04}.txt");
+            fs::write(
+                working_copy.join(&relative),
+                format!("content-{index}\n"),
+            )
+            .expect("write bulk unversioned file");
+            files.push(relative);
+        }
+        fs::write(working_copy.join("tracked.txt"), "changed\n").expect("modify tracked file");
+
+        let queue = TaskQueue::new();
+        let commit_task = queue
+            .create_commit_task(CreateCommitTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                message: "commit many auto-add files".to_string(),
+                files,
+                svn_executable: None,
+            })
+            .expect("large auto-add commit task should be created");
+        let commit_task = wait_for_test_task(&queue, &commit_task.task_id);
+        assert!(
+            matches!(commit_task.status, TaskStatus::Success),
+            "大量未版本文件自动 Add 后应提交成功：{:?}",
+            commit_task.error
+        );
+        assert!(
+            commit_task
+                .logs
+                .iter()
+                .any(|log| log.message.contains("自动 Add") && log.message.contains("400")),
+            "任务日志应记录自动 Add 数量：{:?}",
+            commit_task.logs
+        );
+
+        let listed = run_test_command(
+            Command::new("svn")
+                .arg("list")
+                .arg(format!("{repository_url}/bulk")),
+        );
+        let listing = String::from_utf8_lossy(&listed.stdout);
+        assert!(
+            listing.lines().count() >= FILE_COUNT,
+            "仓库应包含 bulk 下全部新文件，实际列表：{listing}"
+        );
+
         fs::remove_dir_all(root).ok();
     }
 
