@@ -44,6 +44,9 @@ const MAX_APPLY_PATCH_OUTPUT_LINE_BYTES: usize = 64 * 1024;
 const MAX_APPLY_PATCH_STATS_PATHS: usize = 100_000;
 const MAX_BATCH_OPERATION_PATHS: usize = 500;
 const MAX_BATCH_OPERATION_PATH_BYTES: usize = 24 * 1024;
+/// Budget for path args on one `svn status` invocation. `status` does not support
+/// `--targets`, so large selections must be chunked under Windows CreateProcess limits.
+const SVN_STATUS_PATH_ARGV_MAX_BYTES: usize = 24 * 1024;
 const TASK_HISTORY_FILE_VERSION: u32 = 1;
 const MAX_PERSISTED_TASKS: usize = 200;
 const MAX_PERSISTED_TASK_LOGS: usize = 500;
@@ -2875,51 +2878,77 @@ fn collect_unversioned_commit_targets(
     }
 
     // Prefer relative targets so status XML paths stay matchable to commit file list entries.
-    // Use --targets to avoid Windows command-line length limits with large selections.
-    let targets = SvnTargetsFile::create("commit-status", "status", files)?;
-    let mut command = svn::command(executable);
-    command
-        .args(["status", "--xml", "--depth", "empty", "--targets"])
-        .arg(targets.path())
-        .current_dir(root);
-
-    let output = command.output().map_err(|error| {
-        format!(
-            "执行 `{executable} status --xml` 检查提交目标失败：{error}"
-        )
-    })?;
-    if !output.status.success() {
-        return Err(command_error_detail(executable, &output));
-    }
-
-    let xml = String::from_utf8_lossy(&output.stdout);
-    let document = Document::parse(xml.as_ref()).map_err(|error| {
-        format!("解析提交目标 status XML 失败：{error}")
-    })?;
-
+    // Note: `svn status` does **not** accept `--targets` (unlike commit/add). Passing
+    // `--targets` fails with: Subcommand 'status' doesn't accept option '--targets ARG'.
+    // Chunk path argv instead to stay under Windows CreateProcess limits.
     let root_normalized = normalize_status_path(&root.display().to_string());
     let mut unversioned = Vec::new();
-    for entry in document.descendants().filter(|node| node.has_tag_name("entry")) {
-        let path = entry.attribute("path").unwrap_or("").trim();
-        if path.is_empty() {
-            continue;
+    for batch in chunk_paths_for_svn_status_argv(files) {
+        let mut command = svn::command(executable);
+        command
+            .args(["status", "--xml", "--depth", "empty"])
+            .args(batch)
+            .current_dir(root);
+
+        let output = command.output().map_err(|error| {
+            format!("执行 `{executable} status --xml` 检查提交目标失败：{error}")
+        })?;
+        if !output.status.success() {
+            return Err(command_error_detail(executable, &output));
         }
-        let item = entry
-            .descendants()
-            .find(|node| node.has_tag_name("wc-status"))
-            .and_then(|node| node.attribute("item"))
-            .unwrap_or("");
-        if item != "unversioned" && item != "untracked" {
-            continue;
-        }
-        let Some(original) = match_commit_file_path(files, path, &root_normalized) else {
-            continue;
-        };
-        if !unversioned.iter().any(|existing: &String| existing == &original) {
-            unversioned.push(original);
+
+        let xml = String::from_utf8_lossy(&output.stdout);
+        let document = Document::parse(xml.as_ref()).map_err(|error| {
+            format!("解析提交目标 status XML 失败：{error}")
+        })?;
+
+        for entry in document.descendants().filter(|node| node.has_tag_name("entry")) {
+            let path = entry.attribute("path").unwrap_or("").trim();
+            if path.is_empty() {
+                continue;
+            }
+            let item = entry
+                .descendants()
+                .find(|node| node.has_tag_name("wc-status"))
+                .and_then(|node| node.attribute("item"))
+                .unwrap_or("");
+            if item != "unversioned" && item != "untracked" {
+                continue;
+            }
+            let Some(original) = match_commit_file_path(files, path, &root_normalized) else {
+                continue;
+            };
+            if !unversioned.iter().any(|existing: &String| existing == &original) {
+                unversioned.push(original);
+            }
         }
     }
     Ok(unversioned)
+}
+
+/// Split paths into argv-safe batches for commands that cannot use `--targets`.
+fn chunk_paths_for_svn_status_argv(paths: &[String]) -> Vec<&[String]> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut used_bytes = 0_usize;
+    for (index, path) in paths.iter().enumerate() {
+        // +1 approximates the separator/quoting overhead per argument.
+        let path_bytes = path.len().saturating_add(1);
+        if index > start && used_bytes.saturating_add(path_bytes) > SVN_STATUS_PATH_ARGV_MAX_BYTES {
+            chunks.push(&paths[start..index]);
+            start = index;
+            used_bytes = 0;
+        }
+        used_bytes = used_bytes.saturating_add(path_bytes);
+    }
+    if start < paths.len() {
+        chunks.push(&paths[start..]);
+    }
+    chunks
 }
 
 /// Temporary file listing one SVN target path per line for `svn --targets`.
@@ -9144,9 +9173,13 @@ fn validate_unversioned_file_delete_target(
         ));
     }
 
+    // Use the working-copy relative path for SVN. On Windows, fs::canonicalize
+    // returns \\?\ extended paths; Subversion mishandles those absolute targets
+    // (status succeeds with an empty entry list, which we would misread as
+    // "no longer unversioned" / DELETE_UNVERSIONED_FILE_STATUS_CHANGED).
     let output = svn::command(svn_executable)
         .args(["status", "--xml", "--no-ignore", "--depth", "empty"])
-        .arg(&target)
+        .arg(relative_path)
         .current_dir(working_copy_root)
         .output()
         .map_err(|error| {
@@ -9192,7 +9225,9 @@ fn validate_unversioned_file_delete_target(
         .filter(|node| node.has_tag_name("wc-status"))
         .filter_map(|node| node.attribute("item"))
         .collect::<Vec<_>>();
-    if statuses.as_slice() != ["unversioned"] {
+    // Accept both common SVN spellings for untracked local files.
+    let is_unversioned = matches!(statuses.as_slice(), ["unversioned"] | ["untracked"]);
+    if !is_unversioned {
         return Err(NovaError::command(
             "DELETE_UNVERSIONED_FILE_STATUS_CHANGED",
             "删除目标不再是未版本控制文件",
@@ -12274,6 +12309,32 @@ mod tests {
             match_commit_file_path(&files, "docs/readme.md", "C:/work/wc").as_deref(),
             Some("docs/readme.md")
         );
+    }
+
+    #[test]
+    fn chunks_status_path_argv_under_windows_budget() {
+        let short = vec!["a.txt".to_string(), "b.txt".to_string()];
+        let short_chunks = chunk_paths_for_svn_status_argv(&short);
+        assert_eq!(short_chunks.len(), 1);
+        assert_eq!(short_chunks[0].len(), 2);
+
+        // Build paths that must span multiple batches under the fixed argv budget.
+        let path = "x".repeat(1_000);
+        let many: Vec<String> = (0..40).map(|_| path.clone()).collect();
+        let chunks = chunk_paths_for_svn_status_argv(&many);
+        assert!(
+            chunks.len() > 1,
+            "expected multiple chunks for long paths, got {}",
+            chunks.len()
+        );
+        assert_eq!(chunks.iter().map(|chunk| chunk.len()).sum::<usize>(), 40);
+        for chunk in &chunks {
+            let bytes: usize = chunk.iter().map(|p| p.len() + 1).sum();
+            assert!(
+                bytes <= SVN_STATUS_PATH_ARGV_MAX_BYTES,
+                "chunk byte size {bytes} exceeds budget"
+            );
+        }
     }
 
     #[test]
