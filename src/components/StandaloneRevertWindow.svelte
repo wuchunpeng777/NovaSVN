@@ -44,6 +44,7 @@
     rememberPassword: boolean,
   ) => Promise<boolean> = async () => false;
 
+  const REVERT_AUTO_CLOSE_SETTING_KEY = "novasvn:revert-close-after-completion";
   const terminalStatuses: TaskStatus[] = ["success", "failed", "cancelled", "interrupted"];
 
   let target: UpdateTargetSummary | null = null;
@@ -67,7 +68,10 @@
   let generation = 0;
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
-
+  let closeAfterCompletion = readCloseAfterCompletionSetting();
+  let closeCurrentRevertAfterCompletion = false;
+  let submittedRevertTaskId: string | null = null;
+  let autoCloseTriggered = false;
   $: resolvedTheme =
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
   $: visibleFiles = (status?.files ?? []).filter(
@@ -131,6 +135,8 @@
     statusError = null;
     actionError = null;
     notice = null;
+    submittedRevertTaskId = null;
+    autoCloseTriggered = false;
 
     try {
       const path = targetPath.trim();
@@ -245,6 +251,8 @@
     error = null;
     statusError = null;
     notice = null;
+    closeCurrentRevertAfterCompletion = closeAfterCompletion;
+    submittedRevertTaskId = null;
     try {
       const task = await createSvnBatchOperationTask({
         working_copy_root: target.working_copy_root,
@@ -253,9 +261,12 @@
         svn_executable: svnExecutable?.trim() || undefined,
       });
       revertTask = task;
+      submittedRevertTaskId = task.task_id;
       revertedCount = paths.length;
+      autoCloseTriggered = false;
       schedulePoll(task.task_id, "revert", generation, 0);
     } catch (caught) {
+      closeCurrentRevertAfterCompletion = false;
       error = caught as CommandError;
     } finally {
       creatingTask = false;
@@ -364,6 +375,9 @@
           resolutionPath = null;
         }
         await refreshStatus(currentGeneration, true);
+        if (role === "revert") {
+          await maybeCloseCompletedRevert();
+        }
       } else if (role === "resolution") {
         resolutionPath = null;
       }
@@ -469,6 +483,57 @@
 
   function commandErrorText(value: CommandError | null) {
     return value ? [value.code, value.message, value.detail].filter(Boolean).join("\n") : null;
+  }
+
+  async function maybeCloseCompletedRevert() {
+    if (
+      !closeCurrentRevertAfterCompletion ||
+      autoCloseTriggered ||
+      revertTask?.status !== "success" ||
+      submittedRevertTaskId !== revertTask.task_id ||
+      !notice ||
+      scanning ||
+      statusError !== null
+    ) {
+      return;
+    }
+    autoCloseTriggered = true;
+    try {
+      await getCurrentWindow().close();
+    } catch (caught) {
+      autoCloseTriggered = false;
+      error = caught as CommandError;
+    }
+  }
+
+  function handleCloseAfterCompletionChange(event: Event) {
+    closeAfterCompletion = (event.currentTarget as HTMLInputElement).checked;
+    writeCloseAfterCompletionSetting(closeAfterCompletion);
+    if (revertTask?.status !== "success") {
+      closeCurrentRevertAfterCompletion = closeAfterCompletion;
+    }
+  }
+
+  function readCloseAfterCompletionSetting() {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    try {
+      return window.localStorage.getItem(REVERT_AUTO_CLOSE_SETTING_KEY) === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  function writeCloseAfterCompletionSetting(value: boolean) {
+    if (typeof window === "undefined") {
+      return;
+    }
+    try {
+      window.localStorage.setItem(REVERT_AUTO_CLOSE_SETTING_KEY, String(value));
+    } catch {
+      // 偏好持久化失败不能影响 Revert
+    }
   }
 </script>
 
@@ -608,6 +673,15 @@
   </section>
 
   <footer>
+    <label>
+      <input
+        type="checkbox"
+        checked={closeAfterCompletion}
+        disabled={autoCloseTriggered}
+        on:change={handleCloseAfterCompletionChange}
+      />
+      <span>Revert 完成后自动关闭</span>
+    </label>
     <span>Revert 会永久丢弃所选项目的本地修改</span>
     <button
       type="button"
@@ -742,6 +816,8 @@
   .output-lines code { display: block; padding: 3px 0; font-size: 11px; }
   code { font-family: Consolas, "Courier New", monospace; white-space: pre-wrap; word-break: break-word; user-select: text; }
   .standalone-revert > footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 22px; border-top: 1px solid var(--border); background: var(--panel); }
+  .standalone-revert > footer label { display: inline-flex; align-items: center; gap: 7px; color: var(--secondary); font-size: 12px; cursor: pointer; }
+  .standalone-revert > footer label input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
   .standalone-revert > footer span { color: var(--secondary); font-size: 12px; }
   button.danger-primary { border-color: #b93d3d; background: #b93d3d; color: #ffffff; font-weight: 600; }
   button.danger-primary:hover:not(:disabled) { border-color: #9f2f2f; background: #9f2f2f; color: #ffffff; }

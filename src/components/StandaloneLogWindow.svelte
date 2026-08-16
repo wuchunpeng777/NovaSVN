@@ -876,7 +876,7 @@
 
 </script>
 
-<main class="standalone-log" data-theme={resolvedTheme} aria-label="NovaSVN Log">
+<main class="standalone-log" class:revert-blocked={revertRunning} data-theme={resolvedTheme} aria-label="NovaSVN Log">
   <header class="log-titlebar">
     <div>
       <h1>NovaSVN Log</h1>
@@ -952,15 +952,7 @@
 
   <div class="log-error">
     <ErrorNotice error={error ?? launchWindowError ?? revertError ?? exportError} />
-    {#if revertRunning}
-      <p class="revert-status" role="status">
-        {revertWholeWorkspace
-          ? `正在回退目标到 ${revertRevisionLabel || "-"}`
-          : revertTargetRevisions.length > 1
-            ? `正在批量撤销 ${revertTargetRevisions.length} 个 Revision`
-            : `正在撤销提交 ${revertRevisionLabel || "-"}`}...
-      </p>
-    {:else if revertNotice}
+    {#if revertNotice && !revertRunning}
       <p class="revert-status success" role="status">{revertNotice}</p>
     {/if}
     {#if exportRunning}
@@ -1158,6 +1150,23 @@
     retry={authenticationRetry}
     onSubmit={onSvnAuthenticationSubmit}
   />
+  {#if revertRunning}
+    <div
+      class="revert-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-busy="true"
+      aria-labelledby="log-revert-overlay-title"
+    >
+      <div class="revert-overlay-card">
+        <p id="log-revert-overlay-title">
+          {revertWholeWorkspace
+            ? `正在回退目标到 ${revertRevisionLabel || "-"}`
+            : "正在撤销提交……"}
+        </p>
+      </div>
+    </div>
+  {/if}
 </main>
 
 <style>
@@ -1338,9 +1347,42 @@
   }
 
   .revert-status.success {
-    border-color: #91c79d;
-    background: #eef8f0;
-    color: #286b38;
+    border-color: #5fa86c;
+    background: #e7f6ea;
+    color: #1d6b2d;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .revert-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: grid;
+    place-items: center;
+    background: rgb(10 18 26 / 46%);
+    pointer-events: auto;
+  }
+
+  .revert-overlay-card {
+    min-width: min(360px, calc(100vw - 48px));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    padding: 22px 24px;
+    color: var(--text);
+    box-shadow: 0 16px 40px rgb(0 0 0 / 28%);
+  }
+
+  .revert-overlay-card p {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .standalone-log.revert-blocked > :not(.revert-overlay) {
+    pointer-events: none;
   }
 
   .log-layout {

@@ -34,6 +34,7 @@ const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 
 beforeEach(() => {
+  localStorage.clear();
   closeWindowMock.mockReset();
   closeWindowMock.mockResolvedValue(undefined);
   createSvnBatchOperationTaskMock.mockReset();
@@ -205,6 +206,81 @@ describe("StandaloneRevertWindow", () => {
 
     await fireEvent.keyDown(window, { key: "Escape" });
     expect(closeWindowMock).toHaveBeenCalledOnce();
+  });
+
+  it("勾选后在 Revert 成功且刷新完成后自动关闭窗口", async () => {
+    render(StandaloneRevertWindow, { props: { targetPath: "C:\\repo\\src" } });
+    await screen.findByText("src/main.ts");
+
+    const autoClose = screen.getByRole("checkbox", { name: "Revert 完成后自动关闭" });
+    expect(autoClose).not.toBeChecked();
+    await fireEvent.click(autoClose);
+    await fireEvent.click(screen.getByRole("button", { name: "Revert 2 个项目" }));
+    await fireEvent.click(
+      within(screen.getByRole("dialog", { name: "确认 Revert" })).getByRole("button", {
+        name: "确认 Revert",
+      }),
+    );
+
+    await waitFor(() => expect(closeWindowMock).toHaveBeenCalledOnce());
+    expect(getTaskMock).toHaveBeenCalledWith("revert-1");
+    expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("持久化自动关闭选项，但没有可 Revert 文件时保持窗口打开", async () => {
+    const first = render(StandaloneRevertWindow, { props: { targetPath: "C:\\repo\\src" } });
+    const autoClose = screen.getByRole("checkbox", { name: "Revert 完成后自动关闭" });
+
+    await fireEvent.click(autoClose);
+
+    expect(autoClose).toBeChecked();
+    expect(localStorage.getItem("novasvn:revert-close-after-completion")).toBe("true");
+    expect(closeWindowMock).not.toHaveBeenCalled();
+    first.unmount();
+
+    scanWorkspaceStatusMock.mockResolvedValue(makeStatus([]));
+    render(StandaloneRevertWindow, { props: { targetPath: "C:\\repo\\src" } });
+
+    expect(screen.getByRole("checkbox", { name: "Revert 完成后自动关闭" })).toBeChecked();
+    expect(await screen.findByRole("button", { name: "Revert 0 个项目" })).toBeDisabled();
+    expect(createSvnBatchOperationTaskMock).not.toHaveBeenCalled();
+    expect(closeWindowMock).not.toHaveBeenCalled();
+  });
+
+  it("Revert 完成后再勾选只保存下次偏好，不追溯关闭当前窗口", async () => {
+    render(StandaloneRevertWindow, { props: { targetPath: "C:\\repo\\src" } });
+    await screen.findByText("src/main.ts");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Revert 2 个项目" }));
+    await fireEvent.click(
+      within(screen.getByRole("dialog", { name: "确认 Revert" })).getByRole("button", {
+        name: "确认 Revert",
+      }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent("已 Revert 2 个项目");
+    const autoClose = screen.getByRole("checkbox", { name: "Revert 完成后自动关闭" });
+    await fireEvent.click(autoClose);
+
+    expect(localStorage.getItem("novasvn:revert-close-after-completion")).toBe("true");
+    expect(closeWindowMock).not.toHaveBeenCalled();
+  });
+
+  it("Revert 失败时即使勾选了自动关闭也不关窗口", async () => {
+    getTaskMock.mockResolvedValue(makeTask("failed"));
+    render(StandaloneRevertWindow, { props: { targetPath: "C:\\repo\\src" } });
+    await screen.findByText("src/main.ts");
+
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Revert 完成后自动关闭" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Revert 2 个项目" }));
+    await fireEvent.click(
+      within(screen.getByRole("dialog", { name: "确认 Revert" })).getByRole("button", {
+        name: "确认 Revert",
+      }),
+    );
+
+    await waitFor(() => expect(getTaskMock).toHaveBeenCalledWith("revert-1"));
+    expect(closeWindowMock).not.toHaveBeenCalled();
+    expect(screen.queryByText(/已 Revert/)).not.toBeInTheDocument();
   });
 });
 

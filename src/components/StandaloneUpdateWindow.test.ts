@@ -289,6 +289,54 @@ describe("StandaloneUpdateWindow", () => {
     await screen.findByRole("status", { name: "更新完成" });
   });
 
+  it("临时 C 行在扫描后交接为可处理的树冲突", async () => {
+    let finishUpdate: (task: Task) => void = () => {};
+    const finishingTask = new Promise<Task>((resolve) => {
+      finishUpdate = resolve;
+    });
+    inspectUpdateTargetMock.mockResolvedValue(
+      makeTarget({
+        target_path: "C:\\repo",
+        relative_path: "",
+        repository_url: "https://example.com/svn/trunk",
+        kind: "dir",
+      }),
+    );
+    getTaskMock
+      .mockResolvedValueOnce(makeTask("running", ["C    src/tree.ts"]))
+      .mockImplementationOnce(() => finishingTask);
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({
+        conflicted: 1,
+        total: 1,
+        returned: 1,
+        files: [
+          makeConflict({
+            path: "src/tree.ts",
+            conflict_kind: "tree:update|delete|edit",
+          }),
+        ],
+      }),
+    );
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo" } });
+
+    const pane = await screen.findByLabelText("冲突处理");
+    expect(await within(pane).findByText("src/tree.ts")).toBeInTheDocument();
+    expect(within(pane).getByText("更新中检测到冲突")).toBeInTheDocument();
+    expect(within(pane).getByText("等待 Update 完成后读取冲突详情...")).toBeInTheDocument();
+    expect(within(pane).queryByRole("button", { name: "保持删除" })).not.toBeInTheDocument();
+
+    finishUpdate(makeTask("success", ["C    src/tree.ts"]));
+
+    expect(await within(pane).findByText("树冲突 (更新)")).toBeInTheDocument();
+    expect(within(pane).getByText("src/tree.ts")).toBeInTheDocument();
+    expect(within(pane).getByText(/本地已删除/)).toBeInTheDocument();
+    expect(within(pane).getByRole("button", { name: "保持删除" })).toBeEnabled();
+    expect(within(pane).getByRole("button", { name: "恢复仓库版本" })).toBeEnabled();
+    expect(within(pane).queryByText("更新中检测到冲突")).not.toBeInTheDocument();
+    expect(within(pane).queryByText("等待 Update 完成后读取冲突详情...")).not.toBeInTheDocument();
+  });
+
   it("等待目标范围冲突扫描完成后再显示更新完成和冲突数量", async () => {
     let finishScan: (status: WorkingCopyStatus) => void = () => {};
     scanWorkspaceStatusMock.mockImplementationOnce(

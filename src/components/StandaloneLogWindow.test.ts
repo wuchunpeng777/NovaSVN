@@ -124,6 +124,7 @@ describe("StandaloneLogWindow", () => {
         start_revision: undefined,
       });
     });
+    expect(screen.getByTitle("C:\\repo\\src\\main.ts")).toHaveTextContent("C:\\repo");
     expect(screen.getByText("Add log window")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "获取历史日志" })).not.toBeInTheDocument();
     expect(screen.queryByText("/trunk/src/main.ts")).not.toBeInTheDocument();
@@ -385,8 +386,8 @@ describe("StandaloneLogWindow", () => {
     expect(confirmMock).toHaveBeenCalledOnce();
     expect(createRevertRevisionTaskMock).toHaveBeenCalledWith({
       working_copy_root: "C:\\repo",
-      target_path: "C:\\repo\\src\\main.ts",
-      source_url: "https://svn.example.test/repo/trunk/src/main.ts",
+      target_path: "C:\\repo",
+      source_url: "https://svn.example.test/repo/trunk",
       target_revision: "20",
       svn_executable: "C:\\Tools\\svn.exe",
     });
@@ -404,15 +405,15 @@ describe("StandaloneLogWindow", () => {
       makeTask({
         task_id: "export-revision-1",
         status: "success",
-        title: "Export main.ts",
+        title: "Export trunk",
         result: {
           repository_list: null,
           repository_file: null,
           repository_export: {
-            url: "https://svn.example.test/repo/trunk/src/main.ts",
+            url: "https://svn.example.test/repo/trunk",
             revision: "20",
-            local_path: "C:\\exports\\main.ts-r20",
-            file_name: "main.ts-r20",
+            local_path: "C:\\exports\\trunk-r20",
+            file_name: "trunk-r20",
           },
           revision_diff: null,
           merge_result: null,
@@ -421,7 +422,7 @@ describe("StandaloneLogWindow", () => {
       }),
     );
     openLocalPathLocationMock.mockResolvedValue({
-      target_path: "C:\\exports\\main.ts-r20",
+      target_path: "C:\\exports\\trunk-r20",
     });
 
     render(StandaloneLogWindow, {
@@ -436,18 +437,18 @@ describe("StandaloneLogWindow", () => {
 
     expect(chooseExportDirectoryMock).toHaveBeenCalledOnce();
     expect(createRepositoryExportTaskMock).toHaveBeenCalledWith({
-      url: "https://svn.example.test/repo/trunk/src/main.ts",
-      local_path: "C:\\exports\\main.ts-r20",
+      url: "https://svn.example.test/repo/trunk",
+      local_path: "C:\\exports\\trunk-r20",
       revision: "20",
       svn_executable: "C:\\Tools\\svn.exe",
     });
     expect(confirmMock).toHaveBeenCalledOnce();
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "已 Export r20 到 C:\\exports\\main.ts-r20",
+      "已 Export r20 到 C:\\exports\\trunk-r20",
     );
     await waitFor(() => {
       expect(openLocalPathLocationMock).toHaveBeenCalledWith({
-        path: "C:\\exports\\main.ts-r20",
+        path: "C:\\exports\\trunk-r20",
       });
     });
     confirmMock.mockRestore();
@@ -472,7 +473,7 @@ describe("StandaloneLogWindow", () => {
     });
     expect(workspaceRevertButton).toHaveAttribute(
       "data-tooltip",
-      "回退 C:\\repo\\src\\main.ts 到 r20",
+      "回退 C:\\repo 到 r20",
     );
     expect(workspaceRevertButton).not.toHaveAttribute("title");
     await fireEvent.click(workspaceRevertButton);
@@ -480,8 +481,8 @@ describe("StandaloneLogWindow", () => {
     expect(confirmMock).toHaveBeenCalledOnce();
     expect(createRevertRevisionTaskMock).toHaveBeenCalledWith({
       working_copy_root: "C:\\repo",
-      target_path: "C:\\repo\\src\\main.ts",
-      source_url: "https://svn.example.test/repo/trunk/src/main.ts",
+      target_path: "C:\\repo",
+      source_url: "https://svn.example.test/repo/trunk",
       target_revision: "20",
       whole_workspace: true,
       svn_executable: "C:\\Tools\\svn.exe",
@@ -523,8 +524,8 @@ describe("StandaloneLogWindow", () => {
     expect(confirmMock).toHaveBeenCalledWith(expect.stringContaining("选中：r18、r20"));
     expect(createRevertRevisionTaskMock).toHaveBeenCalledWith({
       working_copy_root: "C:\\repo",
-      target_path: "C:\\repo\\src\\main.ts",
-      source_url: "https://svn.example.test/repo/trunk/src/main.ts",
+      target_path: "C:\\repo",
+      source_url: "https://svn.example.test/repo/trunk",
       target_revisions: ["18", "20"],
       svn_executable: "C:\\Tools\\svn.exe",
     });
@@ -585,7 +586,7 @@ describe("StandaloneLogWindow", () => {
     await fireEvent.click(within(toolbar).getByRole("button", { name: "Merge 到..." }));
     const dialog = screen.getByRole("dialog", { name: "Merge 选中 Revision" });
     expect(within(dialog).getByText("r18、r20")).toBeInTheDocument();
-    expect(within(dialog).getByText("https://svn.example.test/repo/trunk/src/main.ts"))
+    expect(within(dialog).getByText("https://svn.example.test/repo/trunk"))
       .toBeInTheDocument();
   });
 
@@ -677,14 +678,62 @@ describe("StandaloneLogWindow", () => {
     expect(await screen.findByText("Add log window")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "登录 SVN" })).not.toBeInTheDocument();
   });
+
+  it("回退运行时显示阻塞遮罩，成功后消失并提示", async () => {
+    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
+    getPathSvnLogMock.mockResolvedValue(makeLog());
+    createRevertRevisionTaskMock.mockResolvedValue(makeTask({ status: "pending" }));
+    let finishRevert: (task: Task) => void = () => {};
+    const finishingTask = new Promise<Task>((resolve) => {
+      finishRevert = resolve;
+    });
+    getTaskMock.mockImplementation(() => finishingTask);
+    render(StandaloneLogWindow, {
+      props: {
+        targetPath: "C:\\repo\\src\\main.ts",
+        svnExecutable: "C:\\Tools\\svn.exe",
+      },
+    });
+    await screen.findByText("Add log window");
+
+    await fireEvent.click(screen.getByRole("button", { name: "回退当前日志目标到 r20" }));
+
+    expect(await screen.findByRole("dialog", { name: "正在回退目标到 r20" })).toBeInTheDocument();
+    expect(document.querySelector(".standalone-log")).toHaveClass("revert-blocked");
+    await fireEvent.click(screen.getByRole("button", { name: "撤销提交 r20" }));
+    expect(createRevertRevisionTaskMock).toHaveBeenCalledTimes(1);
+
+    finishRevert(makeTask({ status: "success", title: "回退目标到 r20" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "目标已回退到 r20，本地修改已生成",
+    );
+    expect(screen.queryByRole("dialog", { name: "正在回退目标到 r20" })).not.toBeInTheDocument();
+    expect(document.querySelector(".standalone-log")).not.toHaveClass("revert-blocked");
+    confirmMock.mockRestore();
+  });
+
+  it("撤销提交运行时遮罩文案不暴露底层操作", async () => {
+    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
+    getPathSvnLogMock.mockResolvedValue(makeLog());
+    createRevertRevisionTaskMock.mockResolvedValue(makeTask({ status: "pending" }));
+    getTaskMock.mockResolvedValue(makeTask({ status: "running" }));
+    render(StandaloneLogWindow, { props: { targetPath: "C:\\repo" } });
+    await screen.findByText("Add log window");
+
+    await fireEvent.click(screen.getByRole("button", { name: "撤销提交 r20" }));
+
+    expect(await screen.findByRole("dialog", { name: "正在撤销提交……" })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    confirmMock.mockRestore();
+  });
 });
 
 function makeLog(overrides: Partial<SvnLog> = {}): SvnLog {
   return {
-    target: "C:\\repo\\src\\main.ts",
+    target: "C:\\repo",
     working_copy_root: "C:\\repo",
     repository_root: "https://svn.example.test/repo",
-    repository_url: "https://svn.example.test/repo/trunk/src/main.ts",
+    repository_url: "https://svn.example.test/repo/trunk",
     working_copy_revision: "20",
     entries: [makeEntry("20", "alice", "2026-07-10T10:00:00Z", "Add log window")],
     has_more: false,

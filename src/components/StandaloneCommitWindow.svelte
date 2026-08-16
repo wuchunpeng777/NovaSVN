@@ -1388,7 +1388,7 @@
   }
 
   function isVisibleFile(file: ChangedFile) {
-    return isSelectable(file) || isConflicted(file);
+    return isSelectable(file) || isConflicted(file) || file.status === "missing";
   }
 
   function isConflicted(file: ChangedFile) {
@@ -1400,7 +1400,9 @@
   }
 
   function isDeletableFile(file: ChangedFile) {
-    return file.status !== "deleted" && (isCommittable(file) || file.status === "unversioned");
+    return file.status !== "deleted" && (
+      isCommittable(file) || file.status === "unversioned" || file.status === "missing"
+    );
   }
 
   function canUseChangelist(file: ChangedFile) {
@@ -1705,6 +1707,7 @@
                   class:active={activeFilePath === file.path}
                   class:selected={selectedPaths.has(file.path)}
                   class:unversioned={file.status === "unversioned"}
+                  class:missing={file.status === "missing"}
                   class:conflicted={isConflicted(file)}
                   class:reverting={revertingPaths.includes(file.path)}
                   class:adding={addingPath === file.path}
@@ -1774,6 +1777,18 @@
                         <Trash2 size={14} aria-hidden="true" /> Delete
                       </button>
                     </div>
+                  {:else if file.status === "missing"}
+                    <div class="file-row-actions">
+                      <button
+                        type="button"
+                        class="file-delete-action"
+                        aria-label={`Delete ${file.path}`}
+                        disabled={operationRunning || scanning || initializing}
+                        on:click={() => requestInlineDelete(file)}
+                      >
+                        <Trash2 size={14} aria-hidden="true" /> Delete
+                      </button>
+                    </div>
                   {:else if file.status === "added"}
                     <button
                       type="button"
@@ -1792,7 +1807,7 @@
             {#if scanning || initializing}
               <div class="empty-files" role="status">正在扫描工作副本...</div>
             {:else}
-              <div class="empty-files">目标范围内没有可提交或待 Add 的文件</div>
+              <div class="empty-files">目标范围内没有可提交、待 Add 或待处理丢失的文件</div>
             {/if}
           {/each}
         </div>

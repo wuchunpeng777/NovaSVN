@@ -970,6 +970,70 @@ describe("StandaloneCommitWindow", () => {
     });
   });
 
+  it("展示丢失文件并允许 Delete 后提交删除", async () => {
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce(
+        makeStatus({
+          files: [makeFile("src/gone.ts", "missing", { abnormal: true })],
+          total: 1,
+          returned: 1,
+          missing: 1,
+          local_changes: 1,
+        }),
+      )
+      .mockResolvedValue(
+        makeStatus({
+          files: [makeFile("src/gone.ts", "deleted")],
+          total: 1,
+          returned: 1,
+          deleted: 1,
+          local_changes: 1,
+        }),
+      );
+    createSvnOperationTaskMock.mockResolvedValue(
+      makeTask("pending", [], { task_id: "delete-missing-1", title: "删除丢失文件" }),
+    );
+    getTaskMock.mockResolvedValue(makeTask("success", [], { task_id: "delete-missing-1" }));
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    const pane = screen.getByLabelText("选择提交文件");
+    const row = await within(pane).findByLabelText("提交文件 src/gone.ts");
+
+    expect(within(row).queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(within(row).getByText("!")).toBeInTheDocument();
+    expect(within(row).getByTitle("丢失")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "提交 0 个文件" })).toBeDisabled();
+
+    await fireEvent.click(within(row).getByRole("button", { name: "Delete src/gone.ts" }));
+    const dialog = screen.getByRole("dialog", { name: "确认 Delete" });
+    expect(within(dialog).getByText("文件将被标记为 SVN 删除，并保留为待提交变更。")).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "确认 Delete" }));
+
+    await waitFor(() => {
+      expect(createSvnOperationTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        kind: "delete_path",
+        file_path: "src/gone.ts",
+        svn_executable: undefined,
+      });
+    });
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status")).toHaveTextContent("已 Delete src/gone.ts");
+
+    const deleted = await within(pane).findByRole("checkbox", { name: "src/gone.ts" });
+    expect(deleted).not.toBeChecked();
+    await fireEvent.click(deleted);
+    expect(deleted).toBeChecked();
+    await fireEvent.click(screen.getByRole("button", { name: "提交 1 个文件" }));
+    await waitFor(() => {
+      expect(createCommitTaskMock).toHaveBeenCalledWith({
+        working_copy_root: "C:\\repo",
+        message: "",
+        files: ["src/gone.ts"],
+        svn_executable: undefined,
+      });
+    });
+  });
+
   it("已删除文件的 Delete 菜单项不可用", async () => {
     scanWorkspaceStatusMock.mockResolvedValue(
       makeStatus({ files: [makeFile("src/removed.ts", "deleted")], total: 1, returned: 1, local_changes: 1, deleted: 1 }),
@@ -984,6 +1048,7 @@ describe("StandaloneCommitWindow", () => {
   it("没有日志或文件选择时禁用提交", async () => {
     scanWorkspaceStatusMock.mockResolvedValue(makeStatus({ files: [] }));
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    expect(await screen.findByText("目标范围内没有可提交、待 Add 或待处理丢失的文件")).toBeInTheDocument();
     const submit = await screen.findByRole("button", { name: "提交 0 个文件" });
     expect(submit).toBeDisabled();
     expect(createCommitTaskMock).not.toHaveBeenCalled();

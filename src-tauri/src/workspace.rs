@@ -687,34 +687,24 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
 }
 
 pub fn get_path_svn_log(request: GetPathSvnLogRequest) -> Result<SvnLog, NovaError> {
-    let target = normalize_svn_log_target_path(&request.path)?;
-    let current_dir = if target.is_dir() {
-        target.clone()
-    } else {
-        target.parent().map(Path::to_path_buf).ok_or_else(|| {
-            NovaError::command(
-                "SVN_LOG_TARGET_PARENT_MISSING",
-                "无法定位日志目标所在目录",
-                Some(format!("路径：{}", target.display())),
-                true,
-            )
-        })?
-    };
+    let requested = normalize_svn_log_target_path(&request.path)?;
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
-    let workspace = read_workspace_summary(&target, &executable)?;
+    let requested_workspace = read_workspace_summary(&requested, &executable)?;
+    let root = normalize_workspace_path(&requested_workspace.working_copy_root)?;
+    let workspace = read_workspace_summary(&root, &executable)?;
     let working_copy_revision =
-        read_log_working_copy_revision(&executable, &target, &workspace.revision);
+        read_log_working_copy_revision(&executable, &root, &workspace.revision);
     let limit = request.limit.unwrap_or(50).clamp(1, 200);
     let start_revision = request
         .start_revision
         .as_deref()
         .map(normalize_log_revision_value)
         .transpose()?;
-    let display_target = target.display().to_string();
+    let display_target = root.display().to_string();
     let mut log = run_svn_log(
         &executable,
-        &target,
-        &current_dir,
+        &root,
+        &root,
         &display_target,
         limit,
         start_revision.as_deref(),
@@ -5406,6 +5396,79 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn reads_working_copy_root_log_from_subdirectory() {
+        if !svn_test_tools_available() {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-root-log-integration-{}-{unique}",
+            std::process::id()
+        ));
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let working_copy = root.join("working-copy");
+        fs::create_dir_all(import_dir.join("left")).expect("create left import tree");
+        fs::create_dir_all(import_dir.join("right")).expect("create right import tree");
+        fs::write(import_dir.join("left/tracked.txt"), "left\n").expect("write left fixture");
+        fs::write(import_dir.join("right/tracked.txt"), "right\n").expect("write right fixture");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("right/tracked.txt"), "right sibling change\n")
+            .expect("write sibling change");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&working_copy)
+                .args(["-m", "sibling change"]),
+        );
+
+        let left_log = get_path_svn_log(GetPathSvnLogRequest {
+            path: working_copy.join("left").display().to_string(),
+            svn_executable: None,
+            limit: Some(10),
+            start_revision: None,
+        })
+        .expect("subdirectory log reads working copy root");
+        let root_log = get_path_svn_log(GetPathSvnLogRequest {
+            path: working_copy.display().to_string(),
+            svn_executable: None,
+            limit: Some(10),
+            start_revision: None,
+        })
+        .expect("root log reads working copy root");
+
+        assert_eq!(left_log.target, working_copy.display().to_string());
+        assert_eq!(root_log.target, working_copy.display().to_string());
+        assert_eq!(left_log.repository_url.as_deref(), Some(repository_url.as_str()));
+        assert_eq!(root_log.repository_url.as_deref(), Some(repository_url.as_str()));
+        assert_eq!(left_log.entries[0].revision, "2");
+        assert_eq!(left_log.entries[0].message, "sibling change");
+        assert_eq!(left_log.entries[0].revision, root_log.entries[0].revision);
+        assert_eq!(left_log.entries[0].message, root_log.entries[0].message);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn create_ignore_test_working_copy(test_name: &str) -> (PathBuf, PathBuf) {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -6081,6 +6144,40 @@ line two</property>
                 && file.remote_property_status.as_deref() == Some("modified")
                 && file.change_scope == ChangeScope::Remote
         }));
+    }
+
+    #[test]
+    fn parses_item_normal_tree_conflict_as_conflicted() {
+        let xml = r#"
+<status>
+  <target path="C:\wc">
+    <entry path="C:\wc\src\tree.ts">
+      <wc-status item="normal" props="none" />
+      <tree-conflict operation="update" action="edit" reason="delete" />
+    </entry>
+  </target>
+</status>
+"#;
+
+        let status = parse_svn_status_xml(
+            xml,
+            Path::new("C:\\wc"),
+            0,
+            100,
+            parse_svnversion_output("42"),
+            true,
+        )
+        .expect("status parses");
+
+        assert_eq!(status.total, 1);
+        assert_eq!(status.conflicted, 1);
+        assert_eq!(status.files[0].path, "src/tree.ts");
+        assert_eq!(status.files[0].status, "conflicted");
+        assert_eq!(
+            status.files[0].conflict_kind.as_deref(),
+            Some("tree:update|delete|edit")
+        );
+        assert!(status.files[0].abnormal);
     }
 
     #[test]
