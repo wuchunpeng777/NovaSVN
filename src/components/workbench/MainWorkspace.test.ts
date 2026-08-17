@@ -626,7 +626,7 @@ describe("MainWorkspace", () => {
     expect(onRemoveBranchPoolEntry).toHaveBeenCalledWith("second", false);
   });
 
-  it("starts a complete commit flow when no files were preselected", async () => {
+  it("opens the commit inspector without auto-selecting files", async () => {
     const file = makeFile("src/main.ts", "modified", "main-digest");
     const onSelectAllCommitFiles = vi.fn();
     render(MainWorkspace, {
@@ -642,7 +642,7 @@ describe("MainWorkspace", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "打开提交窗口" }));
 
-    expect(onSelectAllCommitFiles).toHaveBeenCalledOnce();
+    expect(onSelectAllCommitFiles).not.toHaveBeenCalled();
     expect(screen.getByRole("tab", { name: "Commit" })).toHaveAttribute(
       "aria-selected",
       "true",

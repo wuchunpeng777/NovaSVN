@@ -122,6 +122,16 @@ beforeEach(() => {
   setWorkspaceChangelistMock.mockResolvedValue({ changelist: null, file_paths: [] });
 });
 
+async function selectAllVisibleFiles() {
+  const pane = await screen.findByLabelText("选择提交文件");
+  await waitFor(() => {
+    expect(within(pane).getByRole("button", { name: "全选" })).toBeEnabled();
+  });
+  await fireEvent.click(within(pane).getByRole("button", { name: "全选" }));
+  return pane;
+}
+
+
 describe("StandaloneCommitWindow", () => {
   it("out of date 后关闭 Commit 并打开可自动返回的 Update", async () => {
     getTaskMock.mockResolvedValue(
@@ -130,11 +140,12 @@ describe("StandaloneCommitWindow", () => {
       }),
     );
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    await selectAllVisibleFiles();
 
     await fireEvent.input(await screen.findByRole("textbox", { name: "提交日志" }), {
       target: { value: "保留后重试" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "提交 3 个文件" }));
+    await fireEvent.click(screen.getByRole("button", { name: "提交 4 个文件" }));
     const dialog = await screen.findByRole("dialog", { name: "提交失败：工作副本已过期" });
     await fireEvent.click(within(dialog).getByRole("button", { name: "更新后返回提交" }));
 
@@ -152,7 +163,8 @@ describe("StandaloneCommitWindow", () => {
     const autoClose = screen.getByRole("checkbox", { name: "提交完成后自动关闭" });
     expect(autoClose).not.toBeChecked();
     await fireEvent.click(autoClose);
-    await fireEvent.click(await screen.findByRole("button", { name: "提交 3 个文件" }));
+    await selectAllVisibleFiles();
+    await fireEvent.click(await screen.findByRole("button", { name: "提交 4 个文件" }));
 
     await waitFor(() => expect(closeWindowMock).toHaveBeenCalledOnce());
     expect(getTaskMock).toHaveBeenCalledWith("commit-1");
@@ -183,7 +195,8 @@ describe("StandaloneCommitWindow", () => {
   it("提交完成后再勾选只保存下次偏好，不追溯关闭当前窗口", async () => {
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
 
-    await fireEvent.click(await screen.findByRole("button", { name: "提交 3 个文件" }));
+    await selectAllVisibleFiles();
+    await fireEvent.click(await screen.findByRole("button", { name: "提交 4 个文件" }));
     expect(await screen.findByText("提交完成")).toBeInTheDocument();
     const autoClose = screen.getByRole("checkbox", { name: "提交完成后自动关闭" });
     await fireEvent.click(autoClose);
@@ -204,14 +217,15 @@ describe("StandaloneCommitWindow", () => {
   it("提交过程中按 Escape 不关闭 Commit 窗口", async () => {
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
 
-    await fireEvent.click(await screen.findByRole("button", { name: "提交 3 个文件" }));
+    await selectAllVisibleFiles();
+    await fireEvent.click(await screen.findByRole("button", { name: "提交 4 个文件" }));
     await waitFor(() => expect(createCommitTaskMock).toHaveBeenCalledTimes(1));
     await fireEvent.keyDown(window, { key: "Escape" });
 
     expect(closeWindowMock).not.toHaveBeenCalled();
   });
 
-  it("只显示右键目录范围内的可提交文件并默认全选", async () => {
+  it("只显示右键目录范围内的可提交文件，打开时不自动勾选", async () => {
     inspectUpdateTargetMock.mockResolvedValue(
       makeTarget({ target_path: "C:\\repo\\src", relative_path: "src", kind: "dir" }),
     );
@@ -234,15 +248,16 @@ describe("StandaloneCommitWindow", () => {
     expect(within(pane).queryByText("other.ts")).not.toBeInTheDocument();
     expect(within(pane).getByText("src/ignored.ts")).toBeInTheDocument();
     expect(within(pane).getByRole("button", { name: "Add src/ignored.ts" })).toBeInTheDocument();
-    expect(within(pane).getByRole("checkbox", { name: "src/main.ts" })).toBeChecked();
-    expect(within(pane).getByRole("checkbox", { name: "src/nested.ts" })).toBeChecked();
-    // Unversioned is selectable but not selected by default.
+    expect(within(pane).getByRole("checkbox", { name: "src/main.ts" })).not.toBeChecked();
+    expect(within(pane).getByRole("checkbox", { name: "src/nested.ts" })).not.toBeChecked();
     expect(within(pane).getByRole("checkbox", { name: "src/ignored.ts" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "提交 0 个文件" })).toBeDisabled();
     const metrics = screen.getByLabelText("操作指标");
-    expect(metrics).toHaveTextContent("总提交量 200 B");
+    expect(metrics).toHaveTextContent("总提交量 0 B");
     expect(metrics).not.toHaveTextContent("项/秒");
 
     await fireEvent.click(within(pane).getByRole("checkbox", { name: "src/main.ts" }));
+    expect(within(pane).getByRole("checkbox", { name: "src/main.ts" })).toBeChecked();
     expect(metrics).toHaveTextContent("总提交量 100 B");
   });
 
@@ -269,8 +284,9 @@ describe("StandaloneCommitWindow", () => {
     expect(within(pane).getByText("M")).toBeInTheDocument();
     expect(within(pane).getByText("M")).toHaveAttribute("data-action", "M");
     expect(within(pane).getByText("M")).toHaveAttribute("title", "属性修改");
-    expect(within(pane).getByRole("checkbox", { name: "src" })).toBeChecked();
+    expect(within(pane).getByRole("checkbox", { name: "src" })).not.toBeChecked();
 
+    await fireEvent.click(within(pane).getByRole("checkbox", { name: "src" }));
     await fireEvent.click(screen.getByRole("button", { name: "提交 1 个文件" }));
     await waitFor(() => {
       expect(createCommitTaskMock).toHaveBeenCalledWith({
@@ -312,7 +328,7 @@ describe("StandaloneCommitWindow", () => {
     expect(launchConflictWindowMock).toHaveBeenCalledWith({
       target_path: "C:\\repo\\src\\conflict.ts",
     });
-    expect(screen.getByRole("button", { name: "提交 1 个文件" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "提交 0 个文件" })).toBeDisabled();
   });
 
   it("展示树冲突并标记为不可提交", async () => {
@@ -340,7 +356,7 @@ describe("StandaloneCommitWindow", () => {
     expect(within(pane).getByText("C")).toHaveAttribute("title", "树冲突 (更新)");
     expect(within(pane).queryByRole("checkbox", { name: "src/tree.ts" })).not.toBeInTheDocument();
     expect(within(pane).getByText(/1 个冲突待处理（含树冲突）/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "提交 1 个文件" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "提交 0 个文件" })).toBeDisabled();
   });
 
   it("按 Changelist 分组文件并支持分组勾选", async () => {
@@ -362,11 +378,11 @@ describe("StandaloneCommitWindow", () => {
     const urgentGroup = await screen.findByRole("region", { name: "Changelist 紧急修复" });
     expect(screen.getByRole("region", { name: "Changelist 新功能" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Changelist 未分组" })).toBeInTheDocument();
-    expect(within(urgentGroup).getByText("2 / 2 个可勾选")).toBeInTheDocument();
+    expect(within(urgentGroup).getByText("0 / 2 个可勾选")).toBeInTheDocument();
 
     await fireEvent.click(within(urgentGroup).getByRole("checkbox", { name: "选择 Changelist 紧急修复" }));
-    expect(within(urgentGroup).getByRole("checkbox", { name: "src/fix-a.ts" })).not.toBeChecked();
-    expect(within(urgentGroup).getByRole("checkbox", { name: "src/fix-b.ts" })).not.toBeChecked();
+    expect(within(urgentGroup).getByRole("checkbox", { name: "src/fix-a.ts" })).toBeChecked();
+    expect(within(urgentGroup).getByRole("checkbox", { name: "src/fix-b.ts" })).toBeChecked();
     expect(screen.getByRole("button", { name: "提交 2 个文件" })).toBeInTheDocument();
   });
 
@@ -381,27 +397,22 @@ describe("StandaloneCommitWindow", () => {
     expect(
       screen.getByText(/含 1 个未版本控制，点提交时会自动 svn add，无需手动 Add/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "提交 4 个文件" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "提交 1 个文件" })).toBeEnabled();
 
-    await fireEvent.click(screen.getByRole("button", { name: "提交 4 个文件" }));
+    await fireEvent.click(screen.getByRole("button", { name: "提交 1 个文件" }));
     await waitFor(() => {
       expect(createCommitTaskMock).toHaveBeenCalledWith({
         working_copy_root: "C:\\repo",
         message: "",
-        files: expect.arrayContaining([
-          "src/main.ts",
-          "src/nested.ts",
-          "other.ts",
-          "src/ignored.ts",
-        ]),
+        files: ["src/ignored.ts"],
         svn_executable: undefined,
       });
       const files = createCommitTaskMock.mock.calls.at(-1)?.[0]?.files ?? [];
-      expect(files).toHaveLength(4);
+      expect(files).toEqual(["src/ignored.ts"]);
     });
   });
 
-  it("范围内只有未版本控制路径时默认勾选，可直接提交新增目录", async () => {
+  it("范围内只有未版本控制路径时也不自动勾选，需手动选择后提交", async () => {
     inspectUpdateTargetMock.mockResolvedValue(
       makeTarget({
         target_path: "C:\\repo\\new-folder",
@@ -438,10 +449,12 @@ describe("StandaloneCommitWindow", () => {
     const pane = screen.getByLabelText("选择提交文件");
     expect(await within(pane).findByText("new-folder")).toBeInTheDocument();
     expect(within(pane).queryByText("other.ts")).not.toBeInTheDocument();
-    expect(within(pane).getByRole("checkbox", { name: "new-folder" })).toBeChecked();
+    expect(within(pane).getByRole("checkbox", { name: "new-folder" })).not.toBeChecked();
     expect(within(pane).getByRole("button", { name: "Add new-folder" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "提交 1 个文件" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "提交 0 个文件" })).toBeDisabled();
 
+    await fireEvent.click(within(pane).getByRole("checkbox", { name: "new-folder" }));
+    expect(screen.getByRole("button", { name: "提交 1 个文件" })).toBeEnabled();
     await fireEvent.click(screen.getByRole("button", { name: "提交 1 个文件" }));
     await waitFor(() => {
       expect(createCommitTaskMock).toHaveBeenCalledWith({
@@ -508,6 +521,7 @@ describe("StandaloneCommitWindow", () => {
       }),
     );
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    await selectAllVisibleFiles();
 
     await screen.findByText("src/review.ts");
     await fireEvent.click(screen.getByRole("button", { name: "加入 Changelist..." }));
@@ -596,7 +610,7 @@ describe("StandaloneCommitWindow", () => {
 
     const filePane = screen.getByLabelText("选择提交文件");
     const checkbox = await within(filePane).findByRole("checkbox", { name: "src/main.ts" });
-    expect(checkbox).toBeChecked();
+    expect(checkbox).not.toBeChecked();
     await fireEvent.click(
       within(filePane).getByRole("button", { name: "查看修改 src/main.ts" }),
     );
@@ -614,7 +628,7 @@ describe("StandaloneCommitWindow", () => {
         max_bytes: 20 * 1024 * 1024,
       });
     });
-    expect(checkbox).toBeChecked();
+    expect(checkbox).not.toBeChecked();
     expect(screen.getByLabelText("修改内容")).toHaveTextContent("+const value = 2;");
   });
 
@@ -716,8 +730,7 @@ describe("StandaloneCommitWindow", () => {
     expect(screen.queryByRole("dialog", { name: "选择历史提交日志" })).not.toBeInTheDocument();
 
     const filePane = screen.getByLabelText("选择提交文件");
-    await fireEvent.click(within(filePane).getByLabelText("src/main.ts"));
-    await fireEvent.click(within(filePane).getByLabelText("other.ts"));
+    await fireEvent.click(within(filePane).getByLabelText("src/nested.ts"));
     await fireEvent.click(screen.getByRole("button", { name: "提交 1 个文件" }));
 
     await waitFor(() => {
@@ -804,6 +817,7 @@ describe("StandaloneCommitWindow", () => {
       makeTask("success", [], { task_id: "batch-revert-1", title: "撤销 3 个路径" }),
     );
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    await selectAllVisibleFiles();
 
     await screen.findByText("other.ts");
     await fireEvent.click(screen.getByRole("button", { name: "Revert 已选" }));
@@ -940,8 +954,6 @@ describe("StandaloneCommitWindow", () => {
     expect(within(dialog).getByText("未版本控制文件将从磁盘永久删除，NovaSVN 无法撤销此操作。")).toBeInTheDocument();
     await fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
 
-    // keep.ts is selected by default; clear first so only unversioned are deleted.
-    await fireEvent.click(within(pane).getByRole("button", { name: "清除" }));
     await fireEvent.click(within(pane).getByRole("checkbox", { name: "new-a.txt" }));
     await fireEvent.click(within(pane).getByRole("checkbox", { name: "new-b.txt" }));
     await fireEvent.click(screen.getByRole("button", { name: "Delete 已选" }));
@@ -1062,11 +1074,12 @@ describe("StandaloneCommitWindow", () => {
       recoverable: true,
     });
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+    await selectAllVisibleFiles();
     await screen.findByText("other.ts");
     await fireEvent.input(screen.getByRole("textbox", { name: "提交日志" }), {
       target: { value: "测试提交" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "提交 3 个文件" }));
+    await fireEvent.click(screen.getByRole("button", { name: "提交 4 个文件" }));
     const alert = await screen.findByRole("alert", { name: "命令错误" });
     expect(alert).toHaveTextContent("提交信息不能为空");
   });

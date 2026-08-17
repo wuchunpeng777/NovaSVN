@@ -1613,9 +1613,6 @@
   }
 
   function openCommitForm() {
-    if (commitFiles.length === 0) {
-      onSelectAllCommitFiles();
-    }
     activeInspectorTab = "commit";
     commitMessageFocusRequested = true;
     if (!appSettings.showInspector) {
