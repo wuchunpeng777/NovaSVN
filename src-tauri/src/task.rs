@@ -2697,11 +2697,7 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
     let root = PathBuf::from(&payload.working_copy_root);
 
     // Auto-add unversioned selections so commit can include new files (Tortoise-style).
-    match collect_unversioned_commit_targets(
-        &payload.svn_executable,
-        &root,
-        &payload.files,
-    ) {
+    match collect_unversioned_commit_targets(&payload.svn_executable, &root, &payload.files) {
         Ok(unversioned) if !unversioned.is_empty() => {
             append_task_log(
                 state,
@@ -2898,11 +2894,13 @@ fn collect_unversioned_commit_targets(
         }
 
         let xml = String::from_utf8_lossy(&output.stdout);
-        let document = Document::parse(xml.as_ref()).map_err(|error| {
-            format!("解析提交目标 status XML 失败：{error}")
-        })?;
+        let document = Document::parse(xml.as_ref())
+            .map_err(|error| format!("解析提交目标 status XML 失败：{error}"))?;
 
-        for entry in document.descendants().filter(|node| node.has_tag_name("entry")) {
+        for entry in document
+            .descendants()
+            .filter(|node| node.has_tag_name("entry"))
+        {
             let path = entry.attribute("path").unwrap_or("").trim();
             if path.is_empty() {
                 continue;
@@ -2918,7 +2916,10 @@ fn collect_unversioned_commit_targets(
             let Some(original) = match_commit_file_path(files, path, &root_normalized) else {
                 continue;
             };
-            if !unversioned.iter().any(|existing: &String| existing == &original) {
+            if !unversioned
+                .iter()
+                .any(|existing: &String| existing == &original)
+            {
                 unversioned.push(original);
             }
         }
@@ -3039,7 +3040,11 @@ fn format_paths_for_task_log(paths: &[String]) -> String {
 }
 
 /// Map a status XML path (relative or absolute) back to a path from the commit request.
-fn match_commit_file_path(files: &[String], status_path: &str, root_normalized: &str) -> Option<String> {
+fn match_commit_file_path(
+    files: &[String],
+    status_path: &str,
+    root_normalized: &str,
+) -> Option<String> {
     let mut normalized = normalize_status_path(status_path);
     // Strip working-copy root prefix when svn reports absolute paths.
     if !root_normalized.is_empty() {
@@ -7779,11 +7784,7 @@ where
         if message.is_empty() {
             continue;
         }
-        push_task_log_without_trim(
-            task,
-            message,
-            now,
-        );
+        push_task_log_without_trim(task, message, now);
         appended = true;
     }
     if appended {
@@ -12286,10 +12287,7 @@ mod tests {
             match_commit_file_path(&files, "C:/repo/src/main.ts", root).as_deref(),
             Some("src/main.ts")
         );
-        assert_eq!(
-            match_commit_file_path(&files, "missing.txt", root),
-            None
-        );
+        assert_eq!(match_commit_file_path(&files, "missing.txt", root), None);
     }
 
     #[test]
@@ -12297,12 +12295,7 @@ mod tests {
         // Simulate the matching half of auto-add: absolute status path must map to relative request.
         let files = vec!["docs/readme.md".to_string(), "new-file.txt".to_string()];
         assert_eq!(
-            match_commit_file_path(
-                &files,
-                "C:/work/wc/new-file.txt",
-                "C:/work/wc"
-            )
-            .as_deref(),
+            match_commit_file_path(&files, "C:/work/wc/new-file.txt", "C:/work/wc").as_deref(),
             Some("new-file.txt")
         );
         assert_eq!(
@@ -12350,10 +12343,7 @@ mod tests {
         assert_eq!(content, "src/a.txt\nnested/b.txt\nunicode-文件.txt\n");
         let path = targets.path().to_path_buf();
         drop(targets);
-        assert!(
-            !path.exists(),
-            "targets file should be removed on drop"
-        );
+        assert!(!path.exists(), "targets file should be removed on drop");
     }
 
     #[test]
@@ -13493,7 +13483,8 @@ mod tests {
 
         fs::write(working_copy.join("tracked.txt"), "changed\n").expect("modify tracked file");
         fs::create_dir_all(working_copy.join("nested")).expect("create nested directory");
-        fs::write(working_copy.join("nested/new.txt"), "brand new\n").expect("write unversioned file");
+        fs::write(working_copy.join("nested/new.txt"), "brand new\n")
+            .expect("write unversioned file");
         fs::write(working_copy.join("root-new.txt"), "root new\n").expect("write root unversioned");
 
         let queue = TaskQueue::new();
@@ -13531,28 +13522,19 @@ mod tests {
                 .arg("cat")
                 .arg(format!("{repository_url}/root-new.txt")),
         );
-        assert_eq!(
-            String::from_utf8_lossy(&root_new.stdout),
-            "root new\n"
-        );
+        assert_eq!(String::from_utf8_lossy(&root_new.stdout), "root new\n");
         let nested_new = run_test_command(
             Command::new("svn")
                 .arg("cat")
                 .arg(format!("{repository_url}/nested/new.txt")),
         );
-        assert_eq!(
-            String::from_utf8_lossy(&nested_new.stdout),
-            "brand new\n"
-        );
+        assert_eq!(String::from_utf8_lossy(&nested_new.stdout), "brand new\n");
         let tracked = run_test_command(
             Command::new("svn")
                 .arg("cat")
                 .arg(format!("{repository_url}/tracked.txt")),
         );
-        assert_eq!(
-            String::from_utf8_lossy(&tracked.stdout),
-            "changed\n"
-        );
+        assert_eq!(String::from_utf8_lossy(&tracked.stdout), "changed\n");
 
         let clean_status = run_test_command(Command::new("svn").arg("status").arg(&working_copy));
         assert!(
@@ -13601,11 +13583,8 @@ mod tests {
         files.push("tracked.txt".to_string());
         for index in 0..FILE_COUNT {
             let relative = format!("bulk/file-{index:04}.txt");
-            fs::write(
-                working_copy.join(&relative),
-                format!("content-{index}\n"),
-            )
-            .expect("write bulk unversioned file");
+            fs::write(working_copy.join(&relative), format!("content-{index}\n"))
+                .expect("write bulk unversioned file");
             files.push(relative);
         }
         fs::write(working_copy.join("tracked.txt"), "changed\n").expect("modify tracked file");

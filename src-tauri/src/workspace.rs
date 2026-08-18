@@ -7,13 +7,13 @@ use std::{
     thread,
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use quick_xml::{
     encoding::Decoder,
     escape::{resolve_xml_entity, unescape},
     events::{attributes::Attribute, Event},
     Reader as XmlReader,
 };
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use roxmltree::Document;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -689,21 +689,20 @@ pub fn get_svn_log(request: GetSvnLogRequest) -> Result<SvnLog, NovaError> {
 pub fn get_path_svn_log(request: GetPathSvnLogRequest) -> Result<SvnLog, NovaError> {
     let requested = normalize_svn_log_target_path(&request.path)?;
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
-    let requested_workspace = read_workspace_summary(&requested, &executable)?;
-    let root = normalize_workspace_path(&requested_workspace.working_copy_root)?;
-    let workspace = read_workspace_summary(&root, &executable)?;
+    let workspace = read_workspace_summary(&requested, &executable)?;
+    let root = normalize_workspace_path(&workspace.working_copy_root)?;
     let working_copy_revision =
-        read_log_working_copy_revision(&executable, &root, &workspace.revision);
+        read_log_working_copy_revision(&executable, &requested, &workspace.revision);
     let limit = request.limit.unwrap_or(50).clamp(1, 200);
     let start_revision = request
         .start_revision
         .as_deref()
         .map(normalize_log_revision_value)
         .transpose()?;
-    let display_target = root.display().to_string();
+    let display_target = requested.display().to_string();
     let mut log = run_svn_log(
         &executable,
-        &root,
+        &requested,
         &root,
         &display_target,
         limit,
@@ -1378,11 +1377,7 @@ pub fn get_file_content_diff(
         let working = read_limited_bytes_file(&target, max_bytes)?;
         let original = read_svn_base_bytes(&executable, &root, &target, max_bytes)?;
         return Ok(build_image_content_diff(
-            file_path,
-            node_kind,
-            &original,
-            &working,
-            max_bytes,
+            file_path, node_kind, &original, &working, max_bytes,
         ));
     }
 
@@ -5153,7 +5148,10 @@ mod tests {
         assert!(!diff.too_large);
         assert_eq!(diff.image_mime.as_deref(), Some("image/png"));
         assert!(diff.original_bytes_base64.is_none());
-        assert_eq!(diff.modified_bytes_base64.as_deref(), Some(encoded.as_str()));
+        assert_eq!(
+            diff.modified_bytes_base64.as_deref(),
+            Some(encoded.as_str())
+        );
         assert_eq!(diff.modified_byte_size, png.len() as u64);
         assert_eq!(diff.original_byte_size, 0);
 
@@ -5397,7 +5395,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_working_copy_root_log_from_subdirectory() {
+    fn reads_selected_subdirectory_log_instead_of_working_copy_root() {
         if !svn_test_tools_available() {
             return;
         }
@@ -5433,8 +5431,11 @@ mod tests {
                 .arg(&repository_url)
                 .arg(&working_copy),
         );
-        fs::write(working_copy.join("right/tracked.txt"), "right sibling change\n")
-            .expect("write sibling change");
+        fs::write(
+            working_copy.join("right/tracked.txt"),
+            "right sibling change\n",
+        )
+        .expect("write sibling change");
         run_test_command(
             Command::new("svn")
                 .arg("commit")
@@ -5448,7 +5449,7 @@ mod tests {
             limit: Some(10),
             start_revision: None,
         })
-        .expect("subdirectory log reads working copy root");
+        .expect("subdirectory log reads selected path");
         let root_log = get_path_svn_log(GetPathSvnLogRequest {
             path: working_copy.display().to_string(),
             svn_executable: None,
@@ -5457,14 +5458,23 @@ mod tests {
         })
         .expect("root log reads working copy root");
 
-        assert_eq!(left_log.target, working_copy.display().to_string());
+        assert_eq!(
+            left_log.target,
+            working_copy.join("left").display().to_string()
+        );
         assert_eq!(root_log.target, working_copy.display().to_string());
-        assert_eq!(left_log.repository_url.as_deref(), Some(repository_url.as_str()));
-        assert_eq!(root_log.repository_url.as_deref(), Some(repository_url.as_str()));
-        assert_eq!(left_log.entries[0].revision, "2");
-        assert_eq!(left_log.entries[0].message, "sibling change");
-        assert_eq!(left_log.entries[0].revision, root_log.entries[0].revision);
-        assert_eq!(left_log.entries[0].message, root_log.entries[0].message);
+        assert_eq!(
+            left_log.repository_url.as_deref(),
+            Some(format!("{repository_url}/left").as_str())
+        );
+        assert_eq!(
+            root_log.repository_url.as_deref(),
+            Some(repository_url.as_str())
+        );
+        assert_eq!(left_log.entries[0].revision, "1");
+        assert_eq!(left_log.entries[0].message, "initial");
+        assert_eq!(root_log.entries[0].revision, "2");
+        assert_eq!(root_log.entries[0].message, "sibling change");
 
         let _ = fs::remove_dir_all(root);
     }
@@ -7355,9 +7365,7 @@ line two</property>
             .working_copy_root
             .trim_start_matches(r"\\?\")
             .replace('\\', "/");
-        let normalized_expected_root = expected_root
-            .trim_start_matches(r"\\?\")
-            .replace('\\', "/");
+        let normalized_expected_root = expected_root.trim_start_matches(r"\\?\").replace('\\', "/");
         assert_eq!(normalized_summary_root, normalized_expected_root);
         assert_eq!(
             summary
@@ -7398,8 +7406,7 @@ line two</property>
         .expect("scoped status for unversioned directory");
         assert!(
             scoped.files.iter().any(|file| {
-                file.status == "unversioned"
-                    && file.path.replace('\\', "/") == "new-folder"
+                file.status == "unversioned" && file.path.replace('\\', "/") == "new-folder"
             }),
             "expected unversioned new-folder in status, got {:?}",
             scoped

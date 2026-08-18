@@ -72,9 +72,7 @@ fn enable_finder_sync_extension() {
         return;
     };
 
-    let add_status = Command::new("pluginkit")
-        .args(["-a", &appex_path])
-        .status();
+    let add_status = Command::new("pluginkit").args(["-a", &appex_path]).status();
     if let Err(error) = add_status {
         eprintln!("[NovaSVN] pluginkit 注册 Finder Sync 失败：{error}");
         return;
@@ -103,9 +101,7 @@ fn finder_sync_appex_path() -> Option<String> {
     // .../NovaSVN.app/Contents/MacOS/novasvn → .../NovaSVN.app/Contents/PlugIns/NovaSVNFinderSync.appex
     let macos_dir = executable.parent()?;
     let contents_dir = macos_dir.parent()?;
-    let appex = contents_dir
-        .join("PlugIns")
-        .join("NovaSVNFinderSync.appex");
+    let appex = contents_dir.join("PlugIns").join("NovaSVNFinderSync.appex");
     if !appex.is_dir() {
         // 开发态或错误安装时尝试 Applications 固定路径
         let fallback =
@@ -409,9 +405,7 @@ pub fn launch_repo_browser_window(
             true,
         )
     })?;
-    let revision = request
-        .revision
-        .and_then(normalize_startup_revision);
+    let revision = request.revision.and_then(normalize_startup_revision);
     let executable = std::env::current_exe().map_err(|error| {
         NovaError::command(
             "REPO_BROWSER_WINDOW_EXECUTABLE_MISSING",
@@ -656,10 +650,8 @@ mod tests {
 
     #[test]
     fn parses_repository_blame_window_arguments() {
-        let arguments = blame_window_arguments(
-            "https://example.com/svn/trunk/src/main.rs",
-            Some("42"),
-        );
+        let arguments =
+            blame_window_arguments("https://example.com/svn/trunk/src/main.rs", Some("42"));
         let intent = startup_intent_from_args(arguments);
 
         assert_eq!(intent.action.as_deref(), Some("blame"));

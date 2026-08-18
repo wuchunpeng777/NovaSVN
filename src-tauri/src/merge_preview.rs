@@ -1093,7 +1093,11 @@ mod tests {
 
         fs::write(session.join("work/src/icon.png"), b"\x89PNG\r\n\x1a\nimage").unwrap();
         save_original_file(&session, &session.join("work"), "src/icon.png").unwrap();
-        fs::write(session.join("work/src/icon.png"), b"\x89PNG\r\n\x1a\nimage-changed").unwrap();
+        fs::write(
+            session.join("work/src/icon.png"),
+            b"\x89PNG\r\n\x1a\nimage-changed",
+        )
+        .unwrap();
         let image = inspect_preview_file(
             &session,
             &session.join("work"),

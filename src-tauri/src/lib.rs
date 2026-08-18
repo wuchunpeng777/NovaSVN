@@ -37,8 +37,8 @@ use svn::{
 use system_integration::{
     LaunchBlameWindowRequest, LaunchLogWindowRequest, LaunchMergePreviewWindowRequest,
     LaunchPathWindowRequest, LaunchRepoBrowserWindowRequest, LaunchedBlameWindow,
-    LaunchedLogWindow, LaunchedMergePreviewWindow, LaunchedPathWindow,
-    LaunchedRepoBrowserWindow, StartupIntent,
+    LaunchedLogWindow, LaunchedMergePreviewWindow, LaunchedPathWindow, LaunchedRepoBrowserWindow,
+    StartupIntent,
 };
 use task::{
     CreateApplyMergePreviewTaskRequest, CreateApplyPatchTaskRequest,
