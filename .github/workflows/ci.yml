@@ -17,7 +17,7 @@ jobs:
   quality:
     name: 统一质量检查
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -35,14 +35,23 @@ jobs:
 
       - name: 安装系统依赖
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libxdo-dev \
-            patchelf \
-            subversion
+          printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+          sudo apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=20 \
+            -o Acquire::https::Timeout=20 \
+            update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=20 \
+            -o Acquire::https::Timeout=20 \
+            install --yes --no-install-recommends \
+              libwebkit2gtk-4.1-dev \
+              libayatana-appindicator3-dev \
+              librsvg2-dev \
+              libxdo-dev \
+              patchelf \
+              subversion
 
       - name: 安装项目依赖
         run: npm ci
