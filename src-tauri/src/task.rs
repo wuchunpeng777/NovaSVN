@@ -2817,6 +2817,24 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
 
     // Auto-add unversioned selections so commit can include new files (Tortoise-style).
     let unversioned = target_statuses.unversioned;
+    let unversioned_parents = if unversioned.is_empty() {
+        Vec::new()
+    } else {
+        let parent_candidates = commit_parent_paths(&unversioned);
+        match collect_commit_target_statuses(&payload.svn_executable, &root, &parent_candidates) {
+            Ok(statuses) => statuses.unversioned,
+            Err(error) => {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "无法检查提交目标父目录版本状态",
+                    Some(error),
+                );
+                return;
+            }
+        }
+    };
     if !unversioned.is_empty() {
         append_task_log(
             state,
@@ -2908,7 +2926,14 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
         }
     }
 
-    let commit_targets = match SvnTargetsFile::create(task_id, "commit", &payload.files) {
+    let mut commit_paths = payload.files.clone();
+    for parent in unversioned_parents {
+        if !commit_paths.iter().any(|path| path == &parent) {
+            commit_paths.push(parent);
+        }
+    }
+
+    let commit_targets = match SvnTargetsFile::create(task_id, "commit", &commit_paths) {
         Ok(targets) => targets,
         Err(error) => {
             update_task(
@@ -3041,6 +3066,25 @@ fn collect_commit_target_statuses(
         }
     }
     Ok(statuses)
+}
+/// Return unique non-root parent paths needed when `svn add --parents` schedules new directories.
+fn commit_parent_paths(paths: &[String]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut parents = Vec::new();
+    for path in paths {
+        let mut current = Path::new(path).parent().map(Path::to_path_buf);
+        while let Some(parent) = current {
+            if parent.as_os_str().is_empty() || parent == Path::new(".") {
+                break;
+            }
+            let parent_path = parent.to_string_lossy().into_owned();
+            if seen.insert(parent_path.clone()) {
+                parents.push(parent_path);
+            }
+            current = parent.parent().map(Path::to_path_buf);
+        }
+    }
+    parents
 }
 
 /// Split paths into argv-safe batches for commands that cannot use `--targets`.
