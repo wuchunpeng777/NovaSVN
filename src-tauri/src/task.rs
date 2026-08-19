@@ -3018,6 +3018,7 @@ fn collect_commit_target_statuses(
     // Chunk path argv instead to stay under Windows CreateProcess limits.
     let root_normalized = normalize_status_path(&root.display().to_string());
     let mut statuses = CommitTargetStatuses::default();
+    let mut observed = HashSet::new();
     for batch in chunk_paths_for_svn_status_argv(files) {
         let mut command = svn::command(executable);
         command
@@ -3049,13 +3050,14 @@ fn collect_commit_target_statuses(
                 .find(|node| node.has_tag_name("wc-status"))
                 .and_then(|node| node.attribute("item"))
                 .unwrap_or("");
+            let Some(original) = match_commit_file_path(files, path, &root_normalized) else {
+                continue;
+            };
+            observed.insert(original.clone());
             let matching_statuses = match item {
                 "unversioned" | "untracked" => &mut statuses.unversioned,
                 "missing" => &mut statuses.missing,
                 _ => continue,
-            };
-            let Some(original) = match_commit_file_path(files, path, &root_normalized) else {
-                continue;
             };
             if !matching_statuses
                 .iter()
@@ -3063,6 +3065,16 @@ fn collect_commit_target_statuses(
             {
                 matching_statuses.push(original);
             }
+        }
+    }
+    // SVN omits an explicit file from status XML when one of its ancestors is unversioned.
+    // Existing requested paths without any status entry still need `svn add --parents`.
+    for file in files {
+        if !observed.contains(file)
+            && fs::symlink_metadata(root.join(file)).is_ok()
+            && !statuses.unversioned.iter().any(|path| path == file)
+        {
+            statuses.unversioned.push(file.clone());
         }
     }
     Ok(statuses)
