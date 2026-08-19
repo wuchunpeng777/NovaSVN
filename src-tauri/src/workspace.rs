@@ -617,7 +617,7 @@ fn read_workspace_summary_from_path_or_ancestor(
     executable: &str,
 ) -> Result<WorkspaceSummary, NovaError> {
     match read_workspace_summary(path, executable) {
-        Ok(summary) => return Ok(summary),
+        Ok(summary) => Ok(summary),
         Err(first_error) => {
             let mut current = path.parent();
             while let Some(ancestor) = current {

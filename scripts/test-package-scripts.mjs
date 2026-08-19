@@ -157,6 +157,10 @@ const standaloneUpdateWindow = fs.readFileSync(
   path.join(root, "src", "components", "StandaloneUpdateWindow.svelte"),
   "utf8",
 );
+const svnConflict = fs.readFileSync(
+  path.join(root, "src", "lib", "svn-conflict.ts"),
+  "utf8",
+);
 const standaloneCheckoutWindow = fs.readFileSync(
   path.join(root, "src", "components", "StandaloneCheckoutWindow.svelte"),
   "utf8",
@@ -1775,9 +1779,12 @@ if (
   !standaloneUpdateWindow.includes("inspectUpdateTarget") ||
   !standaloneUpdateWindow.includes('kind: target.relative_path ? "update_path" : "update"') ||
   !standaloneUpdateWindow.includes("scanWorkspaceStatus") ||
-  !standaloneUpdateWindow.includes('"resolve_working"') ||
-  !standaloneUpdateWindow.includes('"resolve_mine_full"') ||
-  !standaloneUpdateWindow.includes('"resolve_theirs_full"') ||
+  !standaloneUpdateWindow.includes("conflictResolutionActions") ||
+  !standaloneUpdateWindow.includes("commonConflictResolutionActions") ||
+  !standaloneUpdateWindow.includes("kind: action.kind as SvnOperationKind") ||
+  !svnConflict.includes('kind: "resolve_working"') ||
+  !svnConflict.includes('kind: "resolve_mine_full"') ||
+  !svnConflict.includes('kind: "resolve_theirs_full"') ||
   !tauriLib.includes('Some("update") => Some("NovaSVN Update")') ||
   !tauriLib.includes("inspect_update_target,") ||
   !workspaceRs.includes("pub fn inspect_update_target(")
