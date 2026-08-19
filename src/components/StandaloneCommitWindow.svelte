@@ -136,6 +136,7 @@
     (file) => isCommittable(file) && isPathInCommitTarget(file.path),
   );
   $: unversionedFiles = visibleFiles.filter((file) => file.status === "unversioned");
+  $: missingFiles = visibleFiles.filter((file) => file.status === "missing");
   $: selectableFiles = visibleFiles.filter(isSelectable);
   $: conflictFiles = visibleFiles.filter(isConflicted);
   $: fileGroups = groupFilesByChangelist(visibleFiles);
@@ -144,6 +145,9 @@
   $: selectedCount = selectedSelectableFiles.length;
   $: selectedUnversionedFiles = selectedSelectableFiles.filter(
     (file) => file.status === "unversioned",
+  );
+  $: selectedMissingFiles = selectedSelectableFiles.filter(
+    (file) => file.status === "missing",
   );
   $: selectedDeletableFiles = selectedSelectableFiles.filter(isDeletableFile);
   $: selectedRevertableFiles = selectedSelectableFiles.filter(isRevertableFile);
@@ -1374,9 +1378,9 @@
     return file.property_changed || !["normal", "none"].includes(file.status);
   }
 
-  /** Files that can be checked for this commit (versioned changes + unversioned to auto-Add). */
+  /** Files that can be checked for this commit, including paths auto-prepared by the commit task. */
   function isSelectable(file: ChangedFile) {
-    return isCommittable(file) || file.status === "unversioned";
+    return isCommittable(file) || ["unversioned", "missing"].includes(file.status);
   }
 
   function isVisibleFile(file: ChangedFile) {
@@ -1566,6 +1570,11 @@
           （含 {selectedUnversionedFiles.length} 个未版本控制，点提交时会自动 svn add，无需手动 Add）
         </small>
       {/if}
+      {#if selectedMissingFiles.length > 0}
+        <small class="selection-hint">
+          （含 {selectedMissingFiles.length} 个丢失，点提交时会自动 svn delete）
+        </small>
+      {/if}
     </span>
     <OperationMetrics
       task={commitTask}
@@ -1629,6 +1638,9 @@
                 : ""}{unversionedFiles.length > 0
                 ? ` · ${unversionedFiles.length} 个未版本控制（可勾选，提交时自动 Add）`
                 : ""}
+              {missingFiles.length > 0
+                ? ` · ${missingFiles.length} 个丢失（可勾选，提交时自动 Delete）`
+                : ""}
             </p>
           </div>
           <div class="selection-actions">
@@ -1667,7 +1679,7 @@
               type="button"
               on:click={selectAll}
               disabled={operationRunning || selectableFiles.length === 0 || allSelected}
-              title="全选可勾选文件（含未版本控制）"
+              title="全选可勾选文件（含未版本控制和丢失文件）"
             >
               <CheckSquare size={15} aria-hidden="true" /> 全选
             </button>

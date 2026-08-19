@@ -2696,108 +2696,215 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
 
     let root = PathBuf::from(&payload.working_copy_root);
 
-    // Auto-add unversioned selections so commit can include new files (Tortoise-style).
-    match collect_unversioned_commit_targets(&payload.svn_executable, &root, &payload.files) {
-        Ok(unversioned) if !unversioned.is_empty() => {
-            append_task_log(
-                state,
-                task_id,
-                &format!(
-                    "自动 Add {} 个未版本控制文件：{}",
-                    unversioned.len(),
-                    format_paths_for_task_log(&unversioned)
-                ),
-            );
-            // Match standalone Add: validate_add_target expects a canonical WC root
-            // (Windows canonicalize uses \\?\ prefixes; non-canonical roots fail the safety check).
-            let add_root = match canonicalize_add_working_copy_root(&root) {
-                Ok(canonical) => canonical,
+    let target_statuses =
+        match collect_commit_target_statuses(&payload.svn_executable, &root, &payload.files) {
+            Ok(statuses) => statuses,
+            Err(error) => {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "无法检查提交目标版本状态",
+                    Some(error),
+                );
+                return;
+            }
+        };
+
+    // A missing versioned path must be scheduled for deletion before svn commit can include it.
+    if !target_statuses.missing.is_empty() {
+        append_task_log(
+            state,
+            task_id,
+            &format!(
+                "自动 Delete {} 个丢失文件：{}",
+                target_statuses.missing.len(),
+                format_paths_for_task_log(&target_statuses.missing)
+            ),
+        );
+        let delete_root = match canonicalize_delete_working_copy_root(&root) {
+            Ok(canonical) => canonical,
+            Err(error) => {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "提交前自动 Delete 安全校验失败",
+                    Some(nova_error_text(&error)),
+                );
+                return;
+            }
+        };
+        for relative_path in &target_statuses.missing {
+            match validate_delete_target(&payload.svn_executable, &delete_root, relative_path) {
+                Ok(identity)
+                    if matches!(identity.filesystem_kind, DeleteFilesystemNodeKind::Missing) => {}
+                Ok(identity) => {
+                    update_task(
+                        state,
+                        task_id,
+                        TaskStatus::Failed,
+                        "提交前自动 Delete 安全校验失败",
+                        Some(format!(
+                            "路径 `{relative_path}` 已不再处于丢失状态；文件系统类型：{:?}",
+                            identity.filesystem_kind
+                        )),
+                    );
+                    return;
+                }
                 Err(error) => {
                     update_task(
                         state,
                         task_id,
                         TaskStatus::Failed,
-                        "提交前自动 Add 安全校验失败",
-                        Some(nova_error_text(&error)),
-                    );
-                    return;
-                }
-            };
-            for relative_path in &unversioned {
-                if let Err(error) =
-                    validate_add_target(&payload.svn_executable, &add_root, relative_path)
-                {
-                    update_task(
-                        state,
-                        task_id,
-                        TaskStatus::Failed,
-                        "提交前自动 Add 安全校验失败",
+                        "提交前自动 Delete 安全校验失败",
                         Some(nova_error_text(&error)),
                     );
                     return;
                 }
             }
-            // Use --targets so large selections stay under Windows CreateProcess limits
-            // (os error 206: "文件名或扩展名太长").
-            let add_targets = match SvnTargetsFile::create(task_id, "add", &unversioned) {
+        }
+        let delete_targets =
+            match SvnTargetsFile::create(task_id, "delete-missing", &target_statuses.missing) {
                 Ok(targets) => targets,
                 Err(error) => {
                     update_task(
                         state,
                         task_id,
                         TaskStatus::Failed,
-                        "提交前自动 Add 启动失败",
+                        "提交前自动 Delete 启动失败",
                         Some(error),
                     );
                     return;
                 }
             };
-            let mut add_command = svn::command(&payload.svn_executable);
-            // Relative paths + current_dir(add_root): same as standalone Add, and keeps parents correct.
-            add_command
-                .arg("add")
-                .arg("--parents")
-                .arg("--targets")
-                .arg(add_targets.path())
-                .current_dir(&add_root);
-            match run_task_command(state, task_id, &mut add_command) {
-                Ok(output) if output.status.success() => {
-                    append_command_output(state, task_id, &output);
-                    append_task_log(state, task_id, "自动 Add 完成");
-                }
-                Ok(output) => {
-                    append_command_output(state, task_id, &output);
-                    update_task(
-                        state,
-                        task_id,
-                        TaskStatus::Failed,
-                        "提交前自动 Add 失败",
-                        Some(command_error_detail(&payload.svn_executable, &output)),
-                    );
-                    return;
-                }
-                Err(error) => {
-                    update_task(
-                        state,
-                        task_id,
-                        TaskStatus::Failed,
-                        "提交前自动 Add 启动失败",
-                        Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
-                    );
-                    return;
-                }
+        let mut delete_command = svn::command(&payload.svn_executable);
+        delete_command
+            .arg("delete")
+            .arg("--force")
+            .arg("--keep-local")
+            .arg("--targets")
+            .arg(delete_targets.path())
+            .current_dir(&delete_root);
+        match run_task_command(state, task_id, &mut delete_command) {
+            Ok(output) if output.status.success() => {
+                append_command_output(state, task_id, &output);
+                append_task_log(state, task_id, "自动 Delete 完成");
+            }
+            Ok(output) => {
+                append_command_output(state, task_id, &output);
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "提交前自动 Delete 失败",
+                    Some(command_error_detail(&payload.svn_executable, &output)),
+                );
+                return;
+            }
+            Err(error) => {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "提交前自动 Delete 启动失败",
+                    Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+                );
+                return;
             }
         }
-        Ok(_) => {}
-        Err(error) => {
-            update_task(
-                state,
-                task_id,
-                TaskStatus::Failed,
-                "无法检查提交目标版本状态",
-                Some(error),
-            );
-            return;
+    }
+
+    // Auto-add unversioned selections so commit can include new files (Tortoise-style).
+    let unversioned = target_statuses.unversioned;
+    if !unversioned.is_empty() {
+        append_task_log(
+            state,
+            task_id,
+            &format!(
+                "自动 Add {} 个未版本控制文件：{}",
+                unversioned.len(),
+                format_paths_for_task_log(&unversioned)
+            ),
+        );
+        // Match standalone Add: validate_add_target expects a canonical WC root
+        // (Windows canonicalize uses \\?\ prefixes; non-canonical roots fail the safety check).
+        let add_root = match canonicalize_add_working_copy_root(&root) {
+            Ok(canonical) => canonical,
+            Err(error) => {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "提交前自动 Add 安全校验失败",
+                    Some(nova_error_text(&error)),
+                );
+                return;
+            }
+        };
+        for relative_path in &unversioned {
+            if let Err(error) =
+                validate_add_target(&payload.svn_executable, &add_root, relative_path)
+            {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "提交前自动 Add 安全校验失败",
+                    Some(nova_error_text(&error)),
+                );
+                return;
+            }
+        }
+        // Use --targets so large selections stay under Windows CreateProcess limits
+        // (os error 206: "文件名或扩展名太长").
+        let add_targets = match SvnTargetsFile::create(task_id, "add", &unversioned) {
+            Ok(targets) => targets,
+            Err(error) => {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "提交前自动 Add 启动失败",
+                    Some(error),
+                );
+                return;
+            }
+        };
+        let mut add_command = svn::command(&payload.svn_executable);
+        // Relative paths + current_dir(add_root): same as standalone Add, and keeps parents correct.
+        add_command
+            .arg("add")
+            .arg("--parents")
+            .arg("--targets")
+            .arg(add_targets.path())
+            .current_dir(&add_root);
+        match run_task_command(state, task_id, &mut add_command) {
+            Ok(output) if output.status.success() => {
+                append_command_output(state, task_id, &output);
+                append_task_log(state, task_id, "自动 Add 完成");
+            }
+            Ok(output) => {
+                append_command_output(state, task_id, &output);
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "提交前自动 Add 失败",
+                    Some(command_error_detail(&payload.svn_executable, &output)),
+                );
+                return;
+            }
+            Err(error) => {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "提交前自动 Add 启动失败",
+                    Some(format!("无法执行 `{}`：{error}", payload.svn_executable)),
+                );
+                return;
+            }
         }
     }
 
@@ -2860,25 +2967,31 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
     }
 }
 
-/// Returns **working-copy relative** paths among `files` that are currently unversioned.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct CommitTargetStatuses {
+    unversioned: Vec<String>,
+    missing: Vec<String>,
+}
+
+/// Returns working-copy relative paths among `files` that need preparation before commit.
 ///
-/// Always returns the original relative path from `files` (never an absolute status path),
-/// so subsequent `svn add` / validation stay inside the working copy.
-fn collect_unversioned_commit_targets(
+/// Always stores the original relative path from `files` (never an absolute status path),
+/// so subsequent SVN commands and validation stay inside the working copy.
+fn collect_commit_target_statuses(
     executable: &str,
     root: &Path,
     files: &[String],
-) -> Result<Vec<String>, String> {
+) -> Result<CommitTargetStatuses, String> {
     if files.is_empty() {
-        return Ok(Vec::new());
+        return Ok(CommitTargetStatuses::default());
     }
 
     // Prefer relative targets so status XML paths stay matchable to commit file list entries.
-    // Note: `svn status` does **not** accept `--targets` (unlike commit/add). Passing
+    // Note: `svn status` does **not** accept `--targets` (unlike commit/add/delete). Passing
     // `--targets` fails with: Subcommand 'status' doesn't accept option '--targets ARG'.
     // Chunk path argv instead to stay under Windows CreateProcess limits.
     let root_normalized = normalize_status_path(&root.display().to_string());
-    let mut unversioned = Vec::new();
+    let mut statuses = CommitTargetStatuses::default();
     for batch in chunk_paths_for_svn_status_argv(files) {
         let mut command = svn::command(executable);
         command
@@ -2910,21 +3023,23 @@ fn collect_unversioned_commit_targets(
                 .find(|node| node.has_tag_name("wc-status"))
                 .and_then(|node| node.attribute("item"))
                 .unwrap_or("");
-            if item != "unversioned" && item != "untracked" {
-                continue;
-            }
+            let matching_statuses = match item {
+                "unversioned" | "untracked" => &mut statuses.unversioned,
+                "missing" => &mut statuses.missing,
+                _ => continue,
+            };
             let Some(original) = match_commit_file_path(files, path, &root_normalized) else {
                 continue;
             };
-            if !unversioned
+            if !matching_statuses
                 .iter()
                 .any(|existing: &String| existing == &original)
             {
-                unversioned.push(original);
+                matching_statuses.push(original);
             }
         }
     }
-    Ok(unversioned)
+    Ok(statuses)
 }
 
 /// Split paths into argv-safe batches for commands that cannot use `--targets`.
@@ -13449,6 +13564,75 @@ mod tests {
         }
 
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn auto_deletes_missing_files_before_commit_in_real_working_copy() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-commit-auto-delete-missing-integration");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = test_file_repository_url(&repository);
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("gone.txt"), "remove me\n").expect("write tracked file");
+        run_test_command(
+            Command::new("svn")
+                .arg("add")
+                .arg(working_copy.join("gone.txt")),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .args(["-m", "init"])
+                .arg(&working_copy),
+        );
+        fs::remove_file(working_copy.join("gone.txt")).expect("remove tracked file locally");
+
+        let queue = TaskQueue::new();
+        let commit_task = queue
+            .create_commit_task(CreateCommitTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                message: "commit missing file as delete".to_string(),
+                files: vec!["gone.txt".to_string()],
+                svn_executable: None,
+            })
+            .expect("commit task with missing file should be created");
+        let commit_task = wait_for_test_task(&queue, &commit_task.task_id);
+        assert!(
+            matches!(commit_task.status, TaskStatus::Success),
+            "提交前自动 Delete 后应提交成功：{:?}",
+            commit_task.error
+        );
+        assert!(
+            commit_task
+                .logs
+                .iter()
+                .any(|log| log.message.contains("自动 Delete")),
+            "任务日志应包含自动 Delete：{:?}",
+            commit_task.logs
+        );
+
+        let listed = run_test_command(Command::new("svn").arg("list").arg(&repository_url));
+        assert!(
+            !String::from_utf8_lossy(&listed.stdout).contains("gone.txt"),
+            "丢失文件应从仓库删除"
+        );
+        let clean_status = run_test_command(Command::new("svn").arg("status").arg(&working_copy));
+        assert!(
+            clean_status.stdout.is_empty(),
+            "提交后工作副本应干净：{}",
+            String::from_utf8_lossy(&clean_status.stdout)
+        );
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]
