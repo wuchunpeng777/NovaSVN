@@ -2922,9 +2922,10 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
         }
     };
     let mut command = svn::command(&payload.svn_executable);
-    // Relative paths + --targets: avoids Windows command-line length limits for large commits.
+    // Relative targets avoid Windows command-line limits; keep changelists as persistent local grouping.
     command
         .arg("commit")
+        .arg("--keep-changelists")
         .arg("--targets")
         .arg(commit_targets.path())
         .arg("-m")
@@ -13631,6 +13632,79 @@ mod tests {
             clean_status.stdout.is_empty(),
             "提交后工作副本应干净：{}",
             String::from_utf8_lossy(&clean_status.stdout)
+        );
+        fs::remove_dir_all(root).ok();
+    }
+    #[test]
+    fn preserves_changelist_after_all_members_are_committed() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-commit-keep-changelist-integration");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = test_file_repository_url(&repository);
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("alpha.txt"), "base\n").expect("write alpha baseline");
+        fs::write(working_copy.join("beta.txt"), "base\n").expect("write beta baseline");
+        run_test_command(
+            Command::new("svn")
+                .arg("add")
+                .arg(working_copy.join("alpha.txt"))
+                .arg(working_copy.join("beta.txt")),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .args(["-m", "init"])
+                .arg(&working_copy),
+        );
+
+        fs::write(working_copy.join("alpha.txt"), "alpha changed\n").expect("modify alpha");
+        fs::write(working_copy.join("beta.txt"), "beta changed\n").expect("modify beta");
+        run_test_command(
+            Command::new("svn")
+                .arg("changelist")
+                .arg("release")
+                .arg(working_copy.join("alpha.txt"))
+                .arg(working_copy.join("beta.txt")),
+        );
+
+        let queue = TaskQueue::new();
+        let commit_task = queue
+            .create_commit_task(CreateCommitTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                message: "commit complete changelist".to_string(),
+                files: vec!["alpha.txt".to_string(), "beta.txt".to_string()],
+                svn_executable: None,
+            })
+            .expect("changelist commit task should be created");
+        let commit_task = wait_for_test_task(&queue, &commit_task.task_id);
+        assert!(
+            matches!(commit_task.status, TaskStatus::Success),
+            "Changelist 全量提交应成功：{:?}",
+            commit_task.error
+        );
+
+        fs::write(working_copy.join("alpha.txt"), "changed again\n")
+            .expect("modify alpha after commit");
+        let status = run_test_command(
+            Command::new("svn")
+                .arg("status")
+                .args(["--changelist", "release"])
+                .arg(&working_copy),
+        );
+        assert!(
+            String::from_utf8_lossy(&status.stdout).contains("alpha.txt"),
+            "提交后再次修改的文件应仍属于原 Changelist：{}",
+            String::from_utf8_lossy(&status.stdout)
         );
         fs::remove_dir_all(root).ok();
     }
