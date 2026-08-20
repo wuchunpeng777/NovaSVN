@@ -672,6 +672,7 @@ export interface ScanWorkspaceStatusRequest {
 
 export interface ListWorkspaceFilesRequest {
   working_copy_root: string;
+  scope_path?: string;
   svn_executable?: string;
   max_files?: number;
 }

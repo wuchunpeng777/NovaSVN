@@ -18,6 +18,7 @@ fi
 
 DMG_PATH="$1"
 EXPECTED_APP_ID="com.novasvn.client"
+EXPECTED_VERSION="$(node "${ROOT_DIR}/scripts/sync-version.mjs" --print)"
 MOUNT_DIR="$(mktemp -d)"
 TEMP_HOME="$(mktemp -d)"
 MOUNTED=false
@@ -56,12 +57,22 @@ done
 plutil -lint "${APP_PLIST}" "${APPEX_PLIST}" >/dev/null
 APP_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APP_PLIST}")"
 APPEX_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${APPEX_PLIST}")"
+APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${APP_PLIST}")"
+APPEX_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${APPEX_PLIST}")"
 if [[ "${APP_ID}" != "${EXPECTED_APP_ID}" ]]; then
   echo "应用 Bundle Identifier 错误：${APP_ID}" >&2
   exit 1
 fi
 if [[ "${APPEX_ID}" != "${APP_ID}.finder-sync" ]]; then
   echo "Finder Sync Bundle Identifier 未使用应用前缀：${APPEX_ID}" >&2
+  exit 1
+fi
+if [[ "${APP_VERSION}" != "${EXPECTED_VERSION}" ]]; then
+  echo "应用版本错误：${APP_VERSION}，预期 ${EXPECTED_VERSION}" >&2
+  exit 1
+fi
+if [[ "${APPEX_VERSION}" != "${EXPECTED_VERSION}" ]]; then
+  echo "Finder Sync 版本错误：${APPEX_VERSION}，预期 ${EXPECTED_VERSION}" >&2
   exit 1
 fi
 

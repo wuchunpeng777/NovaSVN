@@ -56,8 +56,9 @@
   onDestroy(() => {
     diffUpdateDisposable?.dispose();
     cursorUpdateDisposable?.dispose();
-    disposeModels();
     editor?.dispose();
+    editor = null;
+    disposeModels();
   });
 
   $: if (editor && contentDiff) {
@@ -114,7 +115,6 @@
       .getModifiedEditor()
       .onDidChangeCursorPosition(({ position }) => syncDifferenceFromLine(position.lineNumber));
     monacoEditor.setTheme(theme === "dark" ? "vs-dark" : "vs");
-    updateModels();
   }
 
   function updateModels() {
@@ -125,7 +125,8 @@
     differenceCount = 0;
     currentDifference = 0;
     revealFirstDifference = true;
-    disposeModels();
+    const previousOriginalModel = originalModel;
+    const previousModifiedModel = modifiedModel;
     originalModel = monacoEditor.createModel(
       contentDiff.original_text,
       contentDiff.language,
@@ -138,6 +139,8 @@
       original: originalModel,
       modified: modifiedModel,
     });
+    previousOriginalModel?.dispose();
+    previousModifiedModel?.dispose();
   }
 
   function updateDifferenceCount() {

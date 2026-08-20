@@ -16,12 +16,14 @@ vi.mock("../../lib/api", () => ({
   getRepositoryFileLog: vi.fn(),
   getRevisionFileContentDiff: vi.fn(),
   getSvnLog: vi.fn(),
+  listWorkspaceFiles: vi.fn(),
 }));
 
 import {
   getRepositoryFileLog,
   getRevisionFileContentDiff,
   getSvnLog,
+  listWorkspaceFiles,
 } from "../../lib/api";
 import { workbenchViews } from "../../lib/workbench";
 import type { AppSettingsState } from "../../types/app";
@@ -37,9 +39,10 @@ import MainWorkspace from "./MainWorkspace.svelte";
 const getRevisionFileContentDiffMock = vi.mocked(getRevisionFileContentDiff);
 const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const getSvnLogMock = vi.mocked(getSvnLog);
+const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
 
 describe("MainWorkspace", () => {
-  it("renders accessible toolbar icons and exposes operation running states", async () => {
+  it("keeps working-copy operations inside the active content tab", async () => {
     const onRefreshStatus = vi.fn();
     const onUpdateWorkspace = vi.fn();
     const onChooseApplyPatch = vi.fn();
@@ -57,24 +60,25 @@ describe("MainWorkspace", () => {
       },
     });
 
-    const toolbar = screen.getByLabelText("工作副本工具栏");
-    expect(toolbar.querySelector(".toolbar-context")).not.toBeInTheDocument();
-    const refreshButton = within(toolbar).getByRole("button", { name: "刷新工作副本状态" });
-    const updateButton = within(toolbar).getByRole("button", { name: "更新工作副本" });
-    const patchButton = within(toolbar).getByRole("button", { name: "应用 Patch" });
-    const cleanupButton = within(toolbar).getByRole("button", { name: "清理工作副本" });
+    const tabs = screen.getByRole("tablist", { name: "工作副本内容" });
+    expect(within(tabs).getByRole("tab", { name: "工作副本" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(within(tabs).getByRole("tab", { name: "时间线" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+    expect(screen.queryByRole("button", { name: "仓库" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "更多" })).not.toBeInTheDocument();
 
-    expect(toolbar.querySelectorAll("svg")).toHaveLength(6);
-    expect(
-      within(toolbar).getByRole("button", { name: "隐藏项目侧栏" }),
-    ).toHaveAttribute("title", "隐藏项目侧栏");
-    expect(
-      within(toolbar).getByRole("button", { name: "隐藏检查器" }),
-    ).toHaveAttribute("title", "隐藏检查器");
-    expect(refreshButton).toHaveAttribute("title", "刷新工作副本状态");
-    expect(updateButton).toHaveAttribute("title", "更新工作副本");
-    expect(patchButton).toHaveAttribute("title", "应用 Patch");
-    expect(cleanupButton).toHaveAttribute("title", "清理工作副本");
+    const actions = screen.getByLabelText("工作副本操作");
+    const refreshButton = within(actions).getByRole("button", { name: "刷新工作副本状态" });
+    const updateButton = within(actions).getByRole("button", { name: "更新工作副本" });
+    const patchButton = within(actions).getByRole("button", { name: "应用 Patch" });
+    const cleanupButton = within(actions).getByRole("button", { name: "清理工作副本" });
+    expect(within(actions).getByRole("button", { name: "打开提交窗口" })).toBeInTheDocument();
+    expect(within(actions).getByRole("button", { name: "隐藏检查器" })).toBeInTheDocument();
 
     await fireEvent.click(refreshButton);
     await fireEvent.click(updateButton);
@@ -86,26 +90,21 @@ describe("MainWorkspace", () => {
     expect(onCleanupWorkspace).toHaveBeenCalledOnce();
 
     await rerender({ statusLoading: true });
-    expect(
-      within(toolbar).getByRole("button", { name: "正在刷新工作副本状态" }),
-    ).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent("正在扫描工作副本...");
-    expect(screen.queryByText("点击“刷新”扫描工作副本")).not.toBeInTheDocument();
-    expect(within(toolbar).getByRole("button", { name: "隐藏项目侧栏" })).toBeEnabled();
-    expect(within(toolbar).getByRole("button", { name: "隐藏检查器" })).toBeEnabled();
+    expect(within(actions).getByRole("button", { name: "正在刷新工作副本状态" })).toBeDisabled();
     for (const name of ["更新工作副本", "应用 Patch", "清理工作副本"]) {
-      expect(within(toolbar).getByRole("button", { name })).toBeDisabled();
+      expect(within(actions).getByRole("button", { name })).toBeDisabled();
     }
 
     await rerender({ statusLoading: false, pendingSvnOperationKind: "update" });
-    expect(
-      within(toolbar).getByRole("button", { name: "正在更新工作副本" }),
-    ).toHaveAttribute("aria-busy", "true");
-
+    expect(within(actions).getByRole("button", { name: "正在更新工作副本" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
     await rerender({ pendingSvnOperationKind: "cleanup" });
-    expect(
-      within(toolbar).getByRole("button", { name: "正在清理工作副本" }),
-    ).toHaveAttribute("aria-busy", "true");
+    expect(within(actions).getByRole("button", { name: "正在清理工作副本" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
 
     await rerender({
       pendingSvnOperationKind: null,
@@ -121,9 +120,10 @@ describe("MainWorkspace", () => {
     expect(onDismissSvnOperationFeedback).toHaveBeenCalledOnce();
 
     await rerender({ pendingSvnOperationKind: null, applyPatchRunning: true });
-    expect(
-      within(toolbar).getByRole("button", { name: "正在应用 Patch" }),
-    ).toHaveAttribute("aria-busy", "true");
+    expect(within(actions).getByRole("button", { name: "正在应用 Patch" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
   });
 
   it("keeps the inspector within the 960px window layout budget", async () => {
@@ -140,21 +140,21 @@ describe("MainWorkspace", () => {
 
       const resizer = screen.getByRole("slider", { name: "调整右侧面板宽度" });
       expect(resizer).toHaveAttribute("aria-valuemin", "300");
-      expect(resizer).toHaveAttribute("aria-valuemax", "344");
-      expect(resizer).toHaveAttribute("aria-valuenow", "344");
+      expect(resizer).toHaveAttribute("aria-valuemax", "366");
+      expect(resizer).toHaveAttribute("aria-valuenow", "360");
       expect(resizer).toHaveAttribute("aria-orientation", "horizontal");
 
       await fireEvent.keyDown(resizer, { key: "ArrowLeft" });
-      expect(resizer).toHaveAttribute("aria-valuenow", "320");
+      expect(resizer).toHaveAttribute("aria-valuenow", "336");
 
       await fireEvent.keyDown(resizer, { key: "ArrowRight" });
-      expect(resizer).toHaveAttribute("aria-valuenow", "344");
+      expect(resizer).toHaveAttribute("aria-valuenow", "360");
 
       await fireEvent.keyDown(resizer, { key: "Home" });
       expect(resizer).toHaveAttribute("aria-valuenow", "300");
 
       await fireEvent.keyDown(resizer, { key: "End" });
-      expect(resizer).toHaveAttribute("aria-valuenow", "344");
+      expect(resizer).toHaveAttribute("aria-valuenow", "366");
     } finally {
       Object.defineProperty(window, "innerWidth", {
         configurable: true,
@@ -273,7 +273,7 @@ describe("MainWorkspace", () => {
     expect(screen.getByRole("tabpanel", { name: "Tasks" })).toHaveTextContent("暂无后台任务");
   });
 
-  it("persists sidebar and inspector visibility through app settings", async () => {
+  it("keeps the file tree fixed while the inspector remains configurable", async () => {
     const onAppSettingInput = vi.fn();
     const { container, rerender } = render(MainWorkspace, {
       props: {
@@ -284,42 +284,26 @@ describe("MainWorkspace", () => {
       },
     });
 
-    expect(screen.getByLabelText("项目列表")).toBeInTheDocument();
+    expect(screen.getByLabelText("项目标签")).toBeInTheDocument();
+    expect(screen.getByLabelText("工作副本文件夹树")).toBeInTheDocument();
     expect(screen.getByLabelText("详情和提交")).toBeInTheDocument();
     expect(screen.getByRole("slider", { name: "调整右侧面板宽度" })).toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("button", { name: "隐藏项目侧栏" }));
-    expect(onAppSettingInput).toHaveBeenLastCalledWith("showSourceList", false);
-    await rerender({ appSettings: makeAppSettings({ showSourceList: false }) });
-    expect(screen.queryByLabelText("项目列表")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "显示项目侧栏" })).toBeInTheDocument();
-    expect(container.querySelector(".versions-layout")).toHaveClass("source-list-hidden");
-    expect(screen.getByRole("slider", { name: "调整右侧面板宽度" })).toHaveAttribute(
-      "aria-valuemax",
-      "658",
-    );
-
     await fireEvent.click(screen.getByRole("button", { name: "隐藏检查器" }));
     expect(onAppSettingInput).toHaveBeenLastCalledWith("showInspector", false);
-    await rerender({
-      appSettings: makeAppSettings({ showSourceList: false, showInspector: false }),
-    });
+    await rerender({ appSettings: makeAppSettings({ showInspector: false }) });
     expect(screen.queryByLabelText("详情和提交")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("slider", { name: "调整右侧面板宽度" }),
-    ).not.toBeInTheDocument();
     expect(container.querySelector(".work-copy-grid")).toHaveClass("inspector-hidden");
-    expect(screen.getByLabelText("工作副本文件树")).toBeInTheDocument();
+    expect(screen.getByLabelText("工作副本文件夹树")).toBeInTheDocument();
+    expect(screen.getByLabelText("工作副本文件列表")).toBeInTheDocument();
 
     await rerender({
       view: workbenchViews.history,
       appSettings: makeAppSettings({ showInspector: true }),
     });
-    expect(screen.getByRole("button", { name: "隐藏检查器" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "隐藏检查器" })).toHaveAttribute(
-      "title",
-      "检查器仅用于工作副本视图",
-    );
+    expect(screen.getByLabelText("工作副本文件夹树")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "隐藏检查器" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "时间线" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("opens the commit form and focuses its message after adding a commit target", async () => {
@@ -387,27 +371,21 @@ describe("MainWorkspace", () => {
     expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
   });
 
-  it("resizes the project sidebar with the mouse and keyboard", async () => {
-    const { container } = render(MainWorkspace, {
+  it("shows only workbench and timeline as right-side content tabs", async () => {
+    const onSelectView = vi.fn();
+    render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
         workspace: makeWorkspace(),
+        onSelectView,
       },
     });
-    const resizer = screen.getByRole("slider", { name: "调整项目侧栏宽度" });
-
-    expect(resizer).toHaveAttribute("aria-valuenow", "244");
-    await fireEvent.mouseDown(resizer, { clientX: 244 });
-    await fireEvent.mouseMove(window, { clientX: 284 });
-    await fireEvent.mouseUp(window);
-
-    expect(resizer).toHaveAttribute("aria-valuenow", "284");
-    expect(container.querySelector(".versions-workbench")).toHaveStyle(
-      "--source-list-width: 284px",
-    );
-
-    await fireEvent.keyDown(resizer, { key: "Home" });
-    expect(resizer).toHaveAttribute("aria-valuenow", "180");
+    const tabs = screen.getByRole("tablist", { name: "工作副本内容" });
+    expect(within(tabs).getAllByRole("tab")).toHaveLength(2);
+    await fireEvent.click(within(tabs).getByRole("tab", { name: "时间线" }));
+    expect(onSelectView).toHaveBeenCalledWith("history");
+    await fireEvent.click(within(tabs).getByRole("tab", { name: "工作副本" }));
+    expect(onSelectView).toHaveBeenCalledWith("changes");
   });
 
   it("resizes working copy table columns from their headers", async () => {
@@ -472,11 +450,11 @@ describe("MainWorkspace", () => {
       },
     });
 
-    const projects = screen.getByLabelText("项目列表");
+    const projects = screen.getByLabelText("项目标签");
     await fireEvent.click(within(projects).getByRole("button", { name: "添加工作副本" }));
     expect(onAddWorkspace).toHaveBeenCalledOnce();
     expect(
-      [...projects.querySelectorAll(".workspace-source-item strong")].map(
+      [...projects.querySelectorAll(".project-tab > span")].map(
         (element) => element.textContent,
       ),
     ).toEqual(["wc", "feature"]);
@@ -494,13 +472,11 @@ describe("MainWorkspace", () => {
       },
     });
     expect(
-      [...projects.querySelectorAll(".workspace-source-item strong")].map(
+      [...projects.querySelectorAll(".project-tab > span")].map(
         (element) => element.textContent,
       ),
     ).toEqual(["wc", "feature"]);
-    expect(projects.querySelector(".workspace-source-item.active strong")).toHaveTextContent(
-      "feature",
-    );
+    expect(projects.querySelector(".project-tab.active > span")).toHaveTextContent("feature");
 
     await fireEvent.click(within(projects).getByText("feature").closest("button")!);
     expect(onRefreshStatus).toHaveBeenCalledOnce();
@@ -548,12 +524,12 @@ describe("MainWorkspace", () => {
       },
     });
 
-    const projects = screen.getByLabelText("项目列表");
+    const projects = screen.getByLabelText("项目标签");
     expect(within(projects).getByText("主项目")).toBeInTheDocument();
     const firstRow = within(projects).getByRole("group", { name: "项目 主项目" });
     const secondRow = within(projects).getByRole("group", { name: "项目 feature" });
-    const firstProjectButton = firstRow.querySelector(".project-source-button")!;
-    const secondProjectButton = secondRow.querySelector(".project-source-button")!;
+    const firstProjectButton = firstRow.querySelector(".project-tab")!;
+    const secondProjectButton = secondRow.querySelector(".project-tab")!;
     const firstDragHandle = within(projects).getByRole("button", { name: "拖动排序 主项目" });
     expect(firstRow).not.toHaveAttribute("draggable");
     Object.defineProperty(secondRow, "getBoundingClientRect", {
@@ -579,8 +555,8 @@ describe("MainWorkspace", () => {
       pointerId: 1,
     });
     expect(setPointerCapture).toHaveBeenCalledWith(1);
-    await fireEvent.pointerMove(secondRow, { clientX: 20, clientY: 135, pointerId: 1 });
-    await fireEvent.pointerUp(secondRow, { clientX: 20, clientY: 135, pointerId: 1 });
+    await fireEvent.pointerMove(secondRow, { clientX: 180, clientY: 110, pointerId: 1 });
+    await fireEvent.pointerUp(secondRow, { clientX: 180, clientY: 110, pointerId: 1 });
     expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
     expect(releasePointerCapture).toHaveBeenCalledWith(1);
 
@@ -595,12 +571,12 @@ describe("MainWorkspace", () => {
       clientY: 10,
       pointerId: 2,
     });
-    await fireEvent.pointerMove(secondRow, { clientX: 20, clientY: 135, pointerId: 2 });
+    await fireEvent.pointerMove(secondRow, { clientX: 180, clientY: 110, pointerId: 2 });
     await fireEvent.pointerCancel(secondRow, { pointerId: 2 });
     expect(onReorderBranchPoolEntries).not.toHaveBeenCalled();
     expect(releasePointerCapture).toHaveBeenCalledWith(2);
 
-    await fireEvent.keyDown(firstProjectButton, { key: "ArrowDown" });
+    await fireEvent.keyDown(firstProjectButton, { key: "ArrowRight" });
     expect(onReorderBranchPoolEntries).toHaveBeenCalledWith(["second", "first"]);
 
     expect(within(projects).queryByRole("button", { name: "修改备注名 主项目" }))
@@ -2074,18 +2050,10 @@ Certificate information:
     expect(screen.queryByRole("toolbar", { name: "所选路径批量操作" })).not.toBeInTheDocument();
   });
 
-  it("navigates the working-copy treegrid with desktop keyboard semantics", async () => {
+  it("scopes the file list and Update/Commit actions to the selected folder", async () => {
     const alpha = makeFile("src/alpha.txt", "modified", "alpha-digest");
     const beta = makeFile("src/beta.txt", "modified", "beta-digest");
     const omega = makeFile("omega.txt", "modified", "omega-digest");
-    const alphaNode = {
-      ...makeScopedNode("src/alpha.txt", "modified", "local"),
-      name: "alpha.txt",
-    };
-    const betaNode = {
-      ...makeScopedNode("src/beta.txt", "modified", "local"),
-      name: "beta.txt",
-    };
     const tree: WorkspaceFileTree = {
       working_copy_root: "C:/repo/wc",
       total_files: 4,
@@ -2097,12 +2065,28 @@ Certificate information:
           name: "src",
           kind: "dir",
           file_size: null,
-          children: [alphaNode, betaNode],
+          children: [
+            { ...makeScopedNode("src/alpha.txt", "modified", "local"), name: "alpha.txt" },
+            { ...makeScopedNode("src/beta.txt", "modified", "local"), name: "beta.txt" },
+          ],
         },
         makeScopedNode("omega.txt", "modified", "local"),
       ],
     };
-    const onSelectFile = vi.fn();
+    listWorkspaceFilesMock.mockResolvedValueOnce({
+      working_copy_root: "C:/repo/wc",
+      total_files: 3,
+      returned_files: 3,
+      truncated: false,
+      nodes: [
+        { ...makeScopedNode("src/alpha.txt", "modified", "local"), name: "alpha.txt" },
+        { ...makeScopedNode("src/beta.txt", "modified", "local"), name: "beta.txt" },
+        { ...makeScopedNode("src/normal.txt", "normal", "none"), name: "normal.txt" },
+      ],
+    });
+    const onSelectCommitFiles = vi.fn();
+    const onUpdatePath = vi.fn();
+    const onUpdateWorkspace = vi.fn();
     const onActiveWorkspacePathChange = vi.fn();
     render(MainWorkspace, {
       props: {
@@ -2110,80 +2094,84 @@ Certificate information:
         workspace: makeWorkspace(),
         workingCopyStatus: makeStatus([alpha, beta, omega]),
         workspaceFileTree: tree,
-        onSelectFile,
+        svnExecutable: "/opt/homebrew/bin/svn",
+        onSelectCommitFiles,
+        onUpdatePath,
+        onUpdateWorkspace,
         onActiveWorkspacePathChange,
       },
     });
 
-    const treegrid = screen.getByRole("treegrid", { name: "工作副本文件树" });
-    expect(treegrid).toHaveAttribute("aria-activedescendant", "workspace-row-src");
+    const folderTree = screen.getByRole("tree", { name: "文件夹层级" });
+    const fileList = screen.getByRole("treegrid", { name: "工作副本文件列表" });
+    expect(within(folderTree).getByRole("button", { name: "选择文件夹 src" })).toBeInTheDocument();
+    expect(fileList).toHaveAttribute("aria-rowcount", "4");
+    expect(screen.getByRole("button", { name: "选择文件 omega.txt" })).toBeInTheDocument();
+
+    await fireEvent.click(within(folderTree).getByRole("button", { name: "选择文件夹 src" }));
+    await waitFor(() => expect(fileList).toHaveAttribute("aria-rowcount", "4"));
+    expect(screen.getByRole("button", { name: "选择文件 src/alpha.txt" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择文件 src/normal.txt" })).toBeInTheDocument();
+    expect(listWorkspaceFilesMock).toHaveBeenCalledWith({
+      working_copy_root: "C:/repo/wc",
+      scope_path: "src",
+      svn_executable: "/opt/homebrew/bin/svn",
+      max_files: 100_000,
+    });
+    expect(screen.queryByRole("button", { name: "选择文件 omega.txt" })).not.toBeInTheDocument();
     expect(onActiveWorkspacePathChange).toHaveBeenLastCalledWith("src");
-    treegrid.focus();
 
-    await fireEvent.keyDown(treegrid, { key: "ArrowRight" });
-    expect(treegrid).toHaveAttribute(
-      "aria-activedescendant",
-      "workspace-row-src%2Falpha.txt",
-    );
-    expect(onSelectFile).toHaveBeenLastCalledWith("src/alpha.txt");
-    expect(onActiveWorkspacePathChange).toHaveBeenLastCalledWith("src/alpha.txt");
+    await fireEvent.click(screen.getByRole("button", { name: "Update src" }));
+    expect(onUpdatePath).toHaveBeenCalledWith("src");
+    await fireEvent.click(screen.getByRole("button", { name: "加入 Commit 文件夹 src" }));
+    expect(onSelectCommitFiles).toHaveBeenCalledWith(["src/alpha.txt", "src/beta.txt"]);
+    expect(screen.getByRole("tab", { name: "Commit" })).toHaveAttribute("aria-selected", "true");
 
-    await fireEvent.keyDown(treegrid, { key: "ArrowDown", shiftKey: true });
-    expect(treegrid).toHaveAttribute(
-      "aria-activedescendant",
-      "workspace-row-src%2Fbeta.txt",
+    await fireEvent.click(
+      within(folderTree).getByRole("button", { name: "选择工作副本根目录" }),
     );
-    expect(screen.getByRole("toolbar", { name: "所选路径批量操作" })).toHaveTextContent(
-      "2 个已选",
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "Update 工作副本根目录" }));
+    expect(onUpdateWorkspace).toHaveBeenCalledOnce();
+  });
 
-    await fireEvent.keyDown(treegrid, { key: "ArrowUp", shiftKey: true });
-    expect(screen.getByRole("toolbar", { name: "所选路径批量操作" })).toHaveTextContent(
-      "1 个已选",
-    );
-    await fireEvent.keyDown(treegrid, { key: "ArrowDown", shiftKey: true });
-    expect(screen.getByRole("toolbar", { name: "所选路径批量操作" })).toHaveTextContent(
-      "2 个已选",
-    );
-
-    await fireEvent.keyDown(treegrid, { key: "Home" });
-    expect(treegrid).toHaveAttribute("aria-activedescendant", "workspace-row-src");
-    await fireEvent.keyDown(treegrid, { key: "ArrowLeft" });
-    await waitFor(() => {
-      expect(document.getElementById("workspace-row-src")).toHaveAttribute(
-        "aria-expanded",
-        "false",
-      );
+  it("virtualizes large folder hierarchies and keeps scrolled folders clickable", async () => {
+    const directoryCount = 5000;
+    const directoryNodes = Array.from({ length: directoryCount }, (_, index) => {
+      const name = `folder-${String(index + 1).padStart(5, "0")}`;
+      return {
+        ...makeScopedNode(name, "normal", "none"),
+        name,
+        kind: "dir" as const,
+        file_size: null,
+        children: [],
+      };
     });
-    await fireEvent.keyDown(treegrid, { key: "ArrowRight" });
-    await waitFor(() => {
-      expect(document.getElementById("workspace-row-src")).toHaveAttribute(
-        "aria-expanded",
-        "true",
-      );
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([]),
+        workspaceFileTree: {
+          working_copy_root: "C:/repo/wc",
+          total_files: 0,
+          returned_files: 0,
+          truncated: false,
+          nodes: directoryNodes,
+        },
+      },
     });
-    await fireEvent.keyDown(treegrid, { key: "ArrowRight" });
-    expect(treegrid).toHaveAttribute(
-      "aria-activedescendant",
-      "workspace-row-src%2Falpha.txt",
-    );
-    await fireEvent.keyDown(treegrid, { key: "ArrowLeft" });
-    expect(treegrid).toHaveAttribute("aria-activedescendant", "workspace-row-src");
-    await fireEvent.keyDown(treegrid, { key: "Enter" });
-    expect(document.getElementById("workspace-row-src")).toHaveAttribute("aria-expanded", "false");
-    await fireEvent.keyDown(treegrid, { key: "Enter" });
-    expect(document.getElementById("workspace-row-src")).toHaveAttribute("aria-expanded", "true");
 
-    await fireEvent.keyDown(treegrid, { key: "End" });
-    expect(treegrid).toHaveAttribute("aria-activedescendant", "workspace-row-omega.txt");
-    expect(onActiveWorkspacePathChange).toHaveBeenLastCalledWith("omega.txt");
-    await fireEvent.keyDown(treegrid, { key: " " });
-    expect(screen.getByRole("checkbox", { name: "选择文件 omega.txt" })).toBeChecked();
-    await fireEvent.keyDown(treegrid, { key: "a", ctrlKey: true });
-    expect(screen.getByRole("checkbox", { name: "选择当前可见路径" })).toBeChecked();
-    expect(screen.getByRole("toolbar", { name: "所选路径批量操作" })).toHaveTextContent(
-      "4 个已选",
-    );
+    const folderTree = screen.getByRole("tree", { name: "文件夹层级" });
+    Object.defineProperty(folderTree, "clientHeight", { configurable: true, value: 280 });
+    expect(folderTree).toHaveAttribute("data-rowcount", String(directoryCount + 1));
+    expect(folderTree.querySelectorAll(".folder-tree-row").length).toBeLessThan(60);
+
+    folderTree.scrollTop = directoryCount * 28;
+    await fireEvent.scroll(folderTree);
+    const lastFolder = await screen.findByRole("button", { name: "选择文件夹 folder-05000" });
+    await fireEvent.click(lastFolder);
+    expect(lastFolder.closest(".folder-tree-row")).toHaveAttribute("aria-selected", "true");
+    expect(folderTree.querySelectorAll(".folder-tree-row").length).toBeLessThan(60);
   });
 
   it("virtualizes 5000 file-tree and Blame rows while keeping the last row reachable", async () => {
@@ -2222,7 +2210,7 @@ Certificate information:
       },
     });
 
-    const treegrid = screen.getByRole("treegrid", { name: "工作副本文件树" });
+    const treegrid = screen.getByRole("treegrid", { name: "工作副本文件列表" });
     Object.defineProperty(treegrid, "clientHeight", { configurable: true, value: 320 });
     expect(treegrid).toHaveAttribute("aria-rowcount", String(rowCount + 1));
     expect(treegrid.querySelectorAll(".file-row").length).toBeLessThan(50);
@@ -2280,7 +2268,7 @@ Certificate information:
 
     await fireEvent.dblClick(screen.getByRole("button", { name: "选择文件 open.txt" }));
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith("open.txt");
-    expect(screen.getByRole("treegrid", { name: "工作副本文件树" })).toHaveAttribute(
+    expect(screen.getByRole("treegrid", { name: "工作副本文件列表" })).toHaveAttribute(
       "aria-activedescendant",
       "workspace-row-open.txt",
     );
@@ -2288,11 +2276,10 @@ Certificate information:
     await fireEvent.dblClick(screen.getByRole("button", { name: "选择文件 missing.txt" }));
     expect(onOpenWorkspaceFile).toHaveBeenCalledOnce();
 
-    await fireEvent.dblClick(screen.getByRole("button", { name: "切换目录 folder" }));
-    expect(document.getElementById("workspace-row-folder")).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "选择文件夹 folder" }));
+    expect(
+      screen.getByRole("button", { name: "选择文件夹 folder" }).closest(".folder-tree-row"),
+    ).toHaveAttribute("aria-selected", "true");
   });
 
   it("opens a state-aware context menu for pointer and keyboard workflows", async () => {
@@ -2380,7 +2367,7 @@ Certificate information:
     await fireEvent.click(within(draftMenu).getByRole("menuitem", { name: "Ignore" }));
     expect(onIgnorePath).toHaveBeenCalledWith("draft.txt");
 
-    const treegrid = screen.getByRole("treegrid", { name: "工作副本文件树" });
+    const treegrid = screen.getByRole("treegrid", { name: "工作副本文件列表" });
     treegrid.focus();
     await fireEvent.keyDown(treegrid, { key: "F10", shiftKey: true });
     const keyboardMenu = screen.getByRole("menu", { name: "路径菜单 draft.txt" });
@@ -2414,7 +2401,8 @@ Certificate information:
       },
     });
 
-    await clickRowMenuAction("更多操作 目录 src", "移动目录 src");
+    await fireEvent.click(screen.getByRole("button", { name: "选择文件夹 src" }));
+    await clickRowMenuAction("更多操作 目录 src", "Move");
     await clickRowMenuAction("更多操作 文件 src/main.ts", "移动文件 src/main.ts");
     await fireEvent.click(
       screen.getByRole("button", { name: "在工作副本中移动 src/main.ts" }),
@@ -2424,7 +2412,7 @@ Certificate information:
     expect(onMovePath).toHaveBeenNthCalledWith(2, "src/main.ts");
     expect(onMovePath).toHaveBeenNthCalledWith(3, "src/main.ts");
 
-    await clickRowMenuAction("更多操作 目录 src", "复制目录 src");
+    await clickRowMenuAction("更多操作 目录 src", "Copy");
     await clickRowMenuAction("更多操作 文件 src/main.ts", "复制文件 src/main.ts");
     await fireEvent.click(
       screen.getByRole("button", { name: "在工作副本中复制 src/main.ts" }),
@@ -2434,7 +2422,7 @@ Certificate information:
     expect(onCopyPath).toHaveBeenNthCalledWith(2, "src/main.ts");
     expect(onCopyPath).toHaveBeenNthCalledWith(3, "src/main.ts");
 
-    await clickRowMenuAction("更多操作 目录 src", "删除目录 src");
+    await clickRowMenuAction("更多操作 目录 src", "Delete");
     await clickRowMenuAction("更多操作 文件 src/main.ts", "删除文件 src/main.ts");
     await fireEvent.click(
       screen.getByRole("button", { name: "从工作副本删除 src/main.ts" }),
@@ -2445,6 +2433,7 @@ Certificate information:
     expect(onDeletePath).toHaveBeenNthCalledWith(3, "src/main.ts");
 
     await fireEvent.click(screen.getByRole("button", { name: "全部文件" }));
+    await fireEvent.click(screen.getByRole("button", { name: "选择工作副本根目录" }));
     expect(screen.getByText("ignored.log", { exact: true })).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "删除文件 ignored.log" }),
@@ -2465,13 +2454,15 @@ Certificate information:
       screen.queryByRole("button", { name: "更多操作 目录 external" }),
     ).not.toBeInTheDocument();
     await fireEvent.contextMenu(
-      document.getElementById("workspace-row-external") as HTMLElement,
+      screen.getByRole("button", { name: "选择文件夹 external" }).closest(".folder-tree-row")!,
     );
     expect(
       screen.queryByRole("menu", { name: "路径菜单 external" }),
     ).not.toBeInTheDocument();
-    await clickRowMenuAction("更多操作 目录 empty", "删除目录 empty");
+    await fireEvent.click(screen.getByRole("button", { name: "选择文件夹 empty" }));
+    await clickRowMenuAction("更多操作 目录 empty", "Delete");
     expect(onDeletePath).toHaveBeenNthCalledWith(4, "empty");
+    await fireEvent.click(screen.getByRole("button", { name: "选择工作副本根目录" }));
     await clickRowMenuAction(
       "更多操作 文件 literal\\name.txt",
       "删除文件 literal\\name.txt",
@@ -2518,7 +2509,7 @@ Certificate information:
       screen.queryByRole("button", { name: "更多操作 目录 drafts" }),
     ).not.toBeInTheDocument();
     await fireEvent.contextMenu(
-      document.getElementById("workspace-row-drafts") as HTMLElement,
+      screen.getByRole("button", { name: "选择文件夹 drafts" }).closest(".folder-tree-row")!,
     );
     expect(
       screen.queryByRole("menu", { name: "路径菜单 drafts" }),

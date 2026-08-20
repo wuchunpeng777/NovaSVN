@@ -4,10 +4,10 @@ test("loads the current NovaSVN workbench shell", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByText("NovaSVN", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "工作副本", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "时间线", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "仓库", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "更多", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "工作副本", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "时间线", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "仓库", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "更多", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "更新工作副本" })).toBeVisible();
   await expect(page.getByRole("button", { name: "清理工作副本" })).toBeVisible();
 });
@@ -18,7 +18,7 @@ test("provides hover tooltips for every button", async ({ page }) => {
   const tooltipTargets = page.locator('button, [role="button"]');
   expect(await tooltipTargets.count()).toBeGreaterThan(0);
   await expect(page.locator('button:not([title]), [role="button"]:not([title])')).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "工作副本", exact: true })).toHaveAttribute(
+  await expect(page.getByRole("tab", { name: "工作副本", exact: true })).toHaveAttribute(
     "title",
     "工作副本",
   );

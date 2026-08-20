@@ -538,7 +538,7 @@ Certificate information:
         },
       ],
     });
-    const projects = screen.getByLabelText("项目列表");
+    const projects = screen.getByLabelText("项目标签");
     expect(within(projects).getByText("feature")).toBeInTheDocument();
     expect(within(projects).getByText("wc")).toBeInTheDocument();
   });
@@ -603,7 +603,7 @@ Certificate information:
     render(App);
 
     screen.getByRole("button", { name: "添加工作副本" }).click();
-    const projects = screen.getByLabelText("项目列表");
+    const projects = screen.getByLabelText("项目标签");
     await waitFor(() => {
       expect(within(projects).getByText("project-a")).toBeInTheDocument();
       expect(within(projects).getByText("project-b")).toBeInTheDocument();
@@ -662,7 +662,7 @@ Certificate information:
     getSvnLogMock.mockClear();
     render(App);
 
-    const projects = screen.getByLabelText("项目列表");
+    const projects = screen.getByLabelText("项目标签");
     await fireEvent.click(within(projects).getByText("other").closest("button")!);
 
     expect(get(workspaceStore).status).toBeNull();
@@ -710,7 +710,7 @@ Certificate information:
     setCurrentView("history");
     render(App);
 
-    const projects = screen.getByLabelText("项目列表");
+    const projects = screen.getByLabelText("项目标签");
     await fireEvent.click(within(projects).getByText("other").closest("button")!);
 
     expect(get(workspaceStore).status).toBeNull();
@@ -737,8 +737,8 @@ Certificate information:
     });
     render(App);
 
-    const navigation = screen.getByRole("navigation", { name: "主视图" });
-    const timelineButton = within(navigation).getByRole("button", { name: "时间线" });
+    const navigation = screen.getByRole("tablist", { name: "工作副本内容" });
+    const timelineButton = within(navigation).getByRole("tab", { name: "时间线" });
     await fireEvent.click(timelineButton);
 
     await waitFor(() => expect(getSvnLogMock).toHaveBeenCalledTimes(1));
@@ -754,7 +754,7 @@ Certificate information:
     await fireEvent.click(timelineButton);
     expect(getSvnLogMock).toHaveBeenCalledTimes(1);
 
-    await fireEvent.click(within(navigation).getByRole("button", { name: "工作副本" }));
+    await fireEvent.click(within(navigation).getByRole("tab", { name: "工作副本" }));
     await fireEvent.click(timelineButton);
     await waitFor(() => expect(getSvnLogMock).toHaveBeenCalledTimes(2));
   });

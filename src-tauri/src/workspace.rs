@@ -102,6 +102,7 @@ pub struct SvnInfo {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ListWorkspaceFilesRequest {
     pub working_copy_root: String,
+    pub scope_path: Option<String>,
     pub svn_executable: Option<String>,
     pub max_files: Option<usize>,
 }
@@ -1843,16 +1844,49 @@ pub fn list_workspace_files(
     request: ListWorkspaceFilesRequest,
 ) -> Result<WorkspaceFileTree, NovaError> {
     let path = normalize_workspace_path(&request.working_copy_root)?;
+    let scope_path = request
+        .scope_path
+        .as_deref()
+        .map(normalize_status_scope_path)
+        .transpose()?;
+    let tree_path = scope_path
+        .as_ref()
+        .map(|scope| path.join(scope))
+        .unwrap_or_else(|| path.clone());
+    let canonical_root = fs::canonicalize(&path).map_err(|error| {
+        NovaError::command(
+            "WORKSPACE_FILE_TREE_ROOT_FAILED",
+            "无法确认文件树的工作副本根目录",
+            Some(format!("路径：{}。错误：{error}", path.display())),
+            true,
+        )
+    })?;
+    let canonical_tree_path = fs::canonicalize(&tree_path).map_err(|error| {
+        NovaError::command(
+            "WORKSPACE_FILE_TREE_SCOPE_FAILED",
+            "无法读取所选文件夹",
+            Some(format!("路径：{}。错误：{error}", tree_path.display())),
+            true,
+        )
+    })?;
+    if !canonical_tree_path.starts_with(&canonical_root) || !canonical_tree_path.is_dir() {
+        return Err(NovaError::command(
+            "WORKSPACE_FILE_TREE_SCOPE_INVALID",
+            "所选文件夹不在当前工作副本内",
+            Some(tree_path.display().to_string()),
+            true,
+        ));
+    }
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
     let status = scan_workspace_status(ScanWorkspaceStatusRequest {
         working_copy_root: path.display().to_string(),
-        scope_path: None,
+        scope_path: scope_path.clone(),
         include_content_digests: None,
         include_revision_summary: None,
         include_unversioned: None,
         svn_executable: Some(executable.clone()),
         offset: Some(0),
-        limit: Some(5000),
+        limit: Some(100_000),
         check_remote_updates: Some(false),
     })?;
     let status_by_path = status
@@ -1860,8 +1894,14 @@ pub fn list_workspace_files(
         .iter()
         .map(|file| (normalize_tree_path(&file.path), file))
         .collect::<HashMap<_, _>>();
-    let versioned_paths = read_versioned_workspace_paths(&executable, &path)?;
-    let max_files = request.max_files.unwrap_or(5000).clamp(1, 20000);
+    let versioned_paths =
+        read_versioned_workspace_paths(&executable, &path, scope_path.as_deref())?;
+    let maximum = if scope_path.is_some() {
+        100_000
+    } else {
+        20_000
+    };
+    let max_files = request.max_files.unwrap_or(5000).clamp(1, maximum);
     let mut read_state = WorkspaceFileTreeReadState {
         max_files,
         returned_files: 0,
@@ -1870,7 +1910,7 @@ pub fn list_workspace_files(
     };
     let mut nodes = read_workspace_children(
         &path,
-        &path,
+        &tree_path,
         &status_by_path,
         &versioned_paths,
         &mut read_state,
@@ -1976,6 +2016,7 @@ fn run_status_without_updates(
 fn read_versioned_workspace_paths(
     executable: &str,
     working_copy_root: &Path,
+    scope_path: Option<&str>,
 ) -> Result<VersionedWorkspaceIndex, NovaError> {
     let canonical_root = fs::canonicalize(working_copy_root).map_err(|error| {
         NovaError::command(
@@ -1988,9 +2029,10 @@ fn read_versioned_workspace_paths(
             true,
         )
     })?;
+    let target = scope_path.unwrap_or(".");
     let mut child = svn::command(executable)
         .args(["info", "--xml", "--depth", "infinity"])
-        .arg(".")
+        .arg(target)
         .current_dir(&canonical_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2000,7 +2042,7 @@ fn read_versioned_workspace_paths(
                 "SVN_FILE_TREE_INFO_FAILED",
                 "无法读取文件树的 SVN 版本控制信息",
                 Some(format!(
-                    "执行 `{executable} info --xml --depth infinity .` 失败（工作副本：{}）：{error}",
+                    "执行 `{executable} info --xml --depth infinity {target}` 失败（工作副本：{}）：{error}",
                     working_copy_root.display()
                 )),
                 true,
@@ -2485,8 +2527,8 @@ fn process_streaming_info_entry(
     pending_entries: &mut Vec<StreamingInfoEntry>,
     paths: &mut VersionedWorkspaceIndex,
 ) -> Result<(), NovaError> {
+    let root = entry.wc_root.trim();
     if entry.path == "." {
-        let root = entry.wc_root.trim();
         if root.is_empty() {
             return Err(NovaError::command(
                 "SVN_FILE_TREE_INFO_ROOT_MISSING",
@@ -2500,6 +2542,10 @@ fn process_streaming_info_entry(
         return Ok(());
     }
 
+    if reported_root.is_none() && !root.is_empty() {
+        validate_reported_workspace_root(root, canonical_root)?;
+        *reported_root = Some(root.to_string());
+    }
     if let Some(root) = reported_root.as_deref() {
         insert_streaming_info_path(entry, root, canonical_root, paths)?;
     } else {
@@ -6617,6 +6663,7 @@ line two</property>
         let tree = list_workspace_files(ListWorkspaceFilesRequest {
             working_copy_root: working_copy.display().to_string(),
             svn_executable: None,
+            scope_path: None,
             max_files: Some(100),
         })
         .expect("real file tree reads");
@@ -6645,6 +6692,21 @@ line two</property>
             .is_some_and(|node| node.status == "external" && !node.versioned));
         assert!(find_workspace_node(&tree.nodes, "external/nested.txt")
             .is_some_and(|node| node.status == "normal" && !node.versioned));
+
+        let scoped_tree = list_workspace_files(ListWorkspaceFilesRequest {
+            working_copy_root: working_copy.display().to_string(),
+            scope_path: Some("target".to_string()),
+            svn_executable: None,
+            max_files: Some(100),
+        })
+        .expect("scoped file tree reads");
+        assert_eq!(scoped_tree.total_files, 1);
+        assert_eq!(scoped_tree.returned_files, 1);
+        assert!(
+            find_workspace_node(&scoped_tree.nodes, "target/tracked.txt")
+                .is_some_and(|node| node.kind == "file" && node.versioned)
+        );
+        assert!(find_workspace_node(&scoped_tree.nodes, "tracked.txt").is_none());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6700,6 +6762,7 @@ line two</property>
         let tree = list_workspace_files(ListWorkspaceFilesRequest {
             working_copy_root: working_copy.display().to_string(),
             svn_executable: None,
+            scope_path: None,
             max_files: Some(100),
         })
         .expect("sparse file tree reads");
@@ -6909,6 +6972,7 @@ line two</property>
         let tree = list_workspace_files(ListWorkspaceFilesRequest {
             working_copy_root: working_copy.display().to_string(),
             svn_executable: None,
+            scope_path: None,
             max_files: Some(100),
         })
         .expect("real file tree reads");

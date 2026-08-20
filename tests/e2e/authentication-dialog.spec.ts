@@ -7,7 +7,7 @@ test("prompts for credentials and retries a failed status refresh", async ({ pag
   await page.getByPlaceholder("拖入或输入 SVN 工作副本路径").fill("C:/repo/wc");
   await page.getByRole("button", { name: "打开", exact: true }).click();
   await expect(
-    page.getByRole("main", { name: "本地改动" }).getByText("C:/repo/wc", { exact: true }),
+    page.getByRole("main", { name: "本地改动" }).locator(".pane-header").getByText("C:/repo/wc", { exact: true }),
   ).toBeVisible();
 
   await page.evaluate(() => {

@@ -260,6 +260,7 @@ fn run(config: BenchmarkConfig) -> Result<(), String> {
         || {
             list_workspace_files(ListWorkspaceFilesRequest {
                 working_copy_root: working_copy_text.clone(),
+                scope_path: None,
                 svn_executable: Some(config.svn_executable.clone()),
                 max_files: Some(FILE_TREE_LIMIT),
             })

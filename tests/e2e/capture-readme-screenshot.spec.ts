@@ -22,13 +22,11 @@ test.describe("README screenshots", () => {
     await page.getByPlaceholder("拖入或输入 SVN 工作副本路径").fill("C:/repo/wc");
     await page.getByRole("button", { name: "打开", exact: true }).click();
     await expect(
-      page.getByRole("main", { name: "本地改动" }).getByText("C:/repo/wc", { exact: true }),
+      page.getByRole("main", { name: "本地改动" }).locator(".pane-header").getByText("C:/repo/wc", { exact: true }),
     ).toBeVisible();
 
+    await page.getByRole("button", { name: "选择文件夹 src" }).click();
     const modifiedFile = page.getByRole("button", { name: "选择文件 src/modified.txt" });
-    if (!(await modifiedFile.isVisible().catch(() => false))) {
-      await page.getByRole("button", { name: "切换目录 src" }).click();
-    }
     await expect(modifiedFile).toBeVisible();
     await modifiedFile.click();
     await page.getByRole("button", { name: "全部文件" }).click();
@@ -117,16 +115,13 @@ test.describe("README screenshots", () => {
     await page.getByPlaceholder("拖入或输入 SVN 工作副本路径").fill("C:/repo/wc");
     await page.getByRole("button", { name: "打开", exact: true }).click();
     await expect(
-      page.getByRole("main", { name: "本地改动" }).getByText("C:/repo/wc", { exact: true }),
+      page.getByRole("main", { name: "本地改动" }).locator(".pane-header").getByText("C:/repo/wc", { exact: true }),
     ).toBeVisible();
 
-    // 隐藏侧栏，给 Diff 更多空间
-    await page.getByRole("button", { name: "隐藏项目侧栏" }).click();
 
+    await page.getByRole("button", { name: "选择文件夹 src" }).click();
     const modifiedFile = page.getByRole("button", { name: "选择文件 src/modified.txt" });
-    if (!(await modifiedFile.isVisible().catch(() => false))) {
-      await page.getByRole("button", { name: "切换目录 src" }).click();
-    }
+    await expect(modifiedFile).toBeVisible();
     await modifiedFile.click();
     await page.getByRole("tab", { name: "Diff" }).click();
     await page.getByRole("button", { name: "双栏" }).click();

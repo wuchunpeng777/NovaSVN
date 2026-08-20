@@ -21,8 +21,6 @@
     ListPlus,
     LoaderCircle,
     MoveRight,
-    PanelLeftClose,
-    PanelLeftOpen,
     PanelRightClose,
     PanelRightOpen,
     Pencil,
@@ -44,7 +42,7 @@
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
   import RawDiffViewer from "./RawDiffViewer.svelte";
   import SyntaxHighlightedCode from "../SyntaxHighlightedCode.svelte";
-  import { getRevisionFileContentDiff } from "../../lib/api";
+  import { getRevisionFileContentDiff, listWorkspaceFiles } from "../../lib/api";
   import { shouldShowTextDiffViewer } from "../../lib/file-content-diff";
   import { detectSvnAuthenticationFailure } from "../../lib/svn-authentication";
   import { buildPropertyContentDiff } from "../../lib/svn-property-diff";
@@ -107,6 +105,7 @@
   export let workspaceError: CommandError | null = null;
   export let workingCopyStatus: WorkingCopyStatus | null = null;
   export let workspaceFileTree: WorkspaceFileTree | null = null;
+  export let svnExecutable: string | undefined = undefined;
   export let searchText = "";
   export let selectedFilePath: string | null = null;
   export let selectedFile: ChangedFile | null = null;
@@ -626,6 +625,13 @@
   type WorkspaceTreeRow = WorkspaceFileNode & {
     depth: number;
   };
+  type WorkspaceDirectoryRow = {
+    path: string;
+    name: string;
+    depth: number;
+    node: WorkspaceFileNode | null;
+  };
+  type DirectoryChangeSummary = { local: number; remote: number };
   type VirtualWindow<T> = {
     items: T[];
     startIndex: number;
@@ -638,6 +644,8 @@
   const blameRowHeight = 27;
   const virtualRowOverscan = 8;
 
+  const folderTreeHeaderHeight = 28;
+  const folderTreeRowHeight = 28;
   const inspectorTabs: Array<{ id: InspectorTab; label: string }> = [
     { id: "information", label: "Information" },
     { id: "properties", label: "Properties" },
@@ -675,6 +683,13 @@
   let timelineMergeDialogOpen = false;
   let timelineBatchRevertRunning = false;
   let collapsedTreePaths = new Set<string>();
+  let selectedDirectoryPath = "";
+  let directorySelectionWorkspaceRoot: string | null = null;
+  let selectedDirectoryFileTree: WorkspaceFileTree | null = null;
+  let selectedDirectoryFileTreePath: string | null = null;
+  let directoryFilesLoading = false;
+  let directoryFilesError: CommandError | null = null;
+  let directoryFilesGeneration = 0;
   let openRowMenuPath: string | null = null;
   let selectedRowPaths = new Set<string>();
   let rowSelectionAnchorPath: string | null = null;
@@ -687,6 +702,9 @@
   let fileBrowserElement: HTMLElement | null = null;
   let fileBrowserScrollTop = 0;
   let fileBrowserViewportHeight = 720;
+  let folderBrowserElement: HTMLElement | null = null;
+  let folderBrowserScrollTop = 0;
+  let folderBrowserViewportHeight = 720;
   let workspaceBlameScrollTop = 0;
   let workspaceBlameViewportHeight = 360;
   let repositoryBlameScrollTop = 0;
@@ -709,9 +727,7 @@
   let reportedActiveWorkspacePath: string | null | undefined;
   let selectionWorkspaceRoot: string | null = null;
   let selectionFileTree: WorkspaceFileTree | null = null;
-  const sourceListMinWidth = 180;
-  const sourceListMaxWidth = 420;
-  const sourceListDividerWidth = 6;
+  const navigationTreeWidth = 228;
   const inspectorMinWidth = 300;
   const inspectorMaxWidth = 720;
   const inspectorDividerWidth = 6;
@@ -736,9 +752,6 @@
     size: 160,
     actions: 280,
   };
-  let sourceListWidth = 244;
-  let sourceListMaximumWidth = sourceListMaxWidth;
-  let resizingSourceList = false;
   let inspectorWidth = 360;
   let inspectorMaximumWidth = inspectorMaxWidth;
   let resizingInspector = false;
@@ -783,7 +796,7 @@
   }
   $: showWhitespace = appSettings.showWhitespace;
   $: if (typeof window !== "undefined") {
-    syncLayoutWidthsToWindow(appSettings.showSourceList, appSettings.showInspector, view.id);
+    syncLayoutWidthsToWindow();
   }
   $: resolvedTheme =
     appSettings.themeMode === "system"
@@ -1136,7 +1149,10 @@
     if (!path) {
       return null;
     }
-    return findTreeNode(workspaceFileTree?.nodes ?? [], path);
+    return (
+      findTreeNode(workspaceFileTree?.nodes ?? [], path) ??
+      findTreeNode(selectedDirectoryFileTree?.nodes ?? [], path)
+    );
   }
 
   function findTreeNode(nodes: WorkspaceFileNode[], path: string): WorkspaceFileNode | null {
@@ -1150,6 +1166,200 @@
       }
     }
     return null;
+  }
+
+  function flattenWorkspaceNodes(
+    nodes: WorkspaceFileNode[],
+    flattened: WorkspaceFileNode[] = [],
+  ) {
+    for (const node of nodes) {
+      flattened.push(node);
+      flattenWorkspaceNodes(node.children, flattened);
+    }
+    return flattened;
+  }
+
+  function parentDirectoryPath(path: string) {
+    const index = path.lastIndexOf("/");
+    return index < 0 ? "" : path.slice(0, index);
+  }
+
+  function directoryContainsPath(directoryPath: string, path: string) {
+    return !directoryPath || path === directoryPath || path.startsWith(`${directoryPath}/`);
+  }
+
+  function directoryRowsForNodes(
+    nodes: WorkspaceFileNode[],
+    collapsedPaths = collapsedTreePaths,
+  ): WorkspaceDirectoryRow[] {
+    const directoryNodes = new Map<string, WorkspaceFileNode | null>();
+    const orderedPaths: string[] = [];
+    const addDirectory = (path: string, node: WorkspaceFileNode | null = null) => {
+      if (!path) return;
+      if (!directoryNodes.has(path)) {
+        orderedPaths.push(path);
+        directoryNodes.set(path, node);
+      } else if (node) {
+        directoryNodes.set(path, node);
+      }
+    };
+
+    for (const node of flattenWorkspaceNodes(nodes)) {
+      const segments = node.path.split("/");
+      const directoryDepth = node.kind === "dir" ? segments.length : segments.length - 1;
+      for (let index = 1; index <= directoryDepth; index += 1) {
+        const path = segments.slice(0, index).join("/");
+        addDirectory(path, node.kind === "dir" && path === node.path ? node : null);
+      }
+    }
+
+    const childrenByParent = new Map<string, string[]>();
+    for (const path of orderedPaths) {
+      const parentPath = parentDirectoryPath(path);
+      const children = childrenByParent.get(parentPath) ?? [];
+      children.push(path);
+      childrenByParent.set(parentPath, children);
+    }
+
+    const rows: WorkspaceDirectoryRow[] = [];
+    const appendChildren = (parentPath: string, depth: number) => {
+      for (const path of childrenByParent.get(parentPath) ?? []) {
+        rows.push({
+          path,
+          name: basename(path),
+          depth,
+          node: directoryNodes.get(path) ?? null,
+        });
+        if (!collapsedPaths.has(path)) appendChildren(path, depth + 1);
+      }
+    };
+    appendChildren("", 0);
+    return rows;
+  }
+
+  function filesForDirectory(nodes: WorkspaceFileNode[], directoryPath: string) {
+    return flattenWorkspaceNodes(nodes)
+      .filter(
+        (node) => node.kind === "file" && directoryContainsPath(directoryPath, node.path),
+      )
+      .map((node) => ({ ...node, depth: 0 }));
+  }
+
+  function summarizeDirectoryChanges(files: ChangedFile[]) {
+    const summary = new Map<string, DirectoryChangeSummary>();
+    for (const file of files) {
+      let directoryPath = parentDirectoryPath(file.path);
+      while (directoryPath) {
+        const current = summary.get(directoryPath) ?? { local: 0, remote: 0 };
+        if (["local", "both"].includes(file.change_scope)) current.local += 1;
+        if (["remote", "both"].includes(file.change_scope)) current.remote += 1;
+        summary.set(directoryPath, current);
+        directoryPath = parentDirectoryPath(directoryPath);
+      }
+    }
+    return summary;
+  }
+
+  function reconcileSelectedDirectory(
+    workingCopyRoot: string | null,
+    directoryRows: WorkspaceDirectoryRow[],
+    inspectedPath: string | null,
+  ) {
+    const available = new Set(directoryRows.map((row) => row.path));
+    if (directorySelectionWorkspaceRoot !== workingCopyRoot) {
+      directorySelectionWorkspaceRoot = workingCopyRoot;
+      const inspectedDirectory = inspectedPath ? parentDirectoryPath(inspectedPath) : "";
+      selectedDirectoryPath = available.has(inspectedDirectory) ? inspectedDirectory : "";
+      return;
+    }
+    if (selectedDirectoryPath && !available.has(selectedDirectoryPath)) {
+      selectedDirectoryPath = "";
+    }
+  }
+
+  function toggleDirectoryPath(path: string) {
+    const next = new Set(collapsedTreePaths);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    collapsedTreePaths = next;
+  }
+
+  function selectWorkspaceDirectory(path: string) {
+    const changed = selectedDirectoryPath !== path;
+    if (changed) {
+      selectedDirectoryPath = path;
+      clearRowSelection();
+      activeRowPath = null;
+      fileBrowserScrollTop = 0;
+      if (fileBrowserElement) fileBrowserElement.scrollTop = 0;
+      closeContextMenu();
+    }
+    if (!path) {
+      directoryFilesGeneration += 1;
+      selectedDirectoryFileTree = null;
+      selectedDirectoryFileTreePath = null;
+      directoryFilesLoading = false;
+      directoryFilesError = null;
+      return;
+    }
+    if (changed || selectedDirectoryFileTreePath !== path) {
+      void loadSelectedDirectoryFiles(path);
+    }
+  }
+
+  async function loadSelectedDirectoryFiles(path: string) {
+    const root = workspace?.working_copy_root;
+    if (!root) return;
+    const generation = ++directoryFilesGeneration;
+    directoryFilesLoading = true;
+    directoryFilesError = null;
+    try {
+      const fileTree = await listWorkspaceFiles({
+        working_copy_root: root,
+        scope_path: path,
+        svn_executable: svnExecutable?.trim() || undefined,
+        max_files: 100_000,
+      });
+      if (generation !== directoryFilesGeneration || selectedDirectoryPath !== path || !fileTree) {
+        return;
+      }
+      selectedDirectoryFileTree = fileTree;
+      selectedDirectoryFileTreePath = path;
+    } catch (error) {
+      if (generation === directoryFilesGeneration && selectedDirectoryPath === path) {
+        directoryFilesError = error as CommandError;
+      }
+    } finally {
+      if (generation === directoryFilesGeneration && selectedDirectoryPath === path) {
+        directoryFilesLoading = false;
+      }
+    }
+  }
+
+  function handleFolderBrowserScroll(event: Event) {
+    const element = event.currentTarget as HTMLElement;
+    folderBrowserScrollTop = element.scrollTop;
+    folderBrowserViewportHeight = element.clientHeight || folderBrowserViewportHeight;
+  }
+
+  function updateSelectedDirectory() {
+    if (selectedDirectoryPath) onUpdatePath(selectedDirectoryPath);
+    else onUpdateWorkspace();
+  }
+
+  function toggleSelectedDirectoryCommit() {
+    if (selectedDirectoryCommittablePaths.length === 0) return;
+    if (selectedDirectoryFullyStaged) {
+      onUnselectCommitFiles(selectedDirectoryCommittablePaths);
+      return;
+    }
+    onSelectCommitFiles(selectedDirectoryCommittablePaths);
+    openCommitForm();
+  }
+
+  function openSelectedDirectoryMenu(event: MouseEvent) {
+    if (!selectedDirectoryNode) return;
+    openRowContextMenu(event, { ...selectedDirectoryNode, depth: 0 });
   }
 
   function isChangedPath(path: string) {
@@ -1633,8 +1843,7 @@
     if (activeRowPath && rows.some((row) => row.path === activeRowPath)) {
       return;
     }
-    activeRowPath =
-      rows.find((row) => row.path === inspectedPath)?.path ?? rows[0]?.path ?? null;
+    activeRowPath = rows.find((row) => row.path === inspectedPath)?.path ?? null;
   }
 
   function reportActiveWorkspacePath(path: string | null) {
@@ -2327,7 +2536,7 @@
       branchPoolDropTarget = null;
       return;
     }
-    updateBranchPoolDropPosition(targetElement, targetId, event.clientY);
+    updateBranchPoolDropPosition(targetElement, targetId, event.clientX);
     event.preventDefault();
   }
 
@@ -2349,10 +2558,10 @@
   function updateBranchPoolDropPosition(
     targetElement: HTMLElement,
     entryId: string,
-    clientY: number,
+    clientX: number,
   ) {
     const bounds = targetElement.getBoundingClientRect();
-    const position = bounds.height <= 0 || clientY < bounds.top + bounds.height / 2
+    const position = bounds.width <= 0 || clientX < bounds.left + bounds.width / 2
       ? "before"
       : "after";
     branchPoolDropTarget = { id: entryId, position };
@@ -2479,10 +2688,10 @@
   }
 
   function handleBranchPoolDragKeydown(event: KeyboardEvent, entryId: string) {
-    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
     event.preventDefault();
     event.stopPropagation();
-    moveBranchPoolEntry(entryId, event.key === "ArrowUp" ? -1 : 1);
+    moveBranchPoolEntry(entryId, ["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1);
   }
 
   function editBranchPoolEntry(entry: BranchPoolEntry) {
@@ -2622,42 +2831,8 @@
     openRowMenuPath = null;
   }
 
-  function startSourceListResize(event: MouseEvent) {
-    stopInspectorResize();
-    stopFileColumnResize();
-    stopTimelineDiffResize();
-    if (!resizingSourceList) {
-      window.addEventListener("mousemove", resizeSourceList);
-      window.addEventListener("mouseup", stopSourceListResize);
-    }
-    resizingSourceList = true;
-    event.preventDefault();
-  }
-
-  function stopSourceListResize() {
-    if (!resizingSourceList) {
-      return;
-    }
-    resizingSourceList = false;
-    window.removeEventListener("mousemove", resizeSourceList);
-    window.removeEventListener("mouseup", stopSourceListResize);
-  }
-
-  function resizeSourceList(event: MouseEvent) {
-    if (!resizingSourceList) {
-      return;
-    }
-    sourceListWidth = constrainSourceListWidth(event.clientX);
-    syncInspectorWidthToWindow(appSettings.showSourceList);
-  }
-
-  function adjustSourceListWidth(delta: number) {
-    sourceListWidth = constrainSourceListWidth(sourceListWidth + delta);
-    syncInspectorWidthToWindow(appSettings.showSourceList);
-  }
 
   function startFileColumnResize(event: MouseEvent, column: FileColumnKey) {
-    stopSourceListResize();
     stopInspectorResize();
     stopTimelineDiffResize();
     resizingFileColumn = {
@@ -2722,7 +2897,6 @@
   }
 
   function startInspectorResize(event: MouseEvent) {
-    stopSourceListResize();
     stopFileColumnResize();
     stopTimelineDiffResize();
     if (!resizingInspector) {
@@ -2754,7 +2928,6 @@
   }
 
   function startTimelineDiffResize(event: MouseEvent) {
-    stopSourceListResize();
     stopInspectorResize();
     stopFileColumnResize();
     if (!resizingTimelineDiff) {
@@ -2785,36 +2958,12 @@
     timelineDiffWidth = constrainTimelineDiffWidth(timelineDiffWidth + delta);
   }
 
-  function calculateSourceListMaxWidth(showInspector: boolean, activeView: AppView) {
-    const occupiedInspectorWidth =
-      showInspector && activeView === "changes"
-        ? inspectorMinWidth + inspectorDividerWidth
-        : 0;
-    return Math.max(
-      sourceListMinWidth,
-      Math.min(
-        sourceListMaxWidth,
-        window.innerWidth -
-          sourceListDividerWidth -
-          occupiedInspectorWidth -
-          fileBrowserMinWidth,
-      ),
-    );
-  }
-
-  function constrainSourceListWidth(width: number) {
-    return Math.min(Math.max(width, sourceListMinWidth), sourceListMaximumWidth);
-  }
-
-  function calculateInspectorMaxWidth(showSourceList: boolean) {
-    const occupiedSourceWidth = showSourceList
-      ? sourceListWidth + sourceListDividerWidth
-      : 0;
+  function calculateInspectorMaxWidth() {
     return Math.max(
       inspectorMinWidth,
       Math.min(
         inspectorMaxWidth,
-        window.innerWidth - occupiedSourceWidth - inspectorDividerWidth - fileBrowserMinWidth,
+        window.innerWidth - navigationTreeWidth - inspectorDividerWidth - fileBrowserMinWidth,
       ),
     );
   }
@@ -2824,11 +2973,8 @@
   }
 
   function constrainTimelineDiffWidth(width: number) {
-    const sourceWidth = appSettings.showSourceList
-      ? sourceListWidth + sourceListDividerWidth
-      : 0;
     const availableMaximum =
-      window.innerWidth - sourceWidth - timelineListMinWidth - timelineDiffDividerWidth;
+      window.innerWidth - navigationTreeWidth - timelineListMinWidth - timelineDiffDividerWidth;
     const maximum = Math.max(
       timelineDiffMinWidth,
       Math.min(timelineDiffMaxWidth, availableMaximum),
@@ -2836,19 +2982,13 @@
     return Math.min(Math.max(width, timelineDiffMinWidth), maximum);
   }
 
-  function syncInspectorWidthToWindow(showSourceList = appSettings.showSourceList) {
-    inspectorMaximumWidth = calculateInspectorMaxWidth(showSourceList);
+  function syncInspectorWidthToWindow() {
+    inspectorMaximumWidth = calculateInspectorMaxWidth();
     inspectorWidth = constrainInspectorWidth(inspectorWidth);
   }
 
-  function syncLayoutWidthsToWindow(
-    showSourceList = appSettings.showSourceList,
-    showInspector = appSettings.showInspector,
-    activeView: AppView = view.id,
-  ) {
-    sourceListMaximumWidth = calculateSourceListMaxWidth(showInspector, activeView);
-    sourceListWidth = constrainSourceListWidth(sourceListWidth);
-    syncInspectorWidthToWindow(showSourceList);
+  function syncLayoutWidthsToWindow() {
+    syncInspectorWidthToWindow();
     timelineDiffWidth = constrainTimelineDiffWidth(timelineDiffWidth);
   }
 
@@ -2856,9 +2996,6 @@
     syncLayoutWidthsToWindow();
   }
 
-  function toggleSourceList() {
-    onAppSettingInput("showSourceList", !appSettings.showSourceList);
-  }
 
   function toggleInspector() {
     if (view.id !== "changes") {
@@ -2889,7 +3026,6 @@
   onDestroy(() => {
     revisionFileDiffGeneration += 1;
     finishBranchPoolDrag();
-    stopSourceListResize();
     stopInspectorResize();
     stopTimelineDiffResize();
     stopFileColumnResize();
@@ -2914,19 +3050,38 @@
   });
 
   $: files = workingCopyStatus?.files ?? [];
+  $: directoryParentPaths = new Set(directoryRows.map((row) => parentDirectoryPath(row.path)));
+  $: directoryChangeSummary = summarizeDirectoryChanges(files);
   $: filteredTreeNodes = filterTreeNodes(
     workspaceFileTree?.nodes ?? [],
     workingCopyTreeFilter,
     searchText,
     changelistFilter,
   );
-  $: treeRows = flattenTreeNodes(filteredTreeNodes, 0, collapsedTreePaths);
+  $: directoryRows = directoryRowsForNodes(filteredTreeNodes, collapsedTreePaths);
+  $: selectedDirectoryTreeNodes =
+    selectedDirectoryFileTreePath === selectedDirectoryPath && selectedDirectoryFileTree
+      ? filterTreeNodes(
+          selectedDirectoryFileTree.nodes,
+          workingCopyTreeFilter,
+          searchText,
+          changelistFilter,
+        )
+      : selectedDirectoryPath && directoryFilesLoading
+        ? []
+        : filteredTreeNodes;
+  $: treeRows = filesForDirectory(selectedDirectoryTreeNodes, selectedDirectoryPath);
   $: if (virtualizedFileTreeSource !== workspaceFileTree) {
     virtualizedFileTreeSource = workspaceFileTree;
     fileBrowserScrollTop = 0;
     if (fileBrowserElement) {
       fileBrowserElement.scrollTop = 0;
     }
+    folderBrowserScrollTop = 0;
+    if (folderBrowserElement) folderBrowserElement.scrollTop = 0;
+    selectedDirectoryFileTree = null;
+    selectedDirectoryFileTreePath = null;
+    if (selectedDirectoryPath) void loadSelectedDirectoryFiles(selectedDirectoryPath);
   }
   $: if (virtualizedWorkspaceBlameSource !== svnBlame) {
     virtualizedWorkspaceBlameSource = svnBlame;
@@ -2936,6 +3091,13 @@
     virtualizedRepositoryBlameSource = repositoryFileBlame;
     repositoryBlameScrollTop = 0;
   }
+  $: folderTreeWindow = virtualWindow(
+    directoryRows,
+    folderBrowserScrollTop,
+    folderBrowserViewportHeight,
+    folderTreeRowHeight,
+    folderTreeHeaderHeight,
+  );
   $: treeRowWindow = virtualWindow(
     treeRows,
     fileBrowserScrollTop,
@@ -2963,7 +3125,22 @@
     workspaceLoading,
   );
   $: reconcileActiveRow(treeRows, selectedFilePath);
-  $: reportActiveWorkspacePath(activeRowPath);
+  $: reportActiveWorkspacePath((activeRowPath ?? selectedDirectoryPath) || null);
+  $: selectedDirectoryNode = treeNodeForPath(selectedDirectoryPath);
+  $: selectedDirectoryCommittablePaths = files
+    .filter(
+      (file) =>
+        directoryContainsPath(selectedDirectoryPath, file.path) && isCommittable(file),
+    )
+    .map((file) => file.path);
+  $: selectedDirectoryFullyStaged =
+    selectedDirectoryCommittablePaths.length > 0 &&
+    selectedDirectoryCommittablePaths.every((path) => isCommitSelected(path, commitFiles));
+  $: selectedDirectoryRemoteCount = files.filter(
+    (file) =>
+      directoryContainsPath(selectedDirectoryPath, file.path) &&
+      ["remote", "both"].includes(file.change_scope),
+  ).length;
   $: selectedRowNodes = [...selectedRowPaths]
     .map((path) => treeNodeForPath(path))
     .filter((node): node is WorkspaceFileNode => node !== null);
@@ -3052,10 +3229,10 @@
 <section
   class="versions-workbench"
   class:has-inline-update={inlineUpdateRoot !== null}
-  class:resizing-layout={resizingSourceList || resizingInspector || resizingTimelineDiff || resizingFileColumn !== null}
+  class:resizing-layout={resizingInspector || resizingTimelineDiff || resizingFileColumn !== null}
   data-theme={resolvedTheme}
   data-theme-mode={appSettings.themeMode}
-  style={`--source-list-width: ${sourceListWidth}px; --timeline-diff-width: ${timelineDiffWidth}px`}
+  style={`--timeline-diff-width: ${timelineDiffWidth}px`}
   aria-label="NovaSVN 工作台"
 >
   <header class="versions-titlebar" inert={applyPatchDialogOpen || conflictResolverOpen}>
@@ -3067,111 +3244,6 @@
         <strong>NovaSVN</strong>
         <span>Subversion Client</span>
       </span>
-    </div>
-    <div class="toolbar-surface" aria-label="工作副本工具栏">
-      <div class="toolbar-actions toolbar-leading">
-        <button
-          type="button"
-          class="icon-button toolbar-utility"
-          aria-label={appSettings.showSourceList ? "隐藏项目侧栏" : "显示项目侧栏"}
-          title={appSettings.showSourceList ? "隐藏项目侧栏" : "显示项目侧栏"}
-          on:click={toggleSourceList}
-        >
-          {#if appSettings.showSourceList}
-            <PanelLeftClose size={19} strokeWidth={1.8} aria-hidden="true" />
-          {:else}
-            <PanelLeftOpen size={19} strokeWidth={1.8} aria-hidden="true" />
-          {/if}
-          <span class="toolbar-label">侧栏</span>
-        </button>
-        <span class="toolbar-divider" aria-hidden="true"></span>
-        <button
-          type="button"
-          class="icon-button toolbar-command"
-          aria-label={statusLoading ? "正在刷新工作副本状态" : "刷新工作副本状态"}
-          aria-busy={statusLoading}
-          title={statusLoading ? "正在刷新工作副本状态" : "刷新工作副本状态"}
-          on:click={onRefreshStatus}
-          disabled={!workspace || statusLoading || toolbarLocked}
-        >
-          {#if statusLoading}
-            <LoaderCircle class="toolbar-spinner" size={19} strokeWidth={1.8} aria-hidden="true" />
-          {:else}
-            <RefreshCw size={19} strokeWidth={1.8} aria-hidden="true" />
-          {/if}
-          <span class="toolbar-label">刷新</span>
-        </button>
-        <button
-          type="button"
-          class="icon-button toolbar-command"
-          aria-label={updateRunning ? "正在更新工作副本" : "更新工作副本"}
-          aria-busy={updateRunning}
-          title={updateRunning ? "正在更新工作副本" : "更新工作副本"}
-          on:click={onUpdateWorkspace}
-          disabled={!workspace || statusLoading || toolbarLocked}
-        >
-          {#if updateRunning}
-            <LoaderCircle class="toolbar-spinner" size={19} strokeWidth={1.8} aria-hidden="true" />
-          {:else}
-            <Download size={19} strokeWidth={1.8} aria-hidden="true" />
-          {/if}
-          <span class="toolbar-label">更新</span>
-        </button>
-        <button
-          type="button"
-          class="icon-button toolbar-command"
-          aria-label={applyPatchRunning ? "正在应用 Patch" : "应用 Patch"}
-          aria-busy={applyPatchRunning}
-          title={applyPatchRunning ? "正在应用 Patch" : "应用 Patch"}
-          on:click={onChooseApplyPatch}
-          disabled={!workspace || statusLoading || toolbarLocked}
-        >
-          {#if applyPatchRunning}
-            <LoaderCircle class="toolbar-spinner" size={19} strokeWidth={1.8} aria-hidden="true" />
-          {:else}
-            <FileUp size={19} strokeWidth={1.8} aria-hidden="true" />
-          {/if}
-          <span class="toolbar-label">Patch</span>
-        </button>
-        <button
-          type="button"
-          class="icon-button toolbar-command"
-          aria-label={cleanupRunning ? "正在清理工作副本" : "清理工作副本"}
-          aria-busy={cleanupRunning}
-          title={cleanupRunning ? "正在清理工作副本" : "清理工作副本"}
-          on:click={onCleanupWorkspace}
-          disabled={!workspace || statusLoading || toolbarLocked}
-        >
-          {#if cleanupRunning}
-            <LoaderCircle class="toolbar-spinner" size={19} strokeWidth={1.8} aria-hidden="true" />
-          {:else}
-            <Wrench size={19} strokeWidth={1.8} aria-hidden="true" />
-          {/if}
-          <span class="toolbar-label">清理</span>
-        </button>
-      </div>
-
-      <div class="toolbar-actions toolbar-trailing">
-        <button
-          type="button"
-          class="icon-button toolbar-utility"
-          aria-label={appSettings.showInspector ? "隐藏检查器" : "显示检查器"}
-          title={view.id === "changes"
-            ? appSettings.showInspector
-              ? "隐藏检查器"
-              : "显示检查器"
-            : "检查器仅用于工作副本视图"}
-          on:click={toggleInspector}
-          disabled={view.id !== "changes"}
-        >
-          {#if appSettings.showInspector}
-            <PanelRightClose size={19} strokeWidth={1.8} aria-hidden="true" />
-          {:else}
-            <PanelRightOpen size={19} strokeWidth={1.8} aria-hidden="true" />
-          {/if}
-          <span class="toolbar-label">检查器</span>
-        </button>
-      </div>
     </div>
   </header>
 
@@ -3241,197 +3313,211 @@
     </button>
   </div>
 
+  <nav class="project-tabs" aria-label="项目标签" inert={applyPatchDialogOpen || conflictResolverOpen}>
+    {#if !workspace || !currentWorkspaceListed}
+      <button
+        type="button"
+        class="project-tab"
+        class:active={workspace !== null}
+        title={workspace?.local_path ?? "打开工作副本"}
+        disabled={workspaceLoading || branchPoolLoading}
+        on:click={() => (workspace ? onSelectView("changes") : onChooseWorkspace())}
+      >
+        <FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />
+        <span>{workspace ? basename(workspace.local_path) : "打开工作副本"}</span>
+        <em>{workingCopyStatus?.total ?? 0}</em>
+      </button>
+    {/if}
+    {#each branchPool.entries as entry (entry.id)}
+      <div
+        role="group"
+        aria-label={`项目 ${workspaceEntryName(entry)}`}
+        class="project-tab-shell"
+        class:active={sameWorkspacePath(entry.local_path, workspace?.local_path ?? "")}
+        class:editing={editingBranchPoolEntryId === entry.id}
+        class:dragging={draggedBranchPoolEntryId === entry.id}
+        class:drop-before={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "before"}
+        class:drop-after={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "after"}
+        data-project-entry-id={entry.id}
+        on:contextmenu={(event) => openProjectContextMenu(event, entry)}
+      >
+        <button
+          type="button"
+          class="project-tab-drag"
+          aria-label={`拖动排序 ${workspaceEntryName(entry)}`}
+          title="拖动调整项目顺序"
+          disabled={branchPoolLoading}
+          on:pointerdown={(event) => startBranchPoolPointerDrag(event, entry.id)}
+        >
+          <GripVertical size={13} strokeWidth={2} aria-hidden="true" />
+        </button>
+        {#if editingBranchPoolEntryId === entry.id}
+          <input
+            use:focusBranchPoolNameInput
+            class="project-tab-name-input"
+            bind:value={branchPoolDisplayNameDraft}
+            aria-label={`项目备注名 ${workspaceEntryName(entry)}`}
+            maxlength="80"
+            placeholder={basename(entry.local_path) || branchName(entry)}
+            on:blur={() => saveBranchPoolEntryName(entry)}
+            on:keydown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                saveBranchPoolEntryName(entry);
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                cancelBranchPoolEntryEdit();
+              }
+            }}
+          />
+        {:else}
+          <button
+            type="button"
+            class="project-tab"
+            class:active={sameWorkspacePath(entry.local_path, workspace?.local_path ?? "")}
+            title={entry.local_path}
+            disabled={workspaceLoading || branchPoolLoading}
+            on:keydown={(event) => handleBranchPoolDragKeydown(event, entry.id)}
+            on:click={() => openWorkspaceEntryFromClick(entry)}
+          >
+            <FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />
+            <span>{workspaceEntryName(entry)}</span>
+            <em>{sameWorkspacePath(entry.local_path, workspace?.local_path ?? "")
+                ? workingCopyStatus?.total ?? entry.local_changes
+                : entry.local_changes}</em>
+          </button>
+        {/if}
+      </div>
+    {/each}
+    <button
+      type="button"
+      class="project-tab-add"
+      aria-label="添加工作副本"
+      title="添加工作副本"
+      disabled={workspaceLoading || branchPoolLoading}
+      on:click={onAddWorkspace}
+    >
+      <Plus size={15} strokeWidth={2} aria-hidden="true" />
+    </button>
+    {#if branchPoolError}
+      <span class="project-tabs-error" role="alert" title={branchPoolError.detail ?? branchPoolError.message}>
+        {branchPoolError.message}
+      </span>
+    {/if}
+  </nav>
+
   <div
     class="versions-layout"
-    class:source-list-hidden={!appSettings.showSourceList}
+    class:workspace-navigation-layout={view.id === "changes" || view.id === "history"}
+    class:auxiliary-layout={view.id !== "changes" && view.id !== "history"}
     inert={applyPatchDialogOpen || conflictResolverOpen}
   >
-    {#if appSettings.showSourceList}
-      <aside class="source-list" aria-label="项目列表">
-      <section>
-        <div class="source-section-heading">
-          <h2>项目</h2>
-          <button
-            type="button"
-            class="source-add-button"
-            aria-label="添加工作副本"
-            title="添加工作副本"
-            disabled={workspaceLoading || branchPoolLoading}
-            on:click={onAddWorkspace}
-          >
-            <Plus size={15} strokeWidth={2} aria-hidden="true" />
-          </button>
-        </div>
-        {#if branchPoolError}
-          <p class="source-project-error" role="alert" title={branchPoolError.detail ?? branchPoolError.message}>
-            {branchPoolError.message}
-          </p>
-        {/if}
-        {#if !workspace || !currentWorkspaceListed}
-          <button
-            type="button"
-            class="source-item workspace-source-item"
-            class:active={workspace !== null}
-            disabled={workspaceLoading || branchPoolLoading}
-            on:click={() => onSelectView("changes")}
-          >
-            <span class="source-icon" aria-hidden="true">
-              <FolderOpen size={16} strokeWidth={1.8} />
-            </span>
-            <span>
-              <strong>{workspace ? basename(workspace.local_path) : "打开工作副本"}</strong>
-              <small>{workspace?.local_path ?? "选择或输入本地项目目录"}</small>
-            </span>
-            <em>{workingCopyStatus?.total ?? 0}</em>
-          </button>
-        {/if}
-        {#each branchPool.entries as entry (entry.id)}
-          <div
-            class="project-source-row"
-            role="group"
-            aria-label={`项目 ${workspaceEntryName(entry)}`}
-            class:editing={editingBranchPoolEntryId === entry.id}
-            class:dragging={draggedBranchPoolEntryId === entry.id}
-            class:drop-before={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "before"}
-            class:drop-after={branchPoolDropTarget?.id === entry.id && branchPoolDropTarget.position === "after"}
-            data-project-entry-id={entry.id}
-            on:contextmenu={(event) => openProjectContextMenu(event, entry)}
-          >
-            {#if editingBranchPoolEntryId === entry.id}
+    {#if view.id === "changes" || view.id === "history"}
+            <aside class="folder-browser" aria-label="工作副本文件夹树">
+              <header class="folder-browser-header">
+                <strong>文件夹</strong>
+                <span>{directoryRows.length}</span>
+              </header>
               <div
-                class="source-item workspace-source-item project-name-editor"
-                class:active={sameWorkspacePath(entry.local_path, workspace?.local_path ?? "")}
+                bind:this={folderBrowserElement}
+                class="folder-tree"
+                role="tree"
+                aria-label="文件夹层级"
+                data-rowcount={directoryRows.length + 1}
+                on:scroll={handleFolderBrowserScroll}
               >
-                <span class="source-icon" aria-hidden="true">
-                  <FolderOpen size={16} strokeWidth={1.8} />
-                </span>
-                <span>
-                  <input
-                    use:focusBranchPoolNameInput
-                    bind:value={branchPoolDisplayNameDraft}
-                    aria-label={`项目备注名 ${workspaceEntryName(entry)}`}
-                    maxlength="80"
-                    placeholder={basename(entry.local_path) || branchName(entry)}
-                    on:blur={() => saveBranchPoolEntryName(entry)}
-                    on:keydown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        saveBranchPoolEntryName(entry);
-                      } else if (event.key === "Escape") {
-                        event.preventDefault();
-                        cancelBranchPoolEntryEdit();
-                      }
-                    }}
-                  />
-                  <small>{entry.local_path}</small>
-                </span>
-                <em>{entry.local_changes}</em>
+                <div
+                  class="folder-tree-row"
+                  class:selected={selectedDirectoryPath === ""}
+                  role="treeitem"
+                  tabindex="-1"
+                  aria-level="1"
+                  aria-selected={selectedDirectoryPath === ""}
+                >
+                  <span class="folder-tree-spacer" aria-hidden="true"></span>
+                  <button
+                    type="button"
+                    class="folder-tree-select"
+                    aria-label="选择工作副本根目录"
+                    title="工作副本根目录"
+                    on:click={() => selectWorkspaceDirectory("")}
+                  >
+                    <FolderOpen size={15} strokeWidth={1.8} aria-hidden="true" />
+                    <span>工作副本根目录</span>
+                  </button>
+                </div>
+                {#if folderTreeWindow.beforeHeight > 0}
+                  <div
+                    class="virtual-list-spacer folder-tree-virtual-spacer"
+                    style={`height: ${folderTreeWindow.beforeHeight}px`}
+                    aria-hidden="true"
+                  ></div>
+                {/if}
+                {#each folderTreeWindow.items as row (row.path)}
+                  <div
+                    class="folder-tree-row"
+                    class:selected={selectedDirectoryPath === row.path}
+                    role="treeitem"
+                    tabindex="-1"
+                    aria-level={row.depth + 2}
+                    aria-selected={selectedDirectoryPath === row.path}
+                    aria-expanded={directoryParentPaths.has(row.path)
+                      ? !collapsedTreePaths.has(row.path)
+                      : undefined}
+                    style={`--folder-depth: ${row.depth}`}
+                    on:contextmenu={(event) =>
+                      row.node && openRowContextMenu(event, { ...row.node, depth: row.depth })}
+                  >
+                    {#if directoryParentPaths.has(row.path)}
+                      <button
+                        type="button"
+                        class="folder-tree-toggle"
+                        aria-label={`${collapsedTreePaths.has(row.path) ? "展开" : "折叠"}文件夹 ${row.path}`}
+                        title={`${collapsedTreePaths.has(row.path) ? "展开" : "折叠"} ${row.name}`}
+                        on:click={() => toggleDirectoryPath(row.path)}
+                      >
+                        <span
+                          class="tree-affordance visible"
+                          class:collapsed={collapsedTreePaths.has(row.path)}
+                          aria-hidden="true"
+                        ></span>
+                      </button>
+                    {:else}
+                      <span class="folder-tree-spacer" aria-hidden="true"></span>
+                    {/if}
+                    <button
+                      type="button"
+                      class="folder-tree-select"
+                      aria-label={`选择文件夹 ${row.path}`}
+                      title={row.path}
+                      on:click={() => selectWorkspaceDirectory(row.path)}
+                    >
+                      <span class="tree-icon folder-icon" aria-hidden="true"></span>
+                      <span>{row.name}</span>
+                      {#if
+                        (directoryChangeSummary.get(row.path)?.local ?? 0) > 0 ||
+                        row.node?.change_scope === "local" ||
+                        row.node?.change_scope === "both"}
+                        <i class="folder-change-marker local" title="包含本地改动"></i>
+                      {/if}
+                      {#if
+                        (directoryChangeSummary.get(row.path)?.remote ?? 0) > 0 ||
+                        row.node?.change_scope === "remote" ||
+                        row.node?.change_scope === "both"}
+                        <i class="folder-change-marker remote" title="包含远端更新"></i>
+                      {/if}
+                    </button>
+                  </div>
+                {/each}
+                {#if folderTreeWindow.afterHeight > 0}
+                  <div
+                    class="virtual-list-spacer folder-tree-virtual-spacer"
+                    style={`height: ${folderTreeWindow.afterHeight}px`}
+                    aria-hidden="true"
+                  ></div>
+                {/if}
               </div>
-            {:else}
-              <button
-                type="button"
-                class="project-drag-handle"
-                aria-label={`拖动排序 ${workspaceEntryName(entry)}`}
-                title="拖动调整项目顺序"
-                disabled={branchPoolLoading}
-                on:pointerdown={(event) => startBranchPoolPointerDrag(event, entry.id)}
-              >
-                <GripVertical size={15} strokeWidth={2} aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                class="source-item workspace-source-item project-source-button"
-                class:active={sameWorkspacePath(entry.local_path, workspace?.local_path ?? "")}
-                disabled={workspaceLoading || branchPoolLoading}
-                on:keydown={(event) => handleBranchPoolDragKeydown(event, entry.id)}
-                on:click={() => openWorkspaceEntryFromClick(entry)}
-              >
-                <span class="source-icon" aria-hidden="true">
-                  <FolderOpen size={16} strokeWidth={1.8} />
-                </span>
-                <span>
-                  <strong>{workspaceEntryName(entry)}</strong>
-                  <small>{entry.local_path}</small>
-                </span>
-                <em>{sameWorkspacePath(entry.local_path, workspace?.local_path ?? "")
-                    ? workingCopyStatus?.total ?? entry.local_changes
-                    : entry.local_changes}</em>
-              </button>
-            {/if}
-          </div>
-        {/each}
-      </section>
-
-      <section class="source-navigation-section">
-        <h2>浏览</h2>
-        <nav class="mode-switcher" aria-label="主视图">
-          <button
-            type="button"
-            class:active={view.id === "changes"}
-            on:click={() => onSelectView("changes")}
-          >
-            <ListChecks size={16} strokeWidth={1.8} aria-hidden="true" />
-            <span>工作副本</span>
-          </button>
-          <button
-            type="button"
-            class:active={view.id === "history"}
-            on:click={() => onSelectView("history")}
-          >
-            <History size={16} strokeWidth={1.8} aria-hidden="true" />
-            <span>时间线</span>
-          </button>
-          <button
-            type="button"
-            class:active={view.id === "repository"}
-            on:click={() => onSelectView("repository")}
-          >
-            <FolderOpen size={16} strokeWidth={1.8} aria-hidden="true" />
-            <span>仓库</span>
-          </button>
-          <button
-            type="button"
-            class:active={view.id === "branches" || view.id === "settings"}
-            on:click={() => onSelectView("branches")}
-          >
-            <GitBranch size={16} strokeWidth={1.8} aria-hidden="true" />
-            <span>更多</span>
-          </button>
-        </nav>
-      </section>
-
-      </aside>
-      <div
-        role="slider"
-        tabindex="0"
-        class="source-list-resizer"
-        aria-label="调整项目侧栏宽度"
-        aria-orientation="horizontal"
-        aria-valuemin={sourceListMinWidth}
-        aria-valuemax={sourceListMaximumWidth}
-        aria-valuenow={sourceListWidth}
-        on:mousedown={startSourceListResize}
-        on:keydown={(event) => {
-          if (event.key === "ArrowLeft") {
-            adjustSourceListWidth(-16);
-            event.preventDefault();
-          }
-          if (event.key === "ArrowRight") {
-            adjustSourceListWidth(16);
-            event.preventDefault();
-          }
-          if (event.key === "Home") {
-            sourceListWidth = sourceListMinWidth;
-            syncInspectorWidthToWindow();
-            event.preventDefault();
-          }
-          if (event.key === "End") {
-            sourceListWidth = sourceListMaximumWidth;
-            syncInspectorWidthToWindow();
-            event.preventDefault();
-          }
-        }}
-      ></div>
+            </aside>
     {/if}
 
     <main
@@ -3439,6 +3525,128 @@
       class:timeline-merge-active={view.id === "history" && selectedTimelineMergeRevisions.length > 0}
       aria-label={view.title}
     >
+      {#if view.id === "changes" || view.id === "history"}
+        <section class="content-tab-bar" aria-label="工作区内容标签">
+          <div class="content-tabs" role="tablist" aria-label="工作副本内容">
+            <button
+              type="button"
+              role="tab"
+              class:active={view.id === "changes"}
+              aria-selected={view.id === "changes"}
+              title="工作副本"
+              on:click={() => onSelectView("changes")}
+            >
+              <ListChecks size={15} strokeWidth={1.8} aria-hidden="true" />
+              工作副本
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class:active={view.id === "history"}
+              aria-selected={view.id === "history"}
+              title="时间线"
+              on:click={() => onSelectView("history")}
+            >
+              <History size={15} strokeWidth={1.8} aria-hidden="true" />
+              时间线
+            </button>
+          </div>
+          <div class="content-tab-actions" aria-label={view.id === "changes" ? "工作副本操作" : "时间线操作"}>
+            {#if view.id === "changes"}
+              <button
+                type="button"
+                aria-label={statusLoading ? "正在刷新工作副本状态" : "刷新工作副本状态"}
+                title={statusLoading ? "正在刷新工作副本状态" : "刷新工作副本状态"}
+                disabled={!workspace || statusLoading || toolbarLocked}
+                on:click={onRefreshStatus}
+              >
+                {#if statusLoading}
+                  <LoaderCircle class="toolbar-spinner" size={15} aria-hidden="true" />
+                {:else}
+                  <RefreshCw size={15} aria-hidden="true" />
+                {/if}
+                刷新
+              </button>
+              <button
+                type="button"
+                aria-busy={updateRunning}
+                aria-label={updateRunning ? "正在更新工作副本" : "更新工作副本"}
+                title={updateRunning ? "正在更新工作副本" : "更新工作副本"}
+                disabled={!workspace || statusLoading || toolbarLocked}
+                on:click={onUpdateWorkspace}
+              >
+                {#if updateRunning}
+                  <LoaderCircle class="toolbar-spinner" size={15} aria-hidden="true" />
+                {:else}
+                  <Download size={15} aria-hidden="true" />
+                {/if}
+                更新
+              </button>
+              <button
+                type="button"
+                class="primary"
+                aria-label="打开提交窗口"
+                title="选择提交内容并填写提交信息"
+                disabled={commitFormOpenDisabled}
+                on:click={openCommitForm}
+              >
+                <GitCommitHorizontal size={15} aria-hidden="true" />
+                提交 {commitFileCount > 0 ? commitFileCount : ""}
+              </button>
+              <button
+                type="button"
+                aria-label={applyPatchRunning ? "正在应用 Patch" : "应用 Patch"}
+                title={applyPatchRunning ? "正在应用 Patch" : "应用 Patch"}
+                disabled={!workspace || statusLoading || toolbarLocked}
+                on:click={onChooseApplyPatch}
+                aria-busy={applyPatchRunning}
+              >
+                <FileUp size={15} aria-hidden="true" />
+                Patch
+              </button>
+              <button
+                type="button"
+                aria-busy={cleanupRunning}
+                aria-label={cleanupRunning ? "正在清理工作副本" : "清理工作副本"}
+                title={cleanupRunning ? "正在清理工作副本" : "清理工作副本"}
+                disabled={!workspace || statusLoading || toolbarLocked}
+                on:click={onCleanupWorkspace}
+              >
+                <Wrench size={15} aria-hidden="true" />
+                清理
+              </button>
+              <button
+                type="button"
+                class="icon-button"
+                aria-label={appSettings.showInspector ? "隐藏检查器" : "显示检查器"}
+                title={appSettings.showInspector ? "隐藏检查器" : "显示检查器"}
+                on:click={toggleInspector}
+              >
+                {#if appSettings.showInspector}
+                  <PanelRightClose size={16} aria-hidden="true" />
+                {:else}
+                  <PanelRightOpen size={16} aria-hidden="true" />
+                {/if}
+              </button>
+            {:else}
+              <button
+                type="button"
+                aria-label={svnLogLoading ? "正在刷新时间线" : "刷新时间线"}
+                title={svnLogLoading ? "正在刷新时间线" : "刷新时间线"}
+                disabled={!workspace || svnLogLoading}
+                on:click={onRefreshSvnLog}
+              >
+                {#if svnLogLoading}
+                  <LoaderCircle class="toolbar-spinner" size={15} aria-hidden="true" />
+                {:else}
+                  <RefreshCw size={15} aria-hidden="true" />
+                {/if}
+                刷新
+              </button>
+            {/if}
+          </div>
+        </section>
+      {/if}
       <ErrorNotice error={workspaceError} />
       <ErrorNotice error={statusError} />
       <ErrorNotice error={commandError} />
@@ -5035,18 +5243,6 @@
             <label class="checkbox-row">
               <input
                 type="checkbox"
-                checked={appSettings.showSourceList}
-                on:change={(event) =>
-                  onAppSettingInput(
-                    "showSourceList",
-                    (event.currentTarget as HTMLInputElement).checked,
-                  )}
-              />
-              <span>显示项目侧栏</span>
-            </label>
-            <label class="checkbox-row">
-              <input
-                type="checkbox"
                 checked={appSettings.showInspector}
                 on:change={(event) =>
                   onAppSettingInput(
@@ -5305,16 +5501,6 @@
                 更多改动
               </button>
             {/if}
-            <button
-              type="button"
-              class="primary"
-              aria-label="打开提交窗口"
-              title="选择提交内容并填写提交信息"
-              on:click={openCommitForm}
-              disabled={commitFormOpenDisabled}
-            >
-              提交 {commitFileCount > 0 ? commitFileCount : ""}
-            </button>
           </div>
         </section>
 
@@ -5442,12 +5628,78 @@
           class:inspector-hidden={!appSettings.showInspector}
           style={`${fileTableColumnStyle}; --inspector-width: ${inspectorWidth}px`}
         >
+          <div class="workspace-file-explorer folder-detached">
+
+            <div class="file-list-pane">
+              <header class="selected-directory-toolbar" aria-label="当前文件夹操作">
+                <div>
+                  <strong>{selectedDirectoryPath ? basename(selectedDirectoryPath) : "工作副本根目录"}</strong>
+                  <span title={selectedDirectoryPath || workspace?.working_copy_root}>
+                    {selectedDirectoryPath || workspace?.working_copy_root || "未打开工作副本"}
+                  </span>
+                </div>
+                <p>
+                  {#if directoryFilesLoading}
+                    正在读取全部文件...
+                  {:else if directoryFilesError}
+                    <span class="inline-error">读取文件失败</span>
+                  {:else}
+                    {treeRows.length} 个文件
+                    <span>·</span>
+                    {selectedDirectoryCommittablePaths.length} 个可提交
+                    {#if selectedDirectoryRemoteCount > 0}
+                      <span>·</span>
+                      {selectedDirectoryRemoteCount} 个远端更新
+                    {/if}
+                    {#if selectedDirectoryFileTree?.truncated}
+                      <span>·</span>
+                      已显示 {selectedDirectoryFileTree.returned_files}/{selectedDirectoryFileTree.total_files}
+                    {/if}
+                  {/if}
+                </p>
+                <div class="selected-directory-actions">
+                  <button
+                    type="button"
+                    aria-label={`Update ${selectedDirectoryPath || "工作副本根目录"}`}
+                    title={selectedDirectoryPath ? `更新文件夹 ${selectedDirectoryPath}` : "更新整个工作副本"}
+                    disabled={!workspace || statusLoading || toolbarLocked}
+                    on:click={updateSelectedDirectory}
+                  >
+                    <RefreshCw size={14} aria-hidden="true" />
+                    Update
+                  </button>
+                  <button
+                    type="button"
+                    class:active={selectedDirectoryFullyStaged}
+                    aria-label={`${selectedDirectoryFullyStaged ? "移出" : "加入"} Commit 文件夹 ${selectedDirectoryPath || "工作副本根目录"}`}
+                    title={selectedDirectoryFullyStaged
+                      ? "从提交目标移除此文件夹中的改动"
+                      : "把此文件夹中的本地改动加入提交目标"}
+                    disabled={selectedDirectoryCommittablePaths.length === 0 || statusLoading || toolbarLocked}
+                    on:click={toggleSelectedDirectoryCommit}
+                  >
+                    <GitCommitHorizontal size={14} aria-hidden="true" />
+                    {selectedDirectoryFullyStaged ? "移出 Commit" : "Commit 文件夹"}
+                  </button>
+                  {#if selectedDirectoryNode && canShowPathContextMenu(selectedDirectoryNode)}
+                    <button
+                      type="button"
+                      class="icon-button"
+                      aria-label={`更多操作 目录 ${selectedDirectoryPath}`}
+                      title="更多文件夹操作"
+                      on:click={openSelectedDirectoryMenu}
+                    >
+                      <Ellipsis size={15} aria-hidden="true" />
+                    </button>
+                  {/if}
+                </div>
+              </header>
           <div
             bind:this={fileBrowserElement}
             class="file-browser"
             role="treegrid"
             tabindex="0"
-            aria-label="工作副本文件树"
+            aria-label="工作副本文件列表"
             aria-rowcount={treeRows.length + 1}
             aria-multiselectable="true"
             aria-activedescendant={activeRowPath && treeRowWindow.items.some((row) => row.path === activeRowPath)
@@ -5767,6 +6019,8 @@
                 <button type="button" class="primary" on:click={onChooseWorkspace}>选择目录</button>
               </article>
             {/if}
+          </div>
+            </div>
           </div>
 
           {#if appSettings.showInspector}

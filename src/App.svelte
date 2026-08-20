@@ -3043,6 +3043,7 @@
   workspaceError={$workspaceStore.error}
   workingCopyStatus={$workspaceStore.status}
   workspaceFileTree={$workspaceStore.fileTree}
+  svnExecutable={currentSvnExecutable()}
   searchText={$workspaceStore.searchText}
   selectedFilePath={$workspaceStore.selectedFilePath}
   selectedFile={selectedFile}

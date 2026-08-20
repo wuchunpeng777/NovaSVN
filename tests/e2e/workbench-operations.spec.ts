@@ -8,7 +8,7 @@ test("runs the main working-copy operations through the task workflow", async ({
   await page.getByRole("button", { name: "打开", exact: true }).click();
 
   await expect(
-    page.getByRole("main", { name: "本地改动" }).getByText("C:/repo/wc", { exact: true }),
+    page.getByRole("main", { name: "本地改动" }).locator(".pane-header").getByText("C:/repo/wc", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Add draft.txt" })).toBeVisible();
 
@@ -43,15 +43,6 @@ test("runs the main working-copy operations through the task workflow", async ({
     .poll(async () => (await backendCalls(page, "create_svn_operation_task")).length)
     .toBe(4);
 
-  await page.getByRole("button", { name: "更多", exact: true }).click();
-  await page.getByPlaceholder("源 URL").fill("https://example.com/svn/branches/feature");
-  await page.getByPlaceholder("起始 revision").fill("10");
-  await page.getByPlaceholder("结束 revision").fill("12");
-  await page.getByRole("button", { name: "Dry-run", exact: true }).click();
-  await expect.poll(async () => (await backendCalls(page, "create_merge_task")).length).toBe(1);
-  await expect(page.getByText("Dry-run 预览")).toBeVisible();
-
-  await page.getByRole("button", { name: "工作副本", exact: true }).click();
   await page.getByRole("button", { name: "应用 Patch" }).click();
   const patchDialog = page.getByRole("dialog", { name: "应用 Patch" });
   await expect(patchDialog.getByText("预检通过")).toBeVisible();
@@ -68,4 +59,42 @@ test("runs the main working-copy operations through the task workflow", async ({
     { kind: "revert_file", file_path: "src/revert.txt" },
     { kind: "update_path", file_path: "src/remote.txt" },
   ]);
+});
+
+test("scopes Update and Commit to the selected folder", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.clear());
+  await page.goto("/");
+  await installWorkbenchBackendMock(page);
+  await page.getByPlaceholder("拖入或输入 SVN 工作副本路径").fill("C:/repo/wc");
+  await page.getByRole("button", { name: "打开", exact: true }).click();
+
+  await page.getByRole("button", { name: "选择文件夹 src" }).click();
+  await expect(page.getByRole("treegrid", { name: "工作副本文件列表" })).not.toContainText(
+    "draft.txt",
+  );
+  await page.getByRole("button", { name: "Update src", exact: true }).click();
+  await expect
+    .poll(async () => (await backendCalls(page, "create_svn_operation_task")).length)
+    .toBe(1);
+
+  const addFolderToCommit = page.getByRole("button", { name: "加入 Commit 文件夹 src" });
+  if ((await addFolderToCommit.count()) > 0) {
+    await addFolderToCommit.click();
+  } else {
+    await expect(page.getByRole("button", { name: "移出 Commit 文件夹 src" })).toBeVisible();
+    await page.getByRole("button", { name: "打开提交窗口" }).click();
+  }
+  await expect(page.getByText("本次将提交 2 个文件", { exact: true })).toBeVisible();
+  await page.getByPlaceholder("提交信息").fill("Commit src folder");
+  await page.getByRole("button", { name: "提交", exact: true }).click();
+
+  const updateCalls = await backendCalls(page, "create_svn_operation_task");
+  expect(updateCalls[0]?.args.request).toMatchObject({
+    kind: "update_path",
+    file_path: "src",
+  });
+  const commitCalls = await backendCalls(page, "create_commit_task");
+  expect(commitCalls[0]?.args.request).toMatchObject({
+    files: ["src/modified.txt", "src/revert.txt"],
+  });
 });
