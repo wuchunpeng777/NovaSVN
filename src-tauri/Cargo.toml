@@ -1,6 +1,6 @@
 [package]
 name = "novasvn"
-version = "0.4.3"
+version = "0.4.4"
 description = "Open-source desktop Subversion client for Windows and macOS"
 authors = ["NovaSVN Contributors"]
 license = "MIT"
@@ -29,6 +29,7 @@ sha2 = "0.10.9"
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 encoding_rs = "0.8"
+keyring = { version = "4.1.6", default-features = false, features = ["v1"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

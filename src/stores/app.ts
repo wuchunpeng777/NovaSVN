@@ -1115,6 +1115,7 @@ function createSvnStore() {
   function setExecutableInput(value: string) {
     update((state) => ({
       ...state,
+      detection: value === state.executableInput ? state.detection : null,
       executableInput: value,
     }));
   }
@@ -2147,7 +2148,7 @@ function createWorkspaceStore() {
   let repositoryFileBlameGeneration = 0;
   let repositoryFilePropertiesGeneration = 0;
 
-  async function loadRecent() {
+  async function loadRecent(svnExecutable?: string | null) {
     fileSelectionGeneration += 1;
     update((state) => ({ ...state, loading: true, error: null }));
 
@@ -2266,7 +2267,7 @@ function createWorkspaceStore() {
         error: null,
       }));
       if (root) {
-        void refreshStatus(null, root, false);
+        void refreshStatus(svnExecutable, root, false);
       }
     } catch (error) {
       update((state) => ({

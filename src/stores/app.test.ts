@@ -494,6 +494,8 @@ describe("svnStore", () => {
     });
     expect(detectSvnMock).toHaveBeenNthCalledWith(2);
     expect(detection?.resolved_path).toBe("C:\\Tools\\svn.exe");
+    svnStore.setExecutableInput("C:\\Tools\\other-svn.exe");
+    expect(get(svnStore).detection).toBeNull();
   });
 });
 
@@ -2424,7 +2426,7 @@ describe("workspaceStore SVN operation state", () => {
     scanWorkspaceStatusMock.mockReturnValueOnce(pendingStatus.promise);
     listWorkspaceFilesMock.mockReturnValueOnce(pendingTree.promise);
 
-    await workspaceStore.loadRecent();
+    await workspaceStore.loadRecent("/opt/homebrew/bin/svn");
 
     expect(get(workspaceStore)).toMatchObject({
       current: workspace,
@@ -2433,7 +2435,7 @@ describe("workspaceStore SVN operation state", () => {
     });
     expect(scanWorkspaceStatusMock).toHaveBeenCalledWith({
       working_copy_root: "C:/repo/wc",
-      svn_executable: undefined,
+      svn_executable: "/opt/homebrew/bin/svn",
       offset: 0,
       limit: 500,
       check_remote_updates: false,

@@ -40,7 +40,7 @@ NovaSVN takes a different approach:
 | **Cross-platform by design** | Same product direction on **Windows and macOS** — keep one client and one workflow across the team |
 | **Review-oriented UI** | Monaco-powered text Diff, encoding-aware comparison, image Diff, Blame, revision log with WC highlight, one-click copy of a revision number |
 | **Preview before risk** | Merge dry-run and a dedicated merge-preview window so you can inspect the plan before writing the working copy |
-| **Real `svn`, not a clone** | Official Subversion CLI for auth, servers, and edge cases you already rely on — NovaSVN orchestrates, it does not replace the toolchain |
+| **Real `svn`, not a clone** | The official Subversion CLI still handles repository communication and edge cases; remembered passwords are stored by NovaSVN in macOS Keychain / Windows Credential Manager |
 | **Lightweight & open** | Tauri + Rust + Svelte, MIT licensed — inspect, fork, and contribute |
 
 **In short:** keep the reliability of the official `svn` tool, add a modern multi-surface desktop app, and avoid treating every task as “open a dialog, close a dialog.” On Mac in particular, it aims to be the desktop SVN client that was simply missing.

@@ -5,6 +5,7 @@ use std::{
     sync::{OnceLock, RwLock},
 };
 
+use keyring::v1::{Entry as KeyringEntry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
 
 use crate::{error::NovaError, executable::normalize_executable_setting};
@@ -79,6 +80,86 @@ struct SvnAuthentication {
     remember_password: bool,
 }
 
+const SVN_CREDENTIAL_SERVICE: &str = "com.novasvn.client.svn";
+const SVN_CREDENTIAL_ACCOUNT: &str = "password-authentication";
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+struct SavedSvnCredential {
+    username: String,
+    password: String,
+}
+
+trait SvnCredentialStore {
+    fn load(&self) -> Result<Option<SavedSvnCredential>, NovaError>;
+    fn save(&self, credential: &SavedSvnCredential) -> Result<(), NovaError>;
+    fn delete(&self) -> Result<(), NovaError>;
+}
+
+struct SystemSvnCredentialStore;
+
+impl SystemSvnCredentialStore {
+    fn entry(&self) -> Result<KeyringEntry, NovaError> {
+        KeyringEntry::new(SVN_CREDENTIAL_SERVICE, SVN_CREDENTIAL_ACCOUNT).map_err(|error| {
+            credential_store_error("SVN_AUTH_STORE_UNAVAILABLE", "系统凭据库不可用", error)
+        })
+    }
+}
+
+impl SvnCredentialStore for SystemSvnCredentialStore {
+    fn load(&self) -> Result<Option<SavedSvnCredential>, NovaError> {
+        let encoded = match self.entry()?.get_password() {
+            Ok(value) => value,
+            Err(KeyringError::NoEntry) => return Ok(None),
+            Err(error) => {
+                return Err(credential_store_error(
+                    "SVN_AUTH_STORE_READ_FAILED",
+                    "无法读取系统保存的 SVN 密码",
+                    error,
+                ));
+            }
+        };
+        serde_json::from_str(&encoded).map(Some).map_err(|error| {
+            credential_store_error("SVN_AUTH_STORE_INVALID", "系统保存的 SVN 凭据无效", error)
+        })
+    }
+
+    fn save(&self, credential: &SavedSvnCredential) -> Result<(), NovaError> {
+        let encoded = serde_json::to_string(credential).map_err(|error| {
+            credential_store_error(
+                "SVN_AUTH_STORE_ENCODE_FAILED",
+                "无法准备要保存的 SVN 凭据",
+                error,
+            )
+        })?;
+        self.entry()?.set_password(&encoded).map_err(|error| {
+            credential_store_error(
+                "SVN_AUTH_STORE_WRITE_FAILED",
+                "无法将 SVN 密码保存到系统凭据库",
+                error,
+            )
+        })
+    }
+
+    fn delete(&self) -> Result<(), NovaError> {
+        match self.entry()?.delete_credential() {
+            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
+            Err(error) => Err(credential_store_error(
+                "SVN_AUTH_STORE_DELETE_FAILED",
+                "无法删除系统保存的 SVN 密码",
+                error,
+            )),
+        }
+    }
+}
+
+fn credential_store_error(
+    code: &'static str,
+    message: &'static str,
+    error: impl std::fmt::Display,
+) -> NovaError {
+    NovaError::command(code, message, Some(error.to_string()), true)
+}
+
 static SVN_AUTHENTICATION: OnceLock<RwLock<SvnAuthentication>> = OnceLock::new();
 static SVN_CERTIFICATE_TRUST: OnceLock<RwLock<Vec<SvnCertificateFailure>>> = OnceLock::new();
 
@@ -104,7 +185,7 @@ pub(crate) fn configure_hidden_console(command: &mut Command) {
 pub fn configure_authentication(
     request: ConfigureSvnAuthenticationRequest,
 ) -> Result<SvnAuthenticationStatus, NovaError> {
-    let authentication = normalize_authentication(request)?;
+    let authentication = prepare_authentication_with_store(request, &SystemSvnCredentialStore)?;
     let status = authentication_status(&authentication);
     let mut current = authentication_store()
         .write()
@@ -189,6 +270,63 @@ fn normalize_certificate_failures(
     .into_iter()
     .filter(|failure| requested.contains(failure))
     .collect()
+}
+
+fn prepare_authentication_with_store(
+    request: ConfigureSvnAuthenticationRequest,
+    credential_store: &impl SvnCredentialStore,
+) -> Result<SvnAuthentication, NovaError> {
+    if request.mode != SvnAuthenticationMode::Password {
+        return normalize_authentication(request);
+    }
+
+    let username = normalize_username(request.username)?.ok_or_else(|| {
+        NovaError::command("SVN_AUTH_USERNAME_REQUIRED", "用户名不能为空", None, true)
+    })?;
+    let supplied_password = normalize_password(request.password)?;
+    let password_was_supplied = supplied_password.is_some();
+    let password = match supplied_password {
+        Some(password) => password,
+        None if request.remember_password => credential_store
+            .load()?
+            .filter(|credential| credential.username == username)
+            .map(|credential| credential.password)
+            .ok_or_else(|| {
+                NovaError::command(
+                    "SVN_AUTH_PASSWORD_REQUIRED",
+                    "密码不能为空",
+                    Some("系统凭据库中没有当前用户保存的 SVN 密码。".to_string()),
+                    true,
+                )
+            })?,
+        None => {
+            return Err(NovaError::command(
+                "SVN_AUTH_PASSWORD_REQUIRED",
+                "密码不能为空",
+                None,
+                true,
+            ));
+        }
+    };
+
+    let credential = SavedSvnCredential {
+        username: username.clone(),
+        password: password.clone(),
+    };
+    if request.remember_password {
+        if password_was_supplied {
+            credential_store.save(&credential)?;
+        }
+    } else {
+        credential_store.delete()?;
+    }
+
+    Ok(SvnAuthentication {
+        mode: SvnAuthenticationMode::Password,
+        username: Some(username),
+        password: Some(password),
+        remember_password: request.remember_password,
+    })
 }
 
 fn normalize_authentication(
@@ -505,6 +643,37 @@ fn command_output_detail(executable: &str, output: &std::process::Output) -> Str
 mod tests {
     use super::*;
 
+    #[derive(Default)]
+    struct TestCredentialStore {
+        credential: std::sync::Mutex<Option<SavedSvnCredential>>,
+    }
+
+    impl SvnCredentialStore for TestCredentialStore {
+        fn load(&self) -> Result<Option<SavedSvnCredential>, NovaError> {
+            Ok(self
+                .credential
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone())
+        }
+
+        fn save(&self, credential: &SavedSvnCredential) -> Result<(), NovaError> {
+            *self
+                .credential
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(credential.clone());
+            Ok(())
+        }
+
+        fn delete(&self) -> Result<(), NovaError> {
+            self.credential
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take();
+            Ok(())
+        }
+    }
+
     #[test]
     fn adds_non_interactive_before_svn_subcommand() {
         let mut command = command_with_authentication("svn", &SvnAuthentication::default());
@@ -568,6 +737,73 @@ mod tests {
         assert!(status.password_configured);
         assert!(status.uses_system_credentials);
         assert!(status.remember_password);
+    }
+
+    #[test]
+    fn restores_remembered_password_for_later_svn_commands() {
+        let credential_store = TestCredentialStore::default();
+        prepare_authentication_with_store(
+            ConfigureSvnAuthenticationRequest {
+                mode: SvnAuthenticationMode::Password,
+                username: Some("alice".to_string()),
+                password: Some("saved-secret".to_string()),
+                remember_password: true,
+            },
+            &credential_store,
+        )
+        .unwrap();
+
+        let restored = prepare_authentication_with_store(
+            ConfigureSvnAuthenticationRequest {
+                mode: SvnAuthenticationMode::Password,
+                username: Some("alice".to_string()),
+                password: None,
+                remember_password: true,
+            },
+            &credential_store,
+        )
+        .unwrap();
+        let command = command_with_authentication("svn", &restored);
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(restored.username.as_deref(), Some("alice"));
+        assert!(restored.remember_password);
+        assert_eq!(
+            args,
+            [
+                "--non-interactive",
+                "--username",
+                "alice",
+                "--password",
+                "saved-secret",
+            ]
+        );
+    }
+
+    #[test]
+    fn removes_saved_password_when_remembering_is_disabled() {
+        let credential_store = TestCredentialStore {
+            credential: std::sync::Mutex::new(Some(SavedSvnCredential {
+                username: "alice".to_string(),
+                password: "old-secret".to_string(),
+            })),
+        };
+        let authentication = prepare_authentication_with_store(
+            ConfigureSvnAuthenticationRequest {
+                mode: SvnAuthenticationMode::Password,
+                username: Some("alice".to_string()),
+                password: Some("session-secret".to_string()),
+                remember_password: false,
+            },
+            &credential_store,
+        )
+        .unwrap();
+
+        assert!(!authentication.remember_password);
+        assert!(credential_store.load().unwrap().is_none());
     }
 
     #[test]

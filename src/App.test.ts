@@ -38,6 +38,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     createRevertRevisionTask: vi.fn(),
     createSvnBatchOperationTask: vi.fn(),
     createSvnOperationTask: vi.fn(),
+    detectSvn: vi.fn(),
     ignoreWorkspacePath: vi.fn(),
     getTask: vi.fn(),
     getWorkspacePathSizes: vi.fn(),
@@ -46,6 +47,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     getRepositoryFileBlame: vi.fn(),
     getRepositoryFileLog: vi.fn(),
     getRepositoryFileProperties: vi.fn(),
+    getStartupIntent: vi.fn(),
     getBranchPool: vi.fn(),
     renameBranchPoolEntry: vi.fn(),
     reorderBranchPoolEntries: vi.fn(),
@@ -84,6 +86,7 @@ import {
   createRevertRevisionTask,
   createSvnOperationTask,
   createSvnBatchOperationTask,
+  detectSvn,
   ignoreWorkspacePath,
   getTask,
   getWorkspacePathSizes,
@@ -92,6 +95,7 @@ import {
   getRepositoryFileBlame,
   getRepositoryFileLog,
   getRepositoryFileProperties,
+  getStartupIntent,
   getBranchPool,
   renameBranchPoolEntry,
   reorderBranchPoolEntries,
@@ -111,6 +115,7 @@ import {
   branchPoolStore,
   currentView,
   setCurrentView,
+  svnStore,
   taskStore,
   workspaceStore,
 } from "./stores/app";
@@ -144,6 +149,7 @@ const createRepositoryMkdirTaskMock = vi.mocked(createRepositoryMkdirTask);
 const createRepositoryMoveTaskMock = vi.mocked(createRepositoryMoveTask);
 const createRevertRevisionTaskMock = vi.mocked(createRevertRevisionTask);
 const createSvnBatchOperationTaskMock = vi.mocked(createSvnBatchOperationTask);
+const detectSvnMock = vi.mocked(detectSvn);
 const ignoreWorkspacePathMock = vi.mocked(ignoreWorkspacePath);
 const getTaskMock = vi.mocked(getTask);
 const getWorkspacePathSizesMock = vi.mocked(getWorkspacePathSizes);
@@ -152,6 +158,7 @@ const inspectUpdateTargetMock = vi.mocked(inspectUpdateTarget);
 const getRepositoryFileBlameMock = vi.mocked(getRepositoryFileBlame);
 const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const getRepositoryFilePropertiesMock = vi.mocked(getRepositoryFileProperties);
+const getStartupIntentMock = vi.mocked(getStartupIntent);
 const getBranchPoolMock = vi.mocked(getBranchPool);
 const renameBranchPoolEntryMock = vi.mocked(renameBranchPoolEntry);
 const reorderBranchPoolEntriesMock = vi.mocked(reorderBranchPoolEntries);
@@ -187,6 +194,7 @@ beforeEach(async () => {
   createRepositoryMoveTaskMock.mockReset();
   createRevertRevisionTaskMock.mockReset();
   createSvnBatchOperationTaskMock.mockReset();
+  detectSvnMock.mockReset();
   ignoreWorkspacePathMock.mockReset();
   getTaskMock.mockReset();
   getWorkspacePathSizesMock.mockReset();
@@ -195,6 +203,7 @@ beforeEach(async () => {
   getRepositoryFileBlameMock.mockReset();
   getRepositoryFileLogMock.mockReset();
   getRepositoryFilePropertiesMock.mockReset();
+  getStartupIntentMock.mockReset();
   getBranchPoolMock.mockReset();
   renameBranchPoolEntryMock.mockReset();
   reorderBranchPoolEntriesMock.mockReset();
@@ -236,6 +245,8 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  svnStore.setExecutableInput("");
 });
 
 describe("App SVN operation completion", () => {
@@ -287,6 +298,58 @@ describe("App SVN operation completion", () => {
     );
     await waitFor(() => expect(passwordInput).toHaveValue(""));
     expect(screen.getByText("密码仅用于当前会话")).toBeInTheDocument();
+  });
+
+  it("restores a system-saved password during Tauri startup", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    appSettingsStore.setField("svnAuthenticationMode", "password");
+    appSettingsStore.setField("svnUsername", "alice");
+    appSettingsStore.setField("svnRememberPassword", true);
+    appSettingsStore.setField("svnExecutable", "");
+    configureSvnAuthenticationMock.mockResolvedValue({
+      mode: "password",
+      username: "alice",
+      password_configured: true,
+      uses_system_credentials: true,
+      remember_password: true,
+    });
+    const detection = deferred<{
+      available: boolean;
+      version: string;
+      executable: string;
+      resolved_path: string | null;
+    }>();
+    detectSvnMock.mockReturnValue(detection.promise);
+    getStartupIntentMock.mockResolvedValue({
+      action: "info",
+      path: null,
+      repository_root: null,
+      revision: null,
+      return_action: null,
+      preview_id: null,
+    });
+
+    render(App);
+
+    await waitFor(() => expect(detectSvnMock).toHaveBeenCalledWith({ executable: "" }));
+    expect(getStartupIntentMock).not.toHaveBeenCalled();
+    detection.resolve({
+      available: true,
+      version: "1.14.5",
+      executable: "svn",
+      resolved_path: "/opt/homebrew/bin/svn",
+    });
+    await waitFor(() =>
+      expect(configureSvnAuthenticationMock).toHaveBeenCalledWith({
+        mode: "password",
+        username: "alice",
+        remember_password: true,
+      }),
+    );
+    await waitFor(() => expect(getStartupIntentMock).toHaveBeenCalledOnce());
   });
 
   it("opens authentication on E215004 and retries status after login", async () => {

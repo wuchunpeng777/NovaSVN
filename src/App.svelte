@@ -324,6 +324,26 @@
     svnOperationFeedback = null;
   }
 
+  async function restoreRememberedSvnAuthentication() {
+    const username = $appSettingsStore.svnUsername.trim();
+    if (
+      $appSettingsStore.svnAuthenticationMode !== "password" ||
+      !$appSettingsStore.svnRememberPassword ||
+      !username
+    ) {
+      return;
+    }
+    try {
+      svnAuthenticationStatus = await configureSvnAuthentication({
+        mode: "password",
+        username,
+        remember_password: true,
+      });
+    } catch {
+      // 未保存或系统凭据库暂不可用时，沿用认证失败后的登录流程。
+      svnAuthenticationStatus = null;
+    }
+  }
   async function applySvnAuthentication() {
     svnAuthenticationLoading = true;
     svnAuthenticationError = null;
@@ -2635,6 +2655,8 @@
   }
 
   async function initializeTauriApp() {
+    await restoreRememberedSvnAuthentication();
+    await svnStore.detectWithInputFallback();
     let intent: StartupIntent;
     try {
       intent = await getStartupIntent();
@@ -2656,9 +2678,6 @@
       standaloneBlamePath = intent.path?.trim() ?? "";
       standaloneBlameRevision = intent.revision?.trim() || undefined;
       startupSurface = "blame";
-      if ($svnStore.executableInput.trim()) {
-        void svnStore.detectWithInputFallback();
-      }
       standaloneBlameReady = true;
       return;
     }
@@ -2667,9 +2686,6 @@
       standaloneBrowsePath = intent.path?.trim() ?? "";
       standaloneBrowseRevision = intent.revision?.trim() || undefined;
       startupSurface = "browse";
-      if ($svnStore.executableInput.trim()) {
-        void svnStore.detectWithInputFallback();
-      }
       standaloneBrowseReady = true;
       return;
     }
@@ -2679,9 +2695,6 @@
       standaloneLogRepositoryRoot = intent.repository_root?.trim() || undefined;
       standaloneLogRevision = intent.revision?.trim() || undefined;
       startupSurface = "log";
-      if ($svnStore.executableInput.trim()) {
-        void svnStore.detectWithInputFallback();
-      }
       standaloneLogReady = true;
       return;
     }
@@ -2689,9 +2702,6 @@
     if (intent.action === "commit") {
       standaloneCommitPath = intent.path?.trim() ?? "";
       startupSurface = "commit";
-      if ($svnStore.executableInput.trim()) {
-        void svnStore.detectWithInputFallback();
-      }
       standaloneCommitReady = true;
       return;
     }
@@ -2699,9 +2709,6 @@
     if (intent.action === "cleanup") {
       standaloneCleanupPath = intent.path?.trim() ?? "";
       startupSurface = "cleanup";
-      if ($svnStore.executableInput.trim()) {
-        void svnStore.detectWithInputFallback();
-      }
       standaloneCleanupReady = true;
       return;
     }
@@ -2716,9 +2723,6 @@
     if (intent.action === "revert") {
       standaloneRevertPath = intent.path?.trim() ?? "";
       startupSurface = "revert";
-      if ($svnStore.executableInput.trim()) {
-        void svnStore.detectWithInputFallback();
-      }
       standaloneRevertReady = true;
       return;
     }
@@ -2726,9 +2730,6 @@
     if (intent.action === "info") {
       standaloneInfoPath = intent.path?.trim() ?? "";
       startupSurface = "info";
-      if ($svnStore.executableInput.trim()) {
-        void svnStore.detectWithInputFallback();
-      }
       standaloneInfoReady = true;
       return;
     }
@@ -2736,9 +2737,6 @@
     if (intent.action === "checkout") {
       standaloneCheckoutPath = intent.path?.trim() ?? "";
       startupSurface = "checkout";
-      if ($svnStore.executableInput.trim()) {
-        void svnStore.detectWithInputFallback();
-      }
       standaloneCheckoutReady = true;
       return;
     }
@@ -2747,9 +2745,6 @@
       standaloneUpdatePath = intent.path?.trim() ?? "";
       standaloneUpdateReturnAction = intent.return_action?.trim() || null;
       startupSurface = "update";
-      if ($svnStore.executableInput.trim()) {
-        void svnStore.detectWithInputFallback();
-      }
       standaloneUpdateReady = true;
       return;
     }
@@ -2757,9 +2752,6 @@
     if (intent.action === "resolve") {
       standaloneConflictPath = intent.path?.trim() ?? "";
       startupSurface = "resolve";
-      if ($svnStore.executableInput.trim()) {
-        void svnStore.detectWithInputFallback();
-      }
       standaloneConflictReady = true;
       return;
     }
@@ -2794,14 +2786,13 @@
         unlistenDragDrop = unlisten;
       });
     taskStore.startPolling();
-    void svnStore.detectWithInputFallback();
     void branchPoolStore.load();
     void taskWorkspaceStore.load();
     void pingBackend();
     if (intent.path?.trim()) {
       await handleStartupIntent(intent);
     } else {
-      await workspaceStore.loadRecent();
+      await workspaceStore.loadRecent(currentSvnExecutable());
       await handleStartupIntent(intent);
     }
   }
