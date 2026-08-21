@@ -67,6 +67,7 @@
   export let autoStart = true;
   export let minimized = false;
   export let onToggleMinimized: () => void = () => {};
+  export let onClose: () => void = () => {};
   export let onSvnAuthenticationSubmit: (
     username: string,
     password: string,
@@ -157,6 +158,8 @@
   $: batchConflictActions = commonConflictResolutionActions(selectedConflicts);
   $: updateComplete =
     updateTask?.status === "success" && conflictScanCompleted && !scanning;
+  $: canCloseUpdateView =
+    !initializing && !updateRunning && !resolutionRunning && !returningToCommit;
   // 合并日志中的新文件到累计表，后端裁剪旧日志时也不丢已展示项
   $: {
     const latest = extractSvnFileChanges(
@@ -543,12 +546,23 @@
       closeFileContextMenu();
     } else if (fileLogPath) {
       closeFileLog();
-    } else if (!embedded && !initializing && !updateRunning && !resolutionRunning && !returningToCommit) {
-      void getCurrentWindow().close();
+    } else if (canCloseUpdateView) {
+      closeUpdateView();
     } else {
       return;
     }
     event.preventDefault();
+  }
+
+  function closeUpdateView() {
+    if (!canCloseUpdateView) {
+      return;
+    }
+    if (embedded) {
+      onClose();
+      return;
+    }
+    void getCurrentWindow().close();
   }
 
   async function showFileLog(path: string) {
@@ -931,8 +945,12 @@
       }
       return;
     }
-    // 主界面内嵌 Update 不提供「完成后关闭」，也不执行该逻辑
-    if (embedded || !closeCurrentUpdateAfterCompletion) {
+    if (embedded) {
+      autoCloseTriggered = true;
+      onClose();
+      return;
+    }
+    if (!closeCurrentUpdateAfterCompletion) {
       return;
     }
     autoCloseTriggered = true;
@@ -1081,6 +1099,16 @@
           on:click={onToggleMinimized}
         >
           {#if minimized}<ChevronDown size={16} aria-hidden="true" />{:else}<ChevronUp size={16} aria-hidden="true" />{/if}
+        </button>
+        <button
+          type="button"
+          class="icon-button update-close"
+          aria-label="关闭 Update"
+          title="关闭"
+          disabled={!canCloseUpdateView}
+          on:click={closeUpdateView}
+        >
+          <X size={16} aria-hidden="true" />
         </button>
       {/if}
     </div>
@@ -1606,6 +1634,10 @@
     margin-left: auto;
     padding: 0;
     place-items: center;
+  }
+
+  .update-close {
+    margin-left: 0;
   }
 
   :global(.spinning) {

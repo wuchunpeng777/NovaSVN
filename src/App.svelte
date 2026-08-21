@@ -1607,6 +1607,15 @@
     }
   }
 
+  function closeInlineUpdate() {
+    inlineUpdateRefreshGeneration += 1;
+    inlineUpdateRoot = null;
+    inlineUpdateTaskId = null;
+    inlineUpdateTask = null;
+    inlineUpdateMinimized = false;
+    inlineUpdateRefreshSignature = "";
+  }
+
   async function runMerge() {
     if (!$workspaceStore.current) {
       workspaceStore.failMergeTask("请先打开 SVN 工作副本");
@@ -3255,6 +3264,7 @@
   onUpdatePath={(path) => runSvnOperation("update_path", path)}
   onCleanupWorkspace={() => runSvnOperation("cleanup")}
   onToggleInlineUpdate={() => (inlineUpdateMinimized = !inlineUpdateMinimized)}
+  onCloseInlineUpdate={closeInlineUpdate}
   onDismissSvnOperationFeedback={dismissSvnOperationFeedback}
   onChooseApplyPatch={chooseAndPreflightPatch}
   onRunApplyPatch={runApplyPatch}

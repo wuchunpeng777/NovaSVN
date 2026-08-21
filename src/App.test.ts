@@ -891,10 +891,9 @@ Certificate information:
     getTaskMock.mockResolvedValue(
       makeTask({
         task_id: "svn-update",
-        status: "success",
+        status: "running",
         logs: [
           { message: "U    src/main.ts", created_at: 1 },
-          { message: "Updated to revision 21.", created_at: 2 },
         ],
       }),
     );
@@ -920,6 +919,7 @@ Certificate information:
     expect(inspectUpdateTargetMock).not.toHaveBeenCalled();
     expect((await within(updatePanel).findAllByText("src/main.ts")).length).toBeGreaterThan(0);
     await waitFor(() => expect(within(updatePanel).getByText("2.00 KB")).toBeInTheDocument());
+    expect(within(updatePanel).getByRole("button", { name: "关闭 Update" })).toBeDisabled();
 
     await fireEvent.click(within(updatePanel).getByRole("button", { name: "最小化 Update" }));
     expect(within(updatePanel).getByLabelText("Update 简要信息")).toBeInTheDocument();
@@ -957,6 +957,57 @@ Certificate information:
       }),
     ).not.toBeInTheDocument();
     expect(screen.getByLabelText("主界面 Update")).toBeInTheDocument();
+  });
+
+  it("主界面更新完成后自动关闭内嵌 Update", async () => {
+    createSvnOperationTaskMock.mockResolvedValue(
+      makeTask({ task_id: "svn-update", status: "pending" }),
+    );
+    getTaskMock.mockResolvedValue(
+      makeTask({
+        task_id: "svn-update",
+        status: "success",
+        logs: [
+          { message: "U    src/main.ts", created_at: 1 },
+          { message: "Updated to revision 21.", created_at: 2 },
+        ],
+      }),
+    );
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "更新工作副本" }));
+
+    expect(await screen.findByLabelText("主界面 Update")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByLabelText("主界面 Update")).not.toBeInTheDocument();
+    });
+    expect(screen.getByLabelText("NovaSVN 工作台")).toBeInTheDocument();
+  });
+
+  it("主界面更新失败后可手动关闭内嵌 Update", async () => {
+    createSvnOperationTaskMock.mockResolvedValue(
+      makeTask({ task_id: "svn-update", status: "pending" }),
+    );
+    getTaskMock.mockResolvedValue(
+      makeTask({
+        task_id: "svn-update",
+        status: "failed",
+        error: "svn: E155004: working copy locked",
+        logs: [{ message: "svn: E155004: working copy locked", created_at: 1 }],
+      }),
+    );
+    render(App);
+
+    await fireEvent.click(screen.getByRole("button", { name: "更新工作副本" }));
+
+    const updatePanel = await screen.findByLabelText("主界面 Update");
+    const closeButton = within(updatePanel).getByRole("button", { name: "关闭 Update" });
+    await waitFor(() => expect(closeButton).toBeEnabled());
+    await fireEvent.click(closeButton);
+    await waitFor(() => {
+      expect(screen.queryByLabelText("主界面 Update")).not.toBeInTheDocument();
+    });
+    expect(screen.getByLabelText("NovaSVN 工作台")).toBeInTheDocument();
   });
 
   it("远端变化文件使用真实文件级 Update 任务", async () => {

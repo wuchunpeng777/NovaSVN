@@ -178,13 +178,22 @@ describe("StandaloneUpdateWindow", () => {
     ).toBeChecked();
   });
 
-  it("主界面内嵌 Update 不显示也不执行完成后关闭", async () => {
-    localStorage.setItem("novasvn:update-close-after-completion", "true");
+  it("主界面内嵌 Update 完成后关闭面板但不关闭窗口", async () => {
+    const onClose = vi.fn();
+    localStorage.setItem("novasvn:update-close-after-completion", "false");
+    getTaskMock.mockResolvedValue(
+      makeTask("success", [
+        "SVN 操作开始执行",
+        "U    src/main.ts",
+        "Updated to revision 21.",
+      ]),
+    );
     render(StandaloneUpdateWindow, {
       props: {
         targetPath: "C:\\repo",
         embedded: true,
         autoStart: false,
+        onClose,
         initialTask: makeTask("success", [
           "SVN 操作开始执行",
           "U    src/main.ts",
@@ -203,12 +212,91 @@ describe("StandaloneUpdateWindow", () => {
       screen.queryByRole("checkbox", { name: "更新完成且所有冲突解决后自动关闭" }),
     ).not.toBeInTheDocument();
     expect(screen.getByLabelText("主界面 Update")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "关闭 Update" })).toBeInTheDocument();
     await waitFor(() => {
       expect(scanWorkspaceStatusMock).toHaveBeenCalled();
     });
-    // 即使偏好为 true，内嵌模式也不关闭当前面板/窗口
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
     expect(closeWindowMock).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("主界面 Update")).toBeInTheDocument();
+  });
+
+  it("主界面内嵌 Update 失败后可手动关闭", async () => {
+    const onClose = vi.fn();
+    getTaskMock.mockResolvedValue(
+      makeTask("failed", ["svn: E155004: working copy locked"], {
+        error: "svn: E155004: working copy locked",
+      }),
+    );
+    render(StandaloneUpdateWindow, {
+      props: {
+        targetPath: "C:\\repo",
+        embedded: true,
+        autoStart: false,
+        onClose,
+        initialTask: makeTask("failed", ["svn: E155004: working copy locked"], {
+          error: "svn: E155004: working copy locked",
+        }),
+        initialTarget: makeTarget({
+          target_path: "C:\\repo",
+          relative_path: "",
+          kind: "dir",
+        }),
+      },
+    });
+
+    const closeButton = await screen.findByRole("button", { name: "关闭 Update" });
+    await waitFor(() => expect(closeButton).toBeEnabled());
+    expect(onClose).not.toHaveBeenCalled();
+    await fireEvent.click(closeButton);
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(closeWindowMock).not.toHaveBeenCalled();
+  });
+
+  it("主界面内嵌 Update 存在冲突时不自动关闭", async () => {
+    const onClose = vi.fn();
+    getTaskMock.mockResolvedValue(
+      makeTask("success", [
+        "SVN 操作开始执行",
+        "C    src/conflict.ts",
+        "Updated to revision 21.",
+      ]),
+    );
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({
+        conflicted: 1,
+        total: 1,
+        returned: 1,
+        files: [makeConflict()],
+      }),
+    );
+    render(StandaloneUpdateWindow, {
+      props: {
+        targetPath: "C:\\repo",
+        embedded: true,
+        autoStart: false,
+        onClose,
+        initialTask: makeTask("success", [
+          "SVN 操作开始执行",
+          "C    src/conflict.ts",
+          "Updated to revision 21.",
+        ]),
+        initialTarget: makeTarget({
+          target_path: "C:\\repo",
+          relative_path: "",
+          kind: "dir",
+        }),
+      },
+    });
+
+    await screen.findByRole("status", { name: "更新完成" });
+    expect(screen.getByRole("listitem", { name: "更新文件 src/conflict.ts" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "选择冲突 src/conflict.ts" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(scanWorkspaceStatusMock).toHaveBeenCalled();
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "关闭 Update" })).toBeEnabled();
+    expect(closeWindowMock).not.toHaveBeenCalled();
   });
 
   it("主界面模式完成更新后可以返回工作台", async () => {
