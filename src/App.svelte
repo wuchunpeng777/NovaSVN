@@ -468,10 +468,10 @@
     return status;
   }
 
-  async function syncCurrentBranchPoolEntry() {
+  async function syncCurrentBranchPoolEntry(addMissing = false) {
     const workspace = $workspaceStore.current;
     const status = $workspaceStore.status;
-    if (!workspace || !status) {
+    if (!workspace) {
       return;
     }
 
@@ -479,20 +479,24 @@
       (entry) =>
         normalizeLocalPath(entry.local_path) === normalizeLocalPath(workspace.local_path),
     );
-    if (!branchEntry) {
+    if (!branchEntry && !addMissing) {
       return;
     }
-
-    const revision = status.revision_range ?? workspace.revision;
-    if (branchEntry.revision === revision && branchEntry.local_changes === status.total) {
+    const revision = status?.revision_range ?? workspace.revision;
+    const localChanges = status?.total ?? branchEntry?.local_changes ?? 0;
+    if (
+      branchEntry &&
+      branchEntry.revision === revision &&
+      branchEntry.local_changes === localChanges
+    ) {
       return;
     }
 
     await branchPoolStore.saveExisting({
-      branchUrl: branchEntry.branch_url,
-      localPath: branchEntry.local_path,
+      branchUrl: branchEntry?.branch_url ?? workspace.repository_url,
+      localPath: branchEntry?.local_path ?? workspace.local_path,
       revision,
-      localChanges: status.total,
+      localChanges,
     });
   }
 
@@ -1421,6 +1425,7 @@
   }
 
   async function openBranchPoolEntry(localPath: string) {
+    const preserveCurrentWorkspace = syncCurrentBranchPoolEntry(true);
     const content =
       $currentView === "changes"
         ? "status"
@@ -1432,6 +1437,7 @@
       localPath,
       content,
     );
+    await preserveCurrentWorkspace;
     if (workspace && content === "status") {
       await syncCurrentBranchPoolEntry();
     }
@@ -3224,9 +3230,9 @@
   onChooseWorkspace={() =>
     workspaceStore
       .chooseAndOpen(currentSvnExecutable())
-      .then(() => syncCurrentBranchPoolEntry())}
+      .then(() => syncCurrentBranchPoolEntry(true))}
   onOpenWorkspace={() =>
-    workspaceStore.openPath(currentSvnExecutable()).then(() => syncCurrentBranchPoolEntry())}
+    workspaceStore.openPath(currentSvnExecutable()).then(() => syncCurrentBranchPoolEntry(true))}
   onRefreshStatus={() => refreshStatusAndSyncBranchPool()}
   onUpdateWorkspace={openWorkspaceUpdatePage}
   onUpdatePath={(path) => runSvnOperation("update_path", path)}

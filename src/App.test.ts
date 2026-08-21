@@ -216,6 +216,7 @@ beforeEach(async () => {
   scanWorkspaceStatusMock.mockReset();
   saveBranchPoolEntriesMock.mockReset();
   saveBranchPoolEntryMock.mockReset();
+  saveBranchPoolEntryMock.mockImplementation(async () => get(branchPoolStore).pool);
   setWorkspaceChangelistMock.mockReset();
   startDragMock.mockReset();
   startDragMock.mockResolvedValue(undefined);
@@ -624,6 +625,66 @@ Certificate information:
     expect(within(projects).getByText("project-a")).toBeInTheDocument();
     expect(within(projects).getByText("project-b")).toBeInTheDocument();
     expect(get(workspaceStore).current?.local_path).toBe(previousWorkspace.local_path);
+  });
+
+  it("切换已保存项目时先持久化当前未入池项目", async () => {
+    const savedWorkspace = makeWorkspace();
+    const transientWorkspace: WorkspaceSummary = {
+      ...makeWorkspace(),
+      local_path: "D:/repo/transient",
+      working_copy_root: "D:/repo/transient",
+      repository_url: "https://example.com/svn/branches/transient",
+      revision: "18",
+    };
+    const savedEntry = {
+      id: "saved",
+      branch_url: savedWorkspace.repository_url,
+      local_path: savedWorkspace.local_path,
+      revision: "12",
+      local_changes: 0,
+      created_at: 1,
+      updated_at: 1,
+    };
+    const transientEntry = {
+      id: "transient",
+      branch_url: transientWorkspace.repository_url,
+      local_path: transientWorkspace.local_path,
+      revision: "18",
+      local_changes: 2,
+      created_at: 2,
+      updated_at: 2,
+    };
+
+    openWorkspaceMock.mockResolvedValueOnce(transientWorkspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce({
+      ...makeStatus(),
+      working_copy_root: transientWorkspace.working_copy_root,
+      total: 2,
+      returned: 2,
+      local_changes: 2,
+      revision_range: "18",
+    });
+    await workspaceStore.openPath(undefined, transientWorkspace.local_path);
+    getBranchPoolMock.mockResolvedValueOnce({ entries: [savedEntry] });
+    await branchPoolStore.load();
+    saveBranchPoolEntryMock.mockResolvedValueOnce({
+      entries: [savedEntry, transientEntry],
+    });
+    render(App);
+
+    const projects = screen.getByLabelText("项目标签");
+    expect(within(projects).getByText("transient")).toBeInTheDocument();
+    await fireEvent.click(within(projects).getByText("wc").closest("button")!);
+
+    await waitFor(() => expect(saveBranchPoolEntryMock).toHaveBeenCalledWith({
+      branch_url: transientWorkspace.repository_url,
+      local_path: transientWorkspace.local_path,
+      revision: "18",
+      local_changes: 2,
+    }));
+    await waitFor(() => expect(get(workspaceStore).current?.local_path).toBe(savedWorkspace.local_path));
+    expect(within(projects).getByText("transient")).toBeInTheDocument();
+    expect(within(projects).getByText("wc")).toBeInTheDocument();
   });
 
   it("在工作副本页切换项目时先清空旧内容且只刷新工作副本", async () => {

@@ -386,6 +386,49 @@ describe("StandaloneCommitWindow", () => {
     expect(screen.getByRole("button", { name: "提交 2 个文件" })).toBeInTheDocument();
   });
 
+  it("子项选择实时同步 Changelist 全选状态", async () => {
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({
+        files: [
+          makeFile("src/fix-a.ts", "modified", { changelist: "紧急修复" }),
+          makeFile("src/fix-b.ts", "modified", { changelist: "紧急修复" }),
+        ],
+        total: 2,
+        returned: 2,
+        local_changes: 2,
+      }),
+    );
+    render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
+
+    const group = await screen.findByRole("region", { name: "Changelist 紧急修复" });
+    const selectGroup = within(group).getByRole("checkbox", {
+      name: "选择 Changelist 紧急修复",
+    });
+    const first = within(group).getByRole("checkbox", { name: "src/fix-a.ts" });
+    const second = within(group).getByRole("checkbox", { name: "src/fix-b.ts" });
+
+    expect(selectGroup).not.toBeChecked();
+    expect(selectGroup).toHaveProperty("indeterminate", false);
+
+    await fireEvent.click(first);
+    expect(selectGroup).not.toBeChecked();
+    expect(selectGroup).toHaveProperty("indeterminate", true);
+
+    await fireEvent.click(second);
+    expect(selectGroup).toBeChecked();
+    expect(selectGroup).toHaveProperty("indeterminate", false);
+
+    await fireEvent.click(first);
+    expect(selectGroup).not.toBeChecked();
+    expect(selectGroup).toHaveProperty("indeterminate", true);
+
+    await fireEvent.click(selectGroup);
+    expect(first).toBeChecked();
+    expect(second).toBeChecked();
+    expect(selectGroup).toBeChecked();
+    expect(selectGroup).toHaveProperty("indeterminate", false);
+  });
+
   it("未版本控制文件可勾选，提交时一并传给 commit 任务", async () => {
     render(StandaloneCommitWindow, { props: { targetPath: "C:\\repo" } });
     const pane = await screen.findByLabelText("选择提交文件");

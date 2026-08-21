@@ -499,8 +499,8 @@
     return files.filter(isSelectable);
   }
 
-  function groupSelectedCount(files: ChangedFile[]) {
-    return groupSelectableFiles(files).filter((file) => selectedPaths.has(file.path)).length;
+  function groupSelectedCount(files: ChangedFile[], selection: ReadonlySet<string>) {
+    return groupSelectableFiles(files).filter((file) => selection.has(file.path)).length;
   }
 
   function toggleGroupSelection(files: ChangedFile[]) {
@@ -1691,7 +1691,7 @@
         <div class="file-list" aria-label="提交文件列表，按住 Shift 可范围多选">
           {#each fileGroups as group (group.name)}
             {@const groupSelectable = groupSelectableFiles(group.files)}
-            {@const groupSelectionCount = groupSelectedCount(group.files)}
+            {@const groupSelectionCount = groupSelectedCount(group.files, selectedPaths)}
             <section class="file-group" aria-label={`Changelist ${group.label}`}>
               <header class="file-group-header">
                 <input
