@@ -565,7 +565,7 @@ describe("MainWorkspace", () => {
       "aria-selected",
       "true",
     );
-    await fireEvent.click(screen.getByRole("button", { name: "远端更新" }));
+    await fireEvent.click(screen.getByRole("button", { name: "未管理文件" }));
     await fireEvent.click(screen.getByRole("tab", { name: "Properties" }));
 
     await rerender({
@@ -588,7 +588,7 @@ describe("MainWorkspace", () => {
       workspaceFileTree: treeB,
       workingCopyStatus: statusB,
     });
-    expect(screen.getByRole("button", { name: "远端更新" })).toHaveClass("active");
+    expect(screen.getByRole("button", { name: "未管理文件" })).toHaveClass("active");
     expect(screen.getByRole("tab", { name: "Properties" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -2064,12 +2064,7 @@ Certificate information:
 
     const filters = screen.getByRole("region", { name: "改动过滤" });
     expect(within(filters).queryByRole("button", { name: "清除过滤条件" })).not.toBeInTheDocument();
-    await fireEvent.click(within(filters).getByRole("button", { name: "远端更新" }));
-    expect(screen.queryByText("local.txt", { exact: true })).not.toBeInTheDocument();
-    expect(screen.getByText("remote.txt", { exact: true })).toBeInTheDocument();
-    expect(screen.getByText("both.txt", { exact: true })).toBeInTheDocument();
-    expect(screen.getByText("remote-props.txt", { exact: true })).toBeInTheDocument();
-
+    expect(within(filters).queryByRole("button", { name: "远端更新" })).not.toBeInTheDocument();
     await fireEvent.click(within(filters).getByRole("button", { name: "本地改动" }));
     expect(screen.getByText("local.txt", { exact: true })).toBeInTheDocument();
     expect(screen.queryByText("remote.txt", { exact: true })).not.toBeInTheDocument();
@@ -2173,7 +2168,7 @@ Certificate information:
     expect(screen.queryByRole("toolbar", { name: "所选路径批量操作" })).not.toBeInTheDocument();
   });
 
-  it("scopes the file list and Update/Commit actions to the selected folder", async () => {
+  it("scopes the file list to the selected folder without folder Update or Commit buttons", async () => {
     const alpha = makeFile("src/alpha.txt", "modified", "alpha-digest");
     const beta = makeFile("src/beta.txt", "modified", "beta-digest");
     const omega = makeFile("omega.txt", "modified", "omega-digest");
@@ -2207,9 +2202,7 @@ Certificate information:
         { ...makeScopedNode("src/normal.txt", "normal", "none"), name: "normal.txt" },
       ],
     });
-    const onSelectCommitFiles = vi.fn();
-    const onUpdatePath = vi.fn();
-    const onUpdateWorkspace = vi.fn();
+    const onSelectCommitFile = vi.fn();
     const onActiveWorkspacePathChange = vi.fn();
     render(MainWorkspace, {
       props: {
@@ -2218,9 +2211,7 @@ Certificate information:
         workingCopyStatus: makeStatus([alpha, beta, omega]),
         workspaceFileTree: tree,
         svnExecutable: "/opt/homebrew/bin/svn",
-        onSelectCommitFiles,
-        onUpdatePath,
-        onUpdateWorkspace,
+        onSelectCommitFile,
         onActiveWorkspacePathChange,
       },
     });
@@ -2244,17 +2235,56 @@ Certificate information:
     expect(screen.queryByRole("button", { name: "选择文件 omega.txt" })).not.toBeInTheDocument();
     expect(onActiveWorkspacePathChange).toHaveBeenLastCalledWith("src");
 
-    await fireEvent.click(screen.getByRole("button", { name: "Update src" }));
-    expect(onUpdatePath).toHaveBeenCalledWith("src");
-    await fireEvent.click(screen.getByRole("button", { name: "加入 Commit 文件夹 src" }));
-    expect(onSelectCommitFiles).toHaveBeenCalledWith(["src/alpha.txt", "src/beta.txt"]);
-    expect(screen.getByRole("tab", { name: "Commit" })).toHaveAttribute("aria-selected", "true");
+    await fireEvent.click(screen.getByRole("checkbox", { name: "提交目标 src/alpha.txt" }));
+    expect(onSelectCommitFile).toHaveBeenCalledWith("src/alpha.txt");
+    expect(screen.queryByRole("button", { name: "Update src" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "加入 Commit 文件夹 src" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "移出 Commit 文件夹 src" }),
+    ).not.toBeInTheDocument();
 
     await fireEvent.click(
       within(folderTree).getByRole("button", { name: "选择工作副本根目录" }),
     );
-    await fireEvent.click(screen.getByRole("button", { name: "Update 工作副本根目录" }));
-    expect(onUpdateWorkspace).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Update 工作副本根目录" })).not.toBeInTheDocument();
+  });
+
+  it("shows why listing files in the selected folder failed", async () => {
+    listWorkspaceFilesMock.mockRejectedValueOnce({
+      code: "WORKSPACE_FILE_TREE_SCOPE_FAILED",
+      message: "无法读取所选文件夹",
+      detail: "路径：C:/repo/wc/src。错误：系统找不到指定的路径。",
+      recoverable: true,
+    });
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([makeFile("src/alpha.txt", "modified", "alpha-digest")]),
+        workspaceFileTree: {
+          working_copy_root: "C:/repo/wc",
+          total_files: 1,
+          returned_files: 1,
+          truncated: false,
+          nodes: [
+            {
+              ...makeScopedNode("src", "normal", "none"),
+              name: "src",
+              kind: "dir",
+              file_size: null,
+              children: [],
+            },
+          ],
+        },
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "选择文件夹 src" }));
+    expect(
+      await screen.findByText(/读取文件失败：无法读取所选文件夹：路径：C:\/repo\/wc\/src/),
+    ).toBeInTheDocument();
   });
 
   it("virtualizes large folder hierarchies and keeps scrolled folders clickable", async () => {

@@ -918,8 +918,15 @@ textarea {
 .selected-directory-toolbar > p {
   display: flex;
   margin: 0;
+  min-width: 0;
   gap: 5px;
   white-space: nowrap;
+}
+
+.selected-directory-toolbar > p .inline-error {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .selected-directory-actions {

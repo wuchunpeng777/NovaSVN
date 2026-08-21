@@ -61,7 +61,7 @@ test("runs the main working-copy operations through the task workflow", async ({
   ]);
 });
 
-test("scopes Update and Commit to the selected folder", async ({ page }) => {
+test("scopes the file list and commit selection to the selected folder", async ({ page }) => {
   await page.addInitScript(() => window.localStorage.clear());
   await page.goto("/");
   await installWorkbenchBackendMock(page);
@@ -72,27 +72,17 @@ test("scopes Update and Commit to the selected folder", async ({ page }) => {
   await expect(page.getByRole("treegrid", { name: "工作副本文件列表" })).not.toContainText(
     "draft.txt",
   );
-  await page.getByRole("button", { name: "Update src", exact: true }).click();
-  await expect
-    .poll(async () => (await backendCalls(page, "create_svn_operation_task")).length)
-    .toBe(1);
+  await expect(page.getByRole("button", { name: "Update src", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "加入 Commit 文件夹 src" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "移出 Commit 文件夹 src" })).toHaveCount(0);
 
-  const addFolderToCommit = page.getByRole("button", { name: "加入 Commit 文件夹 src" });
-  if ((await addFolderToCommit.count()) > 0) {
-    await addFolderToCommit.click();
-  } else {
-    await expect(page.getByRole("button", { name: "移出 Commit 文件夹 src" })).toBeVisible();
-    await page.getByRole("button", { name: "打开提交窗口" }).click();
-  }
+  await page.getByRole("checkbox", { name: "提交目标 src/modified.txt" }).click();
+  await page.getByRole("checkbox", { name: "提交目标 src/revert.txt" }).click();
+  await page.getByRole("button", { name: "打开提交窗口" }).click();
   await expect(page.getByText("本次将提交 2 个文件", { exact: true })).toBeVisible();
   await page.getByPlaceholder("提交信息").fill("Commit src folder");
   await page.getByRole("button", { name: "提交", exact: true }).click();
 
-  const updateCalls = await backendCalls(page, "create_svn_operation_task");
-  expect(updateCalls[0]?.args.request).toMatchObject({
-    kind: "update_path",
-    file_path: "src",
-  });
   const commitCalls = await backendCalls(page, "create_commit_task");
   expect(commitCalls[0]?.args.request).toMatchObject({
     files: ["src/modified.txt", "src/revert.txt"],

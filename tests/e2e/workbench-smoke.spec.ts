@@ -33,7 +33,7 @@ test("uses SVN commit targets without a staging view", async ({ page }) => {
 
   await expect(page.getByRole("button", { name: "全部文件" })).toBeVisible();
   await expect(page.getByRole("button", { name: "本地改动" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "远端更新" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "远端更新" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "未管理文件" })).toBeVisible();
   await expect(page.getByRole("region", { name: "工作副本摘要" })).toContainText("提交目标");
   await page.getByRole("tab", { name: "Commit" }).click();

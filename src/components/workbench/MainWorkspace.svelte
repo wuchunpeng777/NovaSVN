@@ -621,7 +621,7 @@
     interrupted: "中断",
   };
 
-  type WorkingCopyTreeFilter = "all" | "local" | "remote" | "unversioned";
+  type WorkingCopyTreeFilter = "all" | "local" | "unversioned";
   type InspectorTab = "information" | "properties" | "diff" | "blame" | "commit" | "tasks";
   type WorkspaceTreeRow = WorkspaceFileNode & {
     depth: number;
@@ -961,6 +961,15 @@
       return null;
     }
     return [error.code, error.message, error.detail].filter(Boolean).join("\n");
+  }
+
+  function directoryFilesErrorLabel(error: CommandError) {
+    const message = error.message?.trim() || "";
+    const detail = error.detail?.trim() || "";
+    if (message && detail && !message.includes(detail)) {
+      return `${message}：${detail}`;
+    }
+    return message || detail || "读取文件失败";
   }
 
   function findAuthenticationCandidate(
@@ -1365,21 +1374,6 @@
     const element = event.currentTarget as HTMLElement;
     folderBrowserScrollTop = element.scrollTop;
     folderBrowserViewportHeight = element.clientHeight || folderBrowserViewportHeight;
-  }
-
-  function updateSelectedDirectory() {
-    if (selectedDirectoryPath) onUpdatePath(selectedDirectoryPath);
-    else onUpdateWorkspace();
-  }
-
-  function toggleSelectedDirectoryCommit() {
-    if (selectedDirectoryCommittablePaths.length === 0) return;
-    if (selectedDirectoryFullyStaged) {
-      onUnselectCommitFiles(selectedDirectoryCommittablePaths);
-      return;
-    }
-    onSelectCommitFiles(selectedDirectoryCommittablePaths);
-    openCommitForm();
   }
 
   function openSelectedDirectoryMenu(event: MouseEvent) {
@@ -2309,7 +2303,6 @@
         (filter === "local" &&
           ["local", "both"].includes(node.change_scope) &&
           node.status !== "unversioned") ||
-        (filter === "remote" && ["remote", "both"].includes(node.change_scope)) ||
         (filter === "unversioned" && node.status === "unversioned");
       const selfMatchesChangelist =
         selectedChangelist === "all" ||
@@ -2558,7 +2551,10 @@
     const cached = key ? workspaceTabUiStates.get(key) : null;
 
     activeInspectorTab = cached?.activeInspectorTab ?? "information";
-    workingCopyTreeFilter = cached?.workingCopyTreeFilter ?? "all";
+    workingCopyTreeFilter =
+      cached?.workingCopyTreeFilter === "local" || cached?.workingCopyTreeFilter === "unversioned"
+        ? cached.workingCopyTreeFilter
+        : "all";
     selectedRevisionFileDiff = cached?.selectedRevisionFileDiff ?? null;
     revisionFileContentDiff = cached?.revisionFileContentDiff ?? null;
     revisionFileDiffLoading = false;
@@ -3257,9 +3253,6 @@
         directoryContainsPath(selectedDirectoryPath, file.path) && isCommittable(file),
     )
     .map((file) => file.path);
-  $: selectedDirectoryFullyStaged =
-    selectedDirectoryCommittablePaths.length > 0 &&
-    selectedDirectoryCommittablePaths.every((path) => isCommitSelected(path, commitFiles));
   $: selectedDirectoryRemoteCount = files.filter(
     (file) =>
       directoryContainsPath(selectedDirectoryPath, file.path) &&
@@ -5671,13 +5664,6 @@
             </button>
             <button
               type="button"
-              class:active={workingCopyTreeFilter === "remote"}
-              on:click={() => selectWorkingCopyTreeFilter("remote")}
-            >
-              远端更新
-            </button>
-            <button
-              type="button"
               class:active={workingCopyTreeFilter === "unversioned"}
               on:click={() => selectWorkingCopyTreeFilter("unversioned")}
             >
@@ -5766,7 +5752,9 @@
                   {#if directoryFilesLoading}
                     正在读取全部文件...
                   {:else if directoryFilesError}
-                    <span class="inline-error">读取文件失败</span>
+                    <span class="inline-error" role="alert" title={directoryFilesErrorLabel(directoryFilesError)}>
+                      读取文件失败：{directoryFilesErrorLabel(directoryFilesError)}
+                    </span>
                   {:else}
                     {treeRows.length} 个文件
                     <span>·</span>
@@ -5781,31 +5769,8 @@
                     {/if}
                   {/if}
                 </p>
-                <div class="selected-directory-actions">
-                  <button
-                    type="button"
-                    aria-label={`Update ${selectedDirectoryPath || "工作副本根目录"}`}
-                    title={selectedDirectoryPath ? `更新文件夹 ${selectedDirectoryPath}` : "更新整个工作副本"}
-                    disabled={!workspace || statusLoading || toolbarLocked}
-                    on:click={updateSelectedDirectory}
-                  >
-                    <RefreshCw size={14} aria-hidden="true" />
-                    Update
-                  </button>
-                  <button
-                    type="button"
-                    class:active={selectedDirectoryFullyStaged}
-                    aria-label={`${selectedDirectoryFullyStaged ? "移出" : "加入"} Commit 文件夹 ${selectedDirectoryPath || "工作副本根目录"}`}
-                    title={selectedDirectoryFullyStaged
-                      ? "从提交目标移除此文件夹中的改动"
-                      : "把此文件夹中的本地改动加入提交目标"}
-                    disabled={selectedDirectoryCommittablePaths.length === 0 || statusLoading || toolbarLocked}
-                    on:click={toggleSelectedDirectoryCommit}
-                  >
-                    <GitCommitHorizontal size={14} aria-hidden="true" />
-                    {selectedDirectoryFullyStaged ? "移出 Commit" : "Commit 文件夹"}
-                  </button>
-                  {#if selectedDirectoryNode && canShowPathContextMenu(selectedDirectoryNode)}
+                {#if selectedDirectoryNode && canShowPathContextMenu(selectedDirectoryNode)}
+                  <div class="selected-directory-actions">
                     <button
                       type="button"
                       class="icon-button"
@@ -5815,8 +5780,8 @@
                     >
                       <Ellipsis size={15} aria-hidden="true" />
                     </button>
-                  {/if}
-                </div>
+                  </div>
+                {/if}
               </header>
           <div
             bind:this={fileBrowserElement}
