@@ -11,11 +11,12 @@
     getTask,
     inspectUpdateTarget,
     launchConflictWindow,
-    launchMergePreviewWindow,
     scanWorkspaceStatus,
   } from "../lib/api";
   import { shouldShowTextDiffViewer } from "../lib/file-content-diff";
   import { LOG_FILE_DIFF_MAX_BYTES } from "../lib/svn-log";
+  import { svnStatusMark, svnStatusMarkTitle } from "../lib/svn-file-status";
+  import { extractSvnFileChangesFromText, svnOutputReportsConflicts } from "../lib/svn-operation-output";
   import { buildPropertyContentDiff } from "../lib/svn-property-diff";
   import type {
     ChangedFile,
@@ -49,8 +50,6 @@
   let targetStatus: WorkingCopyStatus | null = null;
   let checkingTarget = false;
   let task: Task | null = null;
-  let operation: "preview" | "apply" | null = null;
-  let previewComplete = false;
   let error: CommandError | null = null;
   let pollTimer: number | null = null;
   let generation = 0;
@@ -78,11 +77,33 @@
     "interrupted",
   ];
 
+  function mergeTaskFinished(value: Task | null) {
+    if (!value) {
+      return false;
+    }
+    if (value.status === "success") {
+      return true;
+    }
+    if (value.status !== "failed") {
+      return false;
+    }
+    if ((value.result?.merge_result?.conflicted ?? 0) > 0) {
+      return true;
+    }
+    const text = [value.error, ...(value.logs ?? []).map((log) => log.message)]
+      .filter(Boolean)
+      .join("\n");
+    return svnOutputReportsConflicts(text);
+  }
+
   $: taskRunning = task !== null && !terminalStatuses.includes(task.status);
   $: mergeResult = task?.result?.merge_result ?? null;
-  $: directMergeFinished =
-    operation === "apply" && task !== null && terminalStatuses.includes(task.status);
-  $: directMergeSucceeded = operation === "apply" && task?.status === "success";
+  $: mergeOutputFiles = extractSvnFileChangesFromText(
+    (mergeResult?.output_text ?? "").split(/\r?\n/),
+    target?.working_copy_root ?? target?.target_path,
+  );
+  $: directMergeFinished = task !== null && terminalStatuses.includes(task.status);
+  $: directMergeSucceeded = mergeTaskFinished(task);
   $: targetDirty = (targetStatus?.total ?? 0) > 0;
   $: reviewConflictCount = (postMergeStatus?.files ?? []).filter(isReviewConflicted).length;
   $: reviewFiles = (postMergeStatus?.files ?? []).filter(
@@ -173,12 +194,10 @@
     return path.trim().replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
   }
 
-  function resetPreview() {
+  function resetMergeState() {
     clearPollTimer();
     reviewGeneration += 1;
     task = null;
-    operation = null;
-    previewComplete = false;
     postMergeStatus = null;
     reviewLoading = false;
     reviewError = null;
@@ -197,7 +216,7 @@
     target = null;
     targetStatus = null;
     error = null;
-    resetPreview();
+    resetMergeState();
   }
 
   async function chooseTarget() {
@@ -225,7 +244,7 @@
     target = null;
     targetStatus = null;
     error = null;
-    resetPreview();
+    resetMergeState();
     try {
       const nextTarget = await inspectUpdateTarget({
         path,
@@ -287,34 +306,30 @@
     }
   }
 
-  async function startMerge(dryRun: boolean) {
+  async function startMerge() {
     if (!target || revisions.length === 0) {
       return;
     }
-    if (!dryRun && !confirmDirectMerge()) {
+    if (!confirmMerge()) {
       return;
     }
 
     const currentGeneration = ++generation;
     clearPollTimer();
     task = null;
-    operation = dryRun ? "preview" : "apply";
     error = null;
     postMergeStatus = null;
     reviewError = null;
     selectedReviewPath = null;
     selectedReviewDiff = null;
     selectedReviewContentDiff = null;
-    if (dryRun) {
-      previewComplete = false;
-    }
     try {
       const created = await createMergeTask({
         working_copy_root: target.target_path,
         source_url: sourceUrl,
         revisions,
-        dry_run: dryRun,
-        allow_local_changes: !dryRun,
+        dry_run: false,
+        allow_local_changes: true,
         record_only: false,
         ignore_ancestry: false,
         force: false,
@@ -331,7 +346,7 @@
       schedulePoll(created.task_id, currentGeneration, 0);
     } catch (caught) {
       if (currentGeneration === generation) {
-        error = normalizeCaughtError(caught, dryRun ? "无法创建 Merge 预览" : "无法执行 Merge");
+        error = normalizeCaughtError(caught, "无法执行 Merge");
       }
     }
   }
@@ -355,39 +370,19 @@
       clearPollTimer();
       cancelling = false;
       if (nextTask.status === "cancelled") {
-        if (operation === "apply") {
-          await refreshPostMergeReview(currentGeneration);
-        }
+        await refreshPostMergeReview(currentGeneration);
         return;
       }
-      if (nextTask.status !== "success") {
+      if (nextTask.status !== "success" && !mergeTaskFinished(nextTask)) {
         error = commandError(
           "LOG_MERGE_TASK_FAILED",
-          operation === "preview" ? "Merge 预览失败" : "Merge 执行失败",
+          "Merge 执行失败",
           nextTask.error ?? undefined,
         );
-        if (operation === "apply") {
-          await refreshPostMergeReview(currentGeneration);
-        }
+        await refreshPostMergeReview(currentGeneration);
         return;
       }
-      if (operation === "preview") {
-        previewComplete = true;
-        const previewId = nextTask.result?.merge_result?.preview_id;
-        if (!previewId) {
-          error = commandError(
-            "LOG_MERGE_PREVIEW_ID_MISSING",
-            "Merge 预览没有返回会话标识",
-          );
-          return;
-        }
-        await launchMergePreviewWindow({ preview_id: previewId });
-        if (currentGeneration === generation) {
-          onClose();
-        }
-      } else {
-        await refreshPostMergeReview(currentGeneration);
-      }
+      await refreshPostMergeReview(currentGeneration);
     } catch (caught) {
       if (currentGeneration === generation) {
         error = normalizeCaughtError(caught, "无法读取 Merge 任务状态");
@@ -395,12 +390,12 @@
     }
   }
 
-  function confirmDirectMerge() {
-    const localChanges = targetDirty
-      ? `\n\n目标当前已有 ${targetStatus?.total ?? 0} 项本地改动。Merge 后状态和 Diff 会同时包含这些原有改动。`
-      : "";
+  function confirmMerge() {
+    if (!targetDirty) {
+      return true;
+    }
     return window.confirm(
-      `确定直接应用 ${revisions.length} 个 Revision 吗？\n\nMerge 只修改本地工作副本，不会自动提交。${localChanges}`,
+      `确定应用 ${revisions.length} 个 Revision 吗？\n\nMerge 只修改本地工作副本，不会自动提交。\n\n目标当前已有 ${targetStatus?.total ?? 0} 项本地改动。Merge 后状态和 Diff 会同时包含这些原有改动。`,
     );
   }
 
@@ -597,20 +592,6 @@
     }
   }
 
-  function statusLabel(status: string) {
-    const labels: Record<string, string> = {
-      modified: "修改",
-      added: "新增",
-      deleted: "删除",
-      missing: "缺失",
-      unversioned: "未版本控制",
-      conflicted: "冲突",
-      obstructed: "阻挡",
-      replaced: "替换",
-    };
-    return labels[status] ?? status;
-  }
-
   async function stopMerge() {
     if (!task || terminalStatuses.includes(task.status) || cancelling) {
       return;
@@ -628,9 +609,7 @@
       task = cancelledTask;
       if (terminalStatuses.includes(cancelledTask.status)) {
         cancelling = false;
-        if (operation === "apply") {
-          await refreshPostMergeReview(currentGeneration);
-        }
+        await refreshPostMergeReview(currentGeneration);
       } else {
         schedulePoll(taskId, currentGeneration, 0);
       }
@@ -652,9 +631,6 @@
   }
 
   function resultTitle(result: MergeResult) {
-    if (operation === "preview") {
-      return result.conflicted > 0 ? "预览发现冲突" : "Dry-run 完成";
-    }
     return result.conflicted > 0 ? "Merge 完成，存在冲突" : "Merge 完成";
   }
 </script>
@@ -764,7 +740,7 @@
         <section class="merge-result" aria-label="Merge 结果">
           <header>
             <strong>{resultTitle(mergeResult)}</strong>
-            <span>{mergeResult.dry_run ? "未修改目标目录" : target?.target_path}</span>
+            <span>{target?.target_path}</span>
           </header>
           <div class="result-counts">
             <span><strong>{mergeResult.file_count}</strong> 文件</span>
@@ -773,6 +749,16 @@
             <span><strong>{mergeResult.deleted}</strong> 删除</span>
             <span class:conflicted={mergeResult.conflicted > 0}><strong>{mergeResult.conflicted}</strong> 冲突</span>
           </div>
+          {#if mergeOutputFiles.length > 0}
+            <div class="merge-files" aria-label="Merge 差异文件">
+              {#each mergeOutputFiles as file (file.path)}
+                <div>
+                  <span class="file-status" data-action={file.action}>{file.action}</span>
+                  <code>{file.path}</code>
+                </div>
+              {/each}
+            </div>
+          {/if}
           <details class="merge-output">
             <summary>SVN 输出</summary>
             <pre>{mergeResult.output_text || "svn merge 没有输出。"}</pre>
@@ -784,7 +770,7 @@
         <section class="post-merge-review" aria-label="Merge 后检查">
           <header>
             <div>
-              <strong>改动审查</strong>
+              <strong>Merge 差异</strong>
               <span>
                 {targetDirty
                   ? "包含 Merge 前已有的本地改动"
@@ -849,11 +835,15 @@
                         class:selected={selectedReviewPath === file.path}
                         class:conflicted={isReviewConflicted(file)}
                         aria-pressed={selectedReviewPath === file.path}
-                        aria-label={`${statusLabel(file.status)} ${file.path}`}
+                        aria-label={`${svnStatusMarkTitle(file)} ${file.path}`}
                         title={file.path}
                         on:click={() => loadReviewDiff(file)}
                       >
-                        <span class="file-status">{isReviewConflicted(file) ? "冲突" : statusLabel(file.status)}</span>
+                        <span
+                          class="file-status"
+                          data-action={svnStatusMark(file)}
+                          title={svnStatusMarkTitle(file)}
+                        >{svnStatusMark(file)}</span>
                         <span>{file.path}</span>
                       </button>
                     {:else}
@@ -867,7 +857,7 @@
                 <section class="review-diff" aria-label="Merge 后文件 Diff">
                   <header class="review-diff-header">
                     <div>
-                      <strong>{selectedReviewFile ? statusLabel(selectedReviewFile.status) : "Diff"}</strong>
+                      <strong>{selectedReviewFile ? svnStatusMarkTitle(selectedReviewFile) : "Diff"}</strong>
                       <span title={selectedReviewPath ?? undefined}>{selectedReviewPath ?? "请选择左侧文件"}</span>
                     </div>
                     {#if selectedReviewFile && isReviewConflicted(selectedReviewFile)}
@@ -932,23 +922,14 @@
       {:else}
         <button type="button" on:click={requestClose}>关闭</button>
         {#if !directMergeFinished}
-          <div>
-            <button
-              type="button"
-              disabled={!target || checkingTarget}
-              on:click={() => startMerge(true)}
-            >
-              {previewComplete ? "重新预览" : "预览 Merge"}
-            </button>
             <button
               type="button"
               class="primary"
               disabled={!target || checkingTarget}
-              on:click={() => startMerge(false)}
+              on:click={() => startMerge()}
             >
-              直接应用
+              开始 Merge
             </button>
-          </div>
         {/if}
       {/if}
     </footer>
@@ -1164,6 +1145,34 @@
     color: #a12f2b;
   }
 
+  .merge-files {
+    display: grid;
+    gap: 2px;
+    max-height: 160px;
+    overflow: auto;
+    margin: 8px 10px 0;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--panel);
+    padding: 4px;
+  }
+
+  .merge-files > div {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-height: 26px;
+    padding: 0 6px;
+    font-size: 12px;
+  }
+
+  .merge-files code {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .merge-output {
     margin: 8px 10px 10px;
     color: var(--secondary);
@@ -1316,7 +1325,7 @@
   }
 
   .review-files > button.conflicted .file-status {
-    border-color: #bd514b;
+    background: #fbe0df;
     color: #a12f2b;
   }
 
@@ -1334,13 +1343,23 @@
   }
 
   .file-status {
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    padding: 1px 4px;
-    color: var(--secondary);
-    font-size: 10px;
-    white-space: nowrap;
+    display: inline-grid;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    place-items: center;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: Consolas, "Courier New", monospace;
   }
+
+  .file-status[data-action="A"] { background: #dff2e4; color: #24733a; }
+  .file-status[data-action="M"],
+  .file-status[data-action="U"],
+  .file-status[data-action="G"] { background: #fff0c7; color: #805900; }
+  .file-status[data-action="D"] { background: #fbe0df; color: #a12f2b; }
+  .file-status[data-action="R"] { background: #e4e9ff; color: #3b4db8; }
+  .file-status[data-action="C"] { background: #fbe0df; color: #a12f2b; }
 
   .review-diff {
     display: grid;
@@ -1445,11 +1464,6 @@
   .merge-dialog > footer {
     border-top: 1px solid var(--border);
     background: var(--panel-subtle);
-  }
-
-  .merge-dialog > footer > div {
-    display: flex;
-    gap: 7px;
   }
 
   .merge-dialog button {

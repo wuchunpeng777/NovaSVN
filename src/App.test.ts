@@ -2509,7 +2509,6 @@ Certificate information:
       expect(get(workspaceStore).selectedFilePath).toBe("src/conflict.ts");
       expect(get(workspaceStore).statusFilters).toEqual(["conflicted"]);
     });
-    expect(screen.getByRole("button", { name: "可视化解决" })).toBeInTheDocument();
   });
 
   it("确认源和目标后创建工作副本 Move 任务", async () => {
@@ -2595,7 +2594,10 @@ Certificate information:
     render(App);
 
     await fireEvent.click(
-      screen.getByRole("button", { name: "在工作副本中 Ignore assets/cache.tmp" }),
+      screen.getByRole("button", { name: "更多操作 文件 assets/cache.tmp" }),
+    );
+    await fireEvent.click(
+      screen.getByRole("menuitem", { name: "Ignore 文件 assets/cache.tmp" }),
     );
 
     await waitFor(() => {

@@ -33,7 +33,7 @@
     conflictResolutionActions,
     type ConflictResolutionAction,
   } from "../lib/svn-conflict";
-  import { extractSvnFileChanges, normalizeSvnOutputPath } from "../lib/svn-operation-output";
+  import { extractSvnFileChanges, normalizeSvnOutputPath, svnOutputReportsConflicts } from "../lib/svn-operation-output";
   import type {
     ChangedFile,
     CommandError,
@@ -114,7 +114,6 @@
   let updatedFileSizes = new Map<string, number>();
   /** 累计已见文件，避免后端日志截断后列表倒退/看似卡住 */
   let accumulatedUpdateFiles = new Map<string, { action: string; path: string }>();
-  let sizeRefreshGeneration = 0;
   let closeAfterCompletion = readCloseAfterCompletionSetting();
   let closeCurrentUpdateAfterCompletion = closeAfterCompletion;
   let autoCloseTriggered = false;
@@ -156,8 +155,9 @@
   $: allConflictsSelected =
     conflicts.length > 0 && conflicts.every((file) => selectedConflictPaths.has(file.path));
   $: batchConflictActions = commonConflictResolutionActions(selectedConflicts);
+  $: updateReachedCompletion = updateTaskFinished(updateTask);
   $: updateComplete =
-    updateTask?.status === "success" && conflictScanCompleted && !scanning;
+    updateReachedCompletion && conflictScanCompleted && !scanning;
   $: canCloseUpdateView =
     !initializing && !updateRunning && !resolutionRunning && !returningToCommit;
   // 合并日志中的新文件到累计表，后端裁剪旧日志时也不丢已展示项
@@ -255,7 +255,6 @@
     conflictSelectionAnchorPath = null;
     updatedFileSizes = new Map();
     accumulatedUpdateFiles = new Map();
-    sizeRefreshGeneration += 1;
     closeCurrentUpdateAfterCompletion = closeAfterCompletion;
     autoCloseTriggered = false;
     autoFollowOutput = true;
@@ -361,7 +360,7 @@
         }
       }
       await refreshConflicts(currentGeneration);
-      if (role === "update" && task.status === "success" && conflictScanCompleted) {
+      if (role === "update" && updateTaskFinished(task) && conflictScanCompleted) {
         await followUpdateOutput(true);
       }
       if (role === "resolution") {
@@ -459,7 +458,6 @@
     conflictSelectionAnchorPath = null;
     updatedFileSizes = new Map();
     accumulatedUpdateFiles = new Map();
-    sizeRefreshGeneration += 1;
     closeCurrentUpdateAfterCompletion = closeAfterCompletion;
     autoCloseTriggered = false;
     autoFollowOutput = true;
@@ -512,7 +510,7 @@
       resolutionRunning ||
       scanning ||
       !conflictScanCompleted ||
-      updateTask?.status !== "success"
+      !updateTaskFinished(updateTask)
     ) {
       return;
     }
@@ -856,19 +854,41 @@
     return task?.status === "pending" || task?.status === "running";
   }
 
-  function taskStatusLabel(task: Task | null) {
+  function updateTaskFinished(task: Task | null) {
+    if (!task) {
+      return false;
+    }
+    if (task.status === "success") {
+      return true;
+    }
+    if (task.status !== "failed") {
+      return false;
+    }
+    const text = [task.error, ...(task.logs ?? []).map((log) => log.message)]
+      .filter(Boolean)
+      .join("\n");
+    return svnOutputReportsConflicts(text);
+  }
+
+  function taskStatusLabel(
+    task: Task | null,
+    complete = updateComplete,
+    scanError: CommandError | null = statusError,
+  ) {
     switch (task?.status) {
       case "pending":
         return "等待执行";
       case "running":
         return "正在更新";
       case "success":
-        if (statusError) {
-          return "冲突检查失败";
-        }
-        return updateComplete ? "更新完成" : "正在检查冲突";
       case "failed":
-        return "更新失败";
+        if (updateTaskFinished(task)) {
+          if (scanError) {
+            return "冲突检查失败";
+          }
+          return complete ? "更新完成" : "正在检查冲突";
+        }
+        return task.status === "failed" ? "更新失败" : "正在检查冲突";
       case "cancelled":
         return "已取消";
       case "interrupted":
@@ -885,20 +905,18 @@
     if (!target) {
       return;
     }
-    // 只补查尚未有体积的路径，避免每轮对全量路径做 metadata
     const paths = extractSvnFileChanges(logs, target.working_copy_root)
       .map((file) => file.path)
       .filter((path) => !updatedFileSizes.has(path));
     if (paths.length === 0) {
       return;
     }
-    const requestId = ++sizeRefreshGeneration;
     try {
       const sizes = await getWorkspacePathSizes({
         working_copy_root: target.working_copy_root,
         paths,
       });
-      if (currentGeneration !== generation || requestId !== sizeRefreshGeneration) {
+      if (currentGeneration !== generation) {
         return;
       }
       const next = new Map(updatedFileSizes);
@@ -967,7 +985,7 @@
     writeCloseAfterCompletionSetting(closeAfterCompletion);
     if (
       !closeAfterCompletion ||
-      updateTask?.status !== "success" ||
+      !updateTaskFinished(updateTask) ||
       conflictCount > 0
     ) {
       closeCurrentUpdateAfterCompletion = closeAfterCompletion;
@@ -1071,7 +1089,7 @@
       </div>
     </div>
     <div class="update-actions">
-      <span class:running={updateRunning}>{taskStatusLabel(updateTask)}</span>
+      <span class:running={updateRunning}>{taskStatusLabel(updateTask, updateComplete, statusError)}</span>
       {#if updateRunning}
         <button type="button" on:click={stopUpdate}>
           <Square size={14} fill="currentColor" aria-hidden="true" /> 停止
@@ -1116,7 +1134,7 @@
 
   {#if embedded && minimized}
     <section class="update-minimized-summary" aria-label="Update 简要信息">
-      <span>{taskStatusLabel(updateTask)}</span>
+      <span>{taskStatusLabel(updateTask, updateComplete, statusError)}</span>
       <strong>{updatedFiles.length} 个文件</strong>
       <OperationMetrics task={updateTask} totalBytes={updatedBytes} label="总更新量" active={updateRunning} />
       <span class:has-conflicts={conflictCount > 0}>{conflictCount} 个冲突</span>
@@ -1148,12 +1166,14 @@
   <section
     class="update-notices"
     aria-hidden={embedded && minimized ? "true" : undefined}
-    class:has-notices={Boolean(error || statusError || updateTask?.error || actionError)}
+    class:has-notices={Boolean(
+      error || statusError || (updateTask?.error && !updateTaskFinished(updateTask)) || actionError,
+    )}
     aria-label="Update 错误"
   >
     <ErrorNotice {error} />
     <ErrorNotice error={statusError} />
-    {#if updateTask?.error}
+    {#if updateTask?.error && !updateTaskFinished(updateTask)}
       <div class="inline-error" role="alert">{updateTask.error}</div>
     {/if}
     {#if actionError}

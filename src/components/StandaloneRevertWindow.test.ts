@@ -72,6 +72,7 @@ describe("StandaloneRevertWindow", () => {
     const pane = await screen.findByLabelText("选择 Revert 项目");
     expect(await within(pane).findByText("src/main.ts")).toBeInTheDocument();
     expect(within(pane).getByText("src/new.ts")).toBeInTheDocument();
+    expect(within(pane).getByTitle("新增")).toHaveTextContent("A");
     expect(within(pane).queryByText("src/untracked.ts")).not.toBeInTheDocument();
     expect(within(pane).queryByText("other.ts")).not.toBeInTheDocument();
     expect(within(pane).getAllByRole("checkbox")).toHaveLength(2);
@@ -141,6 +142,7 @@ describe("StandaloneRevertWindow", () => {
     const pane = await screen.findByLabelText("选择 Revert 项目");
     expect(await within(pane).findByText("src/tree.ts")).toBeInTheDocument();
     expect(within(pane).getByText("树冲突 (更新)")).toBeInTheDocument();
+    expect(within(pane).getByText("C")).toHaveAttribute("data-action", "C");
     expect(within(pane).getByText(/本地已删除/)).toBeInTheDocument();
     expect(within(pane).getByText(/1 个冲突（含树冲突）/)).toBeInTheDocument();
     expect(within(pane).getByRole("checkbox", { name: "src/tree.ts" })).toBeChecked();
@@ -173,7 +175,7 @@ describe("StandaloneRevertWindow", () => {
 
     const pane = await screen.findByLabelText("选择 Revert 项目");
     expect(await within(pane).findByText("src")).toBeInTheDocument();
-    expect(within(pane).getByText("属性修改")).toBeInTheDocument();
+    expect(within(pane).getByTitle("属性修改")).toHaveTextContent("M");
     expect(within(pane).getByRole("checkbox", { name: "src" })).toBeChecked();
 
     await fireEvent.click(screen.getByRole("button", { name: "Revert 1 个项目" }));

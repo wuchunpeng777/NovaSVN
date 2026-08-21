@@ -18,6 +18,7 @@
     isConflictedFile,
     type ConflictResolutionAction,
   } from "../lib/svn-conflict";
+  import { svnStatusMark, svnStatusMarkTitle } from "../lib/svn-file-status";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import type {
     ChangedFile,
@@ -444,30 +445,6 @@
       : normalizedPath === relativeTarget;
   }
 
-  function statusLabel(file: ChangedFile) {
-    const conflictLabel = conflictKindLabel(file);
-    if (conflictLabel) {
-      return conflictLabel;
-    }
-    const labels: Record<string, string> = {
-      modified: "修改",
-      added: "新增",
-      deleted: "删除",
-      replaced: "替换",
-      property_modified: "属性修改",
-      missing: "缺失",
-      conflicted: "冲突",
-      obstructed: "受阻",
-    };
-    const textStatus = labels[file.status] ?? file.status;
-    if (!file.property_changed) {
-      return textStatus;
-    }
-    return ["normal", "none", "property_modified"].includes(file.status)
-      ? "属性修改"
-      : `${textStatus} + 属性`;
-  }
-
   function taskStatusLabel() {
     if (creatingTask) return "正在准备 Revert";
     switch (revertTask?.status) {
@@ -620,10 +597,15 @@
             {/if}
             <span
               class="file-status"
-              class:conflict={conflicted}
-              title={statusLabel(file)}
-            >{statusLabel(file)}</span>
+              data-action={svnStatusMark(file)}
+              title={svnStatusMarkTitle(file)}
+            >{svnStatusMark(file)}</span>
             <span class="file-path" title={file.path}>{file.path}</span>
+            {#if conflicted}
+              <span class="file-conflict-kind" title={conflictKindLabel(file) ?? "冲突"}>
+                {conflictKindLabel(file) ?? "冲突"}
+              </span>
+            {/if}
           </label>
           {#if conflicted}
             {#if reason}
@@ -798,12 +780,35 @@
   .file-row:hover { background: var(--panel-subtle); }
   .file-row.running { background: color-mix(in srgb, #b93d3d 8%, var(--panel)); }
   .file-row.conflicted { background: color-mix(in srgb, #c64040 8%, var(--panel)); }
-  .file-main { display: grid; grid-template-columns: 18px minmax(72px, auto) minmax(0, 1fr); align-items: center; gap: 8px; min-height: 28px; }
+  .file-main { display: grid; grid-template-columns: 18px 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 28px; }
   .file-list input { width: 15px; height: 15px; accent-color: var(--accent); }
   .file-selection-placeholder { width: 15px; height: 15px; }
-  .file-status { color: var(--accent); font-weight: 600; }
-  .file-status.conflict { color: #a12a2a; }
-  .standalone-revert[data-theme="dark"] .file-status.conflict { color: #ffaaa7; }
+  .file-status {
+    display: inline-grid;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    place-items: center;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: Consolas, "Courier New", monospace;
+  }
+  .file-status[data-action="A"] { background: #dff2e4; color: #24733a; }
+  .file-status[data-action="M"] { background: #fff0c7; color: #805900; }
+  .file-status[data-action="D"] { background: #fbe0df; color: #a12f2b; }
+  .file-status[data-action="R"] { background: #e4e9ff; color: #3b4db8; }
+  .file-status[data-action="C"] { background: #fbe0df; color: #a12f2b; }
+  .file-status[data-action="!"],
+  .file-status[data-action="~"] { background: #fff0c7; color: #805900; }
+  .standalone-revert[data-theme="dark"] .file-status[data-action="A"] { background: #1f4b2d; color: #8fdaa2; }
+  .standalone-revert[data-theme="dark"] .file-status[data-action="M"] { background: #4b3b16; color: #f6cf73; }
+  .standalone-revert[data-theme="dark"] .file-status[data-action="D"],
+  .standalone-revert[data-theme="dark"] .file-status[data-action="C"] { background: #522725; color: #ffaaa7; }
+  .standalone-revert[data-theme="dark"] .file-status[data-action="R"] { background: #2a3358; color: #a8b5ff; }
+  .standalone-revert[data-theme="dark"] .file-status[data-action="!"],
+  .standalone-revert[data-theme="dark"] .file-status[data-action="~"] { background: #4b3b16; color: #f6cf73; }
+  .file-conflict-kind { color: #a12a2a; font-size: 11px; white-space: nowrap; }
+  .standalone-revert[data-theme="dark"] .file-conflict-kind { color: #ffaaa7; }
   .standalone-revert[data-theme="dark"] .file-row.conflicted { background: color-mix(in srgb, #c64040 14%, var(--panel)); }
   .file-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .conflict-reason { margin: 0; color: var(--secondary); font-size: 11px; line-height: 1.45; }

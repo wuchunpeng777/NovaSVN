@@ -26,6 +26,7 @@
   } from "../lib/commit-message-history";
   import { shouldShowTextDiffViewer } from "../lib/file-content-diff";
   import { conflictKindLabel, isConflictedFile } from "../lib/svn-conflict";
+  import { svnStatusMark, svnStatusMarkTitle } from "../lib/svn-file-status";
   import { LOG_FILE_DIFF_MAX_BYTES } from "../lib/svn-log";
   import { buildPropertyContentDiff } from "../lib/svn-property-diff";
   import type {
@@ -1442,60 +1443,12 @@
     return normalizedPath === relativeTarget;
   }
 
-  /** 与 Log 窗口一致的单字母变更标记（A/M/D 等）。 */
   function statusMark(file: ChangedFile): string {
-    if (isConflicted(file)) {
-      return "C";
-    }
-    const marks: Record<string, string> = {
-      modified: "M",
-      added: "A",
-      deleted: "D",
-      replaced: "R",
-      property_modified: "M",
-      unversioned: "?",
-      missing: "!",
-      obstructed: "~",
-      conflicted: "C",
-      ignored: "I",
-      external: "X",
-      normal: " ",
-      none: " ",
-    };
-    if (["normal", "none", "property_modified"].includes(file.status) && file.property_changed) {
-      return "M";
-    }
-    if (file.property_changed && !marks[file.status]) {
-      return "M";
-    }
-    return marks[file.status] ?? (file.status.slice(0, 1).toUpperCase() || "?");
+    return svnStatusMark(file);
   }
 
   function statusMarkTitle(file: ChangedFile): string {
-    const conflictLabel = conflictKindLabel(file);
-    if (conflictLabel) {
-      return conflictLabel;
-    }
-    const titles: Record<string, string> = {
-      modified: "修改",
-      added: "新增",
-      deleted: "删除",
-      replaced: "替换",
-      property_modified: "属性修改",
-      unversioned: "未版本控制",
-      missing: "丢失",
-      obstructed: "受阻",
-      conflicted: "冲突",
-      ignored: "已忽略",
-      external: "外部",
-    };
-    if (["normal", "none", "property_modified"].includes(file.status) && file.property_changed) {
-      return "属性修改";
-    }
-    if (file.property_changed && titles[file.status]) {
-      return `${titles[file.status]} + 属性`;
-    }
-    return titles[file.status] ?? file.status;
+    return svnStatusMarkTitle(file);
   }
 
   function logKind(message: string) {

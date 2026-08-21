@@ -2432,15 +2432,13 @@ describe("taskStore SVN operation tasks", () => {
     });
   });
 
-  it("persists source list and inspector visibility", () => {
+  it("persists source list visibility", () => {
     appSettingsStore.setField("showSourceList", false);
-    appSettingsStore.setField("showInspector", false);
 
     appSettingsStore.load();
 
     expect(get(appSettingsStore)).toMatchObject({
       showSourceList: false,
-      showInspector: false,
     });
   });
 

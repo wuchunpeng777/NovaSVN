@@ -3757,7 +3757,8 @@ fn run_svn_operation_task(
         run_task_command(state, task_id, &mut command)
     };
     match command_result {
-        Ok(output) if output.status.success() => {
+        Ok(output) if output.status.success()
+            || (stream_update_output && svn_update_finished_successfully(&output)) => {
             if !stream_update_output {
                 append_command_output(state, task_id, &output);
             }
@@ -5845,7 +5846,7 @@ fn run_merge_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: Me
     );
 
     match run_merge_command(state, task_id, &mut command) {
-        Ok(output) if output.status.success() => {
+        Ok(output) if merge_finished_successfully(&output) => {
             append_merge_analysis_logs(state, task_id, &output.analysis);
             if output.analysis.output_truncated {
                 append_task_log(
@@ -7815,6 +7816,64 @@ fn command_error_detail(executable: &str, output: &std::process::Output) -> Stri
     format!(
         "`{executable}` 返回退出码 {:?}，但没有输出。",
         output.status.code()
+    )
+}
+
+fn combined_command_output_text(output: &std::process::Output) -> String {
+    format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+fn svn_text_reports_conflicts(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("summary of conflicts:")
+        || lower.contains("tree conflicts:")
+        || lower.contains("text conflicts:")
+        || lower.contains("property conflicts:")
+        || lower.contains("remains in conflict")
+}
+
+fn svn_update_should_succeed(status_success: bool, exit_code: Option<i32>, text: &str) -> bool {
+    if status_success {
+        return true;
+    }
+    if exit_code != Some(1) {
+        return false;
+    }
+    let lower = text.to_ascii_lowercase();
+    svn_text_reports_conflicts(text)
+        || lower.contains("updated to revision")
+        || lower.contains("at revision")
+}
+
+fn svn_update_finished_successfully(output: &std::process::Output) -> bool {
+    svn_update_should_succeed(
+        output.status.success(),
+        output.status.code(),
+        &combined_command_output_text(output),
+    )
+}
+
+fn merge_should_succeed(
+    status_success: bool,
+    exit_code: Option<i32>,
+    conflicted: usize,
+    output_text: &str,
+) -> bool {
+    status_success
+        || (exit_code == Some(1)
+            && (conflicted > 0 || svn_text_reports_conflicts(output_text)))
+}
+
+fn merge_finished_successfully(output: &MergeCommandResult) -> bool {
+    merge_should_succeed(
+        output.status.success(),
+        output.status.code(),
+        output.analysis.summary.conflicted,
+        &output.analysis.output_text,
     )
 }
 
@@ -16582,6 +16641,25 @@ mod tests {
                 conflicted: 1,
             }
         );
+    }
+
+    #[test]
+    fn treats_update_and_merge_conflict_exit_as_success() {
+        let conflict_output = "A    src/added.ts\nC    src/tree\nUpdated to revision 8.\nSummary of conflicts:\n  Tree conflicts: 1\n";
+        assert!(svn_text_reports_conflicts(conflict_output));
+        assert!(svn_update_should_succeed(false, Some(1), conflict_output));
+        assert!(!svn_update_should_succeed(
+            false,
+            Some(1),
+            "svn: E155007: 'C:\\wc' is not a working copy"
+        ));
+        assert!(merge_should_succeed(false, Some(1), 1, conflict_output));
+        assert!(!merge_should_succeed(
+            false,
+            Some(1),
+            0,
+            "svn: E195016: Reintegrate merge not allowed"
+        ));
     }
 
     #[test]

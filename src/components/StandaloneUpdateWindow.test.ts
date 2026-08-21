@@ -448,6 +448,53 @@ describe("StandaloneUpdateWindow", () => {
     );
   });
 
+  it("added 与树冲突时即使 SVN 退出码失败也显示更新完成", async () => {
+    inspectUpdateTargetMock.mockResolvedValue(
+      makeTarget({
+        target_path: "C:\\repo",
+        relative_path: null,
+        kind: "dir",
+        repository_url: "https://example.com/svn/trunk",
+      }),
+    );
+    getTaskMock.mockResolvedValue(
+      makeTask(
+        "failed",
+        [
+          "A    src/added.ts",
+          "C    src/tree",
+          "Updated to revision 21.",
+          "Summary of conflicts:",
+          "  Tree conflicts: 1",
+        ],
+        {
+          error:
+            "Summary of conflicts:\n  Tree conflicts: 1",
+        },
+      ),
+    );
+    scanWorkspaceStatusMock.mockResolvedValue(
+      makeStatus({
+        conflicted: 1,
+        added: 1,
+        total: 2,
+        returned: 2,
+        files: [
+          makeConflict({
+            path: "src/tree",
+            conflict_kind: "tree:update|add|add",
+          }),
+        ],
+      }),
+    );
+    render(StandaloneUpdateWindow, { props: { targetPath: "C:\\repo" } });
+
+    expect(await screen.findByRole("listitem", { name: "更新文件 src/added.ts" })).toBeInTheDocument();
+    expect(screen.getByRole("listitem", { name: "更新文件 src/tree" })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "更新完成" })).toHaveTextContent("冲突 1");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("用户手动滚动后停止运行中自动跟随，但完成时仍展示最终提示", async () => {
     getTaskMock
       .mockResolvedValueOnce(makeTask("running", ["U    src/first.ts"]))

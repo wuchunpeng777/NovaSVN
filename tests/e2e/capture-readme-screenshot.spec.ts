@@ -30,7 +30,6 @@ test.describe("README screenshots", () => {
     await expect(modifiedFile).toBeVisible();
     await modifiedFile.click();
     await page.getByRole("button", { name: "全部文件" }).click();
-    await page.getByRole("tab", { name: "Diff" }).click();
     await page.waitForTimeout(800);
 
     await page.locator(".versions-workbench").screenshot({
@@ -123,33 +122,7 @@ test.describe("README screenshots", () => {
     const modifiedFile = page.getByRole("button", { name: "选择文件 src/modified.txt" });
     await expect(modifiedFile).toBeVisible();
     await modifiedFile.click();
-    await page.getByRole("tab", { name: "Diff" }).click();
-    await page.getByRole("button", { name: "双栏" }).click();
 
-    // 检查器默认偏窄时 Monaco 高度可能为 0，截图前强制可展示区域
-    await page.evaluate(() => {
-      const grid = document.querySelector(".work-copy-grid");
-      if (grid instanceof HTMLElement) {
-        grid.style.setProperty("--inspector-width", "780px");
-      }
-      document.querySelectorAll(".monaco-diff-viewer").forEach((el) => {
-        if (el instanceof HTMLElement) {
-          el.style.height = "560px";
-          el.style.minHeight = "560px";
-        }
-      });
-      document.querySelectorAll(".monaco-diff-editor").forEach((el) => {
-        if (el instanceof HTMLElement) {
-          el.style.height = "520px";
-          el.style.minHeight = "520px";
-        }
-      });
-      window.dispatchEvent(new Event("resize"));
-    });
-
-    await expect
-      .poll(async () => page.locator(".view-line").count(), { timeout: 15_000 })
-      .toBeGreaterThan(6);
     await page.waitForTimeout(400);
 
     await page.locator(".versions-workbench").screenshot({

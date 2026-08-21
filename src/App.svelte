@@ -27,6 +27,7 @@
     getStartupIntent,
     launchExternalTool,
     launchRepoBrowserWindow,
+    launchCommitWindow,
     openFileLocation,
     openLocalPathLocation,
     openRepositoryTempFile,
@@ -1641,7 +1642,7 @@
       sourceUrl: form.sourceUrl,
       startRevision: form.startRevision,
       endRevision: form.endRevision,
-      dryRun: form.dryRun,
+      dryRun: false,
       recordOnly: form.recordOnly,
       ignoreAncestry: form.ignoreAncestry,
       force: form.force,
@@ -2867,6 +2868,29 @@
     }
   }
 
+  async function openStandaloneCommitWindow(targetPath: string) {
+    commandError = null;
+    const target = targetPath.trim();
+    if (!target) {
+      commandError = {
+        code: "WORKSPACE_REQUIRED",
+        message: "请先打开 SVN 工作副本",
+        recoverable: true,
+      };
+      return;
+    }
+    try {
+      await launchCommitWindow({ target_path: target });
+    } catch (error) {
+      commandError = {
+        code: (error as CommandError)?.code ?? "COMMIT_WINDOW_FAILED",
+        message: (error as CommandError)?.message ?? "无法打开提交窗口",
+        detail: (error as CommandError)?.detail,
+        recoverable: true,
+      };
+    }
+  }
+
   function handleStartupEscape(event: KeyboardEvent) {
     if (event.key !== "Escape" || event.defaultPrevented || !startupSurfaceIsLoading()) {
       return;
@@ -3303,6 +3327,7 @@
   onOpenFileLocation={openSelectedFileLocation}
   onOpenWorkspaceFile={openSelectedFile}
   onLaunchExternalTool={openExternalTool}
+  onLaunchCommitWindow={openStandaloneCommitWindow}
   onMarkFileReviewed={workspaceStore.markFileReviewed}
   onMarkFileUnreviewed={workspaceStore.markFileUnreviewed}
   onToggleHunkSelection={workspaceStore.toggleHunkSelection}

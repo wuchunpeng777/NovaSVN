@@ -255,6 +255,9 @@ export async function installWorkbenchBackendMock(page: Page) {
         case "sync_app_menu_state":
           data = null;
           break;
+        case "launch_commit_window":
+          data = { target_path: (args.request as { target_path?: string } | undefined)?.target_path ?? "" };
+          break;
         case "list_tasks":
           data = {
             tasks: tasks.map(({ logs: _logs, result: _result, ...summary }) => summary),

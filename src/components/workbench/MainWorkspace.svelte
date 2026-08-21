@@ -21,8 +21,6 @@
     ListPlus,
     LoaderCircle,
     MoveRight,
-    PanelRightClose,
-    PanelRightOpen,
     Pencil,
     Plus,
     RefreshCw,
@@ -40,12 +38,11 @@
   import ConflictResolver from "./ConflictResolver.svelte";
   import ImageDiffViewer from "./ImageDiffViewer.svelte";
   import MonacoDiffViewer from "./MonacoDiffViewer.svelte";
-  import RawDiffViewer from "./RawDiffViewer.svelte";
   import SyntaxHighlightedCode from "../SyntaxHighlightedCode.svelte";
   import { getRevisionFileContentDiff, listWorkspaceFiles } from "../../lib/api";
   import { shouldShowTextDiffViewer } from "../../lib/file-content-diff";
   import { detectSvnAuthenticationFailure } from "../../lib/svn-authentication";
-  import { buildPropertyContentDiff } from "../../lib/svn-property-diff";
+  import { extractSvnFileChangesFromText } from "../../lib/svn-operation-output";
   import {
     findSvnCertificateFailure,
     svnCertificateFailureLabel,
@@ -300,8 +297,6 @@
   export let selectedFileParsedDiff: ParsedFileDiff | null = null;
   export let selectedHunkIds: string[] = [];
   export let selectedPatch: { text: string; file_count: number; hunk_count: number } | null = null;
-  let selectedPropertyContentDiff: FileContentDiff | null = null;
-  $: selectedPropertyContentDiff = buildPropertyContentDiff(selectedFileDiff);
   export let svnBlame: SvnBlame | null = null;
   export let svnBlameLoading = false;
   export let svnBlameError: CommandError | null = null;
@@ -373,7 +368,6 @@
     showWhitespace: false,
     themeMode: "system",
     showSourceList: true,
-    showInspector: true,
     commitTemplate: "",
     branchPoolBasePath: "",
     largeFileThresholdMb: 20,
@@ -442,6 +436,7 @@
   export let onOpenFileLocation: (path: string) => void = () => {};
   export let onOpenWorkspaceFile: (path: string) => void = () => {};
   export let onLaunchExternalTool: (kind: ExternalToolKind, path: string) => void = () => {};
+  export let onLaunchCommitWindow: (targetPath: string) => void = () => {};
   export let onMarkFileReviewed: (path: string) => void = () => {};
   export let onMarkFileUnreviewed: (path: string) => void = () => {};
   export let onToggleHunkSelection: (filePath: string, hunkId: string) => void = () => {};
@@ -598,6 +593,52 @@
   ) => void = () => {};
   export let onExportDiagnosticLog: () => void = () => {};
 
+  $: {
+    selectedFile;
+    selectedFileReviewed;
+    selectedFileDiff;
+    selectedFileParsedDiff;
+    selectedHunkIds;
+    selectedPatch;
+    svnBlameLoading;
+    diffLoading;
+    selectedPatchLoading;
+    diffError;
+    parsedDiffError;
+    selectedPatchError;
+    svnProperties;
+    svnPropertiesLoading;
+    propertyEditForm;
+    commitTemplate;
+    commitHistory;
+    commitMessage;
+    commitError;
+    commitDisabled;
+    partialCommitDisabled;
+    tasks;
+    onSelectAllCommitFiles;
+    onClearCommitFiles;
+    onLockFile;
+    onUnlockFile;
+    onForceUnlockFile;
+    onMarkFileReviewed;
+    onMarkFileUnreviewed;
+    onToggleHunkSelection;
+    onPreviewSelectedPatch;
+    onPropertyEditInput;
+    onUsePropertyForEdit;
+    onSaveSvnProperty;
+    onCommitMessageInput;
+    onCommitTemplateInput;
+    onUseCommitHistoryMessage;
+    onConfirmSafetyWarnings;
+    onClearWorkspaceDraft;
+    onCommit;
+    onPartialCommit;
+    onSelectTask;
+    onCancelTask;
+  }
+
   const statusLabels: Record<string, string> = {
     modified: "modify",
     added: "add",
@@ -622,7 +663,6 @@
   };
 
   type WorkingCopyTreeFilter = "all" | "local" | "unversioned";
-  type InspectorTab = "information" | "properties" | "diff" | "blame" | "commit" | "tasks";
   type WorkspaceTreeRow = WorkspaceFileNode & {
     depth: number;
   };
@@ -640,7 +680,6 @@
     afterHeight: number;
   };
   type WorkspaceTabUiState = {
-    activeInspectorTab: InspectorTab;
     workingCopyTreeFilter: WorkingCopyTreeFilter;
     selectedRevisionFileDiff: { revision: string; path: string } | null;
     revisionFileContentDiff: FileContentDiff | null;
@@ -670,14 +709,6 @@
 
   const folderTreeHeaderHeight = 28;
   const folderTreeRowHeight = 28;
-  const inspectorTabs: Array<{ id: InspectorTab; label: string }> = [
-    { id: "information", label: "Information" },
-    { id: "properties", label: "Properties" },
-    { id: "diff", label: "Diff" },
-    { id: "blame", label: "Blame" },
-    { id: "commit", label: "Commit" },
-    { id: "tasks", label: "Tasks" },
-  ];
 
   const fileColumns = [
     { key: "name", label: "Name", ariaLabel: "Name" },
@@ -691,8 +722,6 @@
   ] as const;
   type FileColumnKey = (typeof fileColumns)[number]["key"];
 
-  let selectedCommitHistoryMessage = "";
-  let activeInspectorTab: InspectorTab = "information";
   let diffInline = false;
   let showWhitespace = false;
   let workingCopyTreeFilter: WorkingCopyTreeFilter = "all";
@@ -747,16 +776,10 @@
   } | null = null;
   let contextMenuElement: HTMLElement | null = null;
   let projectContextMenuElement: HTMLElement | null = null;
-  let commitMessageElement: HTMLTextAreaElement | null = null;
-  let commitMessageFocusRequested = false;
   let reportedActiveWorkspacePath: string | null | undefined;
   let selectionWorkspaceRoot: string | null = null;
   let selectionFileTree: WorkspaceFileTree | null = null;
   const navigationTreeWidth = 228;
-  const inspectorMinWidth = 300;
-  const inspectorMaxWidth = 720;
-  const inspectorDividerWidth = 6;
-  const fileBrowserMinWidth = 360;
   const fileColumnMinimumWidths: Record<FileColumnKey, number> = {
     name: 120,
     base: 36,
@@ -777,9 +800,6 @@
     size: 160,
     actions: 280,
   };
-  let inspectorWidth = 360;
-  let inspectorMaximumWidth = inspectorMaxWidth;
-  let resizingInspector = false;
   const timelineDiffMinWidth = 360;
   const timelineDiffMaxWidth = 1600;
   const timelineListMinWidth = 360;
@@ -804,7 +824,6 @@
   let systemPrefersDark = false;
   let themeMediaQuery: MediaQueryList | null = null;
   let resolvedTheme: "light" | "dark" = "light";
-  let inspectorSelectionSignature = "";
   let preparedCertificateSignature: string | null = null;
   let dismissedCertificateSignature: string | null = null;
   let selectedCertificateFailures: SvnCertificateFailure[] = [];
@@ -927,29 +946,6 @@
   $: if (!detectedCertificateFailure) {
     preparedCertificateSignature = null;
     dismissedCertificateSignature = null;
-  }
-  $: if (
-    commitMessageFocusRequested &&
-    appSettings.showInspector &&
-    activeInspectorTab === "commit" &&
-    commitMessageElement
-  ) {
-    commitMessageFocusRequested = false;
-    queueMicrotask(() => commitMessageElement?.focus());
-  }
-  $: {
-    const selected = selectedFilePath
-      ? selectedFile ?? workingCopyStatus?.files.find((file) => file.path === selectedFilePath)
-      : null;
-    const selectionSignature = `${selectedFilePath ?? ""}:${selected?.status ?? ""}:${selected?.conflict_kind ?? ""}`;
-    if (
-      selectionSignature !== inspectorSelectionSignature &&
-      selected &&
-      (selected.status === "conflicted" || selected.conflict_kind)
-    ) {
-      activeInspectorTab = "information";
-    }
-    inspectorSelectionSignature = selectionSignature;
   }
 
   function labelStatus(status: string) {
@@ -1271,6 +1267,18 @@
     return rows;
   }
 
+  function directoryPathsWithChildren(nodes: WorkspaceFileNode[]) {
+    const parents = new Set<string>();
+    for (const node of flattenWorkspaceNodes(nodes)) {
+      const segments = node.path.split("/").filter(Boolean);
+      const lastParentIndex = node.kind === "dir" ? segments.length - 1 : segments.length - 2;
+      for (let index = 1; index <= lastParentIndex; index += 1) {
+        parents.add(segments.slice(0, index).join("/"));
+      }
+    }
+    return parents;
+  }
+
   function filesForDirectory(nodes: WorkspaceFileNode[], directoryPath: string) {
     return flattenWorkspaceNodes(nodes)
       .filter(
@@ -1499,39 +1507,6 @@
 
   function timelineExportDisabled() {
     return !svnLog?.repository_url?.trim() || toolbarLocked || repositoryExportRunning;
-  }
-
-  function selectInspectorTab(tab: InspectorTab, focus = false) {
-    if (tab !== "commit") {
-      commitMessageFocusRequested = false;
-    }
-    activeInspectorTab = tab;
-    if (focus) {
-      queueMicrotask(() => document.getElementById(`inspector-tab-${tab}`)?.focus());
-    }
-  }
-
-  function handleInspectorTabKeydown(event: KeyboardEvent, tab: InspectorTab) {
-    const currentIndex = inspectorTabs.findIndex((item) => item.id === tab);
-    let nextIndex = currentIndex;
-    if (event.key === "ArrowRight") {
-      nextIndex = (currentIndex + 1) % inspectorTabs.length;
-    } else if (event.key === "ArrowLeft") {
-      nextIndex = (currentIndex - 1 + inspectorTabs.length) % inspectorTabs.length;
-    } else if (event.key === "Home") {
-      nextIndex = 0;
-    } else if (event.key === "End") {
-      nextIndex = inspectorTabs.length - 1;
-    } else {
-      return;
-    }
-    selectInspectorTab(inspectorTabs[nextIndex].id, true);
-    event.preventDefault();
-  }
-
-  function openBlameInspector() {
-    selectInspectorTab("blame");
-    onRefreshSvnBlame();
   }
 
   function formatTimelineDate(value: string) {
@@ -1836,21 +1811,19 @@
       onUnselectCommitFiles(selectedCommittablePaths);
     } else {
       onSelectCommitFiles(selectedCommittablePaths);
-      openCommitForm();
     }
   }
 
   function openCommitForm() {
-    activeInspectorTab = "commit";
-    commitMessageFocusRequested = true;
-    if (!appSettings.showInspector) {
-      onAppSettingInput("showInspector", true);
+    const targetPath = workspace?.working_copy_root?.trim();
+    if (!targetPath) {
+      return;
     }
+    onLaunchCommitWindow(targetPath);
   }
 
   function selectCommitFileAndOpen(path: string) {
     onSelectCommitFile(path);
-    openCommitForm();
   }
 
   function rowDomId(path: string) {
@@ -2471,14 +2444,6 @@
     }
   }
 
-  function applyCommitHistoryMessage() {
-    if (!selectedCommitHistoryMessage) {
-      return;
-    }
-    onUseCommitHistoryMessage(selectedCommitHistoryMessage);
-    selectedCommitHistoryMessage = "";
-  }
-
   function workspaceEntryName(entry: BranchPoolEntry) {
     return entry.display_name?.trim() || basename(entry.local_path) || branchName(entry);
   }
@@ -2512,7 +2477,6 @@
 
   function captureWorkspaceTabUiState(): WorkspaceTabUiState {
     return {
-      activeInspectorTab,
       workingCopyTreeFilter,
       selectedRevisionFileDiff,
       revisionFileContentDiff,
@@ -2550,7 +2514,6 @@
     activeWorkspaceTabUiKey = key;
     const cached = key ? workspaceTabUiStates.get(key) : null;
 
-    activeInspectorTab = cached?.activeInspectorTab ?? "information";
     workingCopyTreeFilter =
       cached?.workingCopyTreeFilter === "local" || cached?.workingCopyTreeFilter === "unversioned"
         ? cached.workingCopyTreeFilter
@@ -2944,7 +2907,6 @@
 
 
   function startFileColumnResize(event: MouseEvent, column: FileColumnKey) {
-    stopInspectorResize();
     stopTimelineDiffResize();
     resizingFileColumn = {
       column,
@@ -3007,39 +2969,7 @@
     }
   }
 
-  function startInspectorResize(event: MouseEvent) {
-    stopFileColumnResize();
-    stopTimelineDiffResize();
-    if (!resizingInspector) {
-      window.addEventListener("mousemove", resizeInspector);
-      window.addEventListener("mouseup", stopInspectorResize);
-    }
-    resizingInspector = true;
-    event.preventDefault();
-  }
-
-  function stopInspectorResize() {
-    if (!resizingInspector) {
-      return;
-    }
-    resizingInspector = false;
-    window.removeEventListener("mousemove", resizeInspector);
-    window.removeEventListener("mouseup", stopInspectorResize);
-  }
-
-  function resizeInspector(event: MouseEvent) {
-    if (!resizingInspector) {
-      return;
-    }
-    inspectorWidth = constrainInspectorWidth(window.innerWidth - event.clientX);
-  }
-
-  function adjustInspectorWidth(delta: number) {
-    inspectorWidth = constrainInspectorWidth(inspectorWidth + delta);
-  }
-
   function startTimelineDiffResize(event: MouseEvent) {
-    stopInspectorResize();
     stopFileColumnResize();
     if (!resizingTimelineDiff) {
       window.addEventListener("mousemove", resizeTimelineDiff);
@@ -3069,20 +2999,6 @@
     timelineDiffWidth = constrainTimelineDiffWidth(timelineDiffWidth + delta);
   }
 
-  function calculateInspectorMaxWidth() {
-    return Math.max(
-      inspectorMinWidth,
-      Math.min(
-        inspectorMaxWidth,
-        window.innerWidth - navigationTreeWidth - inspectorDividerWidth - fileBrowserMinWidth,
-      ),
-    );
-  }
-
-  function constrainInspectorWidth(width: number) {
-    return Math.min(Math.max(width, inspectorMinWidth), inspectorMaximumWidth);
-  }
-
   function constrainTimelineDiffWidth(width: number) {
     const availableMaximum =
       window.innerWidth - navigationTreeWidth - timelineListMinWidth - timelineDiffDividerWidth;
@@ -3093,29 +3009,12 @@
     return Math.min(Math.max(width, timelineDiffMinWidth), maximum);
   }
 
-  function syncInspectorWidthToWindow() {
-    inspectorMaximumWidth = calculateInspectorMaxWidth();
-    inspectorWidth = constrainInspectorWidth(inspectorWidth);
-  }
-
   function syncLayoutWidthsToWindow() {
-    syncInspectorWidthToWindow();
     timelineDiffWidth = constrainTimelineDiffWidth(timelineDiffWidth);
   }
 
   function handleWindowResize() {
     syncLayoutWidthsToWindow();
-  }
-
-
-  function toggleInspector() {
-    if (view.id !== "changes") {
-      return;
-    }
-    if (appSettings.showInspector) {
-      stopInspectorResize();
-    }
-    onAppSettingInput("showInspector", !appSettings.showInspector);
   }
 
   function syncSystemTheme(event?: MediaQueryListEvent) {
@@ -3137,7 +3036,6 @@
   onDestroy(() => {
     revisionFileDiffGeneration += 1;
     finishBranchPoolDrag();
-    stopInspectorResize();
     stopTimelineDiffResize();
     stopFileColumnResize();
     window.removeEventListener("resize", handleWindowResize);
@@ -3168,7 +3066,6 @@
     repositoryFileBlame,
   );
   $: files = workingCopyStatus?.files ?? [];
-  $: directoryParentPaths = new Set(directoryRows.map((row) => parentDirectoryPath(row.path)));
   $: directoryChangeSummary = summarizeDirectoryChanges(files);
   $: filteredTreeNodes = filterTreeNodes(
     workspaceFileTree?.nodes ?? [],
@@ -3176,6 +3073,7 @@
     searchText,
     changelistFilter,
   );
+  $: directoryParentPaths = directoryPathsWithChildren(filteredTreeNodes);
   $: directoryRows = directoryRowsForNodes(filteredTreeNodes, collapsedTreePaths);
   $: selectedDirectoryTreeNodes =
     selectedDirectoryFileTreePath === selectedDirectoryPath && selectedDirectoryFileTree
@@ -3189,6 +3087,9 @@
         ? []
         : filteredTreeNodes;
   $: treeRows = filesForDirectory(selectedDirectoryTreeNodes, selectedDirectoryPath);
+  $: mergeOutputFiles = extractSvnFileChangesFromText(
+    (mergeResult?.output_text ?? "").split(/\r?\n/),
+  );
   $: if (virtualizedFileTreeSource !== workspaceFileTree) {
     const nextWorkspaceKey = workspaceTabUiKey(workspace?.local_path);
     const workspaceChanged = virtualizedFileTreeWorkspaceKey !== nextWorkspaceKey;
@@ -3346,7 +3247,7 @@
 <section
   class="versions-workbench"
   class:has-inline-update={inlineUpdateRoot !== null}
-  class:resizing-layout={resizingInspector || resizingTimelineDiff || resizingFileColumn !== null}
+  class:resizing-layout={resizingTimelineDiff || resizingFileColumn !== null}
   data-theme={resolvedTheme}
   data-theme-mode={appSettings.themeMode}
   style={`--timeline-diff-width: ${timelineDiffWidth}px`}
@@ -3730,19 +3631,6 @@
               >
                 <Wrench size={15} aria-hidden="true" />
                 清理
-              </button>
-              <button
-                type="button"
-                class="icon-button"
-                aria-label={appSettings.showInspector ? "隐藏检查器" : "显示检查器"}
-                title={appSettings.showInspector ? "隐藏检查器" : "显示检查器"}
-                on:click={toggleInspector}
-              >
-                {#if appSettings.showInspector}
-                  <PanelRightClose size={16} aria-hidden="true" />
-                {:else}
-                  <PanelRightOpen size={16} aria-hidden="true" />
-                {/if}
               </button>
             {:else}
               <button
@@ -5192,15 +5080,6 @@
                   onMergeFormInput("endRevision", (event.currentTarget as HTMLInputElement).value)}
               />
             </div>
-            <label class="checkbox-row">
-              <input
-                type="checkbox"
-                checked={mergeForm.dryRun}
-                on:change={(event) =>
-                  onMergeFormInput("dryRun", (event.currentTarget as HTMLInputElement).checked)}
-              />
-              <span>先 Dry-run</span>
-            </label>
             <div class="merge-options" aria-label="Merge tracking 参数">
               <label class="checkbox-row">
                 <input
@@ -5256,11 +5135,11 @@
               on:click={onRunMerge}
               disabled={!workspace || mergeRunning || !mergeForm.sourceUrl.trim()}
             >
-              {mergeRunning ? "执行中" : mergeForm.dryRun ? "Dry-run" : "Merge"}
+              {mergeRunning ? "执行中" : "Merge"}
             </button>
             {#if mergeResult}
               <div class="merge-result-meta">
-                <span>{mergeResult.dry_run ? "Dry-run 预览" : "Merge 结果"}</span>
+                <span>Merge 结果</span>
                 <span>{mergeResult.revision_range === "默认"
                     ? "默认范围"
                     : `r${mergeResult.revision_range}`}</span>
@@ -5278,7 +5157,20 @@
                 <span><strong>{mergeResult.deleted}</strong>删除</span>
                 <span><strong>{mergeResult.conflicted}</strong>冲突</span>
               </div>
-              <pre class="merge-output">{mergeResult.output_text || "svn merge 没有输出。"}</pre>
+              {#if mergeOutputFiles.length > 0}
+                <div class="merge-diff-files" aria-label="Merge 差异文件">
+                  {#each mergeOutputFiles as file (file.path)}
+                    <div>
+                      <span class="merge-file-status">{file.action}</span>
+                      <code>{file.path}</code>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+              <details class="merge-output">
+                <summary>SVN 输出</summary>
+                <pre>{mergeResult.output_text || "svn merge 没有输出。"}</pre>
+              </details>
             {/if}
           </article>
 
@@ -5357,18 +5249,6 @@
                 深色
               </button>
             </div>
-            <label class="checkbox-row">
-              <input
-                type="checkbox"
-                checked={appSettings.showInspector}
-                on:change={(event) =>
-                  onAppSettingInput(
-                    "showInspector",
-                    (event.currentTarget as HTMLInputElement).checked,
-                  )}
-              />
-              <span>显示工作副本检查器</span>
-            </label>
           </article>
           <article>
             <h2>SVN</h2>
@@ -5733,10 +5613,8 @@
 
         <section
           class="work-copy-grid"
-          class:resizing={resizingInspector}
           class:file-columns-resizing={resizingFileColumn !== null}
-          class:inspector-hidden={!appSettings.showInspector}
-          style={`${fileTableColumnStyle}; --inspector-width: ${inspectorWidth}px`}
+          style={fileTableColumnStyle}
         >
           <div class="workspace-file-explorer folder-detached">
 
@@ -6112,527 +5990,6 @@
             </div>
           </div>
 
-          {#if appSettings.showInspector}
-            <div
-              role="slider"
-              tabindex="0"
-              class="inspector-resizer"
-              aria-label="调整右侧面板宽度"
-              aria-orientation="horizontal"
-              aria-valuemin={inspectorMinWidth}
-              aria-valuemax={inspectorMaximumWidth}
-              aria-valuenow={inspectorWidth}
-              on:mousedown={startInspectorResize}
-              on:keydown={(event) => {
-                if (event.key === "ArrowLeft") {
-                  adjustInspectorWidth(-24);
-                  event.preventDefault();
-                }
-                if (event.key === "ArrowRight") {
-                  adjustInspectorWidth(24);
-                  event.preventDefault();
-                }
-                if (event.key === "Home") {
-                  inspectorWidth = inspectorMinWidth;
-                  event.preventDefault();
-                }
-                if (event.key === "End") {
-                  inspectorWidth = inspectorMaximumWidth;
-                  event.preventDefault();
-                }
-              }}
-            ></div>
-
-            <aside class="inspector" aria-label="详情和提交">
-            <div class="inspector-tabs" role="tablist" aria-label="检查器面板">
-              {#each inspectorTabs as tab (tab.id)}
-                <button
-                  id={`inspector-tab-${tab.id}`}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeInspectorTab === tab.id}
-                  aria-controls="inspector-panel"
-                  tabindex={activeInspectorTab === tab.id ? 0 : -1}
-                  class:active={activeInspectorTab === tab.id}
-                  on:click={() => selectInspectorTab(tab.id)}
-                  on:keydown={(event) => handleInspectorTabKeydown(event, tab.id)}
-                >
-                  {tab.label}
-                </button>
-              {/each}
-            </div>
-
-            <div
-              id="inspector-panel"
-              class="inspector-tab-panel"
-              role="tabpanel"
-              tabindex="0"
-              aria-labelledby={`inspector-tab-${activeInspectorTab}`}
-            >
-            {#if activeInspectorTab === "information"}
-            <section class="inspector-section">
-              <h2>Information</h2>
-              {#if selectedFile || selectedTreeNode}
-                <div class="file-card">
-                  <strong>{basename(selectedFile?.path ?? selectedTreeNode?.path ?? "")}</strong>
-                  <span>{dirname(selectedFile?.path ?? selectedTreeNode?.path ?? "")}</span>
-                  <small>
-                    {selectedStatusText(selectedFile, selectedTreeNode)} ·
-                    {formatBytes(selectedFile?.file_size ?? selectedTreeNode?.file_size ?? null)}
-                  </small>
-                </div>
-                <dl class="information-list">
-                  <div>
-                    <dt>Type</dt>
-                    <dd>{selectedTreeNode?.kind === "dir" ? "目录" : "文件"}</dd>
-                  </div>
-                  <div>
-                    <dt>Base</dt>
-                    <dd>{selectedTreeNode?.base_revision ?? selectedTreeNode?.revision ?? "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Last</dt>
-                    <dd>{selectedTreeNode?.last_revision ?? "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Author</dt>
-                    <dd>{selectedTreeNode?.last_changed_author ?? "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Date</dt>
-                    <dd>{formatSvnDate(selectedTreeNode?.last_changed_date ?? null)}</dd>
-                  </div>
-                  <div>
-                    <dt>Lock</dt>
-                    <dd>{selectedFile?.lock_owner ?? (selectedFile?.lock_state === "none" ? "未锁定" : selectedFile?.lock_state ?? "-")}</dd>
-                  </div>
-                </dl>
-                <div class="button-row wrap">
-                  <button
-                    type="button"
-                    disabled={!canOpenWorkspaceNode(selectedTreeNode)}
-                    on:click={() =>
-                      selectedFilePath && onOpenWorkspaceFile(selectedFilePath)}
-                  >
-                    打开
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!canOpenWorkspaceNode(selectedTreeNode)}
-                    on:click={() =>
-                      selectedFilePath && onOpenFileLocation(selectedFilePath)}
-                  >
-                    定位
-                  </button>
-                  {#if selectedFile?.status === "unversioned"}
-                    <button type="button" on:click={() => onAddFile(selectedFile.path)}>Add</button>
-                  {:else if selectedTreeNode?.kind === "file" && selectedTreeNode.versioned}
-                    <button
-                      type="button"
-                      title="查看逐行修改作者"
-                      on:click={openBlameInspector}
-                    >
-                      Blame
-                    </button>
-                  {/if}
-                  {#if selectedFile && selectedFile.status !== "unversioned"}
-                    <button type="button" on:click={() => onLaunchExternalTool("diff", selectedFile.path)}>
-                      外部 Diff
-                    </button>
-                    {#if selectedFile.change_scope === "local" || selectedFile.change_scope === "both"}
-                      <button type="button" on:click={() => onRevertFile(selectedFile.path)}>
-                        撤销
-                      </button>
-                    {/if}
-                    {#if selectedFileReviewed}
-                      <button type="button" on:click={() => onMarkFileUnreviewed(selectedFile.path)}>
-                        标为未审
-                      </button>
-                    {:else}
-                      <button type="button" on:click={() => onMarkFileReviewed(selectedFile.path)}>
-                        标为已审
-                      </button>
-                    {/if}
-                    {#if selectedFile.lock_state === "none" && !selectedFile.lock_owner}
-                      <button type="button" on:click={() => onLockFile(selectedFile.path)}>Lock</button>
-                    {:else}
-                      <button type="button" on:click={() => onUnlockFile(selectedFile.path)}>Unlock</button>
-                      <button type="button" on:click={() => onForceUnlockFile(selectedFile.path)}>
-                        Force Unlock
-                      </button>
-                    {/if}
-                  {/if}
-                  {#if canIgnorePath(selectedTreeNode)}
-                    <button
-                      type="button"
-                      aria-label={`在工作副本中 Ignore ${selectedTreeNode?.path ?? ""}`}
-                      on:click={() => selectedTreeNode && onIgnorePath(selectedTreeNode.path)}
-                    >
-                      Ignore
-                    </button>
-                  {/if}
-                  {#if canMovePath(selectedTreeNode)}
-                    <button
-                      type="button"
-                      aria-label={`在工作副本中移动 ${selectedTreeNode?.path ?? ""}`}
-                      on:click={() => selectedTreeNode && onMovePath(selectedTreeNode.path)}
-                    >
-                      移动
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`在工作副本中复制 ${selectedTreeNode?.path ?? ""}`}
-                      on:click={() => selectedTreeNode && onCopyPath(selectedTreeNode.path)}
-                    >
-                      复制
-                    </button>
-                  {/if}
-                  {#if canDeletePath(selectedTreeNode)}
-                    <button
-                      type="button"
-                      aria-label={`从工作副本删除 ${selectedTreeNode?.path ?? ""}`}
-                      on:click={() => selectedTreeNode && onDeletePath(selectedTreeNode.path)}
-                    >
-                      删除
-                    </button>
-                  {/if}
-                </div>
-
-                {#if selectedFile && (selectedFile.status === "conflicted" || selectedFile.conflict_kind)}
-                  <div class="conflict-actions">
-                    <button
-                      type="button"
-                      class="primary"
-                      on:click={() => openConflictResolver(selectedFile.path)}
-                    >
-                      可视化解决
-                    </button>
-                    <button type="button" on:click={() => onResolveMineFull(selectedFile.path)}>
-                      使用我的版本
-                    </button>
-                    <button type="button" on:click={() => onResolveTheirsFull(selectedFile.path)}>
-                      使用对方版本
-                    </button>
-                  </div>
-                {/if}
-              {:else}
-                <p class="muted">选择文件后显示操作。</p>
-              {/if}
-            </section>
-            {/if}
-
-            {#if activeInspectorTab === "blame"}
-              <section class="inspector-section blame-section" aria-label="Blame 逐行历史">
-                <div class="section-title">
-                  <h2>Blame</h2>
-                  <button
-                    type="button"
-                    on:click={onRefreshSvnBlame}
-                    disabled={svnBlameLoading || !selectedFilePath || selectedTreeNode?.kind !== "file" || !selectedTreeNode?.versioned}
-                  >
-                    {svnBlameLoading ? "读取中" : "刷新"}
-                  </button>
-                </div>
-                <ErrorNotice error={svnBlameError} />
-                {#if svnBlame}
-                  <p class="muted">
-                    {svnBlame.target} · {svnBlame.total_lines} 行
-                  </p>
-                  <div
-                    class="blame-table"
-                    role="table"
-                    aria-label={`${svnBlame.target} Blame`}
-                    on:scroll={handleWorkspaceBlameScroll}
-                  >
-                    <div class="blame-row blame-head" role="row">
-                      <span role="columnheader">Revision</span>
-                      <span role="columnheader">作者</span>
-                      <span role="columnheader">行</span>
-                      <span role="columnheader">内容</span>
-                    </div>
-                    {#if workspaceBlameWindow.beforeHeight > 0}
-                      <div class="virtual-list-spacer" style={`height: ${workspaceBlameWindow.beforeHeight}px`} aria-hidden="true"></div>
-                    {/if}
-                    {#each workspaceBlameWindow.items as line (line.line_number)}
-                      <div class="blame-row" role="row" title={formatDate(line.date)}>
-                        <span role="cell" class="blame-revision-cell">
-                          {#if line.revision}
-                            <button
-                              type="button"
-                              class="blame-revision-button"
-                              aria-label={`查看 r${line.revision} Log`}
-                              title={`查看 r${line.revision} 提交信息`}
-                              on:click={() => openWorkspaceBlameRevisionLog(line.revision)}
-                            >r{line.revision}</button>
-                          {:else}
-                            -
-                          {/if}
-                        </span>
-                        <span role="cell">{line.author || "-"}</span>
-                        <span role="cell" class="blame-line-number">{line.line_number}</span>
-                        <span role="cell" class="blame-content">
-                          <SyntaxHighlightedCode
-                            content={line.content}
-                            language={svnBlame.language ?? "plaintext"}
-                            title={line.content}
-                            theme={resolvedTheme}
-                          />
-                        </span>
-                      </div>
-                    {/each}
-                    {#if workspaceBlameWindow.afterHeight > 0}
-                      <div class="virtual-list-spacer" style={`height: ${workspaceBlameWindow.afterHeight}px`} aria-hidden="true"></div>
-                    {/if}
-                  </div>
-                  {#if svnBlame.truncated}
-                    <p class="muted">仅显示前 {svnBlame.lines.length} 行。</p>
-                  {/if}
-                {:else if !svnBlameLoading && !svnBlameError}
-                  <p class="muted">选择版本控制文件并读取逐行历史。</p>
-                {/if}
-              </section>
-            {/if}
-
-            {#if activeInspectorTab === "diff"}
-            <section class="inspector-section diff-section">
-              <div class="section-title">
-                <h2>Diff</h2>
-                <div class="segmented-control compact">
-                  <button type="button" class:active={!diffInline} on:click={() => (diffInline = false)}>
-                    双栏
-                  </button>
-                  <button type="button" class:active={diffInline} on:click={() => (diffInline = true)}>
-                    行内
-                  </button>
-                </div>
-              </div>
-              {#if contentDiffLoading || diffLoading}
-                <p class="muted">Diff 加载中</p>
-              {:else if contentDiffError}
-                <ErrorNotice error={contentDiffError} />
-              {:else if diffError}
-                <ErrorNotice error={diffError} />
-              {:else if selectedFileContentDiff?.is_image}
-                <ImageDiffViewer contentDiff={selectedFileContentDiff} />
-              {:else if shouldShowTextDiffViewer(selectedFileContentDiff)}
-                <MonacoDiffViewer
-                  contentDiff={selectedFileContentDiff}
-                  inlineMode={diffInline}
-                  showWhitespace={showWhitespace}
-                  theme={resolvedTheme}
-                />
-              {:else if selectedPropertyContentDiff}
-                <MonacoDiffViewer
-                  contentDiff={selectedPropertyContentDiff}
-                  inlineMode={diffInline}
-                  showWhitespace={showWhitespace}
-                  theme={resolvedTheme}
-                />
-              {:else if selectedFileContentDiff?.too_large}
-                <p class="muted">
-                  文件内容超过 {Math.round(selectedFileContentDiff.max_bytes / 1024 / 1024)} MB，无法预览
-                </p>
-              {:else if selectedFileContentDiff?.binary || selectedFileDiff?.binary}
-                <p class="muted">二进制文件无法预览文本修改</p>
-              {:else if selectedFileDiff}
-                {#if selectedFileDiff.text}
-                  <RawDiffViewer text={selectedFileDiff.text} theme={resolvedTheme} />
-                {:else}
-                  <p class="muted">没有文本 diff</p>
-                {/if}
-              {:else}
-                <p class="muted">选择改动文件后显示 diff。</p>
-              {/if}
-            </section>
-
-            {#if selectedFileParsedDiff}
-              <section class="inspector-section hunk-section">
-                <div class="section-title">
-                  <h2>Hunk</h2>
-                  <button type="button" on:click={onPreviewSelectedPatch} disabled={selectedPatchLoading}>
-                    {selectedPatchLoading ? "生成中" : "预览 Patch"}
-                  </button>
-                </div>
-                {#if parsedDiffError}
-                  <ErrorNotice error={parsedDiffError} />
-                {/if}
-                <div class="hunk-list">
-                  {#each selectedFileParsedDiff.hunks as hunk (hunk.id)}
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={selectedHunkIds.includes(hunk.id)}
-                        on:change={() =>
-                          onToggleHunkSelection(selectedFileParsedDiff.path, hunk.id)}
-                      />
-                      <span>{hunk.header}</span>
-                    </label>
-                  {/each}
-                </div>
-                {#if selectedPatchError}
-                  <ErrorNotice error={selectedPatchError} />
-                {:else if selectedPatch}
-                  <p class="muted">{selectedPatch.file_count} 文件 · {selectedPatch.hunk_count} hunk</p>
-                  <button type="button" on:click={onPartialCommit} disabled={partialCommitDisabled}>
-                    提交选中 Hunk
-                  </button>
-                {/if}
-              </section>
-            {/if}
-            {/if}
-
-            {#if activeInspectorTab === "properties"}
-            <section class="inspector-section">
-              <div class="section-title">
-                <h2>Properties</h2>
-                <button type="button" on:click={onRefreshSvnProperties} disabled={!workspace || svnPropertiesLoading}>
-                  {svnPropertiesLoading ? "读取中" : "读取"}
-                </button>
-              </div>
-              <ErrorNotice error={svnPropertiesError} />
-              {#if svnProperties}
-                <p class="muted">作用目录：{svnProperties.target}</p>
-                <div class="property-list">
-                  {#each svnProperties.properties as property (property.name)}
-                    <button type="button" on:click={() => onUsePropertyForEdit(property.name, property.value)}>
-                      <strong>{property.name}</strong>
-                      <span>{property.value}</span>
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-              <input
-                type="text"
-                value={propertyEditForm.name}
-                placeholder="svn:ignore"
-                on:input={(event) =>
-                  onPropertyEditInput("name", (event.currentTarget as HTMLInputElement).value)}
-              />
-              <textarea
-                rows="2"
-                value={propertyEditForm.value}
-                placeholder="属性值，留空保存为删除"
-                on:input={(event) =>
-                  onPropertyEditInput(
-                    "value",
-                    (event.currentTarget as HTMLTextAreaElement).value,
-                  )}
-              ></textarea>
-              <button type="button" on:click={onSaveSvnProperty} disabled={!workspace}>
-                保存属性
-              </button>
-            </section>
-            {/if}
-
-            {#if activeInspectorTab === "commit"}
-            <section class="inspector-section commit-section">
-              <div class="section-title">
-                <h2>Commit</h2>
-                <div class="button-row">
-                  <button type="button" on:click={onSelectAllCommitFiles}>全选改动</button>
-                  <button type="button" on:click={onClearCommitFiles}>清除选择</button>
-                  <button type="button" on:click={onClearWorkspaceDraft}>清空草稿</button>
-                </div>
-              </div>
-              <p class="muted">本次将提交 {commitFiles.length} 个文件</p>
-              <input
-                type="text"
-                value={commitTemplate}
-                placeholder="提交模板"
-                on:input={(event) =>
-                  onCommitTemplateInput((event.currentTarget as HTMLInputElement).value)}
-              />
-              {#if commitHistory.length > 0}
-                <select
-                  bind:value={selectedCommitHistoryMessage}
-                  on:change={applyCommitHistoryMessage}
-                  aria-label="最近提交信息"
-                >
-                  <option value="">最近提交信息</option>
-                  {#each commitHistory as message}
-                    <option value={message}>{message}</option>
-                  {/each}
-                </select>
-              {/if}
-              <textarea
-                bind:this={commitMessageElement}
-                rows="4"
-                value={commitMessage}
-                placeholder="提交信息"
-                on:input={(event) =>
-                  onCommitMessageInput((event.currentTarget as HTMLTextAreaElement).value)}
-              ></textarea>
-              {#if commitError}
-                <p class="inline-error">{commitError}</p>
-              {/if}
-              {#if safetyCheck.blockers.length > 0 || safetyCheck.warnings.length > 0}
-                <div class="safety-box">
-                  {#if safetyCheck.blockers.length > 0}
-                    <strong>{safetyCheck.blockers.length} 个阻塞</strong>
-                  {/if}
-                  {#if safetyCheck.warnings.length > 0}
-                    <span>{safetyCheck.warnings.length} 个警告</span>
-                  {/if}
-                  {#if unconfirmedWarningCount > 0 && safetyCheck.blockers.length === 0}
-                    <button type="button" on:click={onConfirmSafetyWarnings}>
-                      确认警告
-                    </button>
-                  {/if}
-                </div>
-              {/if}
-              <button type="button" class="primary full" on:click={onCommit} disabled={commitDisabled}>
-                提交
-              </button>
-            </section>
-            {/if}
-
-            {#if activeInspectorTab === "tasks"}
-            <section class="inspector-section task-section">
-              <div class="section-title">
-                <h2>Tasks</h2>
-                <span>{tasks.length}</span>
-              </div>
-              <ErrorNotice error={taskError} />
-              {#if activeTask}
-                <div class="task-log">
-                  <strong>{activeTask.title}</strong>
-                  {#each activeTask.logs as log}
-                    <p><time>{formatTaskTime(log.created_at)}</time>{log.message}</p>
-                  {/each}
-                  {#if activeTask.error}
-                    <p class="inline-error">{activeTask.error}</p>
-                  {/if}
-                </div>
-              {:else}
-                <p class="muted">暂无后台任务</p>
-              {/if}
-              <div class="task-list">
-                {#each tasks.slice(0, 6) as task (task.task_id)}
-                  <button type="button" on:click={() => onSelectTask(task.task_id)}>
-                    <span>{task.title}</span>
-                    <em>{taskStatusLabels[task.status]}</em>
-                    {#if task.status === "pending" || task.status === "running"}
-                      <small
-                        role="button"
-                        tabindex="0"
-                        on:click|stopPropagation={() => onCancelTask(task.task_id)}
-                        on:keydown|stopPropagation={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            onCancelTask(task.task_id);
-                          }
-                        }}
-                      >
-                        取消
-                      </small>
-                    {/if}
-                  </button>
-                {/each}
-              </div>
-            </section>
-            {/if}
-            </div>
-            </aside>
-          {/if}
         </section>
       {/if}
     </main>

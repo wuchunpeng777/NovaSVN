@@ -132,7 +132,6 @@ const initialAppSettings: AppSettingsState = {
   showWhitespace: false,
   themeMode: "system",
   showSourceList: true,
-  showInspector: true,
   commitTemplate: "",
   branchPoolBasePath: "",
   largeFileThresholdMb: 20,
@@ -2122,7 +2121,7 @@ const initialWorkspaceState: WorkspaceStoreState = {
     sourceUrl: "",
     startRevision: "",
     endRevision: "",
-    dryRun: true,
+    dryRun: false,
     recordOnly: false,
     ignoreAncestry: false,
     force: false,
@@ -5878,8 +5877,6 @@ function loadAppSettings(): AppSettingsState {
           : "system",
       showSourceList:
         typeof parsed.showSourceList === "boolean" ? parsed.showSourceList : true,
-      showInspector:
-        typeof parsed.showInspector === "boolean" ? parsed.showInspector : true,
       commitTemplate:
         typeof parsed.commitTemplate === "string" ? parsed.commitTemplate : "",
       branchPoolBasePath:

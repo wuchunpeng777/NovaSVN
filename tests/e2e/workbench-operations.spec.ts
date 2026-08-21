@@ -25,11 +25,10 @@ test("runs the main working-copy operations through the task workflow", async ({
     .toBe(2);
 
   await page.getByRole("button", { name: "打开提交窗口" }).click();
-  const commitMessage = page.getByPlaceholder("提交信息");
-  await expect(commitMessage).toBeFocused();
-  await commitMessage.fill("E2E commit");
-  await page.getByRole("button", { name: "提交", exact: true }).click();
-  await expect.poll(async () => (await backendCalls(page, "create_commit_task")).length).toBe(1);
+  await expect.poll(async () => (await backendCalls(page, "launch_commit_window")).length).toBe(1);
+  expect((await backendCalls(page, "launch_commit_window"))[0]?.args.request).toMatchObject({
+    target_path: "C:/repo/wc",
+  });
 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "更多操作 文件 src/revert.txt" }).click();
@@ -79,12 +78,9 @@ test("scopes the file list and commit selection to the selected folder", async (
   await page.getByRole("checkbox", { name: "提交目标 src/modified.txt" }).click();
   await page.getByRole("checkbox", { name: "提交目标 src/revert.txt" }).click();
   await page.getByRole("button", { name: "打开提交窗口" }).click();
-  await expect(page.getByText("本次将提交 2 个文件", { exact: true })).toBeVisible();
-  await page.getByPlaceholder("提交信息").fill("Commit src folder");
-  await page.getByRole("button", { name: "提交", exact: true }).click();
 
-  const commitCalls = await backendCalls(page, "create_commit_task");
+  const commitCalls = await backendCalls(page, "launch_commit_window");
   expect(commitCalls[0]?.args.request).toMatchObject({
-    files: ["src/modified.txt", "src/revert.txt"],
+    target_path: "C:/repo/wc",
   });
 });

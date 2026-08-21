@@ -22,7 +22,6 @@ vi.mock("../../lib/api", () => ({
 import {
   getRepositoryFileLog,
   getRevisionFileContentDiff,
-  getSvnLog,
   listWorkspaceFiles,
 } from "../../lib/api";
 import { workbenchViews } from "../../lib/workbench";
@@ -38,7 +37,6 @@ import MainWorkspace from "./MainWorkspace.svelte";
 
 const getRevisionFileContentDiffMock = vi.mocked(getRevisionFileContentDiff);
 const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
-const getSvnLogMock = vi.mocked(getSvnLog);
 const listWorkspaceFilesMock = vi.mocked(listWorkspaceFiles);
 
 describe("MainWorkspace", () => {
@@ -78,7 +76,7 @@ describe("MainWorkspace", () => {
     const patchButton = within(actions).getByRole("button", { name: "应用 Patch" });
     const cleanupButton = within(actions).getByRole("button", { name: "清理工作副本" });
     expect(within(actions).getByRole("button", { name: "打开提交窗口" })).toBeInTheDocument();
-    expect(within(actions).getByRole("button", { name: "隐藏检查器" })).toBeInTheDocument();
+    expect(within(actions).queryByRole("button", { name: "隐藏检查器" })).not.toBeInTheDocument();
 
     await fireEvent.click(refreshButton);
     await fireEvent.click(updateButton);
@@ -126,189 +124,27 @@ describe("MainWorkspace", () => {
     );
   });
 
-  it("keeps the inspector within the 960px window layout budget", async () => {
-    const originalInnerWidth = window.innerWidth;
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 960 });
-
-    try {
-      render(MainWorkspace, {
-        props: {
-          view: workbenchViews.changes,
-          workspace: makeWorkspace(),
-        },
-      });
-
-      const resizer = screen.getByRole("slider", { name: "调整右侧面板宽度" });
-      expect(resizer).toHaveAttribute("aria-valuemin", "300");
-      expect(resizer).toHaveAttribute("aria-valuemax", "366");
-      expect(resizer).toHaveAttribute("aria-valuenow", "360");
-      expect(resizer).toHaveAttribute("aria-orientation", "horizontal");
-
-      await fireEvent.keyDown(resizer, { key: "ArrowLeft" });
-      expect(resizer).toHaveAttribute("aria-valuenow", "336");
-
-      await fireEvent.keyDown(resizer, { key: "ArrowRight" });
-      expect(resizer).toHaveAttribute("aria-valuenow", "360");
-
-      await fireEvent.keyDown(resizer, { key: "Home" });
-      expect(resizer).toHaveAttribute("aria-valuenow", "300");
-
-      await fireEvent.keyDown(resizer, { key: "End" });
-      expect(resizer).toHaveAttribute("aria-valuenow", "366");
-    } finally {
-      Object.defineProperty(window, "innerWidth", {
-        configurable: true,
-        value: originalInnerWidth,
-      });
-      window.dispatchEvent(new Event("resize"));
-    }
-  });
-
-  it("organizes inspector content into keyboard-accessible tabs", async () => {
-    const file = makeFile("src/main.ts", "modified", "main-digest");
-    getSvnLogMock.mockResolvedValue({
-      target: file.path,
-      has_more: false,
-      next_start_revision: null,
-      entries: [
-        {
-          revision: "11",
-          author: "alice",
-          date: "2026-07-11T01:02:03Z",
-          message: "Enable the ready state",
-          changed_paths: [
-            {
-              path: "/trunk/src/main.ts",
-              action: "M",
-              kind: "file",
-              copy_from_path: null,
-              copy_from_revision: null,
-            },
-          ],
-        },
-      ],
-    });
-    render(MainWorkspace, {
+  it("shows the working copy file explorer without a side inspector", () => {
+    const { container } = render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
         workspace: makeWorkspace(),
-        workingCopyStatus: makeStatus([file]),
-        workspaceFileTree: makeFileTree(),
-        selectedFilePath: file.path,
-        selectedFile: file,
-        commitFiles: [{ path: file.path, status: file.status }],
-        selectedFileDiff: {
-          path: file.path,
-          text: "-before\n+after",
-          binary: false,
-          empty: false,
-        },
-        svnProperties: {
-          target: file.path,
-          properties: [{ name: "svn:mime-type", value: "text/plain" }],
-          externals: null,
-        },
-        svnBlame: {
-          target: file.path,
-          total_lines: 1,
-          truncated: false,
-          lines: [
-            {
-              line_number: 1,
-              revision: "11",
-              author: "alice",
-              date: "2026-07-11T01:02:03Z",
-              content: "const ready = true;",
-            },
-          ],
-        },
-        backendMessage: "后台任务就绪",
-      },
-    });
-
-    const tablist = screen.getByRole("tablist", { name: "检查器面板" });
-    const informationTab = within(tablist).getByRole("tab", { name: "Information" });
-    expect(informationTab).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel", { name: "Information" })).toHaveTextContent("main.ts");
-    expect(screen.queryByText("svn:mime-type")).not.toBeInTheDocument();
-
-    informationTab.focus();
-    await fireEvent.keyDown(informationTab, { key: "ArrowRight" });
-    const propertiesTab = within(tablist).getByRole("tab", { name: "Properties" });
-    expect(propertiesTab).toHaveFocus();
-    expect(propertiesTab).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel", { name: "Properties" })).toHaveTextContent(
-      "svn:mime-type",
-    );
-
-    await fireEvent.click(within(tablist).getByRole("tab", { name: "Diff" }));
-    expect(screen.getByRole("tabpanel", { name: "Diff" })).toHaveTextContent("-before +after");
-
-    await fireEvent.click(within(tablist).getByRole("tab", { name: "Blame" }));
-    expect(screen.getByRole("tabpanel", { name: "Blame" })).toHaveTextContent(
-      "const ready = true;",
-    );
-    await fireEvent.click(screen.getByRole("button", { name: "查看 r11 Log" }));
-    const revisionLogDialog = await screen.findByRole("dialog", { name: "r11 Log 信息" });
-    expect(getSvnLogMock).toHaveBeenCalledWith({
-      working_copy_root: "C:/repo/wc",
-      file_path: "src/main.ts",
-      svn_executable: undefined,
-      limit: 1,
-      start_revision: "11",
-    });
-    expect(within(revisionLogDialog).getByText("Enable the ready state")).toBeInTheDocument();
-    await fireEvent.click(
-      within(revisionLogDialog).getByRole("button", { name: "关闭 Revision Log" }),
-    );
-
-    await fireEvent.click(within(tablist).getByRole("tab", { name: "Commit" }));
-    expect(screen.getByRole("tabpanel", { name: "Commit" })).toHaveTextContent(
-      "本次将提交 1 个文件",
-    );
-
-    const commitTab = within(tablist).getByRole("tab", { name: "Commit" });
-    await fireEvent.keyDown(commitTab, { key: "End" });
-    expect(within(tablist).getByRole("tab", { name: "Tasks" })).toHaveFocus();
-    expect(screen.getByRole("tabpanel", { name: "Tasks" })).toHaveTextContent("暂无后台任务");
-  });
-
-  it("keeps the file tree fixed while the inspector remains configurable", async () => {
-    const onAppSettingInput = vi.fn();
-    const { container, rerender } = render(MainWorkspace, {
-      props: {
-        view: workbenchViews.changes,
-        workspace: makeWorkspace(),
-        appSettings: makeAppSettings(),
-        onAppSettingInput,
       },
     });
 
     expect(screen.getByLabelText("项目标签")).toBeInTheDocument();
     expect(screen.getByLabelText("工作副本文件夹树")).toBeInTheDocument();
-    expect(screen.getByLabelText("详情和提交")).toBeInTheDocument();
-    expect(screen.getByRole("slider", { name: "调整右侧面板宽度" })).toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("button", { name: "隐藏检查器" }));
-    expect(onAppSettingInput).toHaveBeenLastCalledWith("showInspector", false);
-    await rerender({ appSettings: makeAppSettings({ showInspector: false }) });
-    expect(screen.queryByLabelText("详情和提交")).not.toBeInTheDocument();
-    expect(container.querySelector(".work-copy-grid")).toHaveClass("inspector-hidden");
-    expect(screen.getByLabelText("工作副本文件夹树")).toBeInTheDocument();
     expect(screen.getByLabelText("工作副本文件列表")).toBeInTheDocument();
-
-    await rerender({
-      view: workbenchViews.history,
-      appSettings: makeAppSettings({ showInspector: true }),
-    });
-    expect(screen.getByLabelText("工作副本文件夹树")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "隐藏检查器" })).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "时间线" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByLabelText("详情和提交")).not.toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: "调整右侧面板宽度" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tablist", { name: "检查器面板" })).not.toBeInTheDocument();
+    expect(container.querySelector(".work-copy-grid")).not.toHaveClass("inspector-hidden");
   });
 
-  it("opens the commit form and focuses its message after adding a commit target", async () => {
+  it("adds a commit target without opening a commit window", async () => {
     const file = makeFile("src/main.ts", "modified", "main-digest");
     const onSelectCommitFile = vi.fn();
+    const onLaunchCommitWindow = vi.fn();
     render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
@@ -322,53 +158,35 @@ describe("MainWorkspace", () => {
           nodes: [makeScopedNode(file.path, "modified", "local")],
         },
         onSelectCommitFile,
+        onLaunchCommitWindow,
       },
     });
 
     await fireEvent.click(screen.getByRole("checkbox", { name: `提交目标 ${file.path}` }));
 
     expect(onSelectCommitFile).toHaveBeenCalledWith(file.path);
-    expect(screen.getByRole("tab", { name: "Commit" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    await waitFor(() => expect(screen.getByPlaceholderText("提交信息")).toHaveFocus());
+    expect(onLaunchCommitWindow).not.toHaveBeenCalled();
   });
 
-  it("restores the hidden inspector before focusing the commit form", async () => {
+  it("opens the standalone commit window from the toolbar", async () => {
     const file = makeFile("src/main.ts", "modified", "main-digest");
-    const onAppSettingInput = vi.fn();
-    const onCommit = vi.fn();
-    const { rerender } = render(MainWorkspace, {
+    const onLaunchCommitWindow = vi.fn();
+    const onSelectAllCommitFiles = vi.fn();
+    render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
         workspace: makeWorkspace(),
         workingCopyStatus: makeStatus([file]),
-        workspaceFileTree: {
-          working_copy_root: "C:/repo/wc",
-          total_files: 1,
-          returned_files: 1,
-          truncated: false,
-          nodes: [makeScopedNode(file.path, "modified", "local")],
-        },
         commitFiles: [{ path: file.path, status: file.status }],
-        commitDisabled: true,
         commitFormOpenDisabled: false,
-        appSettings: makeAppSettings({ showInspector: false }),
-        onAppSettingInput,
-        onCommit,
+        onLaunchCommitWindow,
+        onSelectAllCommitFiles,
       },
     });
 
-    const openCommitForm = screen.getByRole("button", { name: "打开提交窗口" });
-    expect(openCommitForm).toBeEnabled();
-    await fireEvent.click(openCommitForm);
-    expect(onAppSettingInput).toHaveBeenCalledWith("showInspector", true);
-    expect(onCommit).not.toHaveBeenCalled();
-
-    await rerender({ appSettings: makeAppSettings({ showInspector: true }) });
-    await waitFor(() => expect(screen.getByPlaceholderText("提交信息")).toHaveFocus());
-    expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
+    await fireEvent.click(screen.getByRole("button", { name: "打开提交窗口" }));
+    expect(onLaunchCommitWindow).toHaveBeenCalledWith("C:/repo/wc");
+    expect(onSelectAllCommitFiles).not.toHaveBeenCalled();
   });
 
   it("shows only workbench and timeline as right-side content tabs", async () => {
@@ -546,7 +364,6 @@ describe("MainWorkspace", () => {
     const fileList = screen.getByRole("treegrid", { name: "工作副本文件列表" });
     await fireEvent.click(screen.getByRole("button", { name: "选择文件夹 src" }));
     await fireEvent.click(screen.getByRole("button", { name: "本地改动" }));
-    await fireEvent.click(screen.getByRole("tab", { name: "Commit" }));
     folderTree.scrollTop = 84;
     fileList.scrollTop = 64;
     await fireEvent.scroll(folderTree);
@@ -561,12 +378,7 @@ describe("MainWorkspace", () => {
       screen.getByRole("button", { name: "选择工作副本根目录" }).closest(".folder-tree-row"),
     ).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "全部文件" })).toHaveClass("active");
-    expect(screen.getByRole("tab", { name: "Information" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
     await fireEvent.click(screen.getByRole("button", { name: "未管理文件" }));
-    await fireEvent.click(screen.getByRole("tab", { name: "Properties" }));
 
     await rerender({
       workspace: workspaceA,
@@ -577,7 +389,6 @@ describe("MainWorkspace", () => {
       screen.getByRole("button", { name: "选择文件夹 src" }).closest(".folder-tree-row"),
     ).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "本地改动" })).toHaveClass("active");
-    expect(screen.getByRole("tab", { name: "Commit" })).toHaveAttribute("aria-selected", "true");
     await waitFor(() => {
       expect(folderTree.scrollTop).toBe(84);
       expect(fileList.scrollTop).toBe(64);
@@ -589,10 +400,6 @@ describe("MainWorkspace", () => {
       workingCopyStatus: statusB,
     });
     expect(screen.getByRole("button", { name: "未管理文件" })).toHaveClass("active");
-    expect(screen.getByRole("tab", { name: "Properties" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
   });
 
   it("reorders projects from the drag handle and edits the display name inline", async () => {
@@ -713,9 +520,10 @@ describe("MainWorkspace", () => {
     expect(onRemoveBranchPoolEntry).toHaveBeenCalledWith("second", false);
   });
 
-  it("opens the commit inspector without auto-selecting files", async () => {
+  it("opens the standalone commit window without auto-selecting files", async () => {
     const file = makeFile("src/main.ts", "modified", "main-digest");
     const onSelectAllCommitFiles = vi.fn();
+    const onLaunchCommitWindow = vi.fn();
     render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
@@ -724,17 +532,14 @@ describe("MainWorkspace", () => {
         commitFiles: [],
         commitFormOpenDisabled: false,
         onSelectAllCommitFiles,
+        onLaunchCommitWindow,
       },
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "打开提交窗口" }));
 
     expect(onSelectAllCommitFiles).not.toHaveBeenCalled();
-    expect(screen.getByRole("tab", { name: "Commit" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    await waitFor(() => expect(screen.getByPlaceholderText("提交信息")).toHaveFocus());
+    expect(onLaunchCommitWindow).toHaveBeenCalledWith("C:/repo/wc");
   });
 
   it("resolves the system theme and exposes persistent theme controls", async () => {
@@ -1828,7 +1633,6 @@ Certificate information:
       },
     });
 
-    expect(screen.getByText("提交目标", { exact: true })).toBeInTheDocument();
     expect(
       screen.getByRole("checkbox", { name: "提交目标 src/main.ts" }),
     ).toBeChecked();
@@ -1843,13 +1647,8 @@ Certificate information:
     expect(mainFileRow).toHaveTextContent("alice");
 
     await fireEvent.click(screen.getByRole("checkbox", { name: "提交目标 src/main.ts" }));
-    await fireEvent.click(screen.getByRole("tab", { name: "Commit" }));
-    await fireEvent.click(screen.getByRole("button", { name: "全选改动" }));
-    await fireEvent.click(screen.getByRole("button", { name: "清除选择" }));
 
     expect(onUnselectCommitFile).toHaveBeenCalledWith("src/main.ts");
-    expect(onSelectAllCommitFiles).toHaveBeenCalledOnce();
-    expect(onClearCommitFiles).toHaveBeenCalledOnce();
 
     await fireEvent.click(screen.getByRole("button", { name: "未管理文件" }));
 
@@ -1861,8 +1660,6 @@ Certificate information:
     await fireEvent.click(ignoreMenuItem);
     expect(onAddFile).toHaveBeenCalledWith("notes/new.txt");
     expect(onIgnorePath).toHaveBeenCalledWith("notes/new.txt");
-    await fireEvent.click(screen.getByRole("tab", { name: "Properties" }));
-    expect(screen.getByText("作用目录：notes", { exact: true })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "更多操作 文件 notes/new.txt" }));
     await fireEvent.click(screen.getByRole("menuitem", { name: "删除文件 notes/new.txt" }));
@@ -1945,8 +1742,6 @@ Certificate information:
       selectedTask: nextTask,
     });
     expect(screen.getByRole("checkbox", { name: "提交目标 src/main.ts" })).not.toBeChecked();
-    await fireEvent.click(screen.getByRole("tab", { name: "Commit" }));
-    expect(screen.getByText("本次将提交 0 个文件")).toBeInTheDocument();
 
     await rerender({
       workspace: {
@@ -1970,11 +1765,6 @@ Certificate information:
     });
     expect(screen.queryByText("main.ts", { exact: true })).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "提交目标 src/next.ts" })).not.toBeChecked();
-    expect(screen.getByRole("tab", { name: "Information" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.queryByText("本次将提交 0 个文件")).not.toBeInTheDocument();
   });
 
   it("separates local, remote, and combined working-copy changes", async () => {
@@ -2251,6 +2041,59 @@ Certificate information:
     expect(screen.queryByRole("button", { name: "Update 工作副本根目录" })).not.toBeInTheDocument();
   });
 
+  it("keeps an expand control after a nested folder is collapsed", async () => {
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([makeFile("src/lib/util.ts", "modified", "util-digest")]),
+        workspaceFileTree: {
+          working_copy_root: "C:/repo/wc",
+          total_files: 1,
+          returned_files: 1,
+          truncated: false,
+          nodes: [
+            {
+              ...makeScopedNode("src", "normal", "none"),
+              name: "src",
+              kind: "dir",
+              file_size: null,
+              children: [
+                {
+                  ...makeScopedNode("src/lib", "normal", "none"),
+                  name: "lib",
+                  kind: "dir",
+                  file_size: null,
+                  children: [
+                    {
+                      ...makeScopedNode("src/lib/util.ts", "modified", "local"),
+                      name: "util.ts",
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+
+    const folderTree = screen.getByRole("tree", { name: "文件夹层级" });
+    expect(within(folderTree).getByRole("button", { name: "选择文件夹 src/lib" })).toBeInTheDocument();
+
+    await fireEvent.click(
+      within(folderTree).getByRole("button", { name: "折叠文件夹 src" }),
+    );
+    expect(within(folderTree).queryByRole("button", { name: "选择文件夹 src/lib" })).not.toBeInTheDocument();
+    expect(within(folderTree).getByRole("button", { name: "展开文件夹 src" })).toBeInTheDocument();
+
+    await fireEvent.click(
+      within(folderTree).getByRole("button", { name: "展开文件夹 src" }),
+    );
+    expect(within(folderTree).getByRole("button", { name: "选择文件夹 src/lib" })).toBeInTheDocument();
+    expect(within(folderTree).getByRole("button", { name: "折叠文件夹 src" })).toBeInTheDocument();
+  });
+
   it("shows why listing files in the selected folder failed", async () => {
     listWorkspaceFilesMock.mockRejectedValueOnce({
       code: "WORKSPACE_FILE_TREE_SCOPE_FAILED",
@@ -2327,7 +2170,7 @@ Certificate information:
     expect(folderTree.querySelectorAll(".folder-tree-row").length).toBeLessThan(60);
   });
 
-  it("virtualizes 5000 file-tree and Blame rows while keeping the last row reachable", async () => {
+  it("virtualizes 5000 file-tree rows while keeping the last row reachable", async () => {
     const rowCount = 5000;
     const fileNodes = Array.from({ length: rowCount }, (_, index) => {
       const number = String(index + 1).padStart(5, "0");
@@ -2375,19 +2218,6 @@ Certificate information:
       expect(screen.getByText("src/file-05000.txt", { exact: true })).toBeInTheDocument();
     });
     expect(treegrid.querySelectorAll(".file-row").length).toBeLessThan(50);
-
-    await fireEvent.click(screen.getByRole("tab", { name: "Blame" }));
-    const blameTable = screen.getByRole("table", { name: `${selectedFile.path} Blame` });
-    Object.defineProperty(blameTable, "clientHeight", { configurable: true, value: 300 });
-    expect(within(blameTable).getAllByRole("row").length).toBeLessThan(40);
-    expect(within(blameTable).queryByText("line 05000", { exact: true })).not.toBeInTheDocument();
-
-    blameTable.scrollTop = rowCount * 27;
-    await fireEvent.scroll(blameTable);
-    await waitFor(() => {
-      expect(within(blameTable).getByText("line 05000", { exact: true })).toBeInTheDocument();
-    });
-    expect(within(blameTable).getAllByRole("row").length).toBeLessThan(40);
   });
 
   it("opens existing files on double click and keeps directories in the tree", async () => {
@@ -2557,33 +2387,21 @@ Certificate information:
     await fireEvent.click(screen.getByRole("button", { name: "选择文件夹 src" }));
     await clickRowMenuAction("更多操作 目录 src", "Move");
     await clickRowMenuAction("更多操作 文件 src/main.ts", "移动文件 src/main.ts");
-    await fireEvent.click(
-      screen.getByRole("button", { name: "在工作副本中移动 src/main.ts" }),
-    );
 
     expect(onMovePath).toHaveBeenNthCalledWith(1, "src");
     expect(onMovePath).toHaveBeenNthCalledWith(2, "src/main.ts");
-    expect(onMovePath).toHaveBeenNthCalledWith(3, "src/main.ts");
 
     await clickRowMenuAction("更多操作 目录 src", "Copy");
     await clickRowMenuAction("更多操作 文件 src/main.ts", "复制文件 src/main.ts");
-    await fireEvent.click(
-      screen.getByRole("button", { name: "在工作副本中复制 src/main.ts" }),
-    );
 
     expect(onCopyPath).toHaveBeenNthCalledWith(1, "src");
     expect(onCopyPath).toHaveBeenNthCalledWith(2, "src/main.ts");
-    expect(onCopyPath).toHaveBeenNthCalledWith(3, "src/main.ts");
 
     await clickRowMenuAction("更多操作 目录 src", "Delete");
     await clickRowMenuAction("更多操作 文件 src/main.ts", "删除文件 src/main.ts");
-    await fireEvent.click(
-      screen.getByRole("button", { name: "从工作副本删除 src/main.ts" }),
-    );
 
     expect(onDeletePath).toHaveBeenNthCalledWith(1, "src");
     expect(onDeletePath).toHaveBeenNthCalledWith(2, "src/main.ts");
-    expect(onDeletePath).toHaveBeenNthCalledWith(3, "src/main.ts");
 
     await fireEvent.click(screen.getByRole("button", { name: "全部文件" }));
     await fireEvent.click(screen.getByRole("button", { name: "选择工作副本根目录" }));
@@ -2614,7 +2432,7 @@ Certificate information:
     ).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "选择文件夹 empty" }));
     await clickRowMenuAction("更多操作 目录 empty", "Delete");
-    expect(onDeletePath).toHaveBeenNthCalledWith(4, "empty");
+    expect(onDeletePath).toHaveBeenNthCalledWith(3, "empty");
     await fireEvent.click(screen.getByRole("button", { name: "选择工作副本根目录" }));
     await clickRowMenuAction(
       "更多操作 文件 literal\\name.txt",
@@ -2624,8 +2442,8 @@ Certificate information:
       "更多操作 文件 literal/name.txt",
       "删除文件 literal/name.txt",
     );
-    expect(onDeletePath).toHaveBeenNthCalledWith(5, "literal\\name.txt");
-    expect(onDeletePath).toHaveBeenNthCalledWith(6, "literal/name.txt");
+    expect(onDeletePath).toHaveBeenNthCalledWith(4, "literal\\name.txt");
+    expect(onDeletePath).toHaveBeenNthCalledWith(5, "literal/name.txt");
   });
 
   it("does not show path menus for an unversioned directory", async () => {
@@ -2669,7 +2487,7 @@ Certificate information:
     ).not.toBeInTheDocument();
   });
 
-  it("keeps a Unix backslash filename intact in the inspector", () => {
+  it("keeps a Unix backslash filename intact in the file list", () => {
     const file = makeFile("literal\\name.txt", "modified", "literal-digest");
 
     render(MainWorkspace, {
@@ -2677,17 +2495,22 @@ Certificate information:
         view: workbenchViews.changes,
         workspace: makeWorkspace(),
         workingCopyStatus: makeStatus([file]),
-        workspaceFileTree: makeFileTree(),
+        workspaceFileTree: {
+          working_copy_root: "C:/repo/wc",
+          total_files: 1,
+          returned_files: 1,
+          truncated: false,
+          nodes: [makeScopedNode(file.path, "modified", "local")],
+        },
         selectedFilePath: file.path,
         selectedFile: file,
       },
     });
 
     expect(
-      within(screen.getByLabelText("详情和提交")).getByText("literal\\name.txt", {
-        exact: true,
-      }),
+      screen.getByRole("button", { name: "选择文件 literal\\name.txt" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("literal\\name.txt", { exact: true })).toBeInTheDocument();
   });
 
   it("shows patch preflight output and confirms a safe patch", async () => {
@@ -2766,7 +2589,7 @@ Certificate information:
     expect(within(dialog).getByRole("button", { name: "应用 Patch" })).toBeDisabled();
   });
 
-  it("forwards merge tracking options and previews structured results", async () => {
+  it("forwards merge tracking options and shows structured merge diffs", async () => {
     const onMergeFormInput = vi.fn();
     const onRunMerge = vi.fn();
     render(MainWorkspace, {
@@ -2777,13 +2600,13 @@ Certificate information:
           sourceUrl: "https://example.com/svn/branches/feature",
           startRevision: "10",
           endRevision: "12",
-          dryRun: true,
+          dryRun: false,
           recordOnly: false,
           ignoreAncestry: false,
           force: false,
         },
         mergeResult: {
-          dry_run: true,
+          dry_run: false,
           source_url: "https://example.com/svn/branches/feature",
           revision_range: "10:12",
           record_only: true,
@@ -2811,9 +2634,9 @@ Certificate information:
     expect(onMergeFormInput).toHaveBeenNthCalledWith(2, "ignoreAncestry", true);
     expect(onMergeFormInput).toHaveBeenNthCalledWith(3, "force", true);
 
-    await fireEvent.click(screen.getByRole("button", { name: "Dry-run" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Merge" }));
     expect(onRunMerge).toHaveBeenCalledOnce();
-    expect(screen.getByText("Dry-run 预览")).toBeInTheDocument();
+    expect(screen.getByText("Merge 结果")).toBeInTheDocument();
     expect(screen.getByText("r10:12")).toBeInTheDocument();
     expect(screen.getByText("Record only", { selector: ".merge-result-meta span" }))
       .toBeInTheDocument();
@@ -2821,7 +2644,8 @@ Certificate information:
     const summary = screen.getByLabelText("Merge 结果统计");
     expect(summary.children[0]).toHaveTextContent("1条目");
     expect(summary.children[1]).toHaveTextContent("1更新");
-    expect(screen.getByText("U src/main.ts")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Merge 差异文件")).getByText("src/main.ts")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Merge 差异文件")).getByText("U")).toBeInTheDocument();
   });
 
   it("opens Resolve actions when a selected path becomes conflicted", async () => {
@@ -2843,22 +2667,14 @@ Certificate information:
         selectedFile: modified,
       },
     });
-    await fireEvent.click(screen.getByRole("tab", { name: "Diff" }));
-    expect(screen.getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true");
 
     await rerender({
       workingCopyStatus: makeStatus([conflicted]),
       selectedFile: conflicted,
     });
 
-    expect(screen.getByRole("tab", { name: "Information" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.getByRole("button", { name: "可视化解决" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "使用我的版本" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "使用对方版本" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "可视化解决" }));
+    expect(screen.getByRole("button", { name: `可视化解决 ${conflicted.path}` })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: `可视化解决 ${conflicted.path}` }));
     expect(screen.getByRole("dialog", { name: "解决文本冲突" })).toBeInTheDocument();
   });
 });
@@ -2896,7 +2712,6 @@ function makeAppSettings(settings: Partial<AppSettingsState> = {}): AppSettingsS
     showWhitespace: false,
     themeMode: "system",
     showSourceList: true,
-    showInspector: true,
     commitTemplate: "",
     branchPoolBasePath: "",
     largeFileThresholdMb: 20,

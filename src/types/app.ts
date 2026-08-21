@@ -63,7 +63,6 @@ export interface AppSettingsState {
   showWhitespace: boolean;
   themeMode: "system" | "light" | "dark";
   showSourceList: boolean;
-  showInspector: boolean;
   commitTemplate: string;
   branchPoolBasePath: string;
   largeFileThresholdMb: number;
