@@ -611,20 +611,21 @@ Certificate information:
     });
 
     const previousProjectButton = within(projects).getByText("project-a").closest("button")!;
-    expect(previousProjectButton).toBeDisabled();
+    expect(previousProjectButton).toBeEnabled();
     await waitFor(() => expect(saveBranchPoolEntriesMock).toHaveBeenCalledOnce());
-    resolveProjectSave({ entries: [previousEntry, nextEntry] });
-    await waitFor(() => expect(previousProjectButton).not.toBeDisabled());
 
     await fireEvent.click(previousProjectButton);
-
     await waitFor(() => expect(openWorkspaceMock).toHaveBeenLastCalledWith({
       path: previousWorkspace.local_path,
       svn_executable: undefined,
     }));
+    resolveProjectSave({ entries: [previousEntry, nextEntry] });
+
     expect(within(projects).getByText("project-a")).toBeInTheDocument();
-    expect(within(projects).getByText("project-b")).toBeInTheDocument();
-    expect(get(workspaceStore).current?.local_path).toBe(previousWorkspace.local_path);
+    await waitFor(() => expect(within(projects).getByText("project-b")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(get(workspaceStore).current?.local_path).toBe(previousWorkspace.local_path),
+    );
   });
 
   it("切换已保存项目时先持久化当前未入池项目", async () => {

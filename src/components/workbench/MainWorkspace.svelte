@@ -3376,7 +3376,6 @@
             class="project-tab"
             class:active={sameWorkspacePath(entry.local_path, workspace?.local_path ?? "")}
             title={entry.local_path}
-            disabled={workspaceLoading || branchPoolLoading}
             on:keydown={(event) => handleBranchPoolDragKeydown(event, entry.id)}
             on:click={() => openWorkspaceEntryFromClick(entry)}
           >

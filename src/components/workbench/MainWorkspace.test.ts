@@ -484,6 +484,41 @@ describe("MainWorkspace", () => {
     expect(onOpenBranchPoolEntry).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps other project tabs clickable while the current project is loading", async () => {
+    const onOpenBranchPoolEntry = vi.fn();
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        appSettings: makeAppSettings(),
+        workspaceLoading: true,
+        statusLoading: true,
+        branchPoolLoading: true,
+        branchPool: {
+          entries: [
+            {
+              id: "second",
+              branch_url: "https://example.com/svn/branches/feature",
+              local_path: "D:\\work\\feature",
+              revision: "18",
+              local_changes: 3,
+              created_at: 1,
+              updated_at: 1,
+            },
+          ],
+        },
+        onOpenBranchPoolEntry,
+      },
+    });
+
+    const projects = screen.getByLabelText("项目标签");
+    const featureProject = within(projects).getByText("feature").closest("button")!;
+    expect(featureProject).toBeEnabled();
+
+    await fireEvent.click(featureProject);
+    expect(onOpenBranchPoolEntry).toHaveBeenCalledWith("D:\\work\\feature");
+  });
+
   it("reorders projects from the drag handle and edits the display name inline", async () => {
     const onReorderBranchPoolEntries = vi.fn();
     const onRenameBranchPoolEntry = vi.fn();
