@@ -114,6 +114,7 @@
   let repositoryDragExportStarting = false;
   let repositoryDragExportRunningName: string | null = null;
   let activeWorkspacePath: string | null = null;
+  const workspaceViews = new Map<string, AppView>();
   let appMenuState: AppMenuState;
   let queuedAppMenuState: AppMenuState | null = null;
   let appMenuStateSignature = "";
@@ -260,6 +261,20 @@
       $svnStore.executableInput.trim();
     return executable || undefined;
   }
+  function rememberCurrentWorkspaceView() {
+    const localPath = $workspaceStore.current?.local_path;
+    if (localPath) {
+      workspaceViews.set(normalizeLocalPath(localPath), $currentView);
+    }
+  }
+
+  function setActiveWorkspaceView(view: AppView) {
+    setCurrentView(view);
+    const localPath = $workspaceStore.current?.local_path;
+    if (localPath) {
+      workspaceViews.set(normalizeLocalPath(localPath), view);
+    }
+  }
 
   async function selectView(view: AppView) {
     const shouldRefreshStatus =
@@ -274,7 +289,7 @@
       $workspaceStore.current !== null &&
       !$workspaceStore.svnLogLoading;
 
-    setCurrentView(view);
+    setActiveWorkspaceView(view);
     if (shouldRefreshStatus) {
       await refreshStatusAndSyncBranchPool();
     } else if (shouldRefreshLog) {
@@ -1425,21 +1440,23 @@
   }
 
   async function openBranchPoolEntry(localPath: string) {
+    rememberCurrentWorkspaceView();
+    const targetView = workspaceViews.get(normalizeLocalPath(localPath)) ?? "changes";
+    setCurrentView(targetView);
     const preserveCurrentWorkspace = syncCurrentBranchPoolEntry(true);
     const content =
-      $currentView === "changes"
-        ? "status"
-        : $currentView === "history"
-          ? "log"
-          : "none";
+      targetView === "changes" ? "status" : targetView === "history" ? "log" : "none";
     const workspace = await workspaceStore.openPath(
       currentSvnExecutable(),
       localPath,
       content,
     );
     await preserveCurrentWorkspace;
-    if (workspace && content === "status") {
-      await syncCurrentBranchPoolEntry();
+    if (workspace) {
+      setActiveWorkspaceView(targetView);
+      if (content === "status") {
+        await syncCurrentBranchPoolEntry();
+      }
     }
   }
 
@@ -1472,7 +1489,7 @@
           localChanges: $workspaceStore.status?.total ?? 0,
         },
       ]);
-      setCurrentView("changes");
+      setActiveWorkspaceView("changes");
     } finally {
       workspaceAdding = false;
     }
@@ -1726,35 +1743,35 @@
 
     switch (intent.action) {
       case "diff":
-        setCurrentView("changes");
+        setActiveWorkspaceView("changes");
         break;
       case "cleanup":
-        setCurrentView("changes");
+        setActiveWorkspaceView("changes");
         if ($workspaceStore.current) {
           await runSvnOperation("cleanup");
         }
         break;
       case "revert":
-        setCurrentView("changes");
+        setActiveWorkspaceView("changes");
         break;
       case "delete":
-        setCurrentView("changes");
+        setActiveWorkspaceView("changes");
         if ($workspaceStore.selectedFilePath) {
           await deleteWorkspacePath($workspaceStore.selectedFilePath);
         }
         break;
       case "ignore":
-        setCurrentView("changes");
+        setActiveWorkspaceView("changes");
         if ($workspaceStore.selectedFilePath) {
           await ignoreWorkspacePath($workspaceStore.selectedFilePath);
         }
         break;
       case "branch-workspace":
-        setCurrentView("branches");
+        setActiveWorkspaceView("branches");
         break;
       default:
         if (targetPath) {
-          setCurrentView("changes");
+          setActiveWorkspaceView("changes");
         }
         break;
     }
@@ -1775,7 +1792,7 @@
       open: openSelectedFile,
       show: openSelectedFileLocation,
       commit: (path, selected) => {
-        setCurrentView("changes");
+        setActiveWorkspaceView("changes");
         if (selected) {
           workspaceStore.unselectCommitFile(path);
         } else {
@@ -1785,7 +1802,7 @@
       update: (path) => runSvnOperation("update_path", path),
       add: (path) => runSvnOperation("add_file", path),
       resolve: async (path) => {
-        setCurrentView("changes");
+        setActiveWorkspaceView("changes");
         await workspaceStore.selectFile(path, currentSvnExecutable());
       },
       revert: (path) => runSvnOperation("revert_file", path),
@@ -1807,19 +1824,19 @@
         await refreshStatusAndSyncBranchPool();
         break;
       case "view_changes":
-        setCurrentView("changes");
+        setActiveWorkspaceView("changes");
         break;
       case "view_history":
         await selectView("history");
         break;
       case "view_repository":
-        setCurrentView("repository");
+        setActiveWorkspaceView("repository");
         break;
       case "view_branches":
-        setCurrentView("branches");
+        setActiveWorkspaceView("branches");
         break;
       case "view_settings":
-        setCurrentView("settings");
+        setActiveWorkspaceView("settings");
         break;
       case "update_workspace":
         openWorkspaceUpdatePage();
@@ -1828,11 +1845,11 @@
         await runSvnOperation("cleanup");
         break;
       case "refresh_log":
-        setCurrentView("history");
+        setActiveWorkspaceView("history");
         await workspaceStore.refreshSvnLog(currentSvnExecutable());
         break;
       case "prepare_commit":
-        setCurrentView("changes");
+        setActiveWorkspaceView("changes");
         break;
       case "export_diagnostics":
         await appSettingsStore.exportDiagnosticLog();
@@ -2424,7 +2441,7 @@
       workspaceStore.completeRepositoryCheckoutTask();
       if (localPath) {
         void workspaceStore.openPath(currentSvnExecutable(), localPath);
-        setCurrentView("changes");
+        setActiveWorkspaceView("changes");
       }
     },
   );
@@ -2540,7 +2557,7 @@
       if (workingCopyRoot && !mergeResult.dry_run) {
         void refreshStatusAndSyncBranchPool(workingCopyRoot).then((status) => {
           if ((status?.conflicted ?? 0) > 0) {
-            setCurrentView("changes");
+            setActiveWorkspaceView("changes");
             workspaceStore.focusConflictResolution();
           }
         });
@@ -2573,7 +2590,7 @@
           if (workingCopyRoot) {
             void refreshStatusAndSyncBranchPool(workingCopyRoot).then((status) => {
               if ((status?.conflicted ?? 0) > 0 || result.conflicted > 0) {
-                setCurrentView("changes");
+                setActiveWorkspaceView("changes");
                 workspaceStore.focusConflictFilter();
               }
             });

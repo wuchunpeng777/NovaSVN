@@ -237,6 +237,7 @@ beforeEach(async () => {
   workspaceStore.setMergeForm("ignoreAncestry", false);
   workspaceStore.setMergeForm("force", false);
   setCurrentView("changes");
+  workspaceStore.clearTabStateCache();
 
   openWorkspaceMock.mockResolvedValue(makeWorkspace());
   scanWorkspaceStatusMock.mockResolvedValue(makeStatus());
@@ -688,7 +689,7 @@ Certificate information:
     expect(within(projects).getByText("wc")).toBeInTheDocument();
   });
 
-  it("在工作副本页切换项目时先清空旧内容且只刷新工作副本", async () => {
+  it("切换项目时保留旧界面直到新项目就绪", async () => {
     const nextWorkspace: WorkspaceSummary = {
       ...makeWorkspace(),
       local_path: "D:/repo/other",
@@ -727,8 +728,8 @@ Certificate information:
     const projects = screen.getByLabelText("项目标签");
     await fireEvent.click(within(projects).getByText("other").closest("button")!);
 
-    expect(get(workspaceStore).status).toBeNull();
-    expect(get(workspaceStore).fileTree).toBeNull();
+    expect(get(workspaceStore).status).not.toBeNull();
+    expect(get(workspaceStore).fileTree).not.toBeNull();
     expect(get(workspaceStore).svnLog).toBeNull();
     pendingWorkspace.resolve(nextWorkspace);
 
@@ -740,7 +741,7 @@ Certificate information:
     expect(get(currentView)).toBe("changes");
   });
 
-  it("在时间线页切换项目时先清空旧内容且只刷新日志", async () => {
+  it("首次打开的项目使用默认工作副本视图", async () => {
     getSvnLogMock.mockResolvedValueOnce(makeSvnLog("C:/repo/wc"));
     await workspaceStore.refreshSvnLog();
 
@@ -775,16 +776,78 @@ Certificate information:
     const projects = screen.getByLabelText("项目标签");
     await fireEvent.click(within(projects).getByText("other").closest("button")!);
 
-    expect(get(workspaceStore).status).toBeNull();
-    expect(get(workspaceStore).svnLog).toBeNull();
+    expect(get(workspaceStore).status).not.toBeNull();
+    expect(get(workspaceStore).svnLog).not.toBeNull();
     pendingWorkspace.resolve(nextWorkspace);
 
-    await waitFor(() => expect(getSvnLogMock).toHaveBeenCalledOnce());
-    expect(getSvnLogMock).toHaveBeenLastCalledWith(expect.objectContaining({
+    await waitFor(() => expect(scanWorkspaceStatusMock).toHaveBeenCalledOnce());
+    expect(scanWorkspaceStatusMock).toHaveBeenLastCalledWith(expect.objectContaining({
       working_copy_root: nextWorkspace.working_copy_root,
     }));
-    expect(scanWorkspaceStatusMock).not.toHaveBeenCalled();
+    expect(getSvnLogMock).not.toHaveBeenCalled();
+    expect(get(currentView)).toBe("changes");
+  });
+
+  it("为每个项目Tab恢复独立的内容视图", async () => {
+    const workspaceA = makeWorkspace();
+    const workspaceB: WorkspaceSummary = {
+      ...makeWorkspace(),
+      local_path: "D:/repo/other",
+      working_copy_root: "D:/repo/other",
+      repository_url: "https://example.com/svn/branches/other",
+      revision: "18",
+    };
+    getBranchPoolMock.mockResolvedValueOnce({
+      entries: [
+        {
+          id: "current",
+          branch_url: workspaceA.repository_url,
+          local_path: workspaceA.local_path,
+          revision: "12",
+          local_changes: 0,
+          created_at: 1,
+          updated_at: 1,
+        },
+        {
+          id: "other",
+          branch_url: workspaceB.repository_url,
+          local_path: workspaceB.local_path,
+          revision: "18",
+          local_changes: 0,
+          created_at: 1,
+          updated_at: 1,
+        },
+      ],
+    });
+    await branchPoolStore.load();
+    openWorkspaceMock
+      .mockResolvedValueOnce(workspaceB)
+      .mockResolvedValueOnce(workspaceA);
+    scanWorkspaceStatusMock.mockResolvedValueOnce({
+      ...makeStatus(),
+      working_copy_root: workspaceB.working_copy_root,
+      revision_range: "18",
+    });
+    listWorkspaceFilesMock.mockResolvedValueOnce({
+      ...makeFileTree(),
+      working_copy_root: workspaceB.working_copy_root,
+    });
+    getSvnLogMock.mockResolvedValue(makeSvnLog(workspaceA.working_copy_root));
+    render(App);
+
+    const contentTabs = screen.getByRole("tablist", { name: "工作副本内容" });
+    await fireEvent.click(within(contentTabs).getByRole("tab", { name: "时间线" }));
+    await waitFor(() => expect(get(currentView)).toBe("history"));
+
+    const projects = screen.getByLabelText("项目标签");
+    await fireEvent.click(within(projects).getByText("other").closest("button")!);
+    await waitFor(() => expect(get(workspaceStore).current?.local_path).toBe(workspaceB.local_path));
+    expect(get(currentView)).toBe("changes");
+
+    await fireEvent.click(within(projects).getByText("wc").closest("button")!);
+    await waitFor(() => expect(get(workspaceStore).current?.local_path).toBe(workspaceA.local_path));
     expect(get(currentView)).toBe("history");
+    expect(getSvnLogMock).toHaveBeenCalledTimes(2);
   });
 
   it("进入时间线时自动获取日志且当前界面不重复请求", async () => {
@@ -1372,7 +1435,7 @@ Certificate information:
     expect(state.commitError).toBe(expected);
   });
 
-  it("切换工作副本后旧 Commit 成功不会清理或刷新新工作副本", async () => {
+  it("旧 Commit 保留在原项目实例且不影响新项目", async () => {
     workspaceStore.markCommitTask("pending-commit", ["alpha.txt"], "C:/repo/wc");
     openWorkspaceMock.mockResolvedValue({
       ...makeWorkspace(),
@@ -1380,7 +1443,7 @@ Certificate information:
       working_copy_root: "D:/repo/other",
     });
     await workspaceStore.openPath(undefined, "D:/repo/other");
-    expect(get(workspaceStore).pendingCommitTaskId).toBe("pending-commit");
+    expect(get(workspaceStore).pendingCommitTaskId).toBeNull();
 
     scanWorkspaceStatusMock.mockClear();
     const pendingTask = makeTask({

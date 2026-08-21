@@ -2147,6 +2147,58 @@ function createWorkspaceStore() {
   let repositoryFileLogGeneration = 0;
   let repositoryFileBlameGeneration = 0;
   let repositoryFilePropertiesGeneration = 0;
+  const workspaceTabStates = new Map<string, WorkspaceStoreState>();
+
+  function workspaceTabStateKey(
+    workspace: Pick<WorkspaceSummary, "local_path" | "working_copy_root">,
+  ) {
+    const path = (workspace.local_path || workspace.working_copy_root)
+      .trim()
+      .replaceAll("\\", "/")
+      .replace(/\/+$/, "");
+    const windowsPath = /^[a-z]:\//i.test(path) || path.startsWith("//");
+    return windowsPath ? path.toLowerCase() : path;
+  }
+
+  function rememberWorkspaceTabState(state: WorkspaceStoreState) {
+    if (!state.current) {
+      return;
+    }
+    workspaceTabStates.set(workspaceTabStateKey(state.current), { ...state });
+  }
+
+  function restoreWorkspaceTabState(
+    cached: WorkspaceStoreState,
+    current: WorkspaceSummary,
+  ): WorkspaceStoreState {
+    return {
+      ...cached,
+      current,
+      pathInput: current.local_path || current.working_copy_root,
+      loading: false,
+      statusLoading: false,
+      diffLoading: false,
+      contentDiffLoading: false,
+      selectedPatchLoading: false,
+      repositoryFileLoading: false,
+      repositoryFileLogLoading: false,
+      repositoryFileBlameLoading: false,
+      repositoryFilePropertiesLoading: false,
+      repositoryLayoutLoading: false,
+      repositoryLoading: false,
+      shadowLoading: false,
+      svnLogLoading: false,
+      revisionDiffLoading: false,
+      applyPatchCreating: false,
+      svnPropertiesLoading: false,
+      error: null,
+    };
+  }
+
+  function clearTabStateCache() {
+    workspaceTabStates.clear();
+    update(() => ({ ...initialWorkspaceState }));
+  }
 
   async function loadRecent(svnExecutable?: string | null) {
     fileSelectionGeneration += 1;
@@ -2283,6 +2335,7 @@ function createWorkspaceStore() {
     explicitPath?: string | null,
     content: "status" | "log" | "none" = "status",
   ): Promise<WorkspaceSummary | null> {
+    rememberWorkspaceTabState(get({ subscribe }));
     const requestGeneration = ++openPathGeneration;
     statusRefreshGeneration += 1;
     fileTreeRefreshGeneration += 1;
@@ -2292,29 +2345,6 @@ function createWorkspaceStore() {
       ...state,
       loading: true,
       error: null,
-      status: null,
-      fileTree: null,
-      selectedFilePath: null,
-      selectedFileDiff: null,
-      selectedFileContentDiff: null,
-      selectedFileParsedDiff: null,
-      ...clearSvnBlameState(),
-      commitFiles: [],
-      statusLoading: false,
-      statusError: null,
-      diffLoading: false,
-      contentDiffLoading: false,
-      selectedPatchLoading: false,
-      diffError: null,
-      contentDiffError: null,
-      parsedDiffError: null,
-      selectedPatchError: null,
-      svnLog: null,
-      svnLogLoading: false,
-      svnLogError: null,
-      revisionDiffLoading: false,
-      revisionDiffError: null,
-      revisionDiffResult: null,
     }));
 
     let path = explicitPath?.trim() ?? "";
@@ -2335,8 +2365,11 @@ function createWorkspaceStore() {
       }
       const draft = loadWorkspaceDraft(current);
       const commitSettings = readCommitMessageSettings(current.working_copy_root);
-      update((state) => ({
-        ...state,
+      const cachedTabState = workspaceTabStates.get(workspaceTabStateKey(current));
+      if (cachedTabState) {
+        update(() => restoreWorkspaceTabState(cachedTabState, current));
+      } else update(() => ({
+        ...initialWorkspaceState,
         current,
         status: null,
         fileTree: null,
@@ -3353,7 +3386,12 @@ function createWorkspaceStore() {
               ? `${baseUrl.replace(/\/+$/, "")}-${suffix}`
               : `${baseUrl.replace(/\/+$/, "")}/${suffix}`
             : "",
-          revision: state.repositoryCopyForm.revision || state.current?.revision || "",
+          revision:
+            state.repositoryCopyForm.revision ||
+            state.repositoryList?.revision ||
+            state.repositoryRevisionInput ||
+            state.current?.revision ||
+            "",
         },
         repositoryCopyError: null,
       };
@@ -5613,6 +5651,7 @@ function createWorkspaceStore() {
     subscribe,
     loadRecent,
     openPath,
+    clearTabStateCache,
     chooseAndOpen,
     setPathInput,
     setSearchText,

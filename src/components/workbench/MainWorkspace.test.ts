@@ -519,6 +519,82 @@ describe("MainWorkspace", () => {
     expect(onOpenBranchPoolEntry).toHaveBeenCalledWith("D:\\work\\feature");
   });
 
+  it("restores navigation and inspector state independently for each project tab", async () => {
+    const workspaceA = makeWorkspace();
+    const workspaceB = {
+      ...makeWorkspace(),
+      local_path: "D:/work/feature",
+      working_copy_root: "D:/work/feature",
+      repository_url: "https://example.com/svn/branches/feature",
+    };
+    const treeA = makeFileTree();
+    const treeB = { ...makeFileTree(), working_copy_root: workspaceB.working_copy_root };
+    const files = [makeFile("src/main.ts", "modified", "main-digest")];
+    const statusA = makeStatus(files);
+    const statusB = { ...makeStatus(files), working_copy_root: workspaceB.working_copy_root };
+    const { rerender } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: workspaceA,
+        appSettings: makeAppSettings(),
+        workspaceFileTree: treeA,
+        workingCopyStatus: statusA,
+      },
+    });
+
+    const folderTree = screen.getByRole("tree", { name: "文件夹层级" });
+    const fileList = screen.getByRole("treegrid", { name: "工作副本文件列表" });
+    await fireEvent.click(screen.getByRole("button", { name: "选择文件夹 src" }));
+    await fireEvent.click(screen.getByRole("button", { name: "本地改动" }));
+    await fireEvent.click(screen.getByRole("tab", { name: "Commit" }));
+    folderTree.scrollTop = 84;
+    fileList.scrollTop = 64;
+    await fireEvent.scroll(folderTree);
+    await fireEvent.scroll(fileList);
+
+    await rerender({
+      workspace: workspaceB,
+      workspaceFileTree: treeB,
+      workingCopyStatus: statusB,
+    });
+    expect(
+      screen.getByRole("button", { name: "选择工作副本根目录" }).closest(".folder-tree-row"),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "全部文件" })).toHaveClass("active");
+    expect(screen.getByRole("tab", { name: "Information" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "远端更新" }));
+    await fireEvent.click(screen.getByRole("tab", { name: "Properties" }));
+
+    await rerender({
+      workspace: workspaceA,
+      workspaceFileTree: treeA,
+      workingCopyStatus: statusA,
+    });
+    expect(
+      screen.getByRole("button", { name: "选择文件夹 src" }).closest(".folder-tree-row"),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "本地改动" })).toHaveClass("active");
+    expect(screen.getByRole("tab", { name: "Commit" })).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => {
+      expect(folderTree.scrollTop).toBe(84);
+      expect(fileList.scrollTop).toBe(64);
+    });
+
+    await rerender({
+      workspace: workspaceB,
+      workspaceFileTree: treeB,
+      workingCopyStatus: statusB,
+    });
+    expect(screen.getByRole("button", { name: "远端更新" })).toHaveClass("active");
+    expect(screen.getByRole("tab", { name: "Properties" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
   it("reorders projects from the drag handle and edits the display name inline", async () => {
     const onReorderBranchPoolEntries = vi.fn();
     const onRenameBranchPoolEntry = vi.fn();
@@ -1057,6 +1133,14 @@ Certificate information:
     );
     expect(await screen.findByLabelText("文件 Diff")).toBeInTheDocument();
     await rerender({ workspaceLoading: true, svnLog: null });
+    expect(screen.queryByLabelText("文件 Diff")).toBeInTheDocument();
+    await rerender({
+      workspace: {
+        ...makeWorkspace(),
+        local_path: "D:/repo/other",
+        working_copy_root: "D:/repo/other",
+      },
+    });
     expect(screen.queryByLabelText("文件 Diff")).not.toBeInTheDocument();
   });
 
@@ -1886,7 +1970,11 @@ Certificate information:
     });
     expect(screen.queryByText("main.ts", { exact: true })).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "提交目标 src/next.ts" })).not.toBeChecked();
-    expect(screen.getByText("本次将提交 0 个文件")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Information" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.queryByText("本次将提交 0 个文件")).not.toBeInTheDocument();
   });
 
   it("separates local, remote, and combined working-copy changes", async () => {

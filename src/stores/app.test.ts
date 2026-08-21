@@ -229,6 +229,7 @@ beforeEach(() => {
   workspaceStore.setSvnLogFilter("svnLogDateToFilter", "");
   workspaceStore.setSvnLogLimit(50);
   workspaceStore.markSvnOperationTask(null, null, null);
+  workspaceStore.clearTabStateCache();
   getFileDiffMock.mockResolvedValue({
     path: "src/main.ts",
     text: "",
@@ -584,6 +585,116 @@ describe("appSettingsStore", () => {
     );
   });
 });
+describe("workspaceStore project tab instances", () => {
+  it("restores each project state immediately while refreshing it in the background", async () => {
+    const workspaceA = makeWorkspace({
+      local_path: "C:/repo/project-a",
+      working_copy_root: "C:/repo/project-a",
+      repository_url: "https://example.com/svn/trunk/project-a",
+    });
+    const workspaceB = makeWorkspace({
+      local_path: "D:/repo/project-b",
+      working_copy_root: "D:/repo/project-b",
+      repository_url: "https://example.com/svn/trunk/project-b",
+      revision: "18",
+    });
+    const fileA = makeFile({ path: "src/a.ts", content_digest: "a-digest" });
+    const fileB = makeFile({ path: "src/b.ts", content_digest: "b-digest" });
+    const statusA = makeStatus([fileA], { working_copy_root: workspaceA.working_copy_root });
+    const statusB = makeStatus([fileB], {
+      working_copy_root: workspaceB.working_copy_root,
+      revision_range: "18",
+    });
+    const refreshedStatusA = makeStatus([fileA], {
+      working_copy_root: workspaceA.working_copy_root,
+      repository_revision: "13",
+    });
+    const refreshedStatusB = makeStatus([fileB], {
+      working_copy_root: workspaceB.working_copy_root,
+      repository_revision: "19",
+    });
+    const treeA = makeFileTree(workspaceA.working_copy_root, fileA.path);
+    const treeB = makeFileTree(workspaceB.working_copy_root, fileB.path);
+    const pendingARefresh = deferred<WorkingCopyStatus>();
+    const pendingBRefresh = deferred<WorkingCopyStatus>();
+
+    openWorkspaceMock
+      .mockResolvedValueOnce(workspaceA)
+      .mockResolvedValueOnce(workspaceB)
+      .mockResolvedValueOnce(workspaceA)
+      .mockResolvedValueOnce(workspaceB);
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce(statusA)
+      .mockResolvedValueOnce(statusB)
+      .mockImplementationOnce(() => pendingARefresh.promise)
+      .mockImplementationOnce(() => pendingBRefresh.promise);
+    listWorkspaceFilesMock
+      .mockResolvedValueOnce(treeA)
+      .mockResolvedValueOnce(treeB)
+      .mockResolvedValueOnce(treeA)
+      .mockResolvedValueOnce(treeB);
+
+    await workspaceStore.openPath(undefined, workspaceA.local_path);
+    workspaceStore.setSearchText("alpha");
+    workspaceStore.toggleAbnormalOnly();
+    workspaceStore.setGroupMode("directory");
+    workspaceStore.setSvnLogFilter("svnLogKeywordFilter", "alice");
+    workspaceStore.clearCommitFiles();
+
+    await workspaceStore.openPath(undefined, workspaceB.local_path);
+    expect(get(workspaceStore)).toMatchObject({
+      searchText: "",
+      abnormalOnly: false,
+      generatedOnly: false,
+      groupMode: "status",
+      svnLogKeywordFilter: "",
+    });
+    workspaceStore.setSearchText("beta");
+    workspaceStore.toggleGeneratedOnly();
+    workspaceStore.setGroupMode("extension");
+
+    const reopenA = workspaceStore.openPath(undefined, workspaceA.local_path);
+    await vi.waitFor(() => {
+      expect(get(workspaceStore).current?.local_path).toBe(workspaceA.local_path);
+      expect(get(workspaceStore).statusLoading).toBe(true);
+    });
+    expect(get(workspaceStore)).toMatchObject({
+      status: statusA,
+      fileTree: treeA,
+      searchText: "alpha",
+      abnormalOnly: true,
+      generatedOnly: false,
+      groupMode: "directory",
+      selectedFilePath: fileA.path,
+      commitFiles: [],
+      svnLogKeywordFilter: "alice",
+    });
+    pendingARefresh.resolve(refreshedStatusA);
+    await reopenA;
+    expect(get(workspaceStore).status).toBe(refreshedStatusA);
+    expect(get(workspaceStore).selectedFilePath).toBe(fileA.path);
+
+    const reopenB = workspaceStore.openPath(undefined, workspaceB.local_path);
+    await vi.waitFor(() => {
+      expect(get(workspaceStore).current?.local_path).toBe(workspaceB.local_path);
+      expect(get(workspaceStore).statusLoading).toBe(true);
+    });
+    expect(get(workspaceStore)).toMatchObject({
+      status: statusB,
+      fileTree: treeB,
+      searchText: "beta",
+      abnormalOnly: false,
+      generatedOnly: true,
+      groupMode: "extension",
+      selectedFilePath: fileB.path,
+      svnLogKeywordFilter: "",
+    });
+    pendingBRefresh.resolve(refreshedStatusB);
+    await reopenB;
+    expect(get(workspaceStore).status).toBe(refreshedStatusB);
+  });
+});
+
 
 describe("workspaceStore svn properties", () => {
   it("reports a workspace error when saving properties without an open workspace", async () => {
@@ -2354,7 +2465,11 @@ describe("revision path targets", () => {
     expect(repositoryPathUrl("https://example.com/svn", "/trunk/../secret.txt")).toBeNull();
   });
 
-  it("prepares a path-scoped revision diff and clears it for revision selection", () => {
+  it("prepares a path-scoped revision diff and clears it for revision selection", async () => {
+    openWorkspaceMock.mockResolvedValueOnce(makeWorkspace());
+    scanWorkspaceStatusMock.mockResolvedValueOnce(makeStatus([]));
+    await workspaceStore.openPath(undefined, "C:/repo/wc");
+
     expect(workspaceStore.prepareRevisionDiffFromLog("42", "/trunk/src/main.ts")).toBe(true);
     expect(get(workspaceStore).revisionDiffForm).toMatchObject({
       mode: "revisions",
@@ -2505,22 +2620,38 @@ describe("workspaceStore SVN operation state", () => {
     expect(get(workspaceStore).pathInput).toBe("C:/repo/root/game/client");
   });
 
-  it("打开或切换工作副本时保留运行中的 pending 操作", async () => {
-    workspaceStore.markSvnOperationTask("svn-1", "update", "C:/repo/original");
-    openWorkspaceMock.mockResolvedValueOnce(
-      makeWorkspace({ working_copy_root: "C:/repo/other" }),
-    );
-    scanWorkspaceStatusMock.mockResolvedValueOnce(
-      makeStatus([], { working_copy_root: "C:/repo/other" }),
-    );
-    listWorkspaceFilesMock.mockResolvedValueOnce(makeFileTree("C:/repo/other"));
+  it("将运行中的 pending 操作保留在原项目Tab", async () => {
+    const original = makeWorkspace({
+      local_path: "C:/repo/original",
+      working_copy_root: "C:/repo/original",
+    });
+    const other = makeWorkspace({
+      local_path: "C:/repo/other",
+      working_copy_root: "C:/repo/other",
+    });
+    openWorkspaceMock
+      .mockResolvedValueOnce(original)
+      .mockResolvedValueOnce(other)
+      .mockResolvedValueOnce(original);
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce(makeStatus([], { working_copy_root: original.working_copy_root }))
+      .mockResolvedValueOnce(makeStatus([], { working_copy_root: other.working_copy_root }))
+      .mockResolvedValueOnce(makeStatus([], { working_copy_root: original.working_copy_root }));
+    listWorkspaceFilesMock
+      .mockResolvedValueOnce(makeFileTree(original.working_copy_root))
+      .mockResolvedValueOnce(makeFileTree(other.working_copy_root))
+      .mockResolvedValueOnce(makeFileTree(original.working_copy_root));
 
-    await workspaceStore.openPath(undefined, "C:/repo/other");
+    await workspaceStore.openPath(undefined, original.local_path);
+    workspaceStore.markSvnOperationTask("svn-1", "update", original.working_copy_root);
+    await workspaceStore.openPath(undefined, other.local_path);
+    expect(get(workspaceStore).pendingSvnOperationTaskId).toBeNull();
 
+    await workspaceStore.openPath(undefined, original.local_path);
     expect(get(workspaceStore)).toMatchObject({
       pendingSvnOperationTaskId: "svn-1",
       pendingSvnOperationKind: "update",
-      pendingSvnOperationWorkingCopyRoot: "C:/repo/original",
+      pendingSvnOperationWorkingCopyRoot: original.working_copy_root,
     });
   });
 

@@ -638,6 +638,29 @@
     beforeHeight: number;
     afterHeight: number;
   };
+  type WorkspaceTabUiState = {
+    activeInspectorTab: InspectorTab;
+    workingCopyTreeFilter: WorkingCopyTreeFilter;
+    selectedRevisionFileDiff: { revision: string; path: string } | null;
+    revisionFileContentDiff: FileContentDiff | null;
+    expandedTimelineRevisions: Set<string>;
+    timelineMergeRevisions: Set<string>;
+    timelineMergeSelectionAnchor: string | null;
+    collapsedTreePaths: Set<string>;
+    selectedDirectoryPath: string;
+    selectedDirectoryFileTree: WorkspaceFileTree | null;
+    selectedDirectoryFileTreePath: string | null;
+    selectedRowPaths: Set<string>;
+    rowSelectionAnchorPath: string | null;
+    activeRowPath: string | null;
+    keyboardRangeAnchorPath: string | null;
+    keyboardRangeBasePaths: Set<string>;
+    fileBrowserScrollTop: number;
+    folderBrowserScrollTop: number;
+    workspaceBlameScrollTop: number;
+    repositoryBlameScrollTop: number;
+    changelistFilter: string;
+  };
 
   const fileTreeHeaderHeight = 28;
   const fileTreeRowHeight = 32;
@@ -711,6 +734,7 @@
   let repositoryBlameViewportHeight = 300;
   let virtualizedFileTreeSource: WorkspaceFileTree | null = null;
   let virtualizedWorkspaceBlameSource: SvnBlame | null = null;
+  let virtualizedFileTreeWorkspaceKey: string | null = null;
   let virtualizedRepositoryBlameSource: SvnBlame | null = null;
   let blameRevisionLogTarget: {
     revision: string;
@@ -1703,9 +1727,8 @@
   function reconcileRowSelection(
     workingCopyRoot: string | null,
     fileTree: WorkspaceFileTree | null,
-    resetWorkspaceDisplay: boolean,
   ) {
-    if (selectionWorkspaceRoot !== workingCopyRoot || resetWorkspaceDisplay) {
+    if (selectionWorkspaceRoot !== workingCopyRoot) {
       selectionWorkspaceRoot = workingCopyRoot;
       clearRevisionFileDiff();
       expandedTimelineRevisions = new Set();
@@ -2484,6 +2507,97 @@
   let editingBranchPoolEntryId: string | null = null;
   let branchPoolDisplayNameDraft = "";
   let changelistFilter = "all";
+  const workspaceTabUiStates = new Map<string, WorkspaceTabUiState>();
+  let activeWorkspaceTabUiKey: string | null = null;
+
+  function workspaceTabUiKey(localPath: string | null | undefined) {
+    if (!localPath?.trim()) return null;
+    const path = localPath.trim().replaceAll("\\", "/").replace(/\/+$/, "");
+    return /^[a-z]:\//i.test(path) || path.startsWith("//") ? path.toLowerCase() : path;
+  }
+
+  function captureWorkspaceTabUiState(): WorkspaceTabUiState {
+    return {
+      activeInspectorTab,
+      workingCopyTreeFilter,
+      selectedRevisionFileDiff,
+      revisionFileContentDiff,
+      expandedTimelineRevisions: new Set(expandedTimelineRevisions),
+      timelineMergeRevisions: new Set(timelineMergeRevisions),
+      timelineMergeSelectionAnchor,
+      collapsedTreePaths: new Set(collapsedTreePaths),
+      selectedDirectoryPath,
+      selectedDirectoryFileTree,
+      selectedDirectoryFileTreePath,
+      selectedRowPaths: new Set(selectedRowPaths),
+      rowSelectionAnchorPath,
+      activeRowPath,
+      keyboardRangeAnchorPath,
+      keyboardRangeBasePaths: new Set(keyboardRangeBasePaths),
+      fileBrowserScrollTop,
+      folderBrowserScrollTop,
+      workspaceBlameScrollTop,
+      repositoryBlameScrollTop,
+      changelistFilter,
+    };
+  }
+
+  function syncWorkspaceTabUiState(
+    key: string | null,
+    workingCopyRoot: string | null,
+    fileTree: WorkspaceFileTree | null,
+    workspaceBlame: SvnBlame | null,
+    repositoryBlame: SvnBlame | null,
+  ) {
+    if (key === activeWorkspaceTabUiKey) return;
+    if (activeWorkspaceTabUiKey) {
+      workspaceTabUiStates.set(activeWorkspaceTabUiKey, captureWorkspaceTabUiState());
+    }
+    activeWorkspaceTabUiKey = key;
+    const cached = key ? workspaceTabUiStates.get(key) : null;
+
+    activeInspectorTab = cached?.activeInspectorTab ?? "information";
+    workingCopyTreeFilter = cached?.workingCopyTreeFilter ?? "all";
+    selectedRevisionFileDiff = cached?.selectedRevisionFileDiff ?? null;
+    revisionFileContentDiff = cached?.revisionFileContentDiff ?? null;
+    revisionFileDiffLoading = false;
+    revisionFileDiffError = null;
+    expandedTimelineRevisions = new Set(cached?.expandedTimelineRevisions ?? []);
+    timelineMergeRevisions = new Set(cached?.timelineMergeRevisions ?? []);
+    timelineMergeSelectionAnchor = cached?.timelineMergeSelectionAnchor ?? null;
+    collapsedTreePaths = new Set(cached?.collapsedTreePaths ?? []);
+    selectedDirectoryPath = cached?.selectedDirectoryPath ?? "";
+    selectedDirectoryFileTree = cached?.selectedDirectoryFileTree ?? null;
+    selectedDirectoryFileTreePath = cached?.selectedDirectoryFileTreePath ?? null;
+    selectedRowPaths = new Set(cached?.selectedRowPaths ?? []);
+    rowSelectionAnchorPath = cached?.rowSelectionAnchorPath ?? null;
+    activeRowPath = cached?.activeRowPath ?? null;
+    keyboardRangeAnchorPath = cached?.keyboardRangeAnchorPath ?? null;
+    keyboardRangeBasePaths = new Set(cached?.keyboardRangeBasePaths ?? []);
+    fileBrowserScrollTop = cached?.fileBrowserScrollTop ?? 0;
+    folderBrowserScrollTop = cached?.folderBrowserScrollTop ?? 0;
+    workspaceBlameScrollTop = cached?.workspaceBlameScrollTop ?? 0;
+    repositoryBlameScrollTop = cached?.repositoryBlameScrollTop ?? 0;
+    changelistFilter = cached?.changelistFilter ?? "all";
+    directorySelectionWorkspaceRoot = workingCopyRoot;
+    selectionWorkspaceRoot = workingCopyRoot;
+    selectionFileTree = fileTree;
+    virtualizedFileTreeSource = fileTree;
+    virtualizedFileTreeWorkspaceKey = key;
+    virtualizedWorkspaceBlameSource = workspaceBlame;
+    virtualizedRepositoryBlameSource = repositoryBlame;
+    directoryFilesGeneration += 1;
+    directoryFilesLoading = false;
+    directoryFilesError = null;
+    timelineMergeDialogOpen = false;
+    closeContextMenu();
+
+    queueMicrotask(() => {
+      if (key !== activeWorkspaceTabUiKey) return;
+      if (fileBrowserElement) fileBrowserElement.scrollTop = fileBrowserScrollTop;
+      if (folderBrowserElement) folderBrowserElement.scrollTop = folderBrowserScrollTop;
+    });
+  }
 
   $: projectContextMenuEntry =
     branchPool.entries.find((entry) => entry.id === projectContextMenuEntryId) ?? null;
@@ -3049,6 +3163,13 @@
     }
   });
 
+  $: syncWorkspaceTabUiState(
+    workspaceTabUiKey(workspace?.local_path),
+    workspace?.working_copy_root ?? null,
+    workspaceFileTree,
+    svnBlame,
+    repositoryFileBlame,
+  );
   $: files = workingCopyStatus?.files ?? [];
   $: directoryParentPaths = new Set(directoryRows.map((row) => parentDirectoryPath(row.path)));
   $: directoryChangeSummary = summarizeDirectoryChanges(files);
@@ -3072,13 +3193,16 @@
         : filteredTreeNodes;
   $: treeRows = filesForDirectory(selectedDirectoryTreeNodes, selectedDirectoryPath);
   $: if (virtualizedFileTreeSource !== workspaceFileTree) {
+    const nextWorkspaceKey = workspaceTabUiKey(workspace?.local_path);
+    const workspaceChanged = virtualizedFileTreeWorkspaceKey !== nextWorkspaceKey;
     virtualizedFileTreeSource = workspaceFileTree;
-    fileBrowserScrollTop = 0;
-    if (fileBrowserElement) {
-      fileBrowserElement.scrollTop = 0;
+    virtualizedFileTreeWorkspaceKey = nextWorkspaceKey;
+    if (workspaceChanged) {
+      fileBrowserScrollTop = 0;
+      if (fileBrowserElement) fileBrowserElement.scrollTop = 0;
+      folderBrowserScrollTop = 0;
+      if (folderBrowserElement) folderBrowserElement.scrollTop = 0;
     }
-    folderBrowserScrollTop = 0;
-    if (folderBrowserElement) folderBrowserElement.scrollTop = 0;
     selectedDirectoryFileTree = null;
     selectedDirectoryFileTreePath = null;
     if (selectedDirectoryPath) void loadSelectedDirectoryFiles(selectedDirectoryPath);
@@ -3122,7 +3246,6 @@
   $: reconcileRowSelection(
     workspace?.working_copy_root ?? null,
     workspaceFileTree,
-    workspaceLoading,
   );
   $: reconcileActiveRow(treeRows, selectedFilePath);
   $: reportActiveWorkspacePath((activeRowPath ?? selectedDirectoryPath) || null);
