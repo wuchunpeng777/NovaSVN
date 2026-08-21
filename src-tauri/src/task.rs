@@ -2821,7 +2821,12 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
         Vec::new()
     } else {
         let parent_candidates = commit_parent_paths(&unversioned);
-        match collect_commit_target_statuses(&payload.svn_executable, &root, &parent_candidates) {
+        match collect_commit_target_statuses_with_options(
+            &payload.svn_executable,
+            &root,
+            &parent_candidates,
+            false,
+        ) {
             Ok(statuses) => statuses.unversioned,
             Err(error) => {
                 update_task(
@@ -2948,8 +2953,12 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
     };
     let mut command = svn::command(&payload.svn_executable);
     // Relative targets avoid Windows command-line limits; keep changelists as persistent local grouping.
+    // `--depth empty` is required: `svn commit dir` otherwise recursively includes every
+    // pending change under that directory, not just the files the user selected.
     command
         .arg("commit")
+        .arg("--depth")
+        .arg("empty")
         .arg("--keep-changelists")
         .arg("--targets")
         .arg(commit_targets.path())
@@ -2962,7 +2971,7 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
         task_id,
         &format!(
             "执行 svn commit：{}",
-            format_paths_for_task_log(&payload.files)
+            format_paths_for_task_log(&commit_paths)
         ),
     );
 
@@ -3007,6 +3016,15 @@ fn collect_commit_target_statuses(
     executable: &str,
     root: &Path,
     files: &[String],
+) -> Result<CommitTargetStatuses, String> {
+    collect_commit_target_statuses_with_options(executable, root, files, true)
+}
+
+fn collect_commit_target_statuses_with_options(
+    executable: &str,
+    root: &Path,
+    files: &[String],
+    infer_unobserved_existing: bool,
 ) -> Result<CommitTargetStatuses, String> {
     if files.is_empty() {
         return Ok(CommitTargetStatuses::default());
@@ -3069,16 +3087,22 @@ fn collect_commit_target_statuses(
     }
     // SVN omits an explicit file from status XML when one of its ancestors is unversioned.
     // Existing requested paths without any status entry still need `svn add --parents`.
-    for file in files {
-        if !observed.contains(file)
-            && fs::symlink_metadata(root.join(file)).is_ok()
-            && !statuses.unversioned.iter().any(|path| path == file)
-        {
-            statuses.unversioned.push(file.clone());
+    // Do not apply this to parent-directory probes: a versioned, unchanged directory also
+    // has no status entry, and treating it as unversioned would `svn commit` the directory
+    // (default depth infinity) and drag in unrelated local modifications.
+    if infer_unobserved_existing {
+        for file in files {
+            if !observed.contains(file)
+                && fs::symlink_metadata(root.join(file)).is_ok()
+                && !statuses.unversioned.iter().any(|path| path == file)
+            {
+                statuses.unversioned.push(file.clone());
+            }
         }
     }
     Ok(statuses)
 }
+
 /// Return unique non-root parent paths needed when `svn add --parents` schedules new directories.
 fn commit_parent_paths(paths: &[String]) -> Vec<String> {
     let mut seen = HashSet::new();
@@ -13855,6 +13879,92 @@ mod tests {
             clean_status.stdout.is_empty(),
             "提交后工作副本应干净：{}",
             String::from_utf8_lossy(&clean_status.stdout)
+        );
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn commit_does_not_include_unselected_changes_under_versioned_parents() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-commit-selected-only");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = test_file_repository_url(&repository);
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+
+        let assets = working_copy.join("assets");
+        fs::create_dir_all(&assets).expect("create assets directory");
+        fs::write(assets.join("keep.txt"), "keep-base\n").expect("write keep.txt");
+        fs::write(assets.join("skip.mat.meta"), "meta-base\n").expect("write skip.mat.meta");
+        run_test_command(Command::new("svn").arg("add").arg(&assets));
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .args(["-m", "init"])
+                .arg(&working_copy),
+        );
+
+        fs::write(assets.join("keep.txt"), "keep-changed\n").expect("modify keep.txt");
+        fs::write(assets.join("skip.mat.meta"), "meta-changed\n").expect("modify skip.mat.meta");
+        fs::write(assets.join("new.txt"), "brand new\n").expect("write unversioned file");
+
+        let queue = TaskQueue::new();
+        let commit_task = queue
+            .create_commit_task(CreateCommitTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                message: "commit selected files only".to_string(),
+                files: vec!["assets/keep.txt".to_string(), "assets/new.txt".to_string()],
+                svn_executable: None,
+            })
+            .expect("selected-only commit task should be created");
+        let commit_task = wait_for_test_task(&queue, &commit_task.task_id);
+        assert!(
+            matches!(commit_task.status, TaskStatus::Success),
+            "只提交勾选文件应成功：{:?}",
+            commit_task.error
+        );
+
+        let keep = run_test_command(
+            Command::new("svn")
+                .arg("cat")
+                .arg(format!("{repository_url}/assets/keep.txt")),
+        );
+        assert_eq!(String::from_utf8_lossy(&keep.stdout), "keep-changed\n");
+        let new_file = run_test_command(
+            Command::new("svn")
+                .arg("cat")
+                .arg(format!("{repository_url}/assets/new.txt")),
+        );
+        assert_eq!(String::from_utf8_lossy(&new_file.stdout), "brand new\n");
+        let skipped = run_test_command(
+            Command::new("svn")
+                .arg("cat")
+                .arg(format!("{repository_url}/assets/skip.mat.meta")),
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&skipped.stdout),
+            "meta-base\n",
+            "未勾选的 .mat.meta 不应被父目录提交带上"
+        );
+
+        let leftover = run_test_command(
+            Command::new("svn")
+                .arg("status")
+                .arg(working_copy.join("assets/skip.mat.meta")),
+        );
+        assert!(
+            String::from_utf8_lossy(&leftover.stdout).contains("skip.mat.meta"),
+            "未勾选文件应仍是本地修改：{}",
+            String::from_utf8_lossy(&leftover.stdout)
         );
         fs::remove_dir_all(root).ok();
     }
