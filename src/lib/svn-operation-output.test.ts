@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { extractSvnFileChanges, svnOutputReportsConflicts } from "./svn-operation-output";
+import {
+  extractSvnFileChanges,
+  svnOutputReportsConflicts,
+  svnPathsReferToSameFile,
+  workingCopyRelativeSvnPath,
+} from "./svn-operation-output";
 
 describe("extractSvnFileChanges", () => {
   it("extracts file actions and normalizes absolute Windows output paths", () => {
@@ -32,5 +37,42 @@ describe("extractSvnFileChanges", () => {
       ),
     ).toBe(true);
     expect(svnOutputReportsConflicts("A    src/added.ts\nUpdated to revision 8.")).toBe(false);
+  });
+});
+
+describe("workingCopyRelativeSvnPath", () => {
+  it("prefixes subdirectory merge targets so paths match working copy status", () => {
+    expect(
+      workingCopyRelativeSvnPath("src/main.ts", {
+        workingCopyRoot: "C:\\target",
+        targetPath: "C:\\target\\game\\client",
+        relativePath: "game/client",
+      }),
+    ).toBe("game/client/src/main.ts");
+    expect(
+      workingCopyRelativeSvnPath("C:\\target\\game\\client\\src\\main.ts", {
+        workingCopyRoot: "C:\\target",
+        targetPath: "C:\\target\\game\\client",
+        relativePath: "game/client",
+      }),
+    ).toBe("game/client/src/main.ts");
+    expect(
+      workingCopyRelativeSvnPath(".", {
+        workingCopyRoot: "C:\\target",
+        targetPath: "C:\\target\\game\\client",
+        relativePath: "game/client",
+      }),
+    ).toBe("game/client");
+  });
+
+  it("keeps workspace-root merge paths unchanged", () => {
+    expect(
+      workingCopyRelativeSvnPath("src/main.ts", {
+        workingCopyRoot: "C:\\target",
+        targetPath: "C:\\target",
+        relativePath: null,
+      }),
+    ).toBe("src/main.ts");
+    expect(svnPathsReferToSameFile("src\\main.ts", "src/main.ts")).toBe(true);
   });
 });

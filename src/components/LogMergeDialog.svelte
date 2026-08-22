@@ -16,7 +16,12 @@
   import { shouldShowTextDiffViewer } from "../lib/file-content-diff";
   import { LOG_FILE_DIFF_MAX_BYTES } from "../lib/svn-log";
   import { svnStatusMark, svnStatusMarkTitle } from "../lib/svn-file-status";
-  import { extractSvnFileChangesFromText, svnOutputReportsConflicts } from "../lib/svn-operation-output";
+  import {
+    extractSvnFileChangesFromText,
+    svnOutputReportsConflicts,
+    svnPathsReferToSameFile,
+    workingCopyRelativeSvnPath,
+  } from "../lib/svn-operation-output";
   import { buildPropertyContentDiff } from "../lib/svn-property-diff";
   import type {
     ChangedFile,
@@ -100,17 +105,25 @@
   $: mergeResult = task?.result?.merge_result ?? null;
   $: mergeOutputFiles = extractSvnFileChangesFromText(
     (mergeResult?.output_text ?? "").split(/\r?\n/),
-    target?.working_copy_root ?? target?.target_path,
-  );
+    target?.target_path ?? target?.working_copy_root,
+  ).map((file) => ({
+    ...file,
+    path: workingCopyRelativeSvnPath(file.path, {
+      workingCopyRoot: target?.working_copy_root,
+      targetPath: target?.target_path,
+      relativePath: target?.relative_path,
+    }),
+  }));
   $: directMergeFinished = task !== null && terminalStatuses.includes(task.status);
   $: directMergeSucceeded = mergeTaskFinished(task);
   $: targetDirty = (targetStatus?.total ?? 0) > 0;
-  $: reviewConflictCount = (postMergeStatus?.files ?? []).filter(isReviewConflicted).length;
-  $: reviewFiles = (postMergeStatus?.files ?? []).filter(
+  $: mergeReviewFilesAll = mergeAffectedReviewFiles(postMergeStatus);
+  $: reviewConflictCount = mergeReviewFilesAll.filter(isReviewConflicted).length;
+  $: reviewFiles = mergeReviewFilesAll.filter(
     (file) => reviewFilter === "all" || isReviewConflicted(file),
   );
   $: selectedReviewFile =
-    postMergeStatus?.files.find((file) => file.path === selectedReviewPath) ?? null;
+    mergeReviewFilesAll.find((file) => file.path === selectedReviewPath) ?? null;
   $: selectedPropertyContentDiff = buildPropertyContentDiff(selectedReviewDiff);
   $: resolutionRunning = resolutionTask !== null && !terminalStatuses.includes(resolutionTask.status);
   $: revisionSummary = revisions.length <= 20
@@ -395,7 +408,7 @@
       return true;
     }
     return window.confirm(
-      `确定应用 ${revisions.length} 个 Revision 吗？\n\nMerge 只修改本地工作副本，不会自动提交。\n\n目标当前已有 ${targetStatus?.total ?? 0} 项本地改动。Merge 后状态和 Diff 会同时包含这些原有改动。`,
+      `确定应用 ${revisions.length} 个 Revision 吗？\n\nMerge 只修改本地工作副本，不会自动提交。\n\n目标当前已有 ${targetStatus?.total ?? 0} 项本地改动。结果页只展示这次 Merge 影响的文件。`,
     );
   }
 
@@ -423,12 +436,13 @@
         return;
       }
       postMergeStatus = status;
-      const firstFile = status.files.find(
+      const files = mergeAffectedReviewFiles(status);
+      const firstFile = files.find(
         (file) =>
           file.path === previousReviewPath &&
           (reviewFilter === "all" || isReviewConflicted(file)),
       )
-        ?? status.files.find((file) => reviewFilter === "all" || isReviewConflicted(file));
+        ?? files.find((file) => reviewFilter === "all" || isReviewConflicted(file));
       if (firstFile) {
         await loadReviewDiff(firstFile);
       }
@@ -484,7 +498,7 @@
 
   function applyReviewFilter(filter: "all" | "conflicts") {
     reviewFilter = filter;
-    const files = (postMergeStatus?.files ?? []).filter(
+    const files = mergeAffectedReviewFiles(postMergeStatus).filter(
       (file) => filter === "all" || isReviewConflicted(file),
     );
     const selectedStillVisible = files.find((file) => file.path === selectedReviewPath);
@@ -503,6 +517,96 @@
 
   function isReviewConflicted(file: ChangedFile) {
     return file.status === "conflicted" || Boolean(file.conflict_kind);
+  }
+
+  function currentMergeResult() {
+    return task?.result?.merge_result ?? null;
+  }
+
+  function currentMergeOutputFiles() {
+    return extractSvnFileChangesFromText(
+      (currentMergeResult()?.output_text ?? "").split(/\r?\n/),
+      target?.target_path ?? target?.working_copy_root,
+    ).map((file) => ({
+      ...file,
+      path: workingCopyRelativeSvnPath(file.path, {
+        workingCopyRoot: target?.working_copy_root,
+        targetPath: target?.target_path,
+        relativePath: target?.relative_path,
+      }),
+    }));
+  }
+
+  function mergeAffectedReviewFiles(status: WorkingCopyStatus | null): ChangedFile[] {
+    const statusFiles = status?.files ?? [];
+    const result = currentMergeResult();
+    const outputFiles = currentMergeOutputFiles();
+    if (outputFiles.length === 0 && !result) {
+      return statusFiles;
+    }
+
+    const files: ChangedFile[] = [];
+    const seen = new Set<string>();
+    for (const change of outputFiles) {
+      const key = comparableReviewPath(change.path);
+      if (!key || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      const matched = statusFiles.find((file) => svnPathsReferToSameFile(file.path, change.path));
+      files.push(matched ?? changedFileFromMergeAction(change.path, change.action));
+    }
+
+    if ((result?.conflicted ?? 0) > 0) {
+      for (const file of statusFiles) {
+        if (!isReviewConflicted(file)) {
+          continue;
+        }
+        const key = comparableReviewPath(file.path);
+        if (!key || seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        files.push(file);
+      }
+    }
+    return files;
+  }
+
+  function comparableReviewPath(path: string) {
+    return path.trim().replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase("en-US");
+  }
+
+  function changedFileFromMergeAction(path: string, action: string): ChangedFile {
+    const conflicted = action.includes("C") || action.includes("!");
+    let status = "modified";
+    if (conflicted) {
+      status = "conflicted";
+    } else if (action.includes("A")) {
+      status = "added";
+    } else if (action.includes("D")) {
+      status = "deleted";
+    } else if (action.includes("R")) {
+      status = "replaced";
+    }
+    return {
+      path,
+      status,
+      changelist: null,
+      revision: null,
+      property_status: action.includes("U") && status === "modified" ? "modified" : "none",
+      property_changed: action.includes("U") && !action.includes("A") && !action.includes("D"),
+      remote_status: null,
+      remote_property_status: null,
+      change_scope: "local",
+      abnormal: conflicted,
+      lock_state: "none",
+      lock_owner: null,
+      lock_comment: null,
+      conflict_kind: conflicted ? "text" : null,
+      file_size: null,
+      content_digest: "",
+    };
   }
 
   async function openSelectedConflict() {
@@ -637,6 +741,7 @@
 
 <div
   class="merge-dialog-backdrop"
+  class:reviewing={directMergeFinished}
   role="presentation"
   tabindex="-1"
   on:click|self={requestClose}
@@ -749,7 +854,7 @@
             <span><strong>{mergeResult.deleted}</strong> 删除</span>
             <span class:conflicted={mergeResult.conflicted > 0}><strong>{mergeResult.conflicted}</strong> 冲突</span>
           </div>
-          {#if mergeOutputFiles.length > 0}
+          {#if mergeOutputFiles.length > 0 && !directMergeFinished}
             <div class="merge-files" aria-label="Merge 差异文件">
               {#each mergeOutputFiles as file (file.path)}
                 <div>
@@ -770,11 +875,11 @@
         <section class="post-merge-review" aria-label="Merge 后检查">
           <header>
             <div>
-              <strong>Merge 差异</strong>
+              <strong>这次 Merge 影响的文件</strong>
               <span>
                 {targetDirty
-                  ? "包含 Merge 前已有的本地改动"
-                  : "Merge 结果尚未提交"}
+                  ? `目标在 Merge 前已有 ${targetStatus?.total ?? 0} 项本地改动，未列入本次结果`
+                  : "仅显示这次 Merge 改动的文件，结果尚未提交"}
               </span>
             </div>
             <button
@@ -796,15 +901,15 @@
             </div>
           {:else if postMergeStatus}
             <div class="review-summary">
-              <span><strong>{postMergeStatus.local_changes}</strong> 本地改动</span>
-              <span><strong>{postMergeStatus.modified}</strong> 修改</span>
-              <span><strong>{postMergeStatus.added}</strong> 新增</span>
-              <span><strong>{postMergeStatus.deleted}</strong> 删除</span>
+              <span><strong>{mergeReviewFilesAll.length}</strong> 文件</span>
+              <span><strong>{mergeReviewFilesAll.filter((file) => file.status === "modified" || file.status === "property_modified").length}</strong> 修改</span>
+              <span><strong>{mergeReviewFilesAll.filter((file) => file.status === "added").length}</strong> 新增</span>
+              <span><strong>{mergeReviewFilesAll.filter((file) => file.status === "deleted").length}</strong> 删除</span>
               <span class:conflicted={reviewConflictCount > 0}>
                 <strong>{reviewConflictCount}</strong> 冲突
               </span>
             </div>
-            {#if postMergeStatus.files.length > 0}
+            {#if mergeReviewFilesAll.length > 0}
               <div class="review-layout">
                 <aside class="review-file-pane">
                   <div class="review-filters" role="tablist" aria-label="改动文件筛选">
@@ -815,7 +920,7 @@
                       class:active={reviewFilter === "all"}
                       on:click={() => applyReviewFilter("all")}
                     >
-                      全部 {postMergeStatus.files.length}
+                      全部 {mergeReviewFilesAll.length}
                     </button>
                     <button
                       type="button"
@@ -828,7 +933,7 @@
                       冲突 {reviewConflictCount}
                     </button>
                   </div>
-                  <nav class="review-files" aria-label="Merge 后本地改动">
+                  <nav class="review-files" aria-label="这次 Merge 影响的文件">
                     {#each reviewFiles as file (file.path)}
                       <button
                         type="button"
@@ -849,7 +954,7 @@
                     {:else}
                       <div class="review-empty compact">当前没有冲突文件</div>
                     {/each}
-                    {#if postMergeStatus.returned < postMergeStatus.total}
+                    {#if !mergeResult && postMergeStatus.returned < postMergeStatus.total}
                       <p>仅显示前 {postMergeStatus.returned} 项，共 {postMergeStatus.total} 项。</p>
                     {/if}
                   </nav>
@@ -907,7 +1012,7 @@
                 </section>
               </div>
             {:else}
-              <div class="review-empty">工作副本当前没有本地改动</div>
+              <div class="review-empty">这次 Merge 没有改动文件</div>
             {/if}
           {/if}
         </section>
@@ -947,6 +1052,10 @@
     place-items: center;
   }
 
+  .merge-dialog-backdrop.reviewing {
+    padding: 8px;
+  }
+
   .merge-dialog {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
@@ -961,9 +1070,10 @@
   }
 
   .merge-dialog.reviewing {
-    width: min(1080px, calc(100vw - 32px));
-    height: min(820px, calc(100vh - 32px));
-    max-height: calc(100vh - 32px);
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+    max-width: none;
+    max-height: none;
   }
 
   .merge-dialog > header,
@@ -1011,9 +1121,34 @@
   }
 
   .merge-dialog.reviewing .merge-dialog-body {
-    grid-template-rows: auto minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     align-content: stretch;
     overflow: hidden;
+  }
+
+  .merge-dialog.reviewing .merge-result {
+    flex: 0 0 auto;
+  }
+
+  .merge-dialog.reviewing .post-merge-review {
+    flex: 1 1 auto;
+  }
+
+  .merge-dialog.reviewing .merge-result > header {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .merge-dialog.reviewing .result-counts {
+    padding: 8px 10px 0;
+  }
+
+  .merge-dialog.reviewing .merge-output {
+    margin-top: 6px;
   }
 
   .merge-dialog.reviewing :is(.revision-selection, .target-label, .target-input-row, .target-summary, .task-status) {
@@ -1495,7 +1630,8 @@
   }
 
   @media (max-width: 640px) {
-    .merge-dialog-backdrop {
+    .merge-dialog-backdrop,
+    .merge-dialog-backdrop.reviewing {
       padding: 8px;
     }
 
@@ -1507,7 +1643,7 @@
     .merge-dialog.reviewing {
       width: calc(100vw - 16px);
       height: calc(100vh - 16px);
-      max-height: calc(100vh - 16px);
+      max-height: none;
     }
 
     .target-input-row {

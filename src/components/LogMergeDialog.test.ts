@@ -139,6 +139,7 @@ describe("LogMergeDialog", () => {
       svn_executable: "C:\\Tools\\svn.exe",
     }));
     const review = await screen.findByLabelText("Merge 后检查");
+    expect(within(review).getByText("仅显示这次 Merge 改动的文件，结果尚未提交")).toBeInTheDocument();
     expect(within(review).getByRole("button", { name: "修改 src/main.ts" })).toBeInTheDocument();
     await waitFor(() => expect(getFileDiffMock).toHaveBeenCalledWith({
       working_copy_root: "C:\\target",
@@ -173,6 +174,39 @@ describe("LogMergeDialog", () => {
     await waitFor(() => expect(createMergeTaskMock).toHaveBeenCalledWith(
       expect.objectContaining({ working_copy_root: "C:\\target\\game\\client" }),
     ));
+  });
+
+  it("子目录 Merge 结果只展示相对工作副本根目录的本次文件", async () => {
+    inspectUpdateTargetMock.mockResolvedValueOnce(makeTarget({
+      target_path: "C:\\target\\game\\client",
+      working_copy_root: "C:\\target",
+      relative_path: "game/client",
+      repository_url: "https://example.com/svn/trunk/game/client",
+    }));
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce(makeStatus())
+      .mockResolvedValueOnce(makeStatus({
+        total: 2,
+        returned: 2,
+        limit: 500,
+        local_changes: 2,
+        modified: 2,
+        files: [
+          makeChangedFile("game/client/src/main.ts"),
+          makeChangedFile("unrelated/local.ts"),
+        ],
+      }));
+    getTaskMock.mockResolvedValueOnce(makeTask("success", {
+      ...makeMergeResult(false),
+      output_text: "U    src/main.ts",
+    }));
+    renderDialog();
+    await inspectPath("C:\\target\\game\\client");
+    await fireEvent.click(screen.getByRole("button", { name: "开始 Merge" }));
+
+    const review = await screen.findByLabelText("Merge 后检查");
+    expect(within(review).getByRole("button", { name: "修改 game/client/src/main.ts" })).toBeInTheDocument();
+    expect(within(review).queryByRole("button", { name: /unrelated\/local\.ts/ })).not.toBeInTheDocument();
   });
 
   it("Merge 运行时可关闭窗口并取消后台任务", async () => {
@@ -240,11 +274,11 @@ describe("LogMergeDialog", () => {
     const initialStatus = makeStatus({ total: 2, local_changes: 2, modified: 2 });
     const postMergeStatus = makeStatus({
       total: 3,
-      returned: 1,
+      returned: 2,
       limit: 500,
       local_changes: 3,
       modified: 3,
-      files: [makeChangedFile("src/main.ts")],
+      files: [makeChangedFile("src/main.ts"), makeChangedFile("src/local-only.ts")],
     });
     scanWorkspaceStatusMock
       .mockResolvedValueOnce(initialStatus)
@@ -270,8 +304,9 @@ describe("LogMergeDialog", () => {
       svn_executable: "C:\\Tools\\svn.exe",
     }));
     const review = await screen.findByLabelText("Merge 后检查");
-    expect(within(review).getByText("包含 Merge 前已有的本地改动")).toBeInTheDocument();
+    expect(within(review).getByText("目标在 Merge 前已有 2 项本地改动，未列入本次结果")).toBeInTheDocument();
     expect(within(review).getByRole("button", { name: /src\/main\.ts/ })).toBeInTheDocument();
+    expect(within(review).queryByRole("button", { name: /src\/local-only\.ts/ })).not.toBeInTheDocument();
     await waitFor(() => expect(getFileDiffMock).toHaveBeenCalledWith({
       working_copy_root: "C:\\target",
       file_path: "src/main.ts",
@@ -305,7 +340,11 @@ describe("LogMergeDialog", () => {
       .mockResolvedValueOnce(makeStatus());
     createMergeTaskMock.mockResolvedValueOnce(makeTask("pending", null, "merge-apply"));
     getTaskMock
-      .mockResolvedValueOnce(makeTask("success", makeMergeResult(false), "merge-apply"))
+      .mockResolvedValueOnce(makeTask("success", {
+        ...makeMergeResult(false),
+        conflicted: 1,
+        output_text: "U    src/main.ts\nC    src/conflict.ts",
+      }, "merge-apply"))
       .mockResolvedValueOnce(makeTask("success", null, "resolve-1"));
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderDialog();
@@ -340,8 +379,9 @@ describe("LogMergeDialog", () => {
 
     const result = await screen.findByLabelText("Merge 结果");
     expect(within(result).getByText("Merge 完成，存在冲突")).toBeInTheDocument();
-    expect(within(result).getByText("src/main.ts")).toBeInTheDocument();
     expect(within(result).getByText("1", { selector: ".conflicted strong" })).toBeInTheDocument();
+    const review = await screen.findByLabelText("Merge 后检查");
+    expect(within(review).getByRole("button", { name: "文本冲突 src/main.ts" })).toBeInTheDocument();
   });
 
   it("显示任务失败的后端错误", async () => {

@@ -63,3 +63,46 @@ export function normalizeSvnOutputPath(path: string, workingCopyRoot?: string | 
   }
   return normalizedPath;
 }
+
+/** Convert merge output paths to working-copy-relative paths used by status/diff APIs. */
+export function workingCopyRelativeSvnPath(
+  path: string,
+  options: {
+    workingCopyRoot?: string | null;
+    targetPath?: string | null;
+    relativePath?: string | null;
+  } = {},
+): string {
+  const strippedFromTarget = normalizeSvnOutputPath(path, options.targetPath);
+  const strippedFromRoot = normalizeSvnOutputPath(
+    strippedFromTarget,
+    options.workingCopyRoot,
+  );
+  const normalized = comparableSvnPath(strippedFromRoot) || ".";
+  const prefix = comparableSvnPath(options.relativePath ?? "");
+  if (!prefix) {
+    return normalized;
+  }
+  if (normalized === ".") {
+    return prefix;
+  }
+  const comparablePath = normalized.toLocaleLowerCase("en-US");
+  const comparablePrefix = prefix.toLocaleLowerCase("en-US");
+  if (comparablePath === comparablePrefix || comparablePath.startsWith(`${comparablePrefix}/`)) {
+    return normalized;
+  }
+  return `${prefix}/${normalized}`;
+}
+
+export function svnPathsReferToSameFile(left: string, right: string): boolean {
+  return comparableSvnPath(left).toLocaleLowerCase("en-US")
+    === comparableSvnPath(right).toLocaleLowerCase("en-US");
+}
+
+function comparableSvnPath(path: string) {
+  return path
+    .trim()
+    .replaceAll("\\", "/")
+    .replace(/^\.\//, "")
+    .replace(/\/+$/, "");
+}
