@@ -129,6 +129,10 @@ const logMergeDialog = fs.readFileSync(
   path.join(root, "src", "components", "LogMergeDialog.svelte"),
   "utf8",
 );
+const logMergeDialogTest = fs.readFileSync(
+  path.join(root, "src", "components", "LogMergeDialog.test.ts"),
+  "utf8",
+);
 const standaloneMergePreviewWindow = fs.readFileSync(
   path.join(root, "src", "components", "StandaloneMergePreviewWindow.svelte"),
   "utf8",
@@ -860,7 +864,7 @@ if (
 }
 
 const fileBrowserStart = mainWorkspace.indexOf('class="file-browser"');
-const fileBrowserEnd = mainWorkspace.indexOf('class="inspector-resizer"', fileBrowserStart);
+const fileBrowserEnd = mainWorkspace.indexOf('class="workspace-context-menu"', fileBrowserStart);
 const fileBrowserSource = mainWorkspace.slice(fileBrowserStart, fileBrowserEnd);
 if (
   fileBrowserStart < 0 ||
@@ -939,13 +943,12 @@ if (
 if (
   !mainWorkspace.includes('role="tablist"') ||
   !mainWorkspace.includes('role="tab"') ||
-  !mainWorkspace.includes('role="tabpanel"') ||
-  !mainWorkspace.includes('{ id: "information", label: "Information" }') ||
-  !mainWorkspace.includes('{ id: "properties", label: "Properties" }') ||
-  !mainWorkspace.includes('{ id: "diff", label: "Diff" }') ||
-  !mainWorkspace.includes('{ id: "blame", label: "Blame" }')
+  !mainWorkspace.includes('aria-label="工作副本内容"') ||
+  !mainWorkspace.includes("工作副本") ||
+  !mainWorkspace.includes("时间线") ||
+  !mainWorkspace.includes("<ConflictResolver")
 ) {
-  console.error("Versions 检查器必须使用可访问标签组织 Information、Properties、Diff 和 Blame");
+  console.error("工作台必须用可访问标签切换工作副本和时间线，并保留冲突解决入口");
   failed = true;
 }
 
@@ -1018,7 +1021,11 @@ if (
 }
 
 if (
-  !logMergeDialog.includes("launchMergePreviewWindow") ||
+  !logMergeDialog.includes("createMergeTask") ||
+  !logMergeDialog.includes("getFileContentDiff") ||
+  !logMergeDialog.includes('aria-label="Merge 差异文件"') ||
+  !logMergeDialog.includes("<MonacoDiffViewer") ||
+  !logMergeDialogTest.includes("验证目标后直接 Merge，并展示差异与 Diff") ||
   !standaloneMergePreviewWindow.includes("getMergePreview") ||
   !standaloneMergePreviewWindow.includes("getMergePreviewFile") ||
   !standaloneMergePreviewWindow.includes("createApplyMergePreviewTask") ||
@@ -1028,7 +1035,7 @@ if (
   !mergePreviewRs.includes("workspace_snapshot_digest") ||
   !mergePreviewRs.includes("SESSION_LIFETIME_MILLIS")
 ) {
-  console.error("Merge 预览必须使用独立窗口展示逐文件 Diff，并在快照复检后应用");
+  console.error("Merge 必须验证目标后直接执行，并在对话框内展示逐文件 Diff");
   failed = true;
 }
 
@@ -1085,9 +1092,11 @@ if (
 if (
   !taskRs.includes("执行前工作副本状态复检通过") ||
   !taskRs.includes("merge_workspace_has_local_changes(&payload.svn_executable, &root)") ||
+  !logMergeDialog.includes("scanWorkspaceStatus") ||
+  !logMergeDialog.includes("launchConflictWindow") ||
   !appSvelte.includes("workspaceStore.focusConflictResolution()") ||
   !appStore.includes("function focusConflictResolution()") ||
-  !mainWorkspace.includes("inspectorSelectionSignature")
+  !mainWorkspace.includes("<ConflictResolver")
 ) {
   console.error("Merge 必须在执行前复检工作副本，并把冲突带入 Resolve 工作流");
   failed = true;
@@ -1414,9 +1423,9 @@ if (
   !workspaceRs.includes("pub enum ChangeScope") ||
   !workspaceRs.includes("remote_updates_checked") ||
   !mainWorkspace.includes('workingCopyTreeFilter === "local"') ||
-  !mainWorkspace.includes('workingCopyTreeFilter === "remote"')
+  !mainWorkspace.includes('workingCopyTreeFilter === "unversioned"')
 ) {
-  console.error("工作副本必须区分本地、远端和组合状态，并提供独立筛选");
+  console.error("工作副本必须区分本地、远端和组合状态，并提供本地改动与未管理文件筛选");
   failed = true;
 }
 
@@ -1471,8 +1480,7 @@ for (const assertion of e2eSmokeAssertions) {
 
 for (const operation of [
   "create_svn_operation_task",
-  "create_commit_task",
-  "create_merge_task",
+  "launch_commit_window",
   "create_apply_patch_task",
   'kind: "add_file"',
   'kind: "delete_path"',
@@ -1483,6 +1491,11 @@ for (const operation of [
     console.error(`主工作台 E2E 缺少操作覆盖：${operation}`);
     failed = true;
   }
+}
+
+if (!logMergeDialogTest.includes("createMergeTask")) {
+  console.error("Merge 对话框测试必须覆盖 createMergeTask");
+  failed = true;
 }
 
 for (const action of systemIntegrationActions) {
@@ -1854,7 +1867,7 @@ for (const check of startupActionViewChecks) {
     continue;
   }
 
-  if (!caseBlock.includes(`setCurrentView("${check.view}")`)) {
+  if (!caseBlock.includes(`setActiveWorkspaceView("${check.view}")`)) {
     console.error(`启动意图 action ${check.action} 必须进入 ${check.view} 视图`);
     failed = true;
   }
@@ -1912,7 +1925,11 @@ if (!appSvelte.includes("refreshStatusAndSyncBranchPool")) {
   failed = true;
 }
 
-if (!appSvelte.includes("syncCurrentBranchPoolEntry") || !appSvelte.includes("localChanges: status.total")) {
+if (
+  !appSvelte.includes("syncCurrentBranchPoolEntry") ||
+  !appSvelte.includes("const localChanges = status?.total") ||
+  !appSvelte.includes("localChanges,")
+) {
   console.error("分支工作副本池必须回写当前工作副本 revision 和本地改动数量");
   failed = true;
 }
