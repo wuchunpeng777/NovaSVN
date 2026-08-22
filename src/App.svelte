@@ -27,7 +27,6 @@
     getStartupIntent,
     launchExternalTool,
     launchRepoBrowserWindow,
-    launchCommitWindow,
     openFileLocation,
     openLocalPathLocation,
     openRepositoryTempFile,
@@ -1440,11 +1439,17 @@
     });
   }
 
-  async function openBranchPoolEntry(localPath: string) {
+  async function openBranchPoolEntry(
+    localPath: string,
+    options: { preserveCurrent?: boolean } = {},
+  ) {
     rememberCurrentWorkspaceView();
     const targetView = workspaceViews.get(normalizeLocalPath(localPath)) ?? "changes";
     setCurrentView(targetView);
-    const preserveCurrentWorkspace = syncCurrentBranchPoolEntry(true);
+    const preserveCurrentWorkspace =
+      options.preserveCurrent === false
+        ? Promise.resolve()
+        : syncCurrentBranchPoolEntry(true);
     const content =
       targetView === "changes" ? "status" : targetView === "history" ? "log" : "none";
     const workspace = await workspaceStore.openPath(
@@ -1497,7 +1502,9 @@
   }
 
   async function removeBranchPoolEntry(entryId: string, deleteLocalCopy = false) {
-    const entry = $branchPoolStore.pool.entries.find((item) => item.id === entryId);
+    const entries = $branchPoolStore.pool.entries;
+    const entryIndex = entries.findIndex((item) => item.id === entryId);
+    const entry = entries[entryIndex];
     if (!entry) {
       return;
     }
@@ -1513,7 +1520,23 @@
       return;
     }
 
+    const remaining = entries.filter((item) => item.id !== entryId);
+    const nextEntry = remaining[Math.min(entryIndex, remaining.length - 1)] ?? remaining[0];
+    const removingCurrent =
+      $workspaceStore.current !== null &&
+      normalizeLocalPath(entry.local_path) ===
+        normalizeLocalPath($workspaceStore.current.local_path);
+
     await branchPoolStore.remove(entry, deleteLocalCopy);
+    if ($branchPoolStore.pool.entries.some((item) => item.id === entryId)) {
+      return;
+    }
+
+    workspaceViews.delete(normalizeLocalPath(entry.local_path));
+    workspaceStore.forgetTab(entry.local_path);
+    if (removingCurrent && nextEntry) {
+      await openBranchPoolEntry(nextEntry.local_path, { preserveCurrent: false });
+    }
   }
 
   function reorderBranchPoolEntries(entryIds: string[]) {
@@ -2868,29 +2891,6 @@
     }
   }
 
-  async function openStandaloneCommitWindow(targetPath: string) {
-    commandError = null;
-    const target = targetPath.trim();
-    if (!target) {
-      commandError = {
-        code: "WORKSPACE_REQUIRED",
-        message: "请先打开 SVN 工作副本",
-        recoverable: true,
-      };
-      return;
-    }
-    try {
-      await launchCommitWindow({ target_path: target });
-    } catch (error) {
-      commandError = {
-        code: (error as CommandError)?.code ?? "COMMIT_WINDOW_FAILED",
-        message: (error as CommandError)?.message ?? "无法打开提交窗口",
-        detail: (error as CommandError)?.detail,
-        recoverable: true,
-      };
-    }
-  }
-
   function handleStartupEscape(event: KeyboardEvent) {
     if (event.key !== "Escape" || event.defaultPrevented || !startupSurfaceIsLoading()) {
       return;
@@ -3327,7 +3327,6 @@
   onOpenFileLocation={openSelectedFileLocation}
   onOpenWorkspaceFile={openSelectedFile}
   onLaunchExternalTool={openExternalTool}
-  onLaunchCommitWindow={openStandaloneCommitWindow}
   onMarkFileReviewed={workspaceStore.markFileReviewed}
   onMarkFileUnreviewed={workspaceStore.markFileUnreviewed}
   onToggleHunkSelection={workspaceStore.toggleHunkSelection}

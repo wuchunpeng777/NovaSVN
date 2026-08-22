@@ -75,7 +75,7 @@ describe("MainWorkspace", () => {
     const updateButton = within(actions).getByRole("button", { name: "更新工作副本" });
     const patchButton = within(actions).getByRole("button", { name: "应用 Patch" });
     const cleanupButton = within(actions).getByRole("button", { name: "清理工作副本" });
-    expect(within(actions).getByRole("button", { name: "打开提交窗口" })).toBeInTheDocument();
+    expect(within(actions).getByRole("button", { name: "提交工作副本" })).toBeInTheDocument();
     expect(within(actions).queryByRole("button", { name: "隐藏检查器" })).not.toBeInTheDocument();
 
     await fireEvent.click(refreshButton);
@@ -141,10 +141,9 @@ describe("MainWorkspace", () => {
     expect(container.querySelector(".work-copy-grid")).not.toHaveClass("inspector-hidden");
   });
 
-  it("adds a commit target without opening a commit window", async () => {
+  it("adds a commit target without opening a commit dialog", async () => {
     const file = makeFile("src/main.ts", "modified", "main-digest");
     const onSelectCommitFile = vi.fn();
-    const onLaunchCommitWindow = vi.fn();
     render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
@@ -158,19 +157,18 @@ describe("MainWorkspace", () => {
           nodes: [makeScopedNode(file.path, "modified", "local")],
         },
         onSelectCommitFile,
-        onLaunchCommitWindow,
       },
     });
 
     await fireEvent.click(screen.getByRole("checkbox", { name: `提交目标 ${file.path}` }));
 
     expect(onSelectCommitFile).toHaveBeenCalledWith(file.path);
-    expect(onLaunchCommitWindow).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "提交" })).not.toBeInTheDocument();
   });
 
-  it("opens the standalone commit window from the toolbar", async () => {
+  it("opens the in-workbench commit dialog from the toolbar", async () => {
     const file = makeFile("src/main.ts", "modified", "main-digest");
-    const onLaunchCommitWindow = vi.fn();
+    const onCommit = vi.fn();
     const onSelectAllCommitFiles = vi.fn();
     render(MainWorkspace, {
       props: {
@@ -179,14 +177,19 @@ describe("MainWorkspace", () => {
         workingCopyStatus: makeStatus([file]),
         commitFiles: [{ path: file.path, status: file.status }],
         commitFormOpenDisabled: false,
-        onLaunchCommitWindow,
+        onCommit,
         onSelectAllCommitFiles,
       },
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "打开提交窗口" }));
-    expect(onLaunchCommitWindow).toHaveBeenCalledWith("C:/repo/wc");
+    await fireEvent.click(screen.getByRole("button", { name: "提交工作副本" }));
+    const dialog = screen.getByRole("dialog", { name: "提交" });
+    expect(within(dialog).getByText("本次将提交 1 个文件")).toBeInTheDocument();
     expect(onSelectAllCommitFiles).not.toHaveBeenCalled();
+    expect(onCommit).not.toHaveBeenCalled();
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "提交" }));
+    expect(onCommit).toHaveBeenCalledOnce();
   });
 
   it("shows only workbench and timeline as right-side content tabs", async () => {
@@ -520,10 +523,9 @@ describe("MainWorkspace", () => {
     expect(onRemoveBranchPoolEntry).toHaveBeenCalledWith("second", false);
   });
 
-  it("opens the standalone commit window without auto-selecting files", async () => {
+  it("opens the in-workbench commit dialog without auto-selecting files", async () => {
     const file = makeFile("src/main.ts", "modified", "main-digest");
     const onSelectAllCommitFiles = vi.fn();
-    const onLaunchCommitWindow = vi.fn();
     render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
@@ -532,14 +534,14 @@ describe("MainWorkspace", () => {
         commitFiles: [],
         commitFormOpenDisabled: false,
         onSelectAllCommitFiles,
-        onLaunchCommitWindow,
       },
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "打开提交窗口" }));
+    await fireEvent.click(screen.getByRole("button", { name: "提交工作副本" }));
 
     expect(onSelectAllCommitFiles).not.toHaveBeenCalled();
-    expect(onLaunchCommitWindow).toHaveBeenCalledWith("C:/repo/wc");
+    expect(screen.getByRole("dialog", { name: "提交" })).toBeInTheDocument();
+    expect(screen.getByText("本次将提交 0 个文件")).toBeInTheDocument();
   });
 
   it("resolves the system theme and exposes persistent theme controls", async () => {

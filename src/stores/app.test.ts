@@ -693,6 +693,54 @@ describe("workspaceStore project tab instances", () => {
     await reopenB;
     expect(get(workspaceStore).status).toBe(refreshedStatusB);
   });
+
+  it("forgets a removed project tab without restoring it as the current workspace", async () => {
+    const workspaceA = makeWorkspace({
+      local_path: "C:/repo/project-a",
+      working_copy_root: "C:/repo/project-a",
+      repository_url: "https://example.com/svn/trunk/project-a",
+    });
+    const workspaceB = makeWorkspace({
+      local_path: "D:/repo/project-b",
+      working_copy_root: "D:/repo/project-b",
+      repository_url: "https://example.com/svn/trunk/project-b",
+      revision: "18",
+    });
+    const fileA = makeFile({ path: "src/a.ts", content_digest: "a-digest" });
+    const fileB = makeFile({ path: "src/b.ts", content_digest: "b-digest" });
+    openWorkspaceMock
+      .mockResolvedValueOnce(workspaceA)
+      .mockResolvedValueOnce(workspaceB)
+      .mockResolvedValueOnce(workspaceA);
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce(makeStatus([fileA], { working_copy_root: workspaceA.working_copy_root }))
+      .mockResolvedValueOnce(makeStatus([fileB], {
+        working_copy_root: workspaceB.working_copy_root,
+        revision_range: "18",
+      }))
+      .mockResolvedValueOnce(makeStatus([fileA], { working_copy_root: workspaceA.working_copy_root }));
+    listWorkspaceFilesMock
+      .mockResolvedValueOnce(makeFileTree(workspaceA.working_copy_root, fileA.path))
+      .mockResolvedValueOnce(makeFileTree(workspaceB.working_copy_root, fileB.path))
+      .mockResolvedValueOnce(makeFileTree(workspaceA.working_copy_root, fileA.path));
+
+    await workspaceStore.openPath(undefined, workspaceA.local_path);
+    workspaceStore.setSearchText("alpha");
+    await workspaceStore.openPath(undefined, workspaceB.local_path);
+    workspaceStore.setSearchText("beta");
+
+    workspaceStore.forgetTab(workspaceA.local_path);
+    expect(get(workspaceStore).current?.local_path).toBe(workspaceB.local_path);
+    expect(get(workspaceStore).searchText).toBe("beta");
+
+    workspaceStore.forgetTab(workspaceB.local_path);
+    expect(get(workspaceStore).current).toBeNull();
+    expect(get(workspaceStore).searchText).toBe("");
+
+    await workspaceStore.openPath(undefined, workspaceA.local_path);
+    expect(get(workspaceStore).searchText).toBe("");
+    expect(get(workspaceStore).selectedFilePath).toBe(fileA.path);
+  });
 });
 
 

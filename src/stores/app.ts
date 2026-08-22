@@ -2199,6 +2199,28 @@ function createWorkspaceStore() {
     update(() => ({ ...initialWorkspaceState }));
   }
 
+  function forgetTab(localPath: string) {
+    const key = workspaceTabStateKey({
+      local_path: localPath,
+      working_copy_root: localPath,
+    });
+    workspaceTabStates.delete(key);
+    const current = get({ subscribe }).current;
+    if (!current || workspaceTabStateKey(current) !== key) {
+      return;
+    }
+
+    openPathGeneration += 1;
+    statusRefreshGeneration += 1;
+    fileTreeRefreshGeneration += 1;
+    fileSelectionGeneration += 1;
+    svnLogRefreshGeneration += 1;
+    repositoryFileLogGeneration += 1;
+    repositoryFileBlameGeneration += 1;
+    repositoryFilePropertiesGeneration += 1;
+    update(() => ({ ...initialWorkspaceState }));
+  }
+
   async function loadRecent(svnExecutable?: string | null) {
     fileSelectionGeneration += 1;
     update((state) => ({ ...state, loading: true, error: null }));
@@ -5651,6 +5673,7 @@ function createWorkspaceStore() {
     loadRecent,
     openPath,
     clearTabStateCache,
+    forgetTab,
     chooseAndOpen,
     setPathInput,
     setSearchText,

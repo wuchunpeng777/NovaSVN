@@ -60,6 +60,7 @@ vi.mock("./lib/api", async (importOriginal) => {
     scanWorkspaceStatus: vi.fn(),
     saveBranchPoolEntries: vi.fn(),
     saveBranchPoolEntry: vi.fn(),
+    removeBranchPoolEntry: vi.fn(),
     setWorkspaceChangelist: vi.fn(),
   };
 });
@@ -108,6 +109,7 @@ import {
   scanWorkspaceStatus,
   saveBranchPoolEntries,
   saveBranchPoolEntry,
+  removeBranchPoolEntry,
   setWorkspaceChangelist,
 } from "./lib/api";
 import {
@@ -171,6 +173,7 @@ const openWorkspaceMock = vi.mocked(openWorkspace);
 const scanWorkspaceStatusMock = vi.mocked(scanWorkspaceStatus);
 const saveBranchPoolEntriesMock = vi.mocked(saveBranchPoolEntries);
 const saveBranchPoolEntryMock = vi.mocked(saveBranchPoolEntry);
+const removeBranchPoolEntryMock = vi.mocked(removeBranchPoolEntry);
 const setWorkspaceChangelistMock = vi.mocked(setWorkspaceChangelist);
 const startDragMock = vi.mocked(startDrag);
 
@@ -217,6 +220,8 @@ beforeEach(async () => {
   saveBranchPoolEntriesMock.mockReset();
   saveBranchPoolEntryMock.mockReset();
   saveBranchPoolEntryMock.mockImplementation(async () => get(branchPoolStore).pool);
+  removeBranchPoolEntryMock.mockReset();
+  removeBranchPoolEntryMock.mockImplementation(async () => get(branchPoolStore).pool);
   setWorkspaceChangelistMock.mockReset();
   startDragMock.mockReset();
   startDragMock.mockResolvedValue(undefined);
@@ -848,6 +853,96 @@ Certificate information:
     await waitFor(() => expect(get(workspaceStore).current?.local_path).toBe(workspaceA.local_path));
     expect(get(currentView)).toBe("history");
     expect(getSvnLogMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("移除当前项目后不会再显示为未入池标签", async () => {
+    const currentEntry = {
+      id: "current",
+      branch_url: "https://example.com/svn/trunk",
+      local_path: "C:/repo/wc",
+      revision: "12",
+      local_changes: 0,
+      created_at: 1,
+      updated_at: 1,
+    };
+    getBranchPoolMock.mockResolvedValueOnce({ entries: [currentEntry] });
+    await branchPoolStore.load();
+    removeBranchPoolEntryMock.mockResolvedValueOnce({ entries: [] });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(App);
+
+    const projects = screen.getByLabelText("项目标签");
+    const currentRow = within(projects).getByRole("group", { name: "项目 wc" });
+    await fireEvent.contextMenu(currentRow, { clientX: 140, clientY: 80 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "从项目列表移除" }));
+
+    await waitFor(() => expect(removeBranchPoolEntryMock).toHaveBeenCalledWith({
+      id: "current",
+      delete_local_copy: false,
+    }));
+    expect(saveBranchPoolEntryMock).not.toHaveBeenCalled();
+    expect(get(workspaceStore).current).toBeNull();
+    expect(within(projects).queryByText("wc")).not.toBeInTheDocument();
+    expect(within(projects).getByRole("button", { name: /打开工作副本/ })).toBeInTheDocument();
+  });
+
+  it("移除当前项目后切换到剩余项目且不会重新保存已移除项", async () => {
+    const workspaceB: WorkspaceSummary = {
+      ...makeWorkspace(),
+      local_path: "D:/repo/other",
+      working_copy_root: "D:/repo/other",
+      repository_url: "https://example.com/svn/branches/other",
+      revision: "18",
+    };
+    const currentEntry = {
+      id: "current",
+      branch_url: "https://example.com/svn/trunk",
+      local_path: "C:/repo/wc",
+      revision: "12",
+      local_changes: 0,
+      created_at: 1,
+      updated_at: 1,
+    };
+    const otherEntry = {
+      id: "other",
+      branch_url: workspaceB.repository_url,
+      local_path: workspaceB.local_path,
+      revision: "18",
+      local_changes: 0,
+      created_at: 2,
+      updated_at: 2,
+    };
+    getBranchPoolMock.mockResolvedValueOnce({ entries: [currentEntry, otherEntry] });
+    await branchPoolStore.load();
+    removeBranchPoolEntryMock.mockResolvedValueOnce({ entries: [otherEntry] });
+    openWorkspaceMock.mockResolvedValueOnce(workspaceB);
+    scanWorkspaceStatusMock.mockResolvedValueOnce({
+      ...makeStatus(),
+      working_copy_root: workspaceB.working_copy_root,
+      revision_range: "18",
+    });
+    listWorkspaceFilesMock.mockResolvedValueOnce({
+      ...makeFileTree(),
+      working_copy_root: workspaceB.working_copy_root,
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(App);
+
+    const projects = screen.getByLabelText("项目标签");
+    const currentRow = within(projects).getByRole("group", { name: "项目 wc" });
+    await fireEvent.contextMenu(currentRow, { clientX: 140, clientY: 80 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "从项目列表移除" }));
+
+    await waitFor(() => expect(get(workspaceStore).current?.local_path).toBe(workspaceB.local_path));
+    expect(removeBranchPoolEntryMock).toHaveBeenCalledWith({
+      id: "current",
+      delete_local_copy: false,
+    });
+    expect(saveBranchPoolEntryMock).not.toHaveBeenCalledWith(expect.objectContaining({
+      local_path: currentEntry.local_path,
+    }));
+    expect(within(projects).queryByText("wc")).not.toBeInTheDocument();
+    expect(within(projects).getByText("other")).toBeInTheDocument();
   });
 
   it("进入时间线时自动获取日志且当前界面不重复请求", async () => {

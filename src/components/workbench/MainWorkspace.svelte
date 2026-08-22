@@ -436,7 +436,6 @@
   export let onOpenFileLocation: (path: string) => void = () => {};
   export let onOpenWorkspaceFile: (path: string) => void = () => {};
   export let onLaunchExternalTool: (kind: ExternalToolKind, path: string) => void = () => {};
-  export let onLaunchCommitWindow: (targetPath: string) => void = () => {};
   export let onMarkFileReviewed: (path: string) => void = () => {};
   export let onMarkFileUnreviewed: (path: string) => void = () => {};
   export let onToggleHunkSelection: (filePath: string, hunkId: string) => void = () => {};
@@ -609,15 +608,8 @@
     svnProperties;
     svnPropertiesLoading;
     propertyEditForm;
-    commitTemplate;
-    commitHistory;
-    commitMessage;
-    commitError;
-    commitDisabled;
     partialCommitDisabled;
     tasks;
-    onSelectAllCommitFiles;
-    onClearCommitFiles;
     onLockFile;
     onUnlockFile;
     onForceUnlockFile;
@@ -628,12 +620,6 @@
     onPropertyEditInput;
     onUsePropertyForEdit;
     onSaveSvnProperty;
-    onCommitMessageInput;
-    onCommitTemplateInput;
-    onUseCommitHistoryMessage;
-    onConfirmSafetyWarnings;
-    onClearWorkspaceDraft;
-    onCommit;
     onPartialCommit;
     onSelectTask;
     onCancelTask;
@@ -834,6 +820,11 @@
   let authenticationPassword = "";
   let authenticationRememberPassword = true;
   let conflictResolverOpen = false;
+  let commitDialogOpen = false;
+  let commitMessageElement: HTMLTextAreaElement | null = null;
+  let commitMessageFocusRequested = false;
+  let commitSubmitStarted = false;
+  let selectedCommitHistoryMessage = "";
 
   $: if (appSettings.diffMode) {
     diffInline = appSettings.diffMode === "inline";
@@ -1815,11 +1806,43 @@
   }
 
   function openCommitForm() {
-    const targetPath = workspace?.working_copy_root?.trim();
-    if (!targetPath) {
+    if (!workspace?.working_copy_root?.trim()) {
       return;
     }
-    onLaunchCommitWindow(targetPath);
+    commitDialogOpen = true;
+    commitSubmitStarted = false;
+    commitMessageFocusRequested = true;
+  }
+
+  function closeCommitDialog() {
+    commitDialogOpen = false;
+    commitSubmitStarted = false;
+    commitMessageFocusRequested = false;
+  }
+
+  function submitCommitDialog() {
+    commitSubmitStarted = true;
+    onCommit();
+  }
+
+  function applyCommitHistoryMessage() {
+    if (!selectedCommitHistoryMessage) {
+      return;
+    }
+    onUseCommitHistoryMessage(selectedCommitHistoryMessage);
+    selectedCommitHistoryMessage = "";
+  }
+
+  function focusCommitDialog(node: HTMLElement) {
+    node.focus();
+  }
+
+  function handleCommitDialogKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeCommitDialog();
+    }
   }
 
   function selectCommitFileAndOpen(path: string) {
@@ -3223,6 +3246,22 @@
   $: unconfirmedWarningCount = safetyCheck.warnings.filter(
     (item) => !safetyCheck.confirmedWarningIds.includes(item.id),
   ).length;
+  $: overlayDialogOpen = applyPatchDialogOpen || conflictResolverOpen || commitDialogOpen;
+  $: if (commitDialogOpen && commitMessageFocusRequested && commitMessageElement) {
+    commitMessageElement.focus();
+    commitMessageFocusRequested = false;
+  }
+  $: if (commitError) {
+    commitSubmitStarted = false;
+  }
+  $: if (
+    commitDialogOpen &&
+    commitSubmitStarted &&
+    commitFiles.length === 0 &&
+    !commitError
+  ) {
+    closeCommitDialog();
+  }
   $: activeTask = selectedTask ?? null;
   $: applyPatchHasIssues =
     !!applyPatchError ||
@@ -3253,7 +3292,7 @@
   style={`--timeline-diff-width: ${timelineDiffWidth}px`}
   aria-label="NovaSVN 工作台"
 >
-  <header class="versions-titlebar" inert={applyPatchDialogOpen || conflictResolverOpen}>
+  <header class="versions-titlebar" inert={overlayDialogOpen}>
     <div class="window-identity">
       <span class="app-mark" aria-hidden="true">
         <GitCommitHorizontal size={20} strokeWidth={1.9} />
@@ -3307,7 +3346,7 @@
     </div>
   {/if}
 
-  <div class="workspace-location" inert={applyPatchDialogOpen || conflictResolverOpen}>
+  <div class="workspace-location" inert={overlayDialogOpen}>
     <span class="location-icon" aria-hidden="true">
       <FolderOpen size={16} strokeWidth={1.8} />
     </span>
@@ -3323,15 +3362,9 @@
         }
       }}
     />
-    <button type="button" on:click={onChooseWorkspace} disabled={workspaceLoading}>
-      选择
-    </button>
-    <button type="button" class="primary" on:click={onOpenWorkspace} disabled={workspaceLoading}>
-      {workspaceLoading ? "打开中" : "打开"}
-    </button>
   </div>
 
-  <nav class="project-tabs" aria-label="项目标签" inert={applyPatchDialogOpen || conflictResolverOpen}>
+  <nav class="project-tabs" aria-label="项目标签" inert={overlayDialogOpen}>
     {#if !workspace || !currentWorkspaceListed}
       <button
         type="button"
@@ -3427,7 +3460,7 @@
     class="versions-layout"
     class:workspace-navigation-layout={view.id === "changes" || view.id === "history"}
     class:auxiliary-layout={view.id !== "changes" && view.id !== "history"}
-    inert={applyPatchDialogOpen || conflictResolverOpen}
+    inert={overlayDialogOpen}
   >
     {#if view.id === "changes" || view.id === "history"}
             <aside class="folder-browser" aria-label="工作副本文件夹树">
@@ -3602,7 +3635,7 @@
               <button
                 type="button"
                 class="primary"
-                aria-label="打开提交窗口"
+                aria-label="提交工作副本"
                 title="选择提交内容并填写提交信息"
                 disabled={commitFormOpenDisabled}
                 on:click={openCommitForm}
@@ -6392,6 +6425,101 @@
               selectedCertificateFailures.length === 0}
           >
             {svnCertificateTrustLoading ? "正在应用" : "仅本次会话允许"}
+          </button>
+        </footer>
+      </div>
+    </div>
+  {/if}
+
+  {#if commitDialogOpen}
+    <div class="patch-dialog-backdrop">
+      <div
+        class="patch-dialog commit-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="commit-dialog-title"
+        tabindex="-1"
+        use:focusCommitDialog
+        on:keydown={handleCommitDialogKeydown}
+      >
+        <header>
+          <div>
+            <h2 id="commit-dialog-title">提交</h2>
+            <p>本次将提交 {commitFileCount} 个文件</p>
+          </div>
+          <button
+            type="button"
+            class="dialog-close"
+            aria-label="关闭提交对话框"
+            title="关闭"
+            on:click={closeCommitDialog}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </header>
+
+        <div class="button-row wrap">
+          <button type="button" on:click={onSelectAllCommitFiles}>全选改动</button>
+          <button type="button" on:click={onClearCommitFiles}>清除选择</button>
+          <button type="button" on:click={onClearWorkspaceDraft}>清空草稿</button>
+        </div>
+        <input
+          type="text"
+          value={commitTemplate}
+          placeholder="提交模板"
+          aria-label="提交模板"
+          on:input={(event) =>
+            onCommitTemplateInput((event.currentTarget as HTMLInputElement).value)}
+        />
+        {#if commitHistory.length > 0}
+          <select
+            bind:value={selectedCommitHistoryMessage}
+            on:change={applyCommitHistoryMessage}
+            aria-label="最近提交信息"
+          >
+            <option value="">最近提交信息</option>
+            {#each commitHistory as message}
+              <option value={message}>{message}</option>
+            {/each}
+          </select>
+        {/if}
+        <textarea
+          bind:this={commitMessageElement}
+          rows="6"
+          value={commitMessage}
+          placeholder="提交信息"
+          aria-label="提交信息"
+          on:input={(event) =>
+            onCommitMessageInput((event.currentTarget as HTMLTextAreaElement).value)}
+        ></textarea>
+        {#if commitError}
+          <p class="inline-error">{commitError}</p>
+        {/if}
+        {#if safetyCheck.blockers.length > 0 || safetyCheck.warnings.length > 0}
+          <div class="safety-box">
+            {#if safetyCheck.blockers.length > 0}
+              <strong>{safetyCheck.blockers.length} 个阻塞</strong>
+            {/if}
+            {#if safetyCheck.warnings.length > 0}
+              <span>{safetyCheck.warnings.length} 个警告</span>
+            {/if}
+            {#if unconfirmedWarningCount > 0 && safetyCheck.blockers.length === 0}
+              <button type="button" on:click={onConfirmSafetyWarnings}>
+                确认警告
+              </button>
+            {/if}
+          </div>
+        {/if}
+
+        <footer>
+          <button type="button" on:click={closeCommitDialog}>取消</button>
+          <button
+            type="button"
+            class="primary"
+            on:click={submitCommitDialog}
+            disabled={commitDisabled}
+          >
+            提交
           </button>
         </footer>
       </div>

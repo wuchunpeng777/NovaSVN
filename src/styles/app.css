@@ -352,7 +352,7 @@ textarea {
 
 .workspace-location {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid var(--layout-divider-color);
@@ -2677,6 +2677,21 @@ textarea {
   justify-content: flex-end;
 }
 
+.commit-dialog {
+  width: min(520px, calc(100vw - 48px));
+}
+
+.commit-dialog input,
+.commit-dialog textarea,
+.commit-dialog select {
+  width: 100%;
+}
+
+.commit-dialog textarea {
+  min-height: 140px;
+  resize: vertical;
+}
+
 .certificate-dialog {
   width: min(560px, calc(100vw - 48px));
 }
@@ -4567,7 +4582,7 @@ select:focus {
 }
 
 .workspace-location {
-  grid-template-columns: 22px minmax(0, 1fr) auto auto;
+  grid-template-columns: 22px minmax(0, 1fr);
   gap: 6px;
   background: #f8f8f9;
   padding: 5px 12px;

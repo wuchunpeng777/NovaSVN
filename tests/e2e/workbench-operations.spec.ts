@@ -5,7 +5,7 @@ test("runs the main working-copy operations through the task workflow", async ({
   await page.goto("/");
   await installWorkbenchBackendMock(page);
   await page.getByPlaceholder("拖入或输入 SVN 工作副本路径").fill("C:/repo/wc");
-  await page.getByRole("button", { name: "打开", exact: true }).click();
+  await page.getByPlaceholder("拖入或输入 SVN 工作副本路径").press("Enter");
 
   await expect(
     page.getByRole("main", { name: "本地改动" }).locator(".pane-header").getByText("C:/repo/wc", { exact: true }),
@@ -24,11 +24,12 @@ test("runs the main working-copy operations through the task workflow", async ({
     .poll(async () => (await backendCalls(page, "create_svn_operation_task")).length)
     .toBe(2);
 
-  await page.getByRole("button", { name: "打开提交窗口" }).click();
-  await expect.poll(async () => (await backendCalls(page, "launch_commit_window")).length).toBe(1);
-  expect((await backendCalls(page, "launch_commit_window"))[0]?.args.request).toMatchObject({
-    target_path: "C:/repo/wc",
-  });
+  await page.getByRole("button", { name: "提交工作副本" }).click();
+  const commitDialog = page.getByRole("dialog", { name: "提交" });
+  await expect(commitDialog).toBeVisible();
+  expect(await backendCalls(page, "launch_commit_window")).toHaveLength(0);
+  await commitDialog.getByRole("button", { name: "取消" }).click();
+  await expect(commitDialog).toBeHidden();
 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "更多操作 文件 src/revert.txt" }).click();
@@ -65,7 +66,7 @@ test("scopes the file list and commit selection to the selected folder", async (
   await page.goto("/");
   await installWorkbenchBackendMock(page);
   await page.getByPlaceholder("拖入或输入 SVN 工作副本路径").fill("C:/repo/wc");
-  await page.getByRole("button", { name: "打开", exact: true }).click();
+  await page.getByPlaceholder("拖入或输入 SVN 工作副本路径").press("Enter");
 
   await page.getByRole("button", { name: "选择文件夹 src" }).click();
   await expect(page.getByRole("treegrid", { name: "工作副本文件列表" })).not.toContainText(
@@ -77,10 +78,19 @@ test("scopes the file list and commit selection to the selected folder", async (
 
   await page.getByRole("checkbox", { name: "提交目标 src/modified.txt" }).click();
   await page.getByRole("checkbox", { name: "提交目标 src/revert.txt" }).click();
-  await page.getByRole("button", { name: "打开提交窗口" }).click();
+  await page.getByRole("button", { name: "提交工作副本" }).click();
 
-  const commitCalls = await backendCalls(page, "launch_commit_window");
-  expect(commitCalls[0]?.args.request).toMatchObject({
-    target_path: "C:/repo/wc",
+  const commitDialog = page.getByRole("dialog", { name: "提交" });
+  await expect(commitDialog).toBeVisible();
+  await expect(commitDialog.getByText("本次将提交 2 个文件")).toBeVisible();
+  await commitDialog.getByLabel("提交信息").fill("提交选中文件");
+  await commitDialog.getByRole("button", { name: "提交" }).click();
+
+  await expect.poll(async () => (await backendCalls(page, "create_commit_task")).length).toBe(1);
+  expect((await backendCalls(page, "create_commit_task"))[0]?.args.request).toMatchObject({
+    working_copy_root: "C:/repo/wc",
+    message: "提交选中文件",
+    files: ["src/modified.txt", "src/revert.txt"],
   });
+  expect(await backendCalls(page, "launch_commit_window")).toHaveLength(0);
 });
