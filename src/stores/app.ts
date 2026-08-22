@@ -2373,9 +2373,10 @@ function createWorkspaceStore() {
           workspaceTabStateKey({ local_path: path, working_copy_root: path }),
         )
       : undefined;
-    if (previewCache?.current) {
+    const previewCurrent = previewCache?.current;
+    if (previewCache && previewCurrent) {
       update(() => ({
-        ...restoreWorkspaceTabState(previewCache, previewCache.current),
+        ...restoreWorkspaceTabState(previewCache, previewCurrent),
         loading: false,
         statusLoading: content === "status",
         svnLogLoading: content === "log",
