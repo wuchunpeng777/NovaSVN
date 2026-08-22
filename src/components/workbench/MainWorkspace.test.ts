@@ -2043,6 +2043,66 @@ Certificate information:
     expect(screen.queryByRole("button", { name: "Update 工作副本根目录" })).not.toBeInTheDocument();
   });
 
+  it("shows files from the current tree immediately while listing the selected folder", async () => {
+    const alpha = makeFile("src/alpha.txt", "modified", "alpha-digest");
+    const beta = makeFile("src/beta.txt", "modified", "beta-digest");
+    const omega = makeFile("omega.txt", "modified", "omega-digest");
+    const tree: WorkspaceFileTree = {
+      working_copy_root: "C:/repo/wc",
+      total_files: 4,
+      returned_files: 4,
+      truncated: false,
+      nodes: [
+        {
+          ...makeScopedNode("src", "normal", "none"),
+          name: "src",
+          kind: "dir",
+          file_size: null,
+          children: [
+            { ...makeScopedNode("src/alpha.txt", "modified", "local"), name: "alpha.txt" },
+            { ...makeScopedNode("src/beta.txt", "modified", "local"), name: "beta.txt" },
+          ],
+        },
+        makeScopedNode("omega.txt", "modified", "local"),
+      ],
+    };
+    const pendingTree = deferred<WorkspaceFileTree>();
+    listWorkspaceFilesMock.mockReturnValueOnce(pendingTree.promise);
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([alpha, beta, omega]),
+        workspaceFileTree: tree,
+        svnExecutable: "/opt/homebrew/bin/svn",
+      },
+    });
+
+    const folderTree = screen.getByRole("tree", { name: "文件夹层级" });
+    const fileList = screen.getByRole("treegrid", { name: "工作副本文件列表" });
+    await fireEvent.click(within(folderTree).getByRole("button", { name: "选择文件夹 src" }));
+
+    expect(fileList).toHaveAttribute("aria-rowcount", "3");
+    expect(screen.getByRole("button", { name: "选择文件 src/alpha.txt" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择文件 src/beta.txt" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "选择文件 omega.txt" })).not.toBeInTheDocument();
+    expect(screen.queryByText("正在读取全部文件...")).not.toBeInTheDocument();
+
+    pendingTree.resolve({
+      working_copy_root: "C:/repo/wc",
+      total_files: 3,
+      returned_files: 3,
+      truncated: false,
+      nodes: [
+        { ...makeScopedNode("src/alpha.txt", "modified", "local"), name: "alpha.txt" },
+        { ...makeScopedNode("src/beta.txt", "modified", "local"), name: "beta.txt" },
+        { ...makeScopedNode("src/normal.txt", "normal", "none"), name: "normal.txt" },
+      ],
+    });
+    await waitFor(() => expect(fileList).toHaveAttribute("aria-rowcount", "4"));
+    expect(screen.getByRole("button", { name: "选择文件 src/normal.txt" })).toBeInTheDocument();
+  });
+
   it("keeps an expand control after a nested folder is collapsed", async () => {
     render(MainWorkspace, {
       props: {
@@ -2986,4 +3046,12 @@ function makeLogEntry(
       copy_from_revision: null,
     })),
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }

@@ -694,6 +694,60 @@ describe("workspaceStore project tab instances", () => {
     expect(get(workspaceStore).status).toBe(refreshedStatusB);
   });
 
+  it("shows a cached project immediately before openWorkspace returns", async () => {
+    const workspaceA = makeWorkspace({
+      local_path: "C:/repo/project-a",
+      working_copy_root: "C:/repo/project-a",
+      repository_url: "https://example.com/svn/trunk/project-a",
+    });
+    const workspaceB = makeWorkspace({
+      local_path: "D:/repo/project-b",
+      working_copy_root: "D:/repo/project-b",
+      repository_url: "https://example.com/svn/trunk/project-b",
+      revision: "18",
+    });
+    const fileA = makeFile({ path: "src/a.ts", content_digest: "a-digest" });
+    const fileB = makeFile({ path: "src/b.ts", content_digest: "b-digest" });
+    const statusA = makeStatus([fileA], { working_copy_root: workspaceA.working_copy_root });
+    const statusB = makeStatus([fileB], {
+      working_copy_root: workspaceB.working_copy_root,
+      revision_range: "18",
+    });
+    const treeA = makeFileTree(workspaceA.working_copy_root, fileA.path);
+    const treeB = makeFileTree(workspaceB.working_copy_root, fileB.path);
+
+    openWorkspaceMock
+      .mockResolvedValueOnce(workspaceA)
+      .mockResolvedValueOnce(workspaceB);
+    scanWorkspaceStatusMock
+      .mockResolvedValueOnce(statusA)
+      .mockResolvedValueOnce(statusB);
+    listWorkspaceFilesMock
+      .mockResolvedValueOnce(treeA)
+      .mockResolvedValueOnce(treeB);
+
+    await workspaceStore.openPath(undefined, workspaceA.local_path);
+    await workspaceStore.openPath(undefined, workspaceB.local_path);
+
+    const pendingOpen = deferred<WorkspaceSummary>();
+    openWorkspaceMock.mockReturnValueOnce(pendingOpen.promise);
+    scanWorkspaceStatusMock.mockResolvedValueOnce(statusA);
+    listWorkspaceFilesMock.mockResolvedValueOnce(treeA);
+    const reopenA = workspaceStore.openPath(undefined, workspaceA.local_path);
+
+    expect(get(workspaceStore)).toMatchObject({
+      current: workspaceA,
+      status: statusA,
+      fileTree: treeA,
+      loading: false,
+      statusLoading: true,
+    });
+
+    pendingOpen.resolve(workspaceA);
+    await reopenA;
+    expect(get(workspaceStore).current?.local_path).toBe(workspaceA.local_path);
+  });
+
   it("forgets a removed project tab without restoring it as the current workspace", async () => {
     const workspaceA = makeWorkspace({
       local_path: "C:/repo/project-a",

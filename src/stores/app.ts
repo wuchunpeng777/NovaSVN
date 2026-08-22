@@ -2362,18 +2362,31 @@ function createWorkspaceStore() {
     fileTreeRefreshGeneration += 1;
     fileSelectionGeneration += 1;
     svnLogRefreshGeneration += 1;
-    update((state) => ({
-      ...state,
-      loading: true,
-      error: null,
-    }));
 
     let path = explicitPath?.trim() ?? "";
     if (explicitPath === undefined || explicitPath === null) {
-      update((state) => {
-        path = state.pathInput.trim();
-        return state;
-      });
+      path = get({ subscribe }).pathInput.trim();
+    }
+
+    const previewCache = path
+      ? workspaceTabStates.get(
+          workspaceTabStateKey({ local_path: path, working_copy_root: path }),
+        )
+      : undefined;
+    if (previewCache?.current) {
+      update(() => ({
+        ...restoreWorkspaceTabState(previewCache, previewCache.current),
+        loading: false,
+        statusLoading: content === "status",
+        svnLogLoading: content === "log",
+        error: null,
+      }));
+    } else {
+      update((state) => ({
+        ...state,
+        loading: true,
+        error: null,
+      }));
     }
 
     try {
@@ -2386,9 +2399,14 @@ function createWorkspaceStore() {
       }
       const draft = loadWorkspaceDraft(current);
       const commitSettings = readCommitMessageSettings(current.working_copy_root);
-      const cachedTabState = workspaceTabStates.get(workspaceTabStateKey(current));
+      const cachedTabState =
+        workspaceTabStates.get(workspaceTabStateKey(current)) ?? previewCache;
       if (cachedTabState) {
-        update(() => restoreWorkspaceTabState(cachedTabState, current));
+        update(() => ({
+          ...restoreWorkspaceTabState(cachedTabState, current),
+          statusLoading: content === "status",
+          svnLogLoading: content === "log",
+        }));
       } else update(() => ({
         ...initialWorkspaceState,
         current,

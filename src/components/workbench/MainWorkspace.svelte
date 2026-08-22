@@ -726,6 +726,7 @@
   let directorySelectionWorkspaceRoot: string | null = null;
   let selectedDirectoryFileTree: WorkspaceFileTree | null = null;
   let selectedDirectoryFileTreePath: string | null = null;
+  const directoryFileTreeCache = new Map<string, WorkspaceFileTree>();
   let directoryFilesLoading = false;
   let directoryFilesError: CommandError | null = null;
   let directoryFilesGeneration = 0;
@@ -1317,6 +1318,25 @@
     collapsedTreePaths = next;
   }
 
+  function directoryFileTreeCacheKey(root: string, path: string) {
+    return `${root}\0${path}`;
+  }
+
+  function applyCachedDirectoryTree(path: string) {
+    const root = workspace?.working_copy_root;
+    if (!root || !path) {
+      return false;
+    }
+    const cached = directoryFileTreeCache.get(directoryFileTreeCacheKey(root, path));
+    if (!cached) {
+      return false;
+    }
+    selectedDirectoryFileTree = cached;
+    selectedDirectoryFileTreePath = path;
+    directoryFilesError = null;
+    return true;
+  }
+
   function selectWorkspaceDirectory(path: string) {
     const changed = selectedDirectoryPath !== path;
     if (changed) {
@@ -1326,6 +1346,7 @@
       fileBrowserScrollTop = 0;
       if (fileBrowserElement) fileBrowserElement.scrollTop = 0;
       closeContextMenu();
+      applyCachedDirectoryTree(path);
     }
     if (!path) {
       directoryFilesGeneration += 1;
@@ -1336,6 +1357,7 @@
       return;
     }
     if (changed || selectedDirectoryFileTreePath !== path) {
+      applyCachedDirectoryTree(path);
       void loadSelectedDirectoryFiles(path);
     }
   }
@@ -1343,8 +1365,10 @@
   async function loadSelectedDirectoryFiles(path: string) {
     const root = workspace?.working_copy_root;
     if (!root) return;
+    applyCachedDirectoryTree(path);
     const generation = ++directoryFilesGeneration;
-    directoryFilesLoading = true;
+    directoryFilesLoading =
+      selectedDirectoryFileTreePath !== path || selectedDirectoryFileTree === null;
     directoryFilesError = null;
     try {
       const fileTree = await listWorkspaceFiles({
@@ -1356,6 +1380,7 @@
       if (generation !== directoryFilesGeneration || selectedDirectoryPath !== path || !fileTree) {
         return;
       }
+      directoryFileTreeCache.set(directoryFileTreeCacheKey(root, path), fileTree);
       selectedDirectoryFileTree = fileTree;
       selectedDirectoryFileTreePath = path;
     } catch (error) {
@@ -2552,6 +2577,12 @@
     selectedDirectoryPath = cached?.selectedDirectoryPath ?? "";
     selectedDirectoryFileTree = cached?.selectedDirectoryFileTree ?? null;
     selectedDirectoryFileTreePath = cached?.selectedDirectoryFileTreePath ?? null;
+    if (workingCopyRoot && selectedDirectoryFileTree && selectedDirectoryFileTreePath) {
+      directoryFileTreeCache.set(
+        directoryFileTreeCacheKey(workingCopyRoot, selectedDirectoryFileTreePath),
+        selectedDirectoryFileTree,
+      );
+    }
     selectedRowPaths = new Set(cached?.selectedRowPaths ?? []);
     rowSelectionAnchorPath = cached?.rowSelectionAnchorPath ?? null;
     activeRowPath = cached?.activeRowPath ?? null;
@@ -3106,9 +3137,7 @@
           searchText,
           changelistFilter,
         )
-      : selectedDirectoryPath && directoryFilesLoading
-        ? []
-        : filteredTreeNodes;
+      : filteredTreeNodes;
   $: treeRows = filesForDirectory(selectedDirectoryTreeNodes, selectedDirectoryPath);
   $: mergeOutputFiles = extractSvnFileChangesFromText(
     (mergeResult?.output_text ?? "").split(/\r?\n/),
@@ -3118,15 +3147,12 @@
     const workspaceChanged = virtualizedFileTreeWorkspaceKey !== nextWorkspaceKey;
     virtualizedFileTreeSource = workspaceFileTree;
     virtualizedFileTreeWorkspaceKey = nextWorkspaceKey;
-    if (workspaceChanged) {
-      fileBrowserScrollTop = 0;
-      if (fileBrowserElement) fileBrowserElement.scrollTop = 0;
-      folderBrowserScrollTop = 0;
-      if (folderBrowserElement) folderBrowserElement.scrollTop = 0;
+    if (selectedDirectoryPath && selectedDirectoryFileTreePath !== selectedDirectoryPath) {
+      applyCachedDirectoryTree(selectedDirectoryPath);
+      void loadSelectedDirectoryFiles(selectedDirectoryPath);
+    } else if (selectedDirectoryPath && !workspaceChanged) {
+      void loadSelectedDirectoryFiles(selectedDirectoryPath);
     }
-    selectedDirectoryFileTree = null;
-    selectedDirectoryFileTreePath = null;
-    if (selectedDirectoryPath) void loadSelectedDirectoryFiles(selectedDirectoryPath);
   }
   $: if (virtualizedWorkspaceBlameSource !== svnBlame) {
     virtualizedWorkspaceBlameSource = svnBlame;
@@ -5660,7 +5686,7 @@
                   </span>
                 </div>
                 <p>
-                  {#if directoryFilesLoading}
+                  {#if directoryFilesLoading && treeRows.length === 0}
                     正在读取全部文件...
                   {:else if directoryFilesError}
                     <span class="inline-error" role="alert" title={directoryFilesErrorLabel(directoryFilesError)}>

@@ -746,6 +746,68 @@ Certificate information:
     expect(get(currentView)).toBe("changes");
   });
 
+  it("切换回已访问项目时立即显示缓存界面", async () => {
+    const previousStatus = get(workspaceStore).status;
+    const previousTree = get(workspaceStore).fileTree;
+    const nextWorkspace: WorkspaceSummary = {
+      ...makeWorkspace(),
+      local_path: "D:/repo/other",
+      working_copy_root: "D:/repo/other",
+      repository_url: "https://example.com/svn/branches/other",
+      revision: "18",
+    };
+    getBranchPoolMock.mockResolvedValueOnce({
+      entries: [
+        {
+          id: "current",
+          branch_url: "https://example.com/svn/trunk",
+          local_path: "C:/repo/wc",
+          revision: "12",
+          local_changes: 0,
+          created_at: 1,
+          updated_at: 1,
+        },
+        {
+          id: "other",
+          branch_url: nextWorkspace.repository_url,
+          local_path: nextWorkspace.local_path,
+          revision: "18",
+          local_changes: 0,
+          created_at: 1,
+          updated_at: 1,
+        },
+      ],
+    });
+    await branchPoolStore.load();
+    openWorkspaceMock.mockResolvedValueOnce(nextWorkspace);
+    scanWorkspaceStatusMock.mockResolvedValueOnce({
+      ...makeStatus(),
+      working_copy_root: nextWorkspace.working_copy_root,
+      revision_range: "18",
+    });
+    listWorkspaceFilesMock.mockResolvedValueOnce({
+      ...makeFileTree(),
+      working_copy_root: nextWorkspace.working_copy_root,
+    });
+    render(App);
+
+    const projects = screen.getByLabelText("项目标签");
+    await fireEvent.click(within(projects).getByText("other").closest("button")!);
+    await waitFor(() => expect(get(workspaceStore).current?.local_path).toBe(nextWorkspace.local_path));
+
+    const pendingWorkspace = deferred<WorkspaceSummary>();
+    openWorkspaceMock.mockReturnValueOnce(pendingWorkspace.promise);
+    await fireEvent.click(within(projects).getByText("wc").closest("button")!);
+
+    expect(get(workspaceStore).current?.local_path).toBe("C:/repo/wc");
+    expect(get(workspaceStore).status).toBe(previousStatus);
+    expect(get(workspaceStore).fileTree).toBe(previousTree);
+    expect(get(workspaceStore).loading).toBe(false);
+
+    pendingWorkspace.resolve(makeWorkspace());
+    await waitFor(() => expect(openWorkspaceMock).toHaveBeenCalled());
+  });
+
   it("首次打开的项目使用默认工作副本视图", async () => {
     getSvnLogMock.mockResolvedValueOnce(makeSvnLog("C:/repo/wc"));
     await workspaceStore.refreshSvnLog();
