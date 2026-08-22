@@ -1,7 +1,7 @@
 {
   "name": "novasvn",
   "private": true,
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "Open-source desktop Subversion client for Windows and macOS",
   "license": "MIT",
   "repository": {
