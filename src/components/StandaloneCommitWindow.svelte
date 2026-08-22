@@ -60,6 +60,9 @@
     password: string,
     rememberPassword: boolean,
   ) => Promise<boolean> = async () => false;
+  export let embedded = false;
+  export let onClose: () => void = () => {};
+  export let onSwitchToUpdate: (() => void | Promise<void>) | null = null;
 
   const COMMIT_AUTO_CLOSE_SETTING_KEY = "novasvn:commit-close-after-completion";
   const terminalStatuses: TaskStatus[] = ["success", "failed", "cancelled", "interrupted"];
@@ -1035,7 +1038,7 @@
     } else if (diffPaneOpen) {
       clearFilePreview();
     } else if (!operationRunning) {
-      void getCurrentWindow().close();
+      void closeCommitView();
     } else {
       return;
     }
@@ -1106,6 +1109,13 @@
       return;
     }
     try {
+      if (embedded) {
+        setPendingCommitMessage(commitMessage, false);
+        outOfDateDialogOpen = false;
+        await onSwitchToUpdate?.();
+        closeCommitView();
+        return;
+      }
       await launchUpdateWindow({
         target_path: target.target_path,
         return_action: "commit",
@@ -1316,11 +1326,19 @@
     }
     autoCloseTriggered = true;
     try {
-      await getCurrentWindow().close();
+      await closeCommitView();
     } catch (caught) {
       autoCloseTriggered = false;
       error = caught as CommandError;
     }
+  }
+
+  function closeCommitView() {
+    if (embedded) {
+      onClose();
+      return Promise.resolve();
+    }
+    return getCurrentWindow().close();
   }
 
   function handleCloseAfterCompletionChange(event: Event) {
@@ -1478,7 +1496,7 @@
   }
 </script>
 
-<main class="standalone-commit" data-theme={resolvedTheme} aria-label="NovaSVN Commit">
+<main class="standalone-commit" class:embedded data-theme={resolvedTheme} aria-label={embedded ? "主界面提交" : "NovaSVN Commit"}>
   <header class="commit-titlebar">
     <div>
       <h1>NovaSVN Commit</h1>
@@ -1505,6 +1523,18 @@
       {:else}
         <button type="button" disabled={initializing || scanning || operationRunning} on:click={startCommit}>
           <RefreshCw size={15} aria-hidden="true" /> 刷新
+        </button>
+      {/if}
+      {#if embedded}
+        <button
+          type="button"
+          class="dialog-close"
+          aria-label="关闭提交"
+          title="关闭"
+          disabled={operationRunning}
+          on:click={closeCommitView}
+        >
+          <X size={16} aria-hidden="true" />
         </button>
       {/if}
     </div>
@@ -2172,6 +2202,13 @@
     user-select: none;
     -webkit-user-select: none;
     isolation: isolate;
+  }
+
+  .standalone-commit.embedded {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
   }
 
   .standalone-commit input,

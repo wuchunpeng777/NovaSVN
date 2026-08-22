@@ -74,6 +74,7 @@ struct AppMenuState {
     workspace_busy: bool,
     active_path: Option<String>,
     active_label: Option<String>,
+    #[allow(dead_code)]
     commit_selected: bool,
     can_open: bool,
     can_show: bool,
@@ -203,11 +204,7 @@ fn apply_app_menu_state<R: tauri::Runtime>(
     set_menu_item_text(
         &current_path_menu,
         "path_commit",
-        if state.commit_selected {
-            "移出 Commit(&M)"
-        } else {
-            "加入 Commit(&M)"
-        },
+        "提交(&M)",
     )?;
 
     for (id, enabled) in [
@@ -322,8 +319,7 @@ fn create_app_menu<R: tauri::Runtime>(
     let path_label = MenuItem::with_id(app, "path_label", "当前：未选择路径", false, None::<&str>)?;
     let path_open = MenuItem::with_id(app, "path_open", "打开(&O)", false, None::<&str>)?;
     let path_show = MenuItem::with_id(app, "path_show", "在文件夹中显示(&F)", false, None::<&str>)?;
-    let path_commit =
-        MenuItem::with_id(app, "path_commit", "加入 Commit(&M)", false, None::<&str>)?;
+    let path_commit = MenuItem::with_id(app, "path_commit", "提交(&M)", false, None::<&str>)?;
     let path_update = MenuItem::with_id(app, "path_update", "Update(&U)", false, None::<&str>)?;
     let path_add = MenuItem::with_id(app, "path_add", "Add(&A)", false, None::<&str>)?;
     let path_resolve = MenuItem::with_id(app, "path_resolve", "Resolve(&S)", false, None::<&str>)?;

@@ -4,15 +4,15 @@ export const workbenchViews: Record<string, WorkbenchView> = {
   changes: {
     id: "changes",
     title: "本地改动",
-    subtitle: "扫描工作副本、过滤改动并选择本次提交目标。",
+    subtitle: "扫描工作副本并过滤本地改动。",
     metrics: [
       { label: "改动", value: "0" },
-      { label: "提交目标", value: "0" },
+      { label: "远端更新", value: "0" },
       { label: "异常", value: "0" },
     ],
     primaryItems: [
       { title: "本地改动", meta: "等待工作副本扫描", status: "空" },
-      { title: "提交目标", meta: "默认选择可提交的版本控制文件", status: "空" },
+      { title: "远端更新", meta: "检查仓库后显示可更新文件", status: "空" },
       { title: "未版本控制", meta: "状态扫描后显示 unversioned 文件", status: "空" },
     ],
   },

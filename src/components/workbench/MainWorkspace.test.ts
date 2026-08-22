@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({ close: vi.fn() }),
+}));
+
 vi.mock("./MonacoDiffViewer.svelte", () => ({
   default: vi.fn().mockImplementation((internals) => ({
     c: vi.fn(),
@@ -12,11 +16,53 @@ vi.mock("./MonacoDiffViewer.svelte", () => ({
 }));
 
 vi.mock("../../lib/api", () => ({
+  cancelTask: vi.fn(),
+  createCommitTask: vi.fn(),
+  createSvnBatchOperationTask: vi.fn(),
+  createSvnOperationTask: vi.fn(),
+  getFileContentDiff: vi.fn(),
+  getFileDiff: vi.fn(),
   getPathSvnLog: vi.fn(),
   getRepositoryFileLog: vi.fn(),
   getRevisionFileContentDiff: vi.fn(),
   getSvnLog: vi.fn(),
+  getTask: vi.fn(),
+  inspectUpdateTarget: vi.fn(async () => ({
+    target_path: "C:/repo/wc",
+    working_copy_root: "C:/repo/wc",
+    relative_path: null,
+    repository_url: "https://example.com/svn/trunk",
+    repository_root: "https://example.com/svn",
+    revision: "12",
+    kind: "dir",
+  })),
+  launchConflictWindow: vi.fn(),
+  launchUpdateWindow: vi.fn(),
   listWorkspaceFiles: vi.fn(),
+  scanWorkspaceStatus: vi.fn(async () => ({
+    working_copy_root: "C:/repo/wc",
+    total: 0,
+    returned: 0,
+    offset: 0,
+    limit: 500,
+    revision_range: "12",
+    mixed_revision: false,
+    remote_updates_checked: false,
+    repository_revision: "12",
+    local_changes: 0,
+    remote_changes: 0,
+    combined_changes: 0,
+    modified: 0,
+    added: 0,
+    deleted: 0,
+    missing: 0,
+    unversioned: 0,
+    conflicted: 0,
+    obstructed: 0,
+    property_changed: 0,
+    files: [],
+  })),
+  setWorkspaceChangelist: vi.fn(),
 }));
 
 import {
@@ -69,6 +115,7 @@ describe("MainWorkspace", () => {
     );
     expect(screen.queryByRole("button", { name: "仓库" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "更多" })).not.toBeInTheDocument();
+    expect(screen.queryByText("NovaSVN", { exact: true })).not.toBeInTheDocument();
 
     const actions = screen.getByLabelText("工作副本操作");
     const refreshButton = within(actions).getByRole("button", { name: "刷新工作副本状态" });
@@ -141,9 +188,8 @@ describe("MainWorkspace", () => {
     expect(container.querySelector(".work-copy-grid")).not.toHaveClass("inspector-hidden");
   });
 
-  it("adds a commit target without opening a commit dialog", async () => {
+  it("does not show commit target checkboxes on working copy files", () => {
     const file = makeFile("src/main.ts", "modified", "main-digest");
-    const onSelectCommitFile = vi.fn();
     render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
@@ -156,17 +202,17 @@ describe("MainWorkspace", () => {
           truncated: false,
           nodes: [makeScopedNode(file.path, "modified", "local")],
         },
-        onSelectCommitFile,
       },
     });
 
-    await fireEvent.click(screen.getByRole("checkbox", { name: `提交目标 ${file.path}` }));
-
-    expect(onSelectCommitFile).toHaveBeenCalledWith(file.path);
+    expect(
+      screen.queryByRole("checkbox", { name: `提交目标 ${file.path}` }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Commit", { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "提交" })).not.toBeInTheDocument();
   });
 
-  it("opens the in-workbench commit dialog from the toolbar", async () => {
+  it("opens the in-workbench commit window from the toolbar", async () => {
     const file = makeFile("src/main.ts", "modified", "main-digest");
     const onCommit = vi.fn();
     const onSelectAllCommitFiles = vi.fn();
@@ -175,7 +221,6 @@ describe("MainWorkspace", () => {
         view: workbenchViews.changes,
         workspace: makeWorkspace(),
         workingCopyStatus: makeStatus([file]),
-        commitFiles: [{ path: file.path, status: file.status }],
         commitFormOpenDisabled: false,
         onCommit,
         onSelectAllCommitFiles,
@@ -183,13 +228,15 @@ describe("MainWorkspace", () => {
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "提交工作副本" }));
-    const dialog = screen.getByRole("dialog", { name: "提交" });
-    expect(within(dialog).getByText("本次将提交 1 个文件")).toBeInTheDocument();
+    const commitWindow = await screen.findByLabelText("主界面提交");
+    expect(within(commitWindow).getByText("NovaSVN Commit")).toBeInTheDocument();
+    expect(within(commitWindow).getByRole("textbox", { name: "提交日志" })).toBeInTheDocument();
     expect(onSelectAllCommitFiles).not.toHaveBeenCalled();
     expect(onCommit).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "提交" })).not.toBeInTheDocument();
 
-    await fireEvent.click(within(dialog).getByRole("button", { name: "提交" }));
-    expect(onCommit).toHaveBeenCalledOnce();
+    await fireEvent.click(within(commitWindow).getByRole("button", { name: "关闭提交" }));
+    expect(screen.queryByLabelText("主界面提交")).not.toBeInTheDocument();
   });
 
   it("shows only workbench and timeline as right-side content tabs", async () => {
@@ -230,6 +277,32 @@ describe("MainWorkspace", () => {
 
     await fireEvent.keyDown(resizer, { key: "ArrowLeft" });
     expect(resizer).toHaveAttribute("aria-valuenow", "218");
+  });
+
+  it("resizes the folder tree from its divider", async () => {
+    const { container } = render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+      },
+    });
+    const resizer = screen.getByRole("slider", { name: "调整文件夹树宽度" });
+
+    expect(resizer).toHaveAttribute("aria-valuenow", "228");
+    expect(resizer).toHaveAttribute("aria-orientation", "horizontal");
+    await fireEvent.mouseDown(resizer, { clientX: 228 });
+    await fireEvent.mouseMove(window, { clientX: 280 });
+    await fireEvent.mouseUp(window);
+
+    expect(resizer).toHaveAttribute("aria-valuenow", "280");
+    expect(container.querySelector(".versions-workbench")).toHaveStyle(
+      "--folder-tree-width: 280px",
+    );
+
+    await fireEvent.keyDown(resizer, { key: "ArrowLeft" });
+    expect(resizer).toHaveAttribute("aria-valuenow", "268");
+    await fireEvent.keyDown(resizer, { key: "Home" });
+    expect(resizer).toHaveAttribute("aria-valuenow", "180");
   });
 
   it("keeps working copies in saved order when the active project changes", async () => {
@@ -303,6 +376,37 @@ describe("MainWorkspace", () => {
     expect(onRefreshStatus).toHaveBeenCalledOnce();
     expect(onSelectView).not.toHaveBeenCalled();
     expect(onOpenBranchPoolEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it("places an unsaved current project after saved project tabs", () => {
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        appSettings: makeAppSettings(),
+        branchPool: {
+          entries: [
+            {
+              id: "second",
+              branch_url: "https://example.com/svn/branches/feature",
+              local_path: "D:\\work\\feature",
+              revision: "18",
+              local_changes: 3,
+              created_at: 1,
+              updated_at: 1,
+            },
+          ],
+        },
+      },
+    });
+
+    const projects = screen.getByLabelText("项目标签");
+    expect(
+      [...projects.querySelectorAll(".project-tab > span")].map(
+        (element) => element.textContent,
+      ),
+    ).toEqual(["feature", "wc"]);
+    expect(projects.querySelector(".project-tab.active > span")).toHaveTextContent("wc");
   });
 
   it("keeps other project tabs clickable while the current project is loading", async () => {
@@ -531,7 +635,6 @@ describe("MainWorkspace", () => {
         view: workbenchViews.changes,
         workspace: makeWorkspace(),
         workingCopyStatus: makeStatus([file]),
-        commitFiles: [],
         commitFormOpenDisabled: false,
         onSelectAllCommitFiles,
       },
@@ -540,8 +643,10 @@ describe("MainWorkspace", () => {
     await fireEvent.click(screen.getByRole("button", { name: "提交工作副本" }));
 
     expect(onSelectAllCommitFiles).not.toHaveBeenCalled();
-    expect(screen.getByRole("dialog", { name: "提交" })).toBeInTheDocument();
-    expect(screen.getByText("本次将提交 0 个文件")).toBeInTheDocument();
+    const commitWindow = await screen.findByLabelText("主界面提交");
+    expect(within(commitWindow).getByText("NovaSVN Commit")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "提交" })).not.toBeInTheDocument();
+    expect(screen.queryByText("本次将提交 0 个文件")).not.toBeInTheDocument();
   });
 
   it("resolves the system theme and exposes persistent theme controls", async () => {
@@ -1599,8 +1704,7 @@ Certificate information:
     expect(onLoadAllSvnLog).toHaveBeenCalledOnce();
   });
 
-  it("uses current commit targets and excludes unversioned files", async () => {
-    const onUnselectCommitFile = vi.fn();
+  it("lists versioned files and excludes unversioned files from commit-style row actions", async () => {
     const onSelectAllCommitFiles = vi.fn();
     const onClearCommitFiles = vi.fn();
     const onAddFile = vi.fn();
@@ -1615,13 +1719,6 @@ Certificate information:
         workspace: makeWorkspace(),
         workingCopyStatus: makeStatus([modified, unversioned]),
         workspaceFileTree: makeFileTree(),
-        commitFiles: [
-          {
-            path: modified.path,
-            status: modified.status,
-          },
-        ],
-        onUnselectCommitFile,
         onSelectAllCommitFiles,
         onClearCommitFiles,
         onAddFile,
@@ -1636,8 +1733,8 @@ Certificate information:
     });
 
     expect(
-      screen.getByRole("checkbox", { name: "提交目标 src/main.ts" }),
-    ).toBeChecked();
+      screen.queryByRole("checkbox", { name: "提交目标 src/main.ts" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("暂存", { exact: false })).not.toBeInTheDocument();
     for (const heading of ["Name", "Base", "Last", "Date", "Author", "Status", "Size"]) {
       expect(screen.getByText(heading, { exact: true })).toBeInTheDocument();
@@ -1647,10 +1744,6 @@ Certificate information:
     expect(mainFileRow).toHaveTextContent("11");
     expect(mainFileRow).toHaveTextContent("2026-07-11 01:02");
     expect(mainFileRow).toHaveTextContent("alice");
-
-    await fireEvent.click(screen.getByRole("checkbox", { name: "提交目标 src/main.ts" }));
-
-    expect(onUnselectCommitFile).toHaveBeenCalledWith("src/main.ts");
 
     await fireEvent.click(screen.getByRole("button", { name: "未管理文件" }));
 
@@ -1673,7 +1766,6 @@ Certificate information:
     const laterFile = makeFile("src/file-501.ts", "modified", "digest-501");
     const onSelectFile = vi.fn();
     const onSelectWorkspacePath = vi.fn();
-    const onSelectCommitFile = vi.fn();
     const { rerender } = render(MainWorkspace, {
       props: {
         view: workbenchViews.changes,
@@ -1695,13 +1787,10 @@ Certificate information:
         },
         onSelectFile,
         onSelectWorkspacePath,
-        onSelectCommitFile,
       },
     });
 
-    expect(
-      screen.queryByRole("checkbox", { name: `提交目标 ${laterFile.path}` }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `选择文件 ${laterFile.path}` })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: `选择文件 ${laterFile.path}` }));
     expect(onSelectFile).toHaveBeenCalledWith(laterFile.path);
     expect(onSelectWorkspacePath).not.toHaveBeenCalled();
@@ -1709,13 +1798,12 @@ Certificate information:
     await rerender({
       workingCopyStatus: makeStatus([firstFile, laterFile]),
     });
-    await fireEvent.click(
-      screen.getByRole("checkbox", { name: `提交目标 ${laterFile.path}` }),
-    );
-    expect(onSelectCommitFile).toHaveBeenCalledWith(laterFile.path);
+    expect(
+      screen.queryByRole("checkbox", { name: `提交目标 ${laterFile.path}` }),
+    ).not.toBeInTheDocument();
   });
 
-  it("does not retain commit target visuals across task or workspace switches", async () => {
+  it("does not show commit target checkboxes across task or workspace switches", async () => {
     const originalFile = makeFile("src/main.ts", "modified", "main-digest");
     const nextFile = makeFile("src/next.ts", "modified", "next-digest");
     const originalTask = makeComponentTask("task-a");
@@ -1732,18 +1820,20 @@ Certificate information:
           truncated: false,
           nodes: [makeScopedNode(originalFile.path, "modified", "local")],
         },
-        commitFiles: [{ path: originalFile.path, status: originalFile.status }],
         selectedTask: originalTask,
       },
     });
 
-    expect(screen.getByRole("checkbox", { name: "提交目标 src/main.ts" })).toBeChecked();
+    expect(
+      screen.queryByRole("checkbox", { name: "提交目标 src/main.ts" }),
+    ).not.toBeInTheDocument();
 
     await rerender({
-      commitFiles: [],
       selectedTask: nextTask,
     });
-    expect(screen.getByRole("checkbox", { name: "提交目标 src/main.ts" })).not.toBeChecked();
+    expect(
+      screen.queryByRole("checkbox", { name: "提交目标 src/main.ts" }),
+    ).not.toBeInTheDocument();
 
     await rerender({
       workspace: {
@@ -1763,10 +1853,11 @@ Certificate information:
         nodes: [makeScopedNode(nextFile.path, "modified", "local")],
       },
       selectedTask: originalTask,
-      commitFiles: [],
     });
     expect(screen.queryByText("main.ts", { exact: true })).not.toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "提交目标 src/next.ts" })).not.toBeChecked();
+    expect(
+      screen.queryByRole("checkbox", { name: "提交目标 src/next.ts" }),
+    ).not.toBeInTheDocument();
   });
 
   it("separates local, remote, and combined working-copy changes", async () => {
@@ -1788,7 +1879,6 @@ Certificate information:
     };
     const conflict = makeFile("conflict.txt", "conflicted", "conflict-digest");
     const workingCopyStatus = makeStatus([local, remote, both, remoteProps, conflict]);
-    const onSelectCommitFile = vi.fn();
     const onUpdatePath = vi.fn();
     const onSelectFile = vi.fn();
 
@@ -1810,7 +1900,6 @@ Certificate information:
             makeScopedNode("conflict.txt", "conflicted", "local"),
           ],
         },
-        onSelectCommitFile,
         onUpdatePath,
         onSelectFile,
       },
@@ -1839,14 +1928,12 @@ Certificate information:
       }),
     ).not.toBeInTheDocument();
     expect(
-      within(bothRow as HTMLElement).getByRole("checkbox", { name: "提交目标 both.txt" }),
-    ).toBeInTheDocument();
+      within(bothRow as HTMLElement).queryByRole("checkbox", { name: "提交目标 both.txt" }),
+    ).not.toBeInTheDocument();
     expect(within(bothRow as HTMLElement).getByRole("button", { name: "Update both.txt" })).toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("checkbox", { name: "提交目标 local.txt" }));
     await fireEvent.click(screen.getByRole("button", { name: "Update remote.txt" }));
     await fireEvent.click(screen.getByRole("button", { name: "可视化解决 conflict.txt" }));
-    expect(onSelectCommitFile).toHaveBeenCalledWith("local.txt");
     expect(onUpdatePath).toHaveBeenCalledWith("remote.txt");
     expect(onSelectFile).toHaveBeenCalledWith("conflict.txt");
     const conflictDialog = screen.getByRole("dialog", { name: "解决文本冲突" });
@@ -1886,8 +1973,6 @@ Certificate information:
         { ...makeScopedNode("beta.txt", "modified", "local"), changelist: "release" },
       ],
     };
-    const onSelectCommitFiles = vi.fn();
-    const onUnselectCommitFiles = vi.fn();
     const onRevertPaths = vi.fn();
     const onMovePaths = vi.fn();
     const onDeletePaths = vi.fn();
@@ -1899,8 +1984,6 @@ Certificate information:
         workspace: makeWorkspace(),
         workingCopyStatus: makeStatus([alpha, beta]),
         workspaceFileTree: tree,
-        onSelectCommitFiles,
-        onUnselectCommitFiles,
         onRevertPaths,
         onMovePaths,
         onDeletePaths,
@@ -1927,28 +2010,19 @@ Certificate information:
     const batchToolbar = screen.getByRole("toolbar", { name: "所选路径批量操作" });
     expect(batchToolbar).toHaveTextContent("2 个已选");
     expect(selectVisible).toBeChecked();
-    await fireEvent.click(within(batchToolbar).getByRole("button", { name: "加入 Commit" }));
+    expect(within(batchToolbar).queryByRole("button", { name: "加入 Commit" })).not.toBeInTheDocument();
+    expect(within(batchToolbar).queryByRole("button", { name: "移出 Commit" })).not.toBeInTheDocument();
     await fireEvent.click(within(batchToolbar).getByRole("button", { name: "Revert" }));
     await fireEvent.click(within(batchToolbar).getByRole("button", { name: "加入 Changelist" }));
     await fireEvent.click(within(batchToolbar).getByRole("button", { name: "移出 Changelist" }));
     await fireEvent.click(within(batchToolbar).getByRole("button", { name: "Move" }));
     await fireEvent.click(within(batchToolbar).getByRole("button", { name: "Delete" }));
 
-    expect(onSelectCommitFiles).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
     expect(onRevertPaths).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
     expect(onAssignChangelist).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
     expect(onRemoveChangelist).toHaveBeenCalledWith(["beta.txt"]);
     expect(onMovePaths).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
     expect(onDeletePaths).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
-
-    await rerender({
-      commitFiles: [
-        { path: "alpha.txt", status: "modified" },
-        { path: "beta.txt", status: "modified" },
-      ],
-    });
-    await fireEvent.click(screen.getByRole("button", { name: "移出 Commit" }));
-    expect(onUnselectCommitFiles).toHaveBeenCalledWith(["alpha.txt", "beta.txt"]);
 
     await rerender({
       workspace: {
@@ -1994,7 +2068,6 @@ Certificate information:
         { ...makeScopedNode("src/normal.txt", "normal", "none"), name: "normal.txt" },
       ],
     });
-    const onSelectCommitFile = vi.fn();
     const onActiveWorkspacePathChange = vi.fn();
     render(MainWorkspace, {
       props: {
@@ -2003,7 +2076,6 @@ Certificate information:
         workingCopyStatus: makeStatus([alpha, beta, omega]),
         workspaceFileTree: tree,
         svnExecutable: "/opt/homebrew/bin/svn",
-        onSelectCommitFile,
         onActiveWorkspacePathChange,
       },
     });
@@ -2027,8 +2099,7 @@ Certificate information:
     expect(screen.queryByRole("button", { name: "选择文件 omega.txt" })).not.toBeInTheDocument();
     expect(onActiveWorkspacePathChange).toHaveBeenLastCalledWith("src");
 
-    await fireEvent.click(screen.getByRole("checkbox", { name: "提交目标 src/alpha.txt" }));
-    expect(onSelectCommitFile).toHaveBeenCalledWith("src/alpha.txt");
+    expect(screen.queryByRole("checkbox", { name: "提交目标 src/alpha.txt" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update src" })).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "加入 Commit 文件夹 src" }),
@@ -2154,6 +2225,56 @@ Certificate information:
     );
     expect(within(folderTree).getByRole("button", { name: "选择文件夹 src/lib" })).toBeInTheDocument();
     expect(within(folderTree).getByRole("button", { name: "折叠文件夹 src" })).toBeInTheDocument();
+  });
+
+  it("selects a folder from the row and expands collapsed children", async () => {
+    render(MainWorkspace, {
+      props: {
+        view: workbenchViews.changes,
+        workspace: makeWorkspace(),
+        workingCopyStatus: makeStatus([makeFile("src/lib/util.ts", "modified", "util-digest")]),
+        workspaceFileTree: {
+          working_copy_root: "C:/repo/wc",
+          total_files: 1,
+          returned_files: 1,
+          truncated: false,
+          nodes: [
+            {
+              ...makeScopedNode("src", "normal", "none"),
+              name: "src",
+              kind: "dir",
+              file_size: null,
+              children: [
+                {
+                  ...makeScopedNode("src/lib", "normal", "none"),
+                  name: "lib",
+                  kind: "dir",
+                  file_size: null,
+                  children: [
+                    {
+                      ...makeScopedNode("src/lib/util.ts", "modified", "local"),
+                      name: "util.ts",
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+
+    const folderTree = screen.getByRole("tree", { name: "文件夹层级" });
+    await fireEvent.click(within(folderTree).getByRole("button", { name: "折叠文件夹 src" }));
+    expect(within(folderTree).queryByRole("button", { name: "选择文件夹 src/lib" })).not.toBeInTheDocument();
+
+    await fireEvent.click(
+      within(folderTree).getByRole("button", { name: "选择文件夹 src" }).closest(".folder-tree-row")!,
+    );
+    expect(
+      within(folderTree).getByRole("button", { name: "选择文件夹 src" }).closest(".folder-tree-row"),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(within(folderTree).getByRole("button", { name: "选择文件夹 src/lib" })).toBeInTheDocument();
   });
 
   it("shows why listing files in the selected folder failed", async () => {

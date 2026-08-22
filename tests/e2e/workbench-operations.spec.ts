@@ -25,11 +25,12 @@ test("runs the main working-copy operations through the task workflow", async ({
     .toBe(2);
 
   await page.getByRole("button", { name: "提交工作副本" }).click();
-  const commitDialog = page.getByRole("dialog", { name: "提交" });
-  await expect(commitDialog).toBeVisible();
+  const commitWindow = page.getByLabelText("主界面提交");
+  await expect(commitWindow).toBeVisible();
+  await expect(commitWindow.getByText("NovaSVN Commit")).toBeVisible();
   expect(await backendCalls(page, "launch_commit_window")).toHaveLength(0);
-  await commitDialog.getByRole("button", { name: "取消" }).click();
-  await expect(commitDialog).toBeHidden();
+  await commitWindow.getByRole("button", { name: "关闭提交" }).click();
+  await expect(commitWindow).toBeHidden();
 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "更多操作 文件 src/revert.txt" }).click();
@@ -75,16 +76,20 @@ test("scopes the file list and commit selection to the selected folder", async (
   await expect(page.getByRole("button", { name: "Update src", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "加入 Commit 文件夹 src" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "移出 Commit 文件夹 src" })).toHaveCount(0);
-
-  await page.getByRole("checkbox", { name: "提交目标 src/modified.txt" }).click();
-  await page.getByRole("checkbox", { name: "提交目标 src/revert.txt" }).click();
+  await expect(page.getByRole("checkbox", { name: "提交目标 src/modified.txt" })).toHaveCount(0);
+  await expect(page.getByRole("checkbox", { name: "提交目标 src/revert.txt" })).toHaveCount(0);
   await page.getByRole("button", { name: "提交工作副本" }).click();
 
-  const commitDialog = page.getByRole("dialog", { name: "提交" });
-  await expect(commitDialog).toBeVisible();
-  await expect(commitDialog.getByText("本次将提交 2 个文件")).toBeVisible();
-  await commitDialog.getByLabel("提交信息").fill("提交选中文件");
-  await commitDialog.getByRole("button", { name: "提交" }).click();
+  const commitWindow = page.getByLabelText("主界面提交");
+  await expect(commitWindow).toBeVisible();
+  await expect(commitWindow.getByText("src/modified.txt")).toBeVisible();
+  await expect(commitWindow.getByText("src/revert.txt")).toBeVisible();
+  await expect(commitWindow.getByText("draft.txt")).toHaveCount(0);
+  const filePane = commitWindow.getByLabelText("选择提交文件");
+  await expect(filePane.getByRole("button", { name: "全选" })).toBeEnabled();
+  await filePane.getByRole("button", { name: "全选" }).click();
+  await commitWindow.getByLabel("提交日志").fill("提交选中文件");
+  await commitWindow.getByRole("button", { name: "提交 2 个文件" }).click();
 
   await expect.poll(async () => (await backendCalls(page, "create_commit_task")).length).toBe(1);
   expect((await backendCalls(page, "create_commit_task"))[0]?.args.request).toMatchObject({

@@ -215,7 +215,7 @@ const e2eSmokeAssertions = [
   "工作副本",
   "时间线",
   "仓库",
-  "提交目标",
+  "本地改动",
   "未管理文件",
 ];
 const systemIntegrationActions = [
@@ -871,12 +871,11 @@ if (
   fileBrowserEnd < 0 ||
   !taskRs.includes("SvnOperationKind::UpdatePath") ||
   !taskRs.includes('format!("执行 svn update：{file_path}")') ||
-  !fileBrowserSource.includes("Commit") ||
   !fileBrowserSource.includes("Update") ||
   !fileBrowserSource.includes("Resolve") ||
   fileBrowserSource.includes('role="button"')
 ) {
-  console.error("文件行必须按状态使用真实按钮提供 Commit、Update、Add、Resolve 和菜单操作");
+  console.error("文件行必须按状态使用真实按钮提供 Update、Add、Resolve 和菜单操作");
   failed = true;
 }
 
@@ -891,7 +890,7 @@ if (
   !taskRs.includes("SvnBatchOperationKind::Move") ||
   !taskRs.includes("SvnBatchOperationKind::Delete")
 ) {
-  console.error("工作副本多选必须提供批量提交目标、Revert、Move、Delete 和后端路径边界");
+  console.error("工作副本多选必须提供批量 Revert、Move、Delete 和后端路径边界");
   failed = true;
 }
 

@@ -7,13 +7,12 @@ describe("buildAppMenuState", () => {
     const node = makeNode("src/main.ts", "modified", true, "both");
     const state = buildAppMenuState({
       ...baseInput(node, makeFile("src/main.ts", "modified", "both")),
-      commitFiles: [{ path: "src/main.ts" }],
     });
 
     expect(state).toMatchObject({
       active_path: "src/main.ts",
       active_label: "main.ts",
-      commit_selected: true,
+      commit_selected: false,
       can_open: true,
       can_show: true,
       can_commit: true,
@@ -31,7 +30,6 @@ describe("buildAppMenuState", () => {
     const node = makeNode("drafts", "unversioned", false, "local", "dir");
     const state = buildAppMenuState({
       ...baseInput(node, makeFile("drafts", "unversioned", "local")),
-      commitFiles: [],
     });
 
     expect(state.can_open).toBe(false);
@@ -46,7 +44,6 @@ describe("buildAppMenuState", () => {
     const node = makeNode("notes/new.txt", "unversioned", false, "local");
     const state = buildAppMenuState({
       ...baseInput(node, makeFile("notes/new.txt", "unversioned", "local")),
-      commitFiles: [],
     });
 
     expect(state.can_add).toBe(true);
@@ -63,7 +60,6 @@ describe("buildAppMenuState", () => {
         ...makeFile("conflict.txt", "conflicted", "local"),
         conflict_kind: "text",
       }),
-      commitFiles: [],
       workspaceLocked: true,
     });
 
@@ -81,7 +77,6 @@ describe("buildAppMenuState", () => {
     const state = buildAppMenuState({
       ...baseInput(node, makeFile("src/main.ts", "modified", "local")),
       viewId: "history",
-      commitFiles: [],
     });
 
     expect(state.active_path).toBeNull();
@@ -94,7 +89,6 @@ describe("buildAppMenuState", () => {
     const node = makeNode("src/main.ts", "modified", true, "both");
     const state = buildAppMenuState({
       ...baseInput(node, makeFile("src/main.ts", "modified", "both")),
-      commitFiles: [{ path: "src/main.ts" }],
     });
     const actions = {
       open: vi.fn(),
@@ -111,7 +105,7 @@ describe("buildAppMenuState", () => {
     };
 
     expect(await dispatchAppMenuPathCommand("path_commit", state, actions)).toBe(true);
-    expect(actions.commit).toHaveBeenCalledWith("src/main.ts", true);
+    expect(actions.commit).toHaveBeenCalledWith("src/main.ts", false);
     expect(await dispatchAppMenuPathCommand("path_add", state, actions)).toBe(true);
     expect(actions.add).not.toHaveBeenCalled();
     expect(await dispatchAppMenuPathCommand("refresh_status", state, actions)).toBe(false);

@@ -12,7 +12,6 @@ export interface BuildAppMenuStateInput {
   activePath: string | null;
   fileTree: WorkspaceFileTree | null;
   status: WorkingCopyStatus | null;
-  commitFiles: Array<{ path: string }>;
   statusLoading: boolean;
   workspaceLocked: boolean;
 }
@@ -50,8 +49,7 @@ export function buildAppMenuState(input: BuildAppMenuStateInput): AppMenuState {
     workspace_busy: workspaceBusy,
     active_path: node?.path ?? null,
     active_label: node ? compactPathLabel(node.path) : null,
-    commit_selected:
-      !!node && input.commitFiles.some((commitFile) => commitFile.path === node.path),
+    commit_selected: false,
     can_open: canOpen(node),
     can_show: canOpen(node),
     can_commit: !pathBusy && localChange && committable,

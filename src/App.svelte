@@ -114,6 +114,7 @@
   let repositoryDragExportStarting = false;
   let repositoryDragExportRunningName: string | null = null;
   let activeWorkspacePath: string | null = null;
+  let commitFormRequestId = 0;
   const workspaceViews = new Map<string, AppView>();
   let appMenuState: AppMenuState;
   let queuedAppMenuState: AppMenuState | null = null;
@@ -159,18 +160,6 @@
     ).length;
   $: commitSafetyBlocked =
     $workspaceStore.safetyCheck.blockers.length > 0 || unconfirmedSafetyWarnings > 0;
-  $: committableChangeCount =
-    $workspaceStore.status?.files.filter(
-      (file) =>
-        ![
-          "normal",
-          "missing",
-          "conflicted",
-          "obstructed",
-          "unversioned",
-          "external",
-        ].includes(file.status),
-    ).length ?? 0;
   $: inlineUpdateVisible =
     inlineUpdateRoot !== null &&
     $workspaceStore.current !== null &&
@@ -222,7 +211,6 @@
     activePath: activeWorkspacePath,
     fileTree: $workspaceStore.fileTree,
     status: $workspaceStore.status,
-    commitFiles: $workspaceStore.commitFiles,
     statusLoading: $workspaceStore.statusLoading,
     workspaceLocked:
       $taskStore.snapshot.running_task_id !== null ||
@@ -274,6 +262,11 @@
     if (localPath) {
       workspaceViews.set(normalizeLocalPath(localPath), view);
     }
+  }
+
+  function requestOpenCommitForm() {
+    setActiveWorkspaceView("changes");
+    commitFormRequestId += 1;
   }
 
   async function selectView(view: AppView) {
@@ -1824,13 +1817,8 @@
     const handledPathCommand = await dispatchAppMenuPathCommand(command, appMenuState, {
       open: openSelectedFile,
       show: openSelectedFileLocation,
-      commit: (path, selected) => {
-        setActiveWorkspaceView("changes");
-        if (selected) {
-          workspaceStore.unselectCommitFile(path);
-        } else {
-          workspaceStore.selectCommitFile(path);
-        }
+      commit: () => {
+        requestOpenCommitForm();
       },
       update: (path) => runSvnOperation("update_path", path),
       add: (path) => runSvnOperation("add_file", path),
@@ -1882,7 +1870,7 @@
         await workspaceStore.refreshSvnLog(currentSvnExecutable());
         break;
       case "prepare_commit":
-        setActiveWorkspaceView("changes");
+        requestOpenCommitForm();
         break;
       case "export_diagnostics":
         await appSettingsStore.exportDiagnosticLog();
@@ -3104,7 +3092,6 @@
   selectedFilePath={$workspaceStore.selectedFilePath}
   selectedFile={selectedFile}
   selectedFileReviewed={selectedFileReviewed}
-  commitFiles={$workspaceStore.commitFiles}
   reviewedFiles={$workspaceStore.reviewedFiles}
   statusLoading={$workspaceStore.statusLoading}
   statusError={$workspaceStore.statusError}
@@ -3218,20 +3205,12 @@
   svnPropertiesLoading={$workspaceStore.svnPropertiesLoading}
   svnPropertiesError={$workspaceStore.svnPropertiesError}
   propertyEditForm={$workspaceStore.propertyEditForm}
-  commitTemplate={$workspaceStore.commitTemplate}
-  commitHistory={$workspaceStore.commitHistory}
-  commitMessage={$workspaceStore.commitMessage}
-  commitError={$workspaceStore.commitError}
   commitFormOpenDisabled={
-    committableChangeCount === 0 ||
+    !$workspaceStore.current ||
     $taskStore.snapshot.running_task_id !== null
   }
+  commitFormRequestId={commitFormRequestId}
 
-  commitDisabled={
-    $workspaceStore.commitFiles.length === 0 ||
-    commitSafetyBlocked ||
-    $taskStore.snapshot.running_task_id !== null
-  }
   partialCommitDisabled={
     !$workspaceStore.selectedPatch ||
     commitSafetyBlocked ||
@@ -3300,12 +3279,6 @@
   onSelectFile={(path) => workspaceStore.selectFile(path, currentSvnExecutable())}
   onSelectWorkspacePath={workspaceStore.selectPathOnly}
   onActiveWorkspacePathChange={(path) => (activeWorkspacePath = path)}
-  onSelectCommitFile={workspaceStore.selectCommitFile}
-  onUnselectCommitFile={workspaceStore.unselectCommitFile}
-  onSelectCommitFiles={workspaceStore.selectCommitFiles}
-  onUnselectCommitFiles={workspaceStore.unselectCommitFiles}
-  onSelectAllCommitFiles={workspaceStore.selectAllCommitFiles}
-  onClearCommitFiles={workspaceStore.clearCommitFiles}
   onAddFile={(path) => runSvnOperation("add_file", path)}
   onIgnorePath={ignoreWorkspacePath}
   onDeletePath={deleteWorkspacePath}
@@ -3389,12 +3362,6 @@
   onRevertWorkspaceToRevision={revertWholeWorkspaceToRevision}
   onRevertSelectedRevisions={revertSelectedWorkspaceRevisions}
   onExportRevision={exportLogRevision}
-  onCommitMessageInput={workspaceStore.setCommitMessage}
-  onCommitTemplateInput={workspaceStore.setCommitTemplate}
-  onUseCommitHistoryMessage={workspaceStore.useCommitHistoryMessage}
-  onConfirmSafetyWarnings={workspaceStore.confirmSafetyWarnings}
-  onClearWorkspaceDraft={workspaceStore.clearWorkspaceDraft}
-  onCommit={submitCommitFiles}
   onPartialCommit={submitSelectedPatch}
   onSelectTask={taskStore.select}
   onCancelTask={taskStore.cancel}

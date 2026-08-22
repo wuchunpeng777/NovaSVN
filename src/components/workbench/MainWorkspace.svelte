@@ -2,7 +2,6 @@
   import { onDestroy, onMount } from "svelte";
   import {
     CircleCheck,
-    CircleMinus,
     CircleX,
     Copy,
     Download,
@@ -30,6 +29,7 @@
     X,
   } from "@lucide/svelte";
   import ErrorNotice from "../ErrorNotice.svelte";
+  import StandaloneCommitWindow from "../StandaloneCommitWindow.svelte";
   import StandaloneUpdateWindow from "../StandaloneUpdateWindow.svelte";
   import LogMergeDialog from "../LogMergeDialog.svelte";
   import SvnLogRevisionList from "../SvnLogRevisionList.svelte";
@@ -107,7 +107,6 @@
   export let selectedFilePath: string | null = null;
   export let selectedFile: ChangedFile | null = null;
   export let selectedFileReviewed = false;
-  export let commitFiles: Array<{ path: string; status: string }> = [];
   export let reviewedFiles: ReviewedFileState[] = [];
   export let statusLoading = false;
   export let statusError: CommandError | null = null;
@@ -323,12 +322,8 @@
     value: "",
   };
 
-  export let commitTemplate = "";
-  export let commitHistory: string[] = [];
-  export let commitMessage = "";
-  export let commitError: string | null = null;
   export let commitFormOpenDisabled = false;
-  export let commitDisabled = false;
+  export let commitFormRequestId = 0;
   export let partialCommitDisabled = false;
   export let tasks: TaskSummary[] = [];
   export let selectedTask: Task | null = null;
@@ -406,12 +401,6 @@
   export let onSelectFile: (path: string) => void = () => {};
   export let onSelectWorkspacePath: (path: string) => void = () => {};
   export let onActiveWorkspacePathChange: (path: string | null) => void = () => {};
-  export let onSelectCommitFile: (path: string) => void = () => {};
-  export let onUnselectCommitFile: (path: string) => void = () => {};
-  export let onSelectCommitFiles: (paths: string[]) => void = () => {};
-  export let onUnselectCommitFiles: (paths: string[]) => void = () => {};
-  export let onSelectAllCommitFiles: () => void = () => {};
-  export let onClearCommitFiles: () => void = () => {};
   export let onAddFile: (path: string) => void = () => {};
   export let onIgnorePath: (path: string) => void = () => {};
   export let onDeletePath: (path: string) => void = () => {};
@@ -545,12 +534,6 @@
     false;
   export let onExportRevision: (revision: string) => void = () => {};
 
-  export let onCommitMessageInput: (value: string) => void = () => {};
-  export let onCommitTemplateInput: (value: string) => void = () => {};
-  export let onUseCommitHistoryMessage: (value: string) => void = () => {};
-  export let onConfirmSafetyWarnings: () => void = () => {};
-  export let onClearWorkspaceDraft: () => void = () => {};
-  export let onCommit: () => void = () => {};
   export let onPartialCommit: () => void = () => {};
   export let onSelectTask: (taskId: string) => void = () => {};
   export let onCancelTask: (taskId: string) => void = () => {};
@@ -693,8 +676,9 @@
   const blameRowHeight = 27;
   const virtualRowOverscan = 8;
 
-  const folderTreeHeaderHeight = 28;
+  const folderTreeListOffset = 33;
   const folderTreeRowHeight = 28;
+  let folderTreeViewportObserver: ResizeObserver | null = null;
 
   const fileColumns = [
     { key: "name", label: "Name", ariaLabel: "Name" },
@@ -766,7 +750,12 @@
   let reportedActiveWorkspacePath: string | null | undefined;
   let selectionWorkspaceRoot: string | null = null;
   let selectionFileTree: WorkspaceFileTree | null = null;
-  const navigationTreeWidth = 228;
+  const folderTreeMinWidth = 180;
+  const folderTreeMaxWidth = 480;
+  const folderTreeDividerWidth = 6;
+  const folderTreeContentMinWidth = 480;
+  let folderTreeWidth = 228;
+  let resizingFolderTree: { startX: number; startWidth: number } | null = null;
   const fileColumnMinimumWidths: Record<FileColumnKey, number> = {
     name: 120,
     base: 36,
@@ -822,10 +811,7 @@
   let authenticationRememberPassword = true;
   let conflictResolverOpen = false;
   let commitDialogOpen = false;
-  let commitMessageElement: HTMLTextAreaElement | null = null;
-  let commitMessageFocusRequested = false;
-  let commitSubmitStarted = false;
-  let selectedCommitHistoryMessage = "";
+  let appliedCommitFormRequestId = 0;
 
   $: if (appSettings.diffMode) {
     diffInline = appSettings.diffMode === "inline";
@@ -1136,10 +1122,6 @@
     });
   }
 
-  function isCommitSelected(path: string, selectedCommitFiles = commitFiles) {
-    return selectedCommitFiles.some((file) => file.path === path);
-  }
-
   function isReviewed(path: string) {
     return reviewedFiles.some((file) => file.path === path);
   }
@@ -1318,6 +1300,15 @@
     collapsedTreePaths = next;
   }
 
+  function expandDirectoryPath(path: string) {
+    if (!path || !collapsedTreePaths.has(path)) {
+      return;
+    }
+    const next = new Set(collapsedTreePaths);
+    next.delete(path);
+    collapsedTreePaths = next;
+  }
+
   function directoryFileTreeCacheKey(root: string, path: string) {
     return `${root}\0${path}`;
   }
@@ -1348,6 +1339,9 @@
       closeContextMenu();
       applyCachedDirectoryTree(path);
     }
+    if (path && directoryParentPaths.has(path) && collapsedTreePaths.has(path)) {
+      expandDirectoryPath(path);
+    }
     if (!path) {
       directoryFilesGeneration += 1;
       selectedDirectoryFileTree = null;
@@ -1360,6 +1354,31 @@
       applyCachedDirectoryTree(path);
       void loadSelectedDirectoryFiles(path);
     }
+  }
+
+  function observeFolderTreeViewport(node: HTMLElement) {
+    folderBrowserElement = node;
+    const apply = () => {
+      const height = node.clientHeight;
+      if (height > 0) {
+        folderBrowserViewportHeight = height;
+      }
+    };
+    apply();
+    folderTreeViewportObserver?.disconnect();
+    if (typeof ResizeObserver === "function") {
+      folderTreeViewportObserver = new ResizeObserver(apply);
+      folderTreeViewportObserver.observe(node);
+    }
+    return {
+      destroy() {
+        folderTreeViewportObserver?.disconnect();
+        folderTreeViewportObserver = null;
+        if (folderBrowserElement === node) {
+          folderBrowserElement = null;
+        }
+      },
+    };
   }
 
   async function loadSelectedDirectoryFiles(path: string) {
@@ -1550,11 +1569,6 @@
   function isLocalChangedPath(path: string) {
     const scope = changedFileForPath(path)?.change_scope;
     return scope === "local" || scope === "both";
-  }
-
-  function isCommittablePath(path: string) {
-    const file = changedFileForPath(path);
-    return !!file && isCommittable(file);
   }
 
   function isUnversionedPath(path: string) {
@@ -1819,59 +1833,23 @@
     });
   }
 
-  function toggleSelectedCommitPaths() {
-    if (selectedCommittablePaths.length === 0) {
-      return;
-    }
-    if (selectedCommittablePaths.every((path) => isCommitSelected(path, commitFiles))) {
-      onUnselectCommitFiles(selectedCommittablePaths);
-    } else {
-      onSelectCommitFiles(selectedCommittablePaths);
-    }
-  }
-
   function openCommitForm() {
     if (!workspace?.working_copy_root?.trim()) {
       return;
     }
     commitDialogOpen = true;
-    commitSubmitStarted = false;
-    commitMessageFocusRequested = true;
   }
 
   function closeCommitDialog() {
     commitDialogOpen = false;
-    commitSubmitStarted = false;
-    commitMessageFocusRequested = false;
   }
 
-  function submitCommitDialog() {
-    commitSubmitStarted = true;
-    onCommit();
-  }
-
-  function applyCommitHistoryMessage() {
-    if (!selectedCommitHistoryMessage) {
-      return;
+  function commitTargetPath() {
+    const root = workspace?.working_copy_root?.trim() ?? "";
+    if (!root || !selectedDirectoryPath) {
+      return root;
     }
-    onUseCommitHistoryMessage(selectedCommitHistoryMessage);
-    selectedCommitHistoryMessage = "";
-  }
-
-  function focusCommitDialog(node: HTMLElement) {
-    node.focus();
-  }
-
-  function handleCommitDialogKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeCommitDialog();
-    }
-  }
-
-  function selectCommitFileAndOpen(path: string) {
-    onSelectCommitFile(path);
+    return `${root.replaceAll("\\", "/").replace(/\/+$/, "")}/${selectedDirectoryPath.replaceAll("\\", "/")}`;
   }
 
   function rowDomId(path: string) {
@@ -2962,6 +2940,7 @@
 
   function startFileColumnResize(event: MouseEvent, column: FileColumnKey) {
     stopTimelineDiffResize();
+    stopFolderTreeResize();
     resizingFileColumn = {
       column,
       startX: event.clientX,
@@ -3025,6 +3004,7 @@
 
   function startTimelineDiffResize(event: MouseEvent) {
     stopFileColumnResize();
+    stopFolderTreeResize();
     if (!resizingTimelineDiff) {
       window.addEventListener("mousemove", resizeTimelineDiff);
       window.addEventListener("mouseup", stopTimelineDiffResize);
@@ -3055,7 +3035,11 @@
 
   function constrainTimelineDiffWidth(width: number) {
     const availableMaximum =
-      window.innerWidth - navigationTreeWidth - timelineListMinWidth - timelineDiffDividerWidth;
+      window.innerWidth -
+      folderTreeWidth -
+      folderTreeDividerWidth -
+      timelineListMinWidth -
+      timelineDiffDividerWidth;
     const maximum = Math.max(
       timelineDiffMinWidth,
       Math.min(timelineDiffMaxWidth, availableMaximum),
@@ -3063,7 +3047,51 @@
     return Math.min(Math.max(width, timelineDiffMinWidth), maximum);
   }
 
+  function startFolderTreeResize(event: MouseEvent) {
+    stopTimelineDiffResize();
+    stopFileColumnResize();
+    resizingFolderTree = {
+      startX: event.clientX,
+      startWidth: folderTreeWidth,
+    };
+    window.addEventListener("mousemove", resizeFolderTree);
+    window.addEventListener("mouseup", stopFolderTreeResize);
+    event.preventDefault();
+  }
+
+  function stopFolderTreeResize() {
+    if (!resizingFolderTree) {
+      return;
+    }
+    resizingFolderTree = null;
+    window.removeEventListener("mousemove", resizeFolderTree);
+    window.removeEventListener("mouseup", stopFolderTreeResize);
+  }
+
+  function resizeFolderTree(event: MouseEvent) {
+    if (!resizingFolderTree) {
+      return;
+    }
+    folderTreeWidth = constrainFolderTreeWidth(
+      resizingFolderTree.startWidth + event.clientX - resizingFolderTree.startX,
+    );
+  }
+
+  function adjustFolderTreeWidth(delta: number) {
+    folderTreeWidth = constrainFolderTreeWidth(folderTreeWidth + delta);
+  }
+
+  function constrainFolderTreeWidth(width: number) {
+    const availableMaximum = Math.max(
+      folderTreeMinWidth,
+      window.innerWidth - folderTreeContentMinWidth - folderTreeDividerWidth,
+    );
+    const maximum = Math.min(folderTreeMaxWidth, availableMaximum);
+    return Math.min(Math.max(Math.round(width), folderTreeMinWidth), maximum);
+  }
+
   function syncLayoutWidthsToWindow() {
+    folderTreeWidth = constrainFolderTreeWidth(folderTreeWidth);
     timelineDiffWidth = constrainTimelineDiffWidth(timelineDiffWidth);
   }
 
@@ -3092,11 +3120,14 @@
     finishBranchPoolDrag();
     stopTimelineDiffResize();
     stopFileColumnResize();
+    stopFolderTreeResize();
     window.removeEventListener("resize", handleWindowResize);
     window.removeEventListener("resize", closeContextMenuOnWindowChange);
     window.removeEventListener("blur", closeContextMenuOnWindowChange);
     window.removeEventListener("pointerdown", closeContextMenuOnOutsidePointer);
     themeMediaQuery?.removeEventListener("change", syncSystemTheme);
+    folderTreeViewportObserver?.disconnect();
+    folderTreeViewportObserver = null;
   });
 
   onMount(() => {
@@ -3167,7 +3198,7 @@
     folderBrowserScrollTop,
     folderBrowserViewportHeight,
     folderTreeRowHeight,
-    folderTreeHeaderHeight,
+    folderTreeListOffset,
   );
   $: treeRowWindow = virtualWindow(
     treeRows,
@@ -3211,9 +3242,6 @@
   $: selectedRowNodes = [...selectedRowPaths]
     .map((path) => treeNodeForPath(path))
     .filter((node): node is WorkspaceFileNode => node !== null);
-  $: selectedCommittablePaths = selectedRowNodes
-    .filter((node) => isLocalChangedPath(node.path) && isCommittablePath(node.path))
-    .map((node) => node.path);
   $: selectedRevertablePaths = selectedRowNodes
     .filter((node) => isLocalChangedPath(node.path) && !isUnversionedPath(node.path))
     .map((node) => node.path);
@@ -3241,10 +3269,6 @@
   $: visibleSelectedRowCount = treeRows.filter((row) => selectedRowPaths.has(row.path)).length;
   $: allVisibleRowsSelected = treeRows.length > 0 && visibleSelectedRowCount === treeRows.length;
   $: someVisibleRowsSelected = visibleSelectedRowCount > 0 && !allVisibleRowsSelected;
-  $: allSelectedCommitTargets =
-    selectedCommittablePaths.length > 0 &&
-    selectedCommittablePaths.every((path) => isCommitSelected(path, commitFiles));
-  $: commitFileCount = commitFiles.length;
   $: abnormalCount =
     (workingCopyStatus?.missing ?? 0) +
     (workingCopyStatus?.conflicted ?? 0) +
@@ -3273,20 +3297,11 @@
     (item) => !safetyCheck.confirmedWarningIds.includes(item.id),
   ).length;
   $: overlayDialogOpen = applyPatchDialogOpen || conflictResolverOpen || commitDialogOpen;
-  $: if (commitDialogOpen && commitMessageFocusRequested && commitMessageElement) {
-    commitMessageElement.focus();
-    commitMessageFocusRequested = false;
-  }
-  $: if (commitError) {
-    commitSubmitStarted = false;
-  }
-  $: if (
-    commitDialogOpen &&
-    commitSubmitStarted &&
-    commitFiles.length === 0 &&
-    !commitError
-  ) {
-    closeCommitDialog();
+  $: if (commitFormRequestId !== appliedCommitFormRequestId) {
+    appliedCommitFormRequestId = commitFormRequestId;
+    if (commitFormRequestId > 0) {
+      openCommitForm();
+    }
   }
   $: activeTask = selectedTask ?? null;
   $: applyPatchHasIssues =
@@ -3312,24 +3327,14 @@
 <section
   class="versions-workbench"
   class:has-inline-update={inlineUpdateRoot !== null}
-  class:resizing-layout={resizingTimelineDiff || resizingFileColumn !== null}
+  class:resizing-layout={
+    resizingTimelineDiff || resizingFileColumn !== null || resizingFolderTree !== null
+  }
   data-theme={resolvedTheme}
   data-theme-mode={appSettings.themeMode}
-  style={`--timeline-diff-width: ${timelineDiffWidth}px`}
+  style={`--timeline-diff-width: ${timelineDiffWidth}px; --folder-tree-width: ${folderTreeWidth}px; --folder-tree-divider-width: ${folderTreeDividerWidth}px`}
   aria-label="NovaSVN 工作台"
 >
-  <header class="versions-titlebar" inert={overlayDialogOpen}>
-    <div class="window-identity">
-      <span class="app-mark" aria-hidden="true">
-        <GitCommitHorizontal size={20} strokeWidth={1.9} />
-      </span>
-      <span class="window-copy">
-        <strong>NovaSVN</strong>
-        <span>Subversion Client</span>
-      </span>
-    </div>
-  </header>
-
   {#if svnOperationFeedback}
     <div
       class="svn-operation-feedback"
@@ -3391,18 +3396,17 @@
   </div>
 
   <nav class="project-tabs" aria-label="项目标签" inert={overlayDialogOpen}>
-    {#if !workspace || !currentWorkspaceListed}
+    {#if !workspace}
       <button
         type="button"
         class="project-tab"
-        class:active={workspace !== null}
-        title={workspace?.local_path ?? "打开工作副本"}
+        title="打开工作副本"
         disabled={workspaceLoading || branchPoolLoading}
-        on:click={() => (workspace ? onSelectView("changes") : onChooseWorkspace())}
+        on:click={onChooseWorkspace}
       >
         <FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />
-        <span>{workspace ? basename(workspace.local_path) : "打开工作副本"}</span>
-        <em>{workingCopyStatus?.total ?? 0}</em>
+        <span>打开工作副本</span>
+        <em>0</em>
       </button>
     {/if}
     {#each branchPool.entries as entry (entry.id)}
@@ -3465,6 +3469,20 @@
         {/if}
       </div>
     {/each}
+    {#if workspace && !currentWorkspaceListed}
+      <button
+        type="button"
+        class="project-tab"
+        class:active={true}
+        title={workspace.local_path}
+        disabled={workspaceLoading || branchPoolLoading}
+        on:click={() => onSelectView("changes")}
+      >
+        <FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />
+        <span>{basename(workspace.local_path)}</span>
+        <em>{workingCopyStatus?.total ?? 0}</em>
+      </button>
+    {/if}
     <button
       type="button"
       class="project-tab-add"
@@ -3496,6 +3514,7 @@
               </header>
               <div
                 bind:this={folderBrowserElement}
+                use:observeFolderTreeViewport
                 class="folder-tree"
                 role="tree"
                 aria-label="文件夹层级"
@@ -3509,6 +3528,13 @@
                   tabindex="-1"
                   aria-level="1"
                   aria-selected={selectedDirectoryPath === ""}
+                  on:click={() => selectWorkspaceDirectory("")}
+                  on:keydown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      selectWorkspaceDirectory("");
+                    }
+                  }}
                 >
                   <span class="folder-tree-spacer" aria-hidden="true"></span>
                   <button
@@ -3516,7 +3542,7 @@
                     class="folder-tree-select"
                     aria-label="选择工作副本根目录"
                     title="工作副本根目录"
-                    on:click={() => selectWorkspaceDirectory("")}
+                    on:click|stopPropagation={() => selectWorkspaceDirectory("")}
                   >
                     <FolderOpen size={15} strokeWidth={1.8} aria-hidden="true" />
                     <span>工作副本根目录</span>
@@ -3541,6 +3567,13 @@
                       ? !collapsedTreePaths.has(row.path)
                       : undefined}
                     style={`--folder-depth: ${row.depth}`}
+                    on:click={() => selectWorkspaceDirectory(row.path)}
+                    on:keydown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        selectWorkspaceDirectory(row.path);
+                      }
+                    }}
                     on:contextmenu={(event) =>
                       row.node && openRowContextMenu(event, { ...row.node, depth: row.depth })}
                   >
@@ -3550,7 +3583,7 @@
                         class="folder-tree-toggle"
                         aria-label={`${collapsedTreePaths.has(row.path) ? "展开" : "折叠"}文件夹 ${row.path}`}
                         title={`${collapsedTreePaths.has(row.path) ? "展开" : "折叠"} ${row.name}`}
-                        on:click={() => toggleDirectoryPath(row.path)}
+                        on:click|stopPropagation={() => toggleDirectoryPath(row.path)}
                       >
                         <span
                           class="tree-affordance visible"
@@ -3566,7 +3599,7 @@
                       class="folder-tree-select"
                       aria-label={`选择文件夹 ${row.path}`}
                       title={row.path}
-                      on:click={() => selectWorkspaceDirectory(row.path)}
+                      on:click|stopPropagation={() => selectWorkspaceDirectory(row.path)}
                     >
                       <span class="tree-icon folder-icon" aria-hidden="true"></span>
                       <span>{row.name}</span>
@@ -3594,6 +3627,36 @@
                 {/if}
               </div>
             </aside>
+            <div
+              class="folder-tree-resizer"
+              role="slider"
+              aria-label="调整文件夹树宽度"
+              aria-orientation="horizontal"
+              aria-valuemin={folderTreeMinWidth}
+              aria-valuemax={folderTreeMaxWidth}
+              aria-valuenow={folderTreeWidth}
+              title="拖动调整文件夹树宽度"
+              tabindex="0"
+              on:mousedown={startFolderTreeResize}
+              on:keydown={(event) => {
+                if (event.key === "ArrowLeft") {
+                  adjustFolderTreeWidth(-12);
+                  event.preventDefault();
+                }
+                if (event.key === "ArrowRight") {
+                  adjustFolderTreeWidth(12);
+                  event.preventDefault();
+                }
+                if (event.key === "Home") {
+                  folderTreeWidth = folderTreeMinWidth;
+                  event.preventDefault();
+                }
+                if (event.key === "End") {
+                  folderTreeWidth = constrainFolderTreeWidth(folderTreeMaxWidth);
+                  event.preventDefault();
+                }
+              }}
+            ></div>
     {/if}
 
     <main
@@ -3667,7 +3730,7 @@
                 on:click={openCommitForm}
               >
                 <GitCommitHorizontal size={15} aria-hidden="true" />
-                提交 {commitFileCount > 0 ? commitFileCount : ""}
+                提交
               </button>
               <button
                 type="button"
@@ -5564,7 +5627,6 @@
           <span><strong>{workingCopyStatus?.local_changes ?? 0}</strong> 本地改动</span>
           <span><strong>{workingCopyStatus?.remote_changes ?? 0}</strong> 远端更新</span>
           <span><strong>{workingCopyStatus?.combined_changes ?? 0}</strong> 同时变化</span>
-          <span><strong>{commitFileCount}</strong> 提交目标</span>
           <span><strong>{abnormalCount}</strong> 异常</span>
           <span>
             <strong>r{workingCopyStatus?.revision_range ?? workspace?.revision ?? "-"}</strong>
@@ -5622,13 +5684,6 @@
           {#if selectedRowPaths.size > 0}
             <div class="batch-action-bar" role="toolbar" aria-label="所选路径批量操作">
             <strong>{selectedRowPaths.size} 个已选</strong>
-            <button
-              type="button"
-              disabled={selectedCommittablePaths.length === 0 || statusLoading || toolbarLocked}
-              on:click={toggleSelectedCommitPaths}
-            >
-              {allSelectedCommitTargets ? "移出 Commit" : "加入 Commit"}
-            </button>
             <button
               type="button"
               disabled={selectedRevertablePaths.length === 0 || statusLoading || toolbarLocked}
@@ -5879,25 +5934,6 @@
                         >
                           Resolve
                         </button>
-                      {:else if isLocalChangedPath(node.path) && isCommittablePath(node.path)}
-                        <label
-                          class="commit-target-control"
-                          class:active={isCommitSelected(node.path, commitFiles)}
-                          class:disabled={statusLoading || toolbarLocked}
-                          title="包含在本次提交"
-                        >
-                          <input
-                            type="checkbox"
-                            aria-label={`提交目标 ${node.path}`}
-                            checked={isCommitSelected(node.path, commitFiles)}
-                            disabled={statusLoading || toolbarLocked}
-                            on:change={(event) =>
-                              event.currentTarget.checked
-                                ? selectCommitFileAndOpen(node.path)
-                                : onUnselectCommitFile(node.path)}
-                          />
-                          <span>Commit</span>
-                        </label>
                       {/if}
                       {#if node.change_scope === "remote" || node.change_scope === "both"}
                         <button
@@ -6156,21 +6192,6 @@
           >
             <GitMerge size={15} aria-hidden="true" />
             可视化解决
-          </button>
-        {/if}
-        {#if selectedCommittablePaths.length > 0}
-          <button
-            type="button"
-            role="menuitem"
-            disabled={statusLoading}
-            on:click={() => runContextMenuAction(toggleSelectedCommitPaths)}
-          >
-            {#if allSelectedCommitTargets}
-              <CircleMinus size={15} aria-hidden="true" />
-            {:else}
-              <CircleCheck size={15} aria-hidden="true" />
-            {/if}
-            {allSelectedCommitTargets ? "移出 Commit" : "加入 Commit"}
           </button>
         {/if}
         {#if selectedChangelistPaths.length > 0}
@@ -6457,98 +6478,29 @@
     </div>
   {/if}
 
-  {#if commitDialogOpen}
-    <div class="patch-dialog-backdrop">
-      <div
-        class="patch-dialog commit-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="commit-dialog-title"
-        tabindex="-1"
-        use:focusCommitDialog
-        on:keydown={handleCommitDialogKeydown}
-      >
-        <header>
-          <div>
-            <h2 id="commit-dialog-title">提交</h2>
-            <p>本次将提交 {commitFileCount} 个文件</p>
-          </div>
-          <button
-            type="button"
-            class="dialog-close"
-            aria-label="关闭提交对话框"
-            title="关闭"
-            on:click={closeCommitDialog}
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
-        </header>
-
-        <div class="button-row wrap">
-          <button type="button" on:click={onSelectAllCommitFiles}>全选改动</button>
-          <button type="button" on:click={onClearCommitFiles}>清除选择</button>
-          <button type="button" on:click={onClearWorkspaceDraft}>清空草稿</button>
-        </div>
-        <input
-          type="text"
-          value={commitTemplate}
-          placeholder="提交模板"
-          aria-label="提交模板"
-          on:input={(event) =>
-            onCommitTemplateInput((event.currentTarget as HTMLInputElement).value)}
-        />
-        {#if commitHistory.length > 0}
-          <select
-            bind:value={selectedCommitHistoryMessage}
-            on:change={applyCommitHistoryMessage}
-            aria-label="最近提交信息"
-          >
-            <option value="">最近提交信息</option>
-            {#each commitHistory as message}
-              <option value={message}>{message}</option>
-            {/each}
-          </select>
-        {/if}
-        <textarea
-          bind:this={commitMessageElement}
-          rows="6"
-          value={commitMessage}
-          placeholder="提交信息"
-          aria-label="提交信息"
-          on:input={(event) =>
-            onCommitMessageInput((event.currentTarget as HTMLTextAreaElement).value)}
-        ></textarea>
-        {#if commitError}
-          <p class="inline-error">{commitError}</p>
-        {/if}
-        {#if safetyCheck.blockers.length > 0 || safetyCheck.warnings.length > 0}
-          <div class="safety-box">
-            {#if safetyCheck.blockers.length > 0}
-              <strong>{safetyCheck.blockers.length} 个阻塞</strong>
-            {/if}
-            {#if safetyCheck.warnings.length > 0}
-              <span>{safetyCheck.warnings.length} 个警告</span>
-            {/if}
-            {#if unconfirmedWarningCount > 0 && safetyCheck.blockers.length === 0}
-              <button type="button" on:click={onConfirmSafetyWarnings}>
-                确认警告
-              </button>
-            {/if}
-          </div>
-        {/if}
-
-        <footer>
-          <button type="button" on:click={closeCommitDialog}>取消</button>
-          <button
-            type="button"
-            class="primary"
-            on:click={submitCommitDialog}
-            disabled={commitDisabled}
-          >
-            提交
-          </button>
-        </footer>
-      </div>
+  {#if commitDialogOpen && workspace}
+    <div class="embedded-commit-host">
+      <StandaloneCommitWindow
+        targetPath={commitTargetPath()}
+        svnExecutable={svnExecutable?.trim() || svnExecutableInput.trim() || undefined}
+        themeMode={appSettings.themeMode}
+        diffMode={appSettings.diffMode}
+        showWhitespace={appSettings.showWhitespace}
+        svnAuthenticationUsername={appSettings.svnUsername}
+        svnRememberPassword={appSettings.svnRememberPassword}
+        {svnAuthenticationLoading}
+        {svnAuthenticationError}
+        onSvnAuthenticationSubmit={onInlineSvnAuthenticationSubmit}
+        embedded={true}
+        onClose={() => {
+          closeCommitDialog();
+          onRefreshStatus();
+        }}
+        onSwitchToUpdate={() => {
+          closeCommitDialog();
+          onUpdateWorkspace();
+        }}
+      />
     </div>
   {/if}
 

@@ -195,6 +195,21 @@ export async function installWorkbenchBackendMock(page: Page) {
             revision: "12",
           };
           break;
+        case "inspect_update_target": {
+          const path = String((args.request as { path?: string } | undefined)?.path ?? "C:/repo/wc");
+          const normalized = path.replaceAll("\\", "/").replace(/\/+$/, "");
+          const root = "C:/repo/wc";
+          data = {
+            target_path: path,
+            working_copy_root: root,
+            relative_path: normalized === root ? null : normalized.slice(root.length + 1),
+            repository_url: "https://example.com/svn/trunk",
+            repository_root: "https://example.com/svn",
+            revision: "12",
+            kind: "dir",
+          };
+          break;
+        }
         case "scan_workspace_status":
           data = status;
           break;

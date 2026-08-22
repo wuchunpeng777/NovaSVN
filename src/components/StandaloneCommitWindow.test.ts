@@ -1084,6 +1084,23 @@ describe("StandaloneCommitWindow", () => {
     expect(createCommitTaskMock).not.toHaveBeenCalled();
   });
 
+  it("主界面内嵌 Commit 关闭面板但不关闭窗口", async () => {
+    const onClose = vi.fn();
+    render(StandaloneCommitWindow, {
+      props: {
+        targetPath: "C:\\repo",
+        embedded: true,
+        onClose,
+      },
+    });
+
+    const commitWindow = await screen.findByLabelText("主界面提交");
+    expect(within(commitWindow).getByText("NovaSVN Commit")).toBeInTheDocument();
+    await fireEvent.click(within(commitWindow).getByRole("button", { name: "关闭提交" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(closeWindowMock).not.toHaveBeenCalled();
+  });
+
   it("展示提交任务错误", async () => {
     createCommitTaskMock.mockRejectedValue({
       code: "COMMIT_MESSAGE_MISSING",

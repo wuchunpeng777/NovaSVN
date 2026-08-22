@@ -546,6 +546,11 @@ Certificate information:
       ],
     });
     const projects = screen.getByLabelText("项目标签");
+    expect(
+      [...projects.querySelectorAll(".project-tab > span")].map(
+        (element) => element.textContent,
+      ),
+    ).toEqual(["wc", "feature"]);
     expect(within(projects).getByText("feature")).toBeInTheDocument();
     expect(within(projects).getByText("wc")).toBeInTheDocument();
   });
@@ -612,8 +617,11 @@ Certificate information:
     screen.getByRole("button", { name: "添加工作副本" }).click();
     const projects = screen.getByLabelText("项目标签");
     await waitFor(() => {
-      expect(within(projects).getByText("project-a")).toBeInTheDocument();
-      expect(within(projects).getByText("project-b")).toBeInTheDocument();
+      expect(
+        [...projects.querySelectorAll(".project-tab > span")].map(
+          (element) => element.textContent,
+        ),
+      ).toEqual(["project-a", "project-b"]);
     });
 
     const previousProjectButton = within(projects).getByText("project-a").closest("button")!;
