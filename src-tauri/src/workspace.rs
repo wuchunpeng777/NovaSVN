@@ -11,7 +11,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use quick_xml::{
     encoding::Decoder,
     escape::{resolve_xml_entity, unescape},
-    events::{attributes::Attribute, Event},
+    events::{attributes::Attribute, BytesStart, Event},
     Reader as XmlReader,
 };
 use roxmltree::Document;
@@ -2103,6 +2103,10 @@ fn read_versioned_workspace_paths(
     }
 
     if !status.success() {
+        // 未版本控制 / externals 等目录的 svn info 常以空 <info> 失败，仍按文件系统列出。
+        if scope_path.is_some() {
+            return Ok(paths_result.unwrap_or_default());
+        }
         return Err(NovaError::command(
             "SVN_FILE_TREE_INFO_FAILED",
             "无法读取文件树的 SVN 版本控制信息",
@@ -2322,61 +2326,27 @@ fn parse_versioned_workspace_paths_reader_with_limit<R: BufRead>(
         })?;
         match event {
             Event::Start(start) if start.name().as_ref() == b"entry" => {
-                entry_count = entry_count.saturating_add(1);
-                if entry_count > max_paths.saturating_add(1) {
-                    return Err(NovaError::command(
-                        "SVN_FILE_TREE_INFO_LIMIT_EXCEEDED",
-                        "工作副本包含过多版本控制路径",
-                        Some(format!("svn info 路径数超过安全上限 {max_paths}")),
-                        true,
-                    ));
-                }
-                let mut path = None;
-                let mut base_revision = 0;
-                for attribute in start.attributes() {
-                    let attribute = attribute.map_err(|error| {
-                        svn_file_tree_info_xml_error(format!(
-                            "svn info entry 属性无法解析：{error}"
-                        ))
-                    })?;
-                    if attribute.key.as_ref() == b"path" {
-                        path = Some(
-                            attribute
-                                .decode_and_unescape_value(reader.decoder())
-                                .map_err(|error| {
-                                    svn_file_tree_info_xml_error(format!(
-                                        "svn info entry path 解码失败：{error}"
-                                    ))
-                                })?
-                                .into_owned(),
-                        );
-                    } else if attribute.key.as_ref() == b"revision" {
-                        base_revision = parse_streaming_revision_attribute(
-                            &attribute,
-                            reader.decoder(),
-                            "entry revision",
-                        )?;
-                    }
-                }
-                let path = path.ok_or_else(|| {
-                    svn_file_tree_info_xml_error("svn info entry 缺少 path 属性".to_string())
-                })?;
-                if path.len() > MAX_SVN_INFO_PATH_BYTES {
-                    return Err(NovaError::command(
-                        "SVN_FILE_TREE_INFO_PATH_TOO_LONG",
-                        "SVN 文件树信息包含过长路径",
-                        Some(format!("单个路径超过 {MAX_SVN_INFO_PATH_BYTES} 字节")),
-                        true,
-                    ));
-                }
-                current_entry = Some(StreamingInfoEntry {
-                    path,
-                    wc_root: String::new(),
-                    base_revision,
-                    last_revision: 0,
-                    author: String::new(),
-                    date: String::new(),
-                });
+                current_entry = Some(parse_streaming_info_entry_start(
+                    &start,
+                    reader.decoder(),
+                    &mut entry_count,
+                    max_paths,
+                )?);
+            }
+            Event::Empty(empty) if empty.name().as_ref() == b"entry" => {
+                let entry = parse_streaming_info_entry_start(
+                    &empty,
+                    reader.decoder(),
+                    &mut entry_count,
+                    max_paths,
+                )?;
+                process_streaming_info_entry(
+                    entry,
+                    canonical_root,
+                    &mut reported_root,
+                    &mut pending_entries,
+                    &mut paths,
+                )?;
             }
             Event::Start(start) if start.name().as_ref() == b"commit" => {
                 if let Some(entry) = current_entry.as_mut() {
@@ -2469,18 +2439,68 @@ fn parse_versioned_workspace_paths_reader_with_limit<R: BufRead>(
         buffer.clear();
     }
 
-    let Some(reported_root) = reported_root else {
-        return Err(NovaError::command(
-            "SVN_FILE_TREE_INFO_ROOT_MISSING",
-            "SVN 文件树信息缺少工作副本根节点",
-            None,
-            true,
-        ));
-    };
+    let reported_root = reported_root.unwrap_or_default();
     for entry in pending_entries {
         insert_streaming_info_path(entry, &reported_root, canonical_root, &mut paths)?;
     }
     Ok(paths)
+}
+
+fn parse_streaming_info_entry_start(
+    start: &BytesStart<'_>,
+    decoder: Decoder,
+    entry_count: &mut usize,
+    max_paths: usize,
+) -> Result<StreamingInfoEntry, NovaError> {
+    *entry_count = entry_count.saturating_add(1);
+    if *entry_count > max_paths.saturating_add(1) {
+        return Err(NovaError::command(
+            "SVN_FILE_TREE_INFO_LIMIT_EXCEEDED",
+            "工作副本包含过多版本控制路径",
+            Some(format!("svn info 路径数超过安全上限 {max_paths}")),
+            true,
+        ));
+    }
+    let mut path = None;
+    let mut base_revision = 0;
+    for attribute in start.attributes() {
+        let attribute = attribute.map_err(|error| {
+            svn_file_tree_info_xml_error(format!("svn info entry 属性无法解析：{error}"))
+        })?;
+        if attribute.key.as_ref() == b"path" {
+            path = Some(
+                attribute
+                    .decode_and_unescape_value(decoder)
+                    .map_err(|error| {
+                        svn_file_tree_info_xml_error(format!(
+                            "svn info entry path 解码失败：{error}"
+                        ))
+                    })?
+                    .into_owned(),
+            );
+        } else if attribute.key.as_ref() == b"revision" {
+            base_revision =
+                parse_streaming_revision_attribute(&attribute, decoder, "entry revision")?;
+        }
+    }
+    let path = path
+        .ok_or_else(|| svn_file_tree_info_xml_error("svn info entry 缺少 path 属性".to_string()))?;
+    if path.len() > MAX_SVN_INFO_PATH_BYTES {
+        return Err(NovaError::command(
+            "SVN_FILE_TREE_INFO_PATH_TOO_LONG",
+            "SVN 文件树信息包含过长路径",
+            Some(format!("单个路径超过 {MAX_SVN_INFO_PATH_BYTES} 字节")),
+            true,
+        ));
+    }
+    Ok(StreamingInfoEntry {
+        path,
+        wc_root: String::new(),
+        base_revision,
+        last_revision: 0,
+        author: String::new(),
+        date: String::new(),
+    })
 }
 
 fn append_streaming_info_text(
@@ -2530,22 +2550,36 @@ fn process_streaming_info_entry(
     let root = entry.wc_root.trim();
     if entry.path == "." {
         if root.is_empty() {
-            return Err(NovaError::command(
-                "SVN_FILE_TREE_INFO_ROOT_MISSING",
-                "SVN 文件树信息缺少工作副本根路径",
-                None,
-                true,
-            ));
+            if reported_root.is_none() {
+                *reported_root = Some(String::new());
+            }
+            return Ok(());
         }
-        validate_reported_workspace_root(root, canonical_root)?;
-        *reported_root = Some(root.to_string());
+        match classify_reported_workspace_root(root, canonical_root)? {
+            WorkspaceRootRelation::Current => {
+                *reported_root = Some(root.to_string());
+            }
+            WorkspaceRootRelation::Nested => {}
+            WorkspaceRootRelation::Foreign => {
+                return Err(workspace_root_mismatch_error(root, canonical_root));
+            }
+        }
         return Ok(());
     }
 
-    if reported_root.is_none() && !root.is_empty() {
-        validate_reported_workspace_root(root, canonical_root)?;
-        *reported_root = Some(root.to_string());
+    if !root.is_empty() {
+        match classify_reported_workspace_root(root, canonical_root) {
+            Ok(WorkspaceRootRelation::Current) => {
+                if reported_root.as_deref().unwrap_or_default().is_empty() {
+                    *reported_root = Some(root.to_string());
+                }
+            }
+            Ok(WorkspaceRootRelation::Nested | WorkspaceRootRelation::Foreign) | Err(_) => {
+                return Ok(());
+            }
+        }
     }
+
     if let Some(root) = reported_root.as_deref() {
         insert_streaming_info_path(entry, root, canonical_root, paths)?;
     } else {
@@ -2554,10 +2588,17 @@ fn process_streaming_info_entry(
     Ok(())
 }
 
-fn validate_reported_workspace_root(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkspaceRootRelation {
+    Current,
+    Nested,
+    Foreign,
+}
+
+fn classify_reported_workspace_root(
     reported_root: &str,
     canonical_root: &Path,
-) -> Result<(), NovaError> {
+) -> Result<WorkspaceRootRelation, NovaError> {
     let canonical_reported_root = fs::canonicalize(reported_root).map_err(|error| {
         NovaError::command(
             "SVN_FILE_TREE_INFO_ROOT_INVALID",
@@ -2566,19 +2607,26 @@ fn validate_reported_workspace_root(
             true,
         )
     })?;
-    if canonical_reported_root != canonical_root {
-        return Err(NovaError::command(
-            "SVN_FILE_TREE_INFO_ROOT_MISMATCH",
-            "SVN 文件树信息不属于当前工作副本",
-            Some(format!(
-                "当前工作副本：{}。SVN 返回：{}。",
-                canonical_root.display(),
-                canonical_reported_root.display()
-            )),
-            true,
-        ));
+    if canonical_reported_root == canonical_root {
+        Ok(WorkspaceRootRelation::Current)
+    } else if canonical_reported_root.starts_with(canonical_root) {
+        Ok(WorkspaceRootRelation::Nested)
+    } else {
+        Ok(WorkspaceRootRelation::Foreign)
     }
-    Ok(())
+}
+
+fn workspace_root_mismatch_error(reported_root: &str, canonical_root: &Path) -> NovaError {
+    NovaError::command(
+        "SVN_FILE_TREE_INFO_ROOT_MISMATCH",
+        "SVN 文件树信息不属于当前工作副本",
+        Some(format!(
+            "当前工作副本：{}。SVN 返回：{}。",
+            canonical_root.display(),
+            reported_root
+        )),
+        true,
+    )
 }
 
 fn insert_streaming_info_path(
@@ -2587,13 +2635,31 @@ fn insert_streaming_info_path(
     canonical_root: &Path,
     paths: &mut VersionedWorkspaceIndex,
 ) -> Result<(), NovaError> {
-    if entry.wc_root.trim() != reported_root {
+    if !entry_belongs_to_current_workspace(&entry.wc_root, reported_root, canonical_root) {
         return Ok(());
     }
     if let Some(relative_path) = info_entry_relative_path(&entry.path, canonical_root) {
         paths.insert(relative_path, &entry)?;
     }
     Ok(())
+}
+
+fn entry_belongs_to_current_workspace(
+    entry_wc_root: &str,
+    reported_root: &str,
+    canonical_root: &Path,
+) -> bool {
+    let entry_root = entry_wc_root.trim();
+    if entry_root.is_empty() {
+        return true;
+    }
+    if !reported_root.is_empty() && entry_root == reported_root {
+        return true;
+    }
+    matches!(
+        classify_reported_workspace_root(entry_root, canonical_root),
+        Ok(WorkspaceRootRelation::Current)
+    )
 }
 
 fn svn_file_tree_info_xml_error(detail: String) -> NovaError {
@@ -6067,6 +6133,88 @@ line two</property>
     }
 
     #[test]
+    fn parses_versioned_paths_without_wcroot_or_dot_entry() {
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-versioned-paths-implicit-root-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let canonical_root = fs::canonicalize(&root).unwrap();
+
+        let paths = parse_versioned_workspace_paths(
+            "<info><entry path=\"tracked.txt\" /></info>",
+            &canonical_root,
+        )
+        .expect("missing root node must not fail the file tree");
+        assert!(paths.contains("tracked.txt"));
+
+        let empty = parse_versioned_workspace_paths("<info></info>", &canonical_root)
+            .expect("empty svn info must not fail the file tree");
+        assert!(!empty.contains("tracked.txt"));
+
+        let scoped = parse_versioned_workspace_paths(
+            &format!(
+                r#"<info>
+  <entry path="src">
+    <wc-info><wcroot-abspath>{}</wcroot-abspath></wc-info>
+  </entry>
+  <entry path="src/main.ts">
+    <wc-info><wcroot-abspath>{}</wcroot-abspath></wc-info>
+  </entry>
+</info>"#,
+                canonical_root.display(),
+                canonical_root.display()
+            ),
+            &canonical_root,
+        )
+        .expect("scoped info without a dot entry must parse");
+        assert!(scoped.contains("src"));
+        assert!(scoped.contains("src/main.ts"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn skips_nested_working_copy_info_without_failing_the_tree() {
+        let root = std::env::temp_dir().join(format!(
+            "novasvn-versioned-paths-nested-root-test-{}",
+            std::process::id()
+        ));
+        let nested = root.join("external");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&nested).unwrap();
+        let canonical_root = fs::canonicalize(&root).unwrap();
+        let xml = format!(
+            r#"<info>
+  <entry path="external">
+    <wc-info><wcroot-abspath>{}</wcroot-abspath></wc-info>
+  </entry>
+  <entry path="external/nested.txt">
+    <wc-info><wcroot-abspath>{}</wcroot-abspath></wc-info>
+  </entry>
+</info>"#,
+            nested.display(),
+            nested.display()
+        );
+
+        let paths = parse_versioned_workspace_paths(&xml, &canonical_root)
+            .expect("nested working copy info must not fail the parent file tree");
+        assert!(!paths.contains("external"));
+        assert!(!paths.contains("external/nested.txt"));
+
+        let nested_dot_xml = format!(
+            "<info><entry path=\".\"><wc-info><wcroot-abspath>{}</wcroot-abspath></wc-info></entry></info>",
+            nested.display()
+        );
+        let nested_dot = parse_versioned_workspace_paths(&nested_dot_xml, &canonical_root)
+            .expect("nested working copy root entry must not fail the parent file tree");
+        assert!(!nested_dot.contains("external"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn rejects_versioned_path_info_without_matching_root() {
         let root = std::env::temp_dir().join(format!(
             "novasvn-versioned-paths-root-test-{}",
@@ -6075,18 +6223,6 @@ line two</property>
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         let canonical_root = fs::canonicalize(&root).unwrap();
-
-        let error = parse_versioned_workspace_paths(
-            "<info><entry path=\"tracked.txt\" /></info>",
-            &canonical_root,
-        )
-        .expect_err("missing root must fail");
-
-        match error {
-            NovaError::Command { code, .. } => {
-                assert_eq!(code, "SVN_FILE_TREE_INFO_ROOT_MISSING");
-            }
-        }
 
         let foreign_root = std::env::temp_dir().join(format!(
             "novasvn-versioned-paths-mismatch-test-{}",
@@ -6659,6 +6795,9 @@ line two</property>
         );
         run_test_command(Command::new("svn").arg("update").arg(&working_copy));
         fs::write(working_copy.join("ignored.txt"), "ignored").expect("write ignored file");
+        fs::create_dir_all(working_copy.join("local-only")).expect("create unversioned directory");
+        fs::write(working_copy.join("local-only/scratch.txt"), "scratch")
+            .expect("write unversioned file");
 
         let tree = list_workspace_files(ListWorkspaceFilesRequest {
             working_copy_root: working_copy.display().to_string(),
@@ -6707,6 +6846,27 @@ line two</property>
                 .is_some_and(|node| node.kind == "file" && node.versioned)
         );
         assert!(find_workspace_node(&scoped_tree.nodes, "tracked.txt").is_none());
+
+        let unversioned_tree = list_workspace_files(ListWorkspaceFilesRequest {
+            working_copy_root: working_copy.display().to_string(),
+            scope_path: Some("local-only".to_string()),
+            svn_executable: None,
+            max_files: Some(100),
+        })
+        .expect("unversioned directory still lists files");
+        assert!(
+            find_workspace_node(&unversioned_tree.nodes, "local-only/scratch.txt")
+                .is_some_and(|node| node.kind == "file" && !node.versioned)
+        );
+
+        let external_tree = list_workspace_files(ListWorkspaceFilesRequest {
+            working_copy_root: working_copy.display().to_string(),
+            scope_path: Some("external".to_string()),
+            svn_executable: None,
+            max_files: Some(100),
+        })
+        .expect("external directory still lists files");
+        assert!(find_workspace_node(&external_tree.nodes, "external/nested.txt").is_some());
 
         let _ = fs::remove_dir_all(root);
     }

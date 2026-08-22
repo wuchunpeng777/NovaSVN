@@ -3757,8 +3757,10 @@ fn run_svn_operation_task(
         run_task_command(state, task_id, &mut command)
     };
     match command_result {
-        Ok(output) if output.status.success()
-            || (stream_update_output && svn_update_finished_successfully(&output)) => {
+        Ok(output)
+            if output.status.success()
+                || (stream_update_output && svn_update_finished_successfully(&output)) =>
+        {
             if !stream_update_output {
                 append_command_output(state, task_id, &output);
             }
@@ -7864,8 +7866,7 @@ fn merge_should_succeed(
     output_text: &str,
 ) -> bool {
     status_success
-        || (exit_code == Some(1)
-            && (conflicted > 0 || svn_text_reports_conflicts(output_text)))
+        || (exit_code == Some(1) && (conflicted > 0 || svn_text_reports_conflicts(output_text)))
 }
 
 fn merge_finished_successfully(output: &MergeCommandResult) -> bool {

@@ -76,6 +76,9 @@ describe("StandaloneRevertWindow", () => {
     expect(within(pane).queryByText("src/untracked.ts")).not.toBeInTheDocument();
     expect(within(pane).queryByText("other.ts")).not.toBeInTheDocument();
     expect(within(pane).getAllByRole("checkbox")).toHaveLength(2);
+    expect(within(pane).getByRole("checkbox", { name: "src/main.ts" })).not.toBeChecked();
+    expect(within(pane).getByRole("checkbox", { name: "src/new.ts" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Revert 0 个项目" })).toBeDisabled();
     expect(scanWorkspaceStatusMock).toHaveBeenCalledWith({
       working_copy_root: "C:\\repo",
       scope_path: "src",
@@ -88,6 +91,7 @@ describe("StandaloneRevertWindow", () => {
       check_remote_updates: false,
     });
 
+    await fireEvent.click(screen.getByRole("button", { name: "全选" }));
     await fireEvent.click(screen.getByRole("button", { name: "Revert 2 个项目" }));
     const dialog = screen.getByRole("dialog", { name: "确认 Revert" });
     expect(within(dialog).getByText("src/main.ts")).toBeInTheDocument();
@@ -110,7 +114,7 @@ describe("StandaloneRevertWindow", () => {
     render(StandaloneRevertWindow, { props: { targetPath: "C:\\repo\\src" } });
     const pane = await screen.findByLabelText("选择 Revert 项目");
     await within(pane).findByText("src/main.ts");
-    await fireEvent.click(within(pane).getByRole("checkbox", { name: "src/new.ts" }));
+    await fireEvent.click(within(pane).getByRole("checkbox", { name: "src/main.ts" }));
 
     await fireEvent.click(screen.getByRole("button", { name: "Revert 1 个项目" }));
     const dialog = screen.getByRole("dialog", { name: "确认 Revert" });
@@ -145,8 +149,8 @@ describe("StandaloneRevertWindow", () => {
     expect(within(pane).getByText("C")).toHaveAttribute("data-action", "C");
     expect(within(pane).getByText(/本地已删除/)).toBeInTheDocument();
     expect(within(pane).getByText(/1 个冲突（含树冲突）/)).toBeInTheDocument();
-    expect(within(pane).getByRole("checkbox", { name: "src/tree.ts" })).toBeChecked();
-    expect(screen.getByRole("button", { name: "Revert 2 个项目" })).toBeEnabled();
+    expect(within(pane).getByRole("checkbox", { name: "src/tree.ts" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Revert 0 个项目" })).toBeDisabled();
     expect(within(pane).getByRole("button", { name: "保持删除 src/tree.ts" })).toBeEnabled();
     expect(within(pane).getByRole("button", { name: "恢复仓库版本 src/tree.ts" })).toBeEnabled();
 
@@ -176,7 +180,8 @@ describe("StandaloneRevertWindow", () => {
     const pane = await screen.findByLabelText("选择 Revert 项目");
     expect(await within(pane).findByText("src")).toBeInTheDocument();
     expect(within(pane).getByTitle("属性修改")).toHaveTextContent("M");
-    expect(within(pane).getByRole("checkbox", { name: "src" })).toBeChecked();
+    expect(within(pane).getByRole("checkbox", { name: "src" })).not.toBeChecked();
+    await fireEvent.click(within(pane).getByRole("checkbox", { name: "src" }));
 
     await fireEvent.click(screen.getByRole("button", { name: "Revert 1 个项目" }));
     await fireEvent.click(
@@ -200,6 +205,7 @@ describe("StandaloneRevertWindow", () => {
     const pane = await screen.findByLabelText("选择 Revert 项目");
     await within(pane).findByText("src/main.ts");
 
+    await fireEvent.click(screen.getByRole("button", { name: "全选" }));
     await fireEvent.click(screen.getByRole("button", { name: "Revert 2 个项目" }));
     expect(screen.getByRole("dialog", { name: "确认 Revert" })).toBeInTheDocument();
     await fireEvent.keyDown(window, { key: "Escape" });
@@ -217,6 +223,7 @@ describe("StandaloneRevertWindow", () => {
     const autoClose = screen.getByRole("checkbox", { name: "Revert 完成后自动关闭" });
     expect(autoClose).not.toBeChecked();
     await fireEvent.click(autoClose);
+    await fireEvent.click(screen.getByRole("button", { name: "全选" }));
     await fireEvent.click(screen.getByRole("button", { name: "Revert 2 个项目" }));
     await fireEvent.click(
       within(screen.getByRole("dialog", { name: "确认 Revert" })).getByRole("button", {
@@ -253,6 +260,7 @@ describe("StandaloneRevertWindow", () => {
     render(StandaloneRevertWindow, { props: { targetPath: "C:\\repo\\src" } });
     await screen.findByText("src/main.ts");
 
+    await fireEvent.click(screen.getByRole("button", { name: "全选" }));
     await fireEvent.click(screen.getByRole("button", { name: "Revert 2 个项目" }));
     await fireEvent.click(
       within(screen.getByRole("dialog", { name: "确认 Revert" })).getByRole("button", {
@@ -273,6 +281,7 @@ describe("StandaloneRevertWindow", () => {
     await screen.findByText("src/main.ts");
 
     await fireEvent.click(screen.getByRole("checkbox", { name: "Revert 完成后自动关闭" }));
+    await fireEvent.click(screen.getByRole("button", { name: "全选" }));
     await fireEvent.click(screen.getByRole("button", { name: "Revert 2 个项目" }));
     await fireEvent.click(
       within(screen.getByRole("dialog", { name: "确认 Revert" })).getByRole("button", {

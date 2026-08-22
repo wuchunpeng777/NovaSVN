@@ -195,7 +195,7 @@
         .map((file) => file.path);
       selectedPaths = preserveSelection
         ? new Set(inScope.filter((path) => selectedPaths.has(path)))
-        : new Set(inScope);
+        : new Set();
     } catch (caught) {
       if (currentGeneration === generation) {
         statusError = caught as CommandError;
