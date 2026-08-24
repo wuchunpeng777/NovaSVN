@@ -3934,6 +3934,8 @@
                 : workingCopyStatus?.revision_range ?? workspace?.revision ?? null),
             )}
             theme={resolvedTheme}
+            repositoryRoot={svnLog?.repository_root ?? workspace?.repository_root}
+            repositoryUrl={svnLog?.repository_url ?? workspace?.repository_url}
             emptyText="暂无修订历史"
             loadingText="正在读取日志"
             formatDate={formatTimelineDate}
@@ -4038,6 +4040,8 @@
                 selectedRevisions={selectedTimelineMergeRevisions}
                 diffLoading={revisionFileDiffLoading}
                 theme={resolvedTheme}
+                repositoryRoot={svnLog?.repository_root ?? workspace?.repository_root}
+                repositoryUrl={svnLog?.repository_url ?? workspace?.repository_url}
                 onOpenDiff={openTimelineEntryDiff}
               />
             {/if}

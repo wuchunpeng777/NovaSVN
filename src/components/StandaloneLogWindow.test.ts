@@ -574,9 +574,15 @@ describe("StandaloneLogWindow", () => {
     changedPaths = screen.getByLabelText("已选 Revision 文件变化");
     expect(within(changedPaths).getByText("/branches/release/older.ts")).toBeInTheDocument();
     expect(within(changedPaths).getAllByText("/trunk/src/main.ts")).toHaveLength(1);
+    expect(
+      within(changedPaths).getByRole("button", {
+        name: "查看 r18 的 /branches/release/older.ts diff（不在当前文件夹内）",
+      }),
+    ).toHaveClass("outside-log-target");
     const sharedPath = within(changedPaths).getByRole("button", {
       name: "查看 r20 的 /trunk/src/main.ts diff",
     });
+    expect(sharedPath).not.toHaveClass("outside-log-target");
     expect(within(sharedPath).getByLabelText("状态 A、M")).toBeInTheDocument();
     expect(within(changedPaths).getByText("2 个 Revision，2 个路径")).toBeInTheDocument();
     const toolbar = screen.getByRole("toolbar", { name: "Revision 批量操作" });

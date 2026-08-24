@@ -125,6 +125,67 @@ export function suggestExportLocalPath(
   return `${parent}${separator}${directoryName}`;
 }
 
+/** Repository-absolute path of the log target, e.g. `/trunk/src`. `/` means repository root. */
+export function logTargetRepositoryPath(
+  repositoryRoot: string | null | undefined,
+  repositoryUrl: string | null | undefined,
+) {
+  const root = normalizeRepositoryUrl(repositoryRoot);
+  const url = normalizeRepositoryUrl(repositoryUrl);
+  if (!root || !url) {
+    return null;
+  }
+  if (url === root) {
+    return "/";
+  }
+  if (!url.startsWith(`${root}/`)) {
+    return null;
+  }
+  const remainder = url.slice(root.length);
+  return remainder || "/";
+}
+
+/** True when a changed path is under the log target folder (or is the target file). Unknown scope stays visible. */
+export function isChangedPathInLogTarget(
+  changedPath: string,
+  targetRepositoryPath: string | null | undefined,
+) {
+  if (targetRepositoryPath == null || targetRepositoryPath === "" || targetRepositoryPath === "/") {
+    return true;
+  }
+  const path = normalizeRepositoryPath(changedPath);
+  const target = normalizeRepositoryPath(targetRepositoryPath);
+  if (!path || !target || target === "/") {
+    return true;
+  }
+  return path === target || path.startsWith(`${target}/`);
+}
+
+function normalizeRepositoryUrl(value: string | null | undefined) {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) {
+    return "";
+  }
+  return decodeRepositoryValue(trimmed.replace(/\/+$/, "").replace(/@\d+$/, ""));
+}
+
+function normalizeRepositoryPath(value: string) {
+  const trimmed = decodeRepositoryValue(value.trim().replaceAll("\\", "/"));
+  if (!trimmed) {
+    return "";
+  }
+  const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return withSlash.replace(/\/+$/, "") || "/";
+}
+
+function decodeRepositoryValue(value: string) {
+  try {
+    return decodeURI(value);
+  } catch {
+    return value;
+  }
+}
+
 export function repositoryPathUrl(
   repositoryRoot: string | null | undefined,
   repositoryPath: string,

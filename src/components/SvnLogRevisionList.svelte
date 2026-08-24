@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Check, ChevronDown, ChevronUp, Clipboard, Download, FolderClock, Undo2 } from "@lucide/svelte";
   import { onDestroy } from "svelte";
-  import { summarizeSvnChangeActions } from "../lib/svn-log";
+  import { isChangedPathInLogTarget, logTargetRepositoryPath, summarizeSvnChangeActions } from "../lib/svn-log";
   import type { SvnChangedPath, SvnLogEntry } from "../types/api";
 
   export let entries: SvnLogEntry[] = [];
@@ -16,6 +16,8 @@
   export let currentRevision: string | null = null;
   export let effectiveRevision: string | null = null;
   export let theme: "light" | "dark" = "light";
+  export let repositoryRoot: string | null | undefined = null;
+  export let repositoryUrl: string | null | undefined = null;
   export let emptyText = "没有可显示的日志记录";
   export let loadingText = "正在读取日志...";
   export let filteredEmptyText = "没有符合当前过滤条件的 revision";
@@ -48,9 +50,18 @@
 
   $: normalizedBaselineRevision = normalizeRevision(currentRevision);
   $: normalizedEffectiveRevision = normalizeRevision(effectiveRevision ?? currentRevision);
+  $: logScopePath = logTargetRepositoryPath(repositoryRoot, repositoryUrl);
   $: hasBaselineRevisionEntry = entries.some(
     (entry) => normalizeRevision(entry.revision) === normalizedBaselineRevision,
   );
+
+  function pathInLogTarget(path: string) {
+    return isChangedPathInLogTarget(path, logScopePath);
+  }
+
+  function changedPathTitle(path: string) {
+    return pathInLogTarget(path) ? path : `${path}（不在当前文件夹内）`;
+  }
 
   onDestroy(() => {
     if (copiedTimer !== null) {
@@ -260,17 +271,22 @@
             aria-label={`r${entry.revision} 改变路径`}
           >
             {#each entry.changed_paths as path (`${entry.revision}:${path.action}:${path.path}`)}
-              <div class="svn-log-changed-path">
+              {@const inLogTarget = pathInLogTarget(path.path)}
+              <div
+                class="svn-log-changed-path"
+                class:outside-log-target={!inLogTarget}
+              >
                 <span class="svn-log-change-action" data-action={path.action}>
                   {path.action || "-"}
                 </span>
                 {#if path.kind === "dir"}
-                  <code>{path.path}</code>
+                  <code title={changedPathTitle(path.path)}>{path.path}</code>
                 {:else}
                   <button
                     type="button"
                     class="svn-log-changed-path-button"
-                    aria-label={`查看 r${entry.revision} 的 ${path.path} diff`}
+                    aria-label={`查看 r${entry.revision} 的 ${path.path} diff${inLogTarget ? "" : "（不在当前文件夹内）"}`}
+                    title={changedPathTitle(path.path)}
                     disabled={diffLoading}
                     on:click={() => onOpenDiff(entry, path)}
                     on:contextmenu={(event) => onOpenContextMenu(event, entry, path)}
@@ -563,6 +579,24 @@
   .svn-log-changed-path-button:disabled {
     background: transparent;
     color: var(--log-secondary);
+  }
+
+  .svn-log-changed-path.outside-log-target,
+  .svn-log-changed-path.outside-log-target code,
+  .svn-log-changed-path.outside-log-target .svn-log-changed-path-button,
+  .svn-log-changed-path.outside-log-target small {
+    color: var(--log-secondary);
+  }
+
+  .svn-log-changed-path.outside-log-target .svn-log-change-action {
+    opacity: 0.55;
+  }
+
+  .svn-log-changed-path.outside-log-target .svn-log-changed-path-button:hover,
+  .svn-log-changed-path.outside-log-target .svn-log-changed-path-button:focus-visible {
+    background: color-mix(in srgb, var(--log-secondary) 12%, transparent);
+    color: var(--log-secondary);
+    outline: 1px solid color-mix(in srgb, var(--log-secondary) 40%, transparent);
   }
 
   .svn-log-changed-path small {

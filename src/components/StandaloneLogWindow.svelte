@@ -986,6 +986,8 @@
       {effectiveRevision}
       theme={resolvedTheme}
       {formatDate}
+      repositoryRoot={log?.repository_root ?? repositoryRoot}
+      repositoryUrl={log?.repository_url}
       revertDisabled={() => !log?.working_copy_root || loading || revertRunning || exportRunning}
       revertTitle={(entry) => log?.working_copy_root
         ? `撤销提交 r${entry.revision}`
@@ -1086,6 +1088,8 @@
         selectedRevisions={selectedMergeRevisions}
         diffLoading={revisionDiffLoading}
         theme={resolvedTheme}
+        repositoryRoot={log?.repository_root ?? repositoryRoot}
+        repositoryUrl={log?.repository_url}
         onOpenDiff={openChangedPathDiff}
         onOpenContextMenu={openChangedPathContextMenu}
       />

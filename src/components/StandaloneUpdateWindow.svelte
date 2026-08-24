@@ -1435,6 +1435,8 @@
             hasLoadError={fileLogError !== null}
             expandedRevisions={expandedFileLogRevisions}
             theme={resolvedTheme}
+            repositoryRoot={fileLog?.repository_root}
+            repositoryUrl={fileLog?.repository_url}
             formatDate={formatLogDate}
             emptyText="没有可显示的 Log"
             onTogglePaths={toggleFileLogPaths}

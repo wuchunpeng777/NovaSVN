@@ -1,11 +1,14 @@
 <script lang="ts">
   import { File, Folder, ListTree } from "@lucide/svelte";
+  import { isChangedPathInLogTarget, logTargetRepositoryPath } from "../lib/svn-log";
   import type { SvnChangedPath, SvnLogEntry } from "../types/api";
 
   export let entries: SvnLogEntry[] = [];
   export let selectedRevisions: string[] = [];
   export let diffLoading = false;
   export let theme: "light" | "dark" = "light";
+  export let repositoryRoot: string | null | undefined = null;
+  export let repositoryUrl: string | null | undefined = null;
   export let onOpenDiff: (entry: SvnLogEntry, path: SvnChangedPath) => void = () => {};
   export let onOpenContextMenu: (
     event: MouseEvent,
@@ -82,6 +85,15 @@
     .map((revision) => entriesByRevision.get(revision))
     .filter((entry): entry is SvnLogEntry => entry !== undefined);
   $: selectedChangedPaths = collectChangedPaths(selectedEntries);
+  $: logScopePath = logTargetRepositoryPath(repositoryRoot, repositoryUrl);
+
+  function pathInLogTarget(path: string) {
+    return isChangedPathInLogTarget(path, logScopePath);
+  }
+
+  function changedPathTitle(path: string) {
+    return pathInLogTarget(path) ? path : `${path}（不在当前文件夹内）`;
+  }
 </script>
 
 <aside
@@ -103,21 +115,25 @@
         {#each selectedChangedPaths as changedPath (changedPath.path.path)}
           {@const { entry, path, actions } = changedPath}
           {#if path.kind === "dir"}
-            <div class="path-row directory">
+            <div
+              class="path-row directory"
+              class:outside-log-target={!pathInLogTarget(path.path)}
+            >
               <span class="change-actions" aria-label={`状态 ${actions.join("、")}`}>
                 {#each actions as action (action)}
                   <span class="change-action" data-action={action}>{action}</span>
                 {/each}
               </span>
               <span class="path-icon" aria-hidden="true"><Folder size={15} /></span>
-              <code title={path.path}>{path.path}</code>
+              <code title={changedPathTitle(path.path)}>{path.path}</code>
               <small>目录</small>
             </div>
           {:else}
             <button
               type="button"
               class="path-row"
-              aria-label={`查看 r${entry.revision} 的 ${path.path} diff`}
+              class:outside-log-target={!pathInLogTarget(path.path)}
+              aria-label={`查看 r${entry.revision} 的 ${path.path} diff${pathInLogTarget(path.path) ? "" : "（不在当前文件夹内）"}`}
               disabled={diffLoading}
               on:click={() => onOpenDiff(entry, path)}
               on:contextmenu={(event) => onOpenContextMenu(event, entry, path)}
@@ -128,7 +144,7 @@
                 {/each}
               </span>
               <span class="path-icon" aria-hidden="true"><File size={15} /></span>
-              <code title={path.path}>{path.path}</code>
+              <code title={changedPathTitle(path.path)}>{path.path}</code>
               <small>文件</small>
             </button>
           {/if}
@@ -253,6 +269,23 @@
   button.path-row:disabled {
     color: var(--details-secondary);
     cursor: default;
+  }
+
+  .path-row.outside-log-target,
+  .path-row.outside-log-target code,
+  .path-row.outside-log-target small,
+  .path-row.outside-log-target .path-icon {
+    color: var(--details-secondary);
+  }
+
+  .path-row.outside-log-target .change-action {
+    opacity: 0.55;
+  }
+
+  button.path-row.outside-log-target:hover:not(:disabled),
+  button.path-row.outside-log-target:focus-visible {
+    background: color-mix(in srgb, var(--details-secondary) 12%, var(--details-panel));
+    color: var(--details-secondary);
   }
 
   .path-icon {

@@ -169,4 +169,49 @@ describe("SvnLogRevisionList", () => {
     expect(boundary).toHaveTextContent("工作副本基准 r43");
     expect(boundary.nextElementSibling).toHaveTextContent("r42");
   });
+
+  it("greys changed paths that sit outside the current log folder", () => {
+    render(SvnLogRevisionList, {
+      props: {
+        entries: [
+          {
+            revision: "42",
+            author: "alice",
+            date: "2026-07-22T10:30:00Z",
+            message: "Mixed paths",
+            changed_paths: [
+              {
+                path: "/trunk/src/main.ts",
+                action: "M",
+                kind: "file",
+                copy_from_path: null,
+                copy_from_revision: null,
+              },
+              {
+                path: "/trunk/docs/readme.md",
+                action: "M",
+                kind: "file",
+                copy_from_path: null,
+                copy_from_revision: null,
+              },
+            ],
+          },
+        ],
+        totalEntries: 1,
+        expandedRevisions: new Set(["42"]),
+        repositoryRoot: "https://svn.example.test/repo",
+        repositoryUrl: "https://svn.example.test/repo/trunk/src",
+      },
+    });
+
+    const inScope = screen.getByRole("button", {
+      name: "查看 r42 的 /trunk/src/main.ts diff",
+    });
+    const outside = screen.getByRole("button", {
+      name: "查看 r42 的 /trunk/docs/readme.md diff（不在当前文件夹内）",
+    });
+    expect(inScope.closest(".svn-log-changed-path")).not.toHaveClass("outside-log-target");
+    expect(outside.closest(".svn-log-changed-path")).toHaveClass("outside-log-target");
+    expect(outside).toHaveAttribute("title", "/trunk/docs/readme.md（不在当前文件夹内）");
+  });
 });

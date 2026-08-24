@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  isChangedPathInLogTarget,
   loadAllSvnLogPages,
+  logTargetRepositoryPath,
   mergeSvnLogPage,
   repositoryPathLogTarget,
   resolveWorkingCopyLogRevision,
@@ -152,6 +154,45 @@ describe("svn log helpers", () => {
       repositoryUrl: "https://svn.example.test/repo/trunk/deleted%20file.txt",
       revision: "19",
     });
+  });
+});
+
+describe("log target changed-path scope", () => {
+  it("maps the log URL to a repository-absolute folder path", () => {
+    expect(
+      logTargetRepositoryPath(
+        "https://svn.example.test/repo",
+        "https://svn.example.test/repo/trunk/src/",
+      ),
+    ).toBe("/trunk/src");
+    expect(
+      logTargetRepositoryPath(
+        "https://svn.example.test/repo/",
+        "https://svn.example.test/repo/trunk/my%20folder@20",
+      ),
+    ).toBe("/trunk/my folder");
+    expect(
+      logTargetRepositoryPath(
+        "https://svn.example.test/repo",
+        "https://svn.example.test/repo",
+      ),
+    ).toBe("/");
+    expect(
+      logTargetRepositoryPath(
+        "https://svn.example.test/repo",
+        "https://other.example.test/repo/trunk",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps files under the current folder and greys paths outside it", () => {
+    expect(isChangedPathInLogTarget("/trunk/src/main.ts", "/trunk/src")).toBe(true);
+    expect(isChangedPathInLogTarget("/trunk/src", "/trunk/src")).toBe(true);
+    expect(isChangedPathInLogTarget("/trunk/src2/main.ts", "/trunk/src")).toBe(false);
+    expect(isChangedPathInLogTarget("/trunk/docs/readme.md", "/trunk/src")).toBe(false);
+    expect(isChangedPathInLogTarget("/branches/release/older.ts", "/trunk")).toBe(false);
+    expect(isChangedPathInLogTarget("/trunk/src/main.ts", "/")).toBe(true);
+    expect(isChangedPathInLogTarget("/trunk/src/main.ts", null)).toBe(true);
   });
 });
 
