@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("loads the current NovaSVN workbench shell", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByLabelText("NovaSVN 工作台")).toBeVisible();
+  await expect(page.getByLabel("NovaSVN 工作台")).toBeVisible();
   await expect(page.getByRole("tab", { name: "工作副本", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "时间线", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "仓库", exact: true })).toHaveCount(0);
