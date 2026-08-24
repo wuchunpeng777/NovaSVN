@@ -14215,7 +14215,8 @@ mod tests {
             .create_commit_task(CreateCommitTaskRequest {
                 working_copy_root: working_copy.display().to_string(),
                 message: "commit nested file".to_string(),
-                files: vec!["nested".to_string()],
+                // `--depth empty` 只提交显式选中的路径：目录本身不会递归带上子文件。
+                files: vec!["nested".to_string(), "nested/new.txt".to_string()],
                 svn_executable: None,
             })
             .expect("commit task should be created");
