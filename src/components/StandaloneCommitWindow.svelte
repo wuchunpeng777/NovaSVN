@@ -20,6 +20,7 @@
   import {
     COMMIT_MESSAGE_SELECTED_EVENT,
     consumePendingCommitMessage,
+    prependCommitMessageHistory,
     readCommitMessageSettings,
     setPendingCommitMessage,
     writeCommitMessageSettings,
@@ -283,11 +284,10 @@
   }
 
   function recordCommitHistory(message: string) {
-    const normalized = message.trim();
-    if (!normalized) {
+    if (!message.trim()) {
       return;
     }
-    history = [normalized, ...history.filter((item) => item !== normalized)].slice(0, 8);
+    history = prependCommitMessageHistory(message, history);
     saveCommitSettings(history);
   }
 
@@ -2029,7 +2029,7 @@
       {#if history.length > 0}
         <select
           class="history-select"
-          size="8"
+          size={Math.min(history.length, 16)}
           aria-label="历史提交日志"
           bind:value={selectedHistoryMessage}
           on:dblclick={useSelectedHistoryMessage}
@@ -2448,14 +2448,24 @@
   }
 
   .history-select {
+    box-sizing: border-box;
+    width: 100%;
     min-height: 220px;
+    max-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
     padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel-subtle);
+    color: var(--text);
     font-size: 12px;
   }
 
   .history-select option {
     padding: 7px 8px;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   .history-empty {

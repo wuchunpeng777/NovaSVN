@@ -1,5 +1,6 @@
 import { get, writable } from "svelte/store";
 import {
+  prependCommitMessageHistory,
   readCommitMessageSettings,
   writeCommitMessageSettings,
 } from "../lib/commit-message-history";
@@ -6896,12 +6897,11 @@ function recordCommitHistory(
   template: string,
   workingCopyRoot: string | undefined,
 ) {
-  const normalized = message.trim();
-  if (!normalized) {
+  if (!message.trim()) {
     return history;
   }
 
-  const nextHistory = [normalized, ...history.filter((item) => item !== normalized)].slice(0, 8);
+  const nextHistory = prependCommitMessageHistory(message, history);
   writeCommitMessageSettings(
     {
       template,

@@ -1,6 +1,8 @@
 export const COMMIT_MESSAGE_SETTINGS_KEY = "novasvn:commit-message-settings";
 export const PENDING_COMMIT_MESSAGE_KEY = "novasvn:pending-commit-message";
 export const COMMIT_MESSAGE_SELECTED_EVENT = "novasvn-commit-message-selected";
+/** 本地提交日志缓存上限（读写与 UI 共用）。 */
+export const COMMIT_MESSAGE_HISTORY_LIMIT = 50;
 
 export interface CommitMessageSettings {
   template: string;
@@ -55,6 +57,15 @@ export function cacheCommitMessages(messages: string[], workingCopyRoot?: string
   const history = normalizeHistory([...messages, ...current.history]);
   writeCommitMessageSettings({ ...current, history }, workingCopyRoot);
   return history;
+}
+
+/** 将新日志插到最前并按上限截断（去重、去空）。 */
+export function prependCommitMessageHistory(message: string, history: string[]): string[] {
+  const normalized = message.trim();
+  if (!normalized) {
+    return normalizeHistory(history);
+  }
+  return normalizeHistory([normalized, ...history]);
 }
 
 function readStoredCommitMessageSettings(): StoredCommitMessageSettings {
@@ -132,7 +143,7 @@ function normalizeHistory(value: unknown) {
       .filter((item): item is string => typeof item === "string")
       .map((item) => item.trim())
       .filter(Boolean),
-  )].slice(0, 50);
+  )].slice(0, COMMIT_MESSAGE_HISTORY_LIMIT);
 }
 
 function normalizeWorkingCopyRoot(value: string | undefined) {
