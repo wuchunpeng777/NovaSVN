@@ -320,11 +320,50 @@
     --log-accent: #245f91;
     --log-current-panel: #e1f5e9;
     --log-current-border: #16834f;
+    min-width: 0;
     min-height: 0;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: scroll;
+    scrollbar-color: #a8b3bf #eef1f4;
+    scrollbar-gutter: stable;
     background: var(--log-panel);
     padding: 0 14px 18px;
     color: var(--log-text);
+  }
+
+  .svn-log-list::-webkit-scrollbar {
+    width: 12px;
+  }
+
+  .svn-log-list::-webkit-scrollbar-track {
+    background: #eef1f4;
+  }
+
+  .svn-log-list::-webkit-scrollbar-thumb {
+    border: 3px solid #eef1f4;
+    border-radius: 8px;
+    background: #a8b3bf;
+  }
+
+  .svn-log-list::-webkit-scrollbar-thumb:hover {
+    background: #8e9ba8;
+  }
+
+  .svn-log-list[data-theme="dark"] {
+    scrollbar-color: #68717b #252527;
+  }
+
+  .svn-log-list[data-theme="dark"]::-webkit-scrollbar-track {
+    background: #252527;
+  }
+
+  .svn-log-list[data-theme="dark"]::-webkit-scrollbar-thumb {
+    border-color: #252527;
+    background: #68717b;
+  }
+
+  .svn-log-list[data-theme="dark"]::-webkit-scrollbar-thumb:hover {
+    background: #828b95;
   }
 
   .svn-log-list[data-theme="dark"] {

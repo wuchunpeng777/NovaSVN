@@ -1814,6 +1814,13 @@ textarea {
 .timeline-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.timeline-layout > .svn-log-list {
+  min-width: 0;
   min-height: 0;
 }
 

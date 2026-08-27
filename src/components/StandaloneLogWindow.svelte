@@ -1392,6 +1392,13 @@
   .log-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .log-layout > :global(.svn-log-list) {
+    min-width: 0;
     min-height: 0;
   }
 
