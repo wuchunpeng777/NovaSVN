@@ -140,7 +140,15 @@ describe("SvnRevisionPickerDialog", () => {
             author: "bob",
             date: "2026-07-21T10:00:00Z",
             message: "Fix menu",
-            changed_paths: [{ path: "/trunk/src/menu.ts", action: "M", kind: "file" }],
+            changed_paths: [
+              {
+                path: "/trunk/src/menu.ts",
+                action: "M",
+                kind: "file",
+                copy_from_path: null,
+                copy_from_revision: null,
+              },
+            ],
           },
         ],
       }),
