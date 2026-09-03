@@ -2413,14 +2413,33 @@
 
   .history-dialog {
     display: grid;
-    grid-template-rows: auto minmax(180px, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     width: min(560px, 100%);
-    max-height: min(560px, 100%);
+    max-height: min(560px, calc(100vh - 48px));
+    min-height: 0;
+    overflow: hidden;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--panel);
     color: var(--text);
     padding: 16px;
+  }
+  .history-select {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    height: min(420px, calc(100vh - 190px));
+    min-height: 220px;
+    max-height: none;
+    overflow-x: hidden;
+    overflow-y: scroll;
+    scrollbar-gutter: stable;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel-subtle);
+    color: var(--text);
+    font-size: 12px;
   }
 
   .history-dialog > header,
@@ -2445,21 +2464,6 @@
   .history-dialog > footer {
     justify-content: flex-end;
     padding-top: 12px;
-  }
-
-  .history-select {
-    box-sizing: border-box;
-    width: 100%;
-    min-height: 220px;
-    max-height: 100%;
-    overflow-x: hidden;
-    overflow-y: auto;
-    padding: 4px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--panel-subtle);
-    color: var(--text);
-    font-size: 12px;
   }
 
   .history-select option {

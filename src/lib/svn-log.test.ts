@@ -4,12 +4,34 @@ import {
   loadAllSvnLogPages,
   logTargetRepositoryPath,
   mergeSvnLogPage,
+  normalizeSvnRevisionInput,
   repositoryPathLogTarget,
   resolveWorkingCopyLogRevision,
   repositoryPathUrlAtRevision,
   suggestExportLocalPath,
   summarizeSvnChangeActions,
 } from "./svn-log";
+
+describe("normalizeSvnRevisionInput", () => {
+  it("treats empty and HEAD as latest", () => {
+    expect(normalizeSvnRevisionInput("")).toBe("");
+    expect(normalizeSvnRevisionInput("  ")).toBe("");
+    expect(normalizeSvnRevisionInput("HEAD")).toBe("");
+    expect(normalizeSvnRevisionInput("head")).toBe("");
+  });
+
+  it("strips an optional r prefix from numeric revisions", () => {
+    expect(normalizeSvnRevisionInput("42")).toBe("42");
+    expect(normalizeSvnRevisionInput(" r42 ")).toBe("42");
+    expect(normalizeSvnRevisionInput("R100")).toBe("100");
+  });
+
+  it("rejects non-numeric revision text", () => {
+    expect(normalizeSvnRevisionInput("r")).toBeNull();
+    expect(normalizeSvnRevisionInput("abc")).toBeNull();
+    expect(normalizeSvnRevisionInput("1:2")).toBeNull();
+  });
+});
 
 describe("suggestExportLocalPath", () => {
   it("builds a revision-scoped local path under the selected parent", () => {

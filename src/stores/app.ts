@@ -3864,8 +3864,8 @@ function createWorkspaceStore() {
       ).trim();
       const nextRevision = (
         revision ??
-        state.repositoryList?.revision ??
         state.repositoryRevisionInput ??
+        state.repositoryList?.revision ??
         ""
       ).toString();
       const nextLocalPath =

@@ -58,6 +58,7 @@
     repositoryBreadcrumbs,
     repositoryEntryKindLabel,
   } from "../lib/repository-url";
+  import { normalizeSvnRevisionInput } from "../lib/svn-log";
   import type {
     CommandError,
     RepositoryListEntry,
@@ -68,6 +69,7 @@
   } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
+  import SvnRevisionPickerDialog from "./SvnRevisionPickerDialog.svelte";
   import "./StandaloneRepoBrowserWindow.css";
 
   export let targetPath = "";
@@ -143,6 +145,7 @@
   let formTargetUrl = "";
   let formLocalPath = "";
   let formRevision = "";
+  let revisionPickerOpen = false;
   let contextMenu: ContextMenuState | null = null;
   let contextMenuElement: HTMLDivElement | null = null;
   let urlInputElement: HTMLInputElement | null = null;
@@ -864,7 +867,7 @@
     formSourceUrl = options.sourceUrl ?? currentUrl;
     formTargetUrl = options.targetUrl ?? "";
     formLocalPath = "";
-    formRevision = list?.revision ?? revisionInput;
+    formRevision = revisionInput.trim() || list?.revision || "";
     if (kind === "mkdir") {
       formTargetUrl = options.targetUrl ?? currentUrl;
     }
@@ -914,6 +917,21 @@
     }
   }
 
+  function openRevisionPicker() {
+    const url = formSourceUrl.trim() || currentUrl;
+    if (!url || !isRepositoryUrl(url)) {
+      detailError = formError(
+        "REPO_BROWSER_REVISION_URL",
+        url ? "仓库 URL 无效" : "请输入仓库 URL",
+        "选择 Revision 前需要先填写有效的 SVN 仓库 URL。",
+      );
+      return;
+    }
+    formSourceUrl = url;
+    detailError = null;
+    revisionPickerOpen = true;
+  }
+
   async function submitWrite() {
     if (writeRunning) {
       return;
@@ -934,7 +952,20 @@
 
     commandError = null;
     const message = formMessage.trim();
+    const requestedRevision = normalizeSvnRevisionInput(formRevision);
     const requestGeneration = generation;
+
+    if (
+      (kind === "checkout" || kind === "export" || kind === "copy") &&
+      requestedRevision === null
+    ) {
+      commandError = formError(
+        "REPO_BROWSER_REVISION_INVALID",
+        "Revision 无效",
+        "Revision 必须是数字，可带 r 前缀；留空或填写 HEAD 则使用最新版本。",
+      );
+      return;
+    }
 
     try {
       let task: Task;
@@ -1003,7 +1034,7 @@
           kind: "entry",
           source_url: formSourceUrl.trim(),
           target_url: formTargetUrl.trim(),
-          revision: formRevision.trim() || undefined,
+          revision: requestedRevision || undefined,
           message,
           svn_executable: svnExecutable?.trim() || undefined,
         });
@@ -1067,7 +1098,7 @@
         task = await createRepositoryCheckoutTask({
           url: formSourceUrl.trim(),
           local_path: formLocalPath.trim(),
-          revision: formRevision.trim() || undefined,
+          revision: requestedRevision || undefined,
           svn_executable: svnExecutable?.trim() || undefined,
         });
         refreshUrl = currentUrl;
@@ -1079,7 +1110,7 @@
         task = await createRepositoryExportTask({
           url: formSourceUrl.trim(),
           local_path: formLocalPath.trim(),
-          revision: formRevision.trim() || undefined,
+          revision: requestedRevision || undefined,
           svn_executable: svnExecutable?.trim() || undefined,
         });
         refreshUrl = currentUrl;
@@ -1173,6 +1204,11 @@
       return;
     }
     if (event.key === "Escape") {
+      if (revisionPickerOpen) {
+        event.preventDefault();
+        revisionPickerOpen = false;
+        return;
+      }
       if (contextMenu) {
         event.preventDefault();
         closeContextMenu();
@@ -1682,7 +1718,12 @@
             {#if activePanel === "copy"}
               <label>
                 <span>Revision</span>
-                <input aria-label="Copy Revision" bind:value={formRevision} placeholder="HEAD" />
+                <div class="path-control">
+                  <input aria-label="Copy Revision" bind:value={formRevision} placeholder="HEAD" />
+                  <button type="button" aria-label="选择 Revision" title="从日志选择 Revision" on:click={openRevisionPicker}>
+                    <History size={15} aria-hidden="true" />
+                  </button>
+                </div>
               </label>
             {/if}
           {:else if activePanel === "rename"}
@@ -1718,11 +1759,16 @@
             </label>
             <label>
               <span>Revision</span>
-              <input
-                aria-label={`${activePanel} Revision`}
-                bind:value={formRevision}
-                placeholder="HEAD"
-              />
+              <div class="path-control">
+                <input
+                  aria-label={`${activePanel} Revision`}
+                  bind:value={formRevision}
+                  placeholder="HEAD"
+                />
+                <button type="button" aria-label="选择 Revision" title="从日志选择 Revision" on:click={openRevisionPicker}>
+                  <History size={15} aria-hidden="true" />
+                </button>
+              </div>
             </label>
           {/if}
 
@@ -1894,4 +1940,24 @@
     retry={null}
     onSubmit={onSvnAuthenticationSubmit}
   />
+
+  {#if revisionPickerOpen}
+    <SvnRevisionPickerDialog
+      repositoryUrl={formSourceUrl.trim() || currentUrl}
+      {svnExecutable}
+      theme={resolvedTheme}
+      currentRevision={formRevision}
+      title={activePanel === "checkout" ? "选择 Checkout Revision" : "选择 Revision"}
+      {svnAuthenticationUsername}
+      {svnRememberPassword}
+      {svnAuthenticationLoading}
+      {svnAuthenticationError}
+      {onSvnAuthenticationSubmit}
+      onSelect={(selected) => {
+        formRevision = selected;
+        detailError = null;
+      }}
+      onClose={() => (revisionPickerOpen = false)}
+    />
+  {/if}
 </main>

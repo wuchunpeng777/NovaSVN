@@ -6709,11 +6709,16 @@ fn run_repository_checkout_task(
 
     let command_target =
         repository_url_with_peg_revision(&payload.url, payload.revision.as_deref());
+    let revision_label = payload
+        .revision
+        .as_deref()
+        .map(|revision| format!(" -r {revision}"))
+        .unwrap_or_default();
     append_task_log(
         state,
         task_id,
         &format!(
-            "执行 svn checkout：{} -> {}",
+            "执行 svn checkout{revision_label}：{} -> {}",
             payload.url, payload.local_path
         ),
     );
@@ -10584,9 +10589,19 @@ fn normalize_optional_revision_value(
     code: &'static str,
     message: &'static str,
 ) -> Result<Option<String>, NovaError> {
-    let Some(value) = revision.map(str::trim).filter(|value| !value.is_empty()) else {
+    let Some(raw) = revision.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
     };
+
+    if raw.eq_ignore_ascii_case("head") {
+        return Ok(None);
+    }
+
+    let value = raw
+        .strip_prefix('r')
+        .or_else(|| raw.strip_prefix('R'))
+        .filter(|digits| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()))
+        .unwrap_or(raw);
 
     if value.chars().any(char::is_control) {
         return Err(NovaError::command(
@@ -13402,6 +13417,14 @@ mod tests {
         assert_eq!(
             normalize_optional_revision_value(Some(" 42 "), "INVALID", "invalid").unwrap(),
             Some("42".to_string())
+        );
+        assert_eq!(
+            normalize_optional_revision_value(Some(" r42 "), "INVALID", "invalid").unwrap(),
+            Some("42".to_string())
+        );
+        assert_eq!(
+            normalize_optional_revision_value(Some("HEAD"), "INVALID", "invalid").unwrap(),
+            None
         );
         assert_eq!(
             normalize_optional_revision_value(Some(" "), "INVALID", "invalid").unwrap(),

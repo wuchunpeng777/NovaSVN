@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { CircleCheck, Download, FolderOpen, RotateCw, Square } from "@lucide/svelte";
+  import { CircleCheck, Download, FolderOpen, History, RotateCw, Square } from "@lucide/svelte";
   import {
     cancelTask,
     chooseCheckoutTargetDirectory,
@@ -11,11 +11,13 @@
     readClipboardText,
   } from "../lib/api";
   import { isRepositoryUrl } from "../lib/repository-url";
+  import { normalizeSvnRevisionInput } from "../lib/svn-log";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
   import { extractSvnFileChanges } from "../lib/svn-operation-output";
   import type { CommandError, Task, TaskStatus } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
+  import SvnRevisionPickerDialog from "./SvnRevisionPickerDialog.svelte";
 
   export let targetPath: string;
   export let svnExecutable: string | undefined = undefined;
@@ -34,6 +36,7 @@
   let repositoryUrlTouched = false;
   let localPath = targetPath.trim();
   let revision = "";
+  let revisionPickerOpen = false;
   let checkoutTask: Task | null = null;
   let commandError: CommandError | null = null;
   let locationError: CommandError | null = null;
@@ -52,6 +55,9 @@
     themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
   $: checkoutRunning = isTaskRunning(checkoutTask);
   $: checkoutComplete = checkoutTask?.status === "success";
+  $: checkoutRevision = normalizeSvnRevisionInput(revision);
+  $: checkoutRevisionLabel =
+    checkoutRevision === null ? revision.trim() : checkoutRevision ? `r${checkoutRevision}` : "HEAD";
   $: checkedOutFiles = extractSvnFileChanges(checkoutTask?.logs ?? [], localPath.trim());
   $: authenticationFailure =
     detectSvnAuthenticationFailure(commandErrorText(commandError)) ??
@@ -84,6 +90,11 @@
     if (event.key !== "Escape" || event.defaultPrevented || checkoutRunning) {
       return;
     }
+    if (revisionPickerOpen) {
+      event.preventDefault();
+      revisionPickerOpen = false;
+      return;
+    }
     event.preventDefault();
     void getCurrentWindow().close();
   }
@@ -106,7 +117,7 @@
 
     const url = repositoryUrl.trim();
     const destination = localPath.trim();
-    const requestedRevision = revision.trim();
+    const requestedRevision = normalizeSvnRevisionInput(revision);
     if (!url) {
       commandError = formError(
         "CHECKOUT_URL_MISSING",
@@ -133,11 +144,11 @@
       );
       return;
     }
-    if (requestedRevision && !/^\d+$/.test(requestedRevision)) {
+    if (requestedRevision === null) {
       commandError = formError(
         "CHECKOUT_REVISION_INVALID",
         "Revision 无效",
-        "Revision 必须是数字，留空则使用 HEAD。",
+        "Revision 必须是数字，可带 r 前缀；留空或填写 HEAD 则使用最新版本。",
       );
       return;
     }
@@ -228,6 +239,24 @@
     } catch (caught) {
       commandError = normalizeCommandError(caught);
     }
+  }
+
+  function openRevisionPicker() {
+    if (checkoutRunning) {
+      return;
+    }
+    const url = repositoryUrl.trim();
+    if (!url || !isRepositoryUrl(url)) {
+      commandError = formError(
+        "CHECKOUT_URL_INVALID",
+        url ? "仓库 URL 无效" : "请输入仓库 URL",
+        "选择 Revision 前需要先填写有效的 SVN 仓库 URL。",
+      );
+      repositoryUrlElement?.focus();
+      return;
+    }
+    commandError = null;
+    revisionPickerOpen = true;
   }
 
   async function showCheckoutLocation() {
@@ -369,7 +398,7 @@
     <section class="checkout-form-pane" aria-label="Checkout 设置">
       <header>
         <h2>Checkout 设置</h2>
-        <span>{revision.trim() ? `r${revision.trim()}` : "HEAD"}</span>
+        <span>{checkoutRevisionLabel}</span>
       </header>
       <form on:submit|preventDefault={startCheckout}>
         <label>
@@ -416,17 +445,27 @@
 
         <label>
           <span>Revision</span>
-          <input
-            type="text"
-            inputmode="numeric"
-            value={revision}
-            placeholder="HEAD"
-            disabled={checkoutRunning}
-            on:input={(event) => {
-              revision = (event.currentTarget as HTMLInputElement).value;
-              clearFormError();
-            }}
-          />
+          <div class="path-control">
+            <input
+              type="text"
+              inputmode="numeric"
+              aria-label="Revision"
+              bind:value={revision}
+              placeholder="HEAD"
+              disabled={checkoutRunning}
+              on:input={clearFormError}
+            />
+            <button
+              type="button"
+              class="icon-button"
+              aria-label="选择 Revision"
+              title="从日志选择 Revision"
+              disabled={checkoutRunning}
+              on:click={openRevisionPicker}
+            >
+              <History size={17} aria-hidden="true" />
+            </button>
+          </div>
         </label>
 
         <button type="submit" class="primary" disabled={checkoutRunning}>
@@ -493,6 +532,26 @@
     retry={null}
     onSubmit={onSvnAuthenticationSubmit}
   />
+
+  {#if revisionPickerOpen}
+    <SvnRevisionPickerDialog
+      repositoryUrl={repositoryUrl.trim()}
+      {svnExecutable}
+      theme={resolvedTheme}
+      currentRevision={revision}
+      title="选择 Checkout Revision"
+      {svnAuthenticationUsername}
+      {svnRememberPassword}
+      {svnAuthenticationLoading}
+      {svnAuthenticationError}
+      {onSvnAuthenticationSubmit}
+      onSelect={(selected) => {
+        revision = selected;
+        commandError = null;
+      }}
+      onClose={() => (revisionPickerOpen = false)}
+    />
+  {/if}
 </main>
 
 <style>

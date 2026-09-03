@@ -5,6 +5,7 @@ vi.mock("../lib/api", () => ({
   cancelTask: vi.fn(),
   chooseCheckoutTargetDirectory: vi.fn(),
   createRepositoryCheckoutTask: vi.fn(),
+  getRepositoryFileLog: vi.fn(),
   getTask: vi.fn(),
   openLocalPathLocation: vi.fn(),
   readClipboardText: vi.fn(),
@@ -14,6 +15,7 @@ import {
   cancelTask,
   chooseCheckoutTargetDirectory,
   createRepositoryCheckoutTask,
+  getRepositoryFileLog,
   getTask,
   openLocalPathLocation,
   readClipboardText,
@@ -24,6 +26,7 @@ import StandaloneCheckoutWindow from "./StandaloneCheckoutWindow.svelte";
 const cancelTaskMock = vi.mocked(cancelTask);
 const chooseCheckoutTargetDirectoryMock = vi.mocked(chooseCheckoutTargetDirectory);
 const createRepositoryCheckoutTaskMock = vi.mocked(createRepositoryCheckoutTask);
+const getRepositoryFileLogMock = vi.mocked(getRepositoryFileLog);
 const getTaskMock = vi.mocked(getTask);
 const openLocalPathLocationMock = vi.mocked(openLocalPathLocation);
 const readClipboardTextMock = vi.mocked(readClipboardText);
@@ -32,10 +35,26 @@ beforeEach(() => {
   cancelTaskMock.mockReset();
   chooseCheckoutTargetDirectoryMock.mockReset();
   createRepositoryCheckoutTaskMock.mockReset();
+  getRepositoryFileLogMock.mockReset();
   getTaskMock.mockReset();
   openLocalPathLocationMock.mockReset();
   readClipboardTextMock.mockReset();
   readClipboardTextMock.mockResolvedValue("");
+  createRepositoryCheckoutTaskMock.mockResolvedValue(makeTask("pending"));
+  getRepositoryFileLogMock.mockResolvedValue({
+    target: "https://example.com/svn/project/trunk",
+    entries: [
+      {
+        revision: "42",
+        author: "alice",
+        date: "2026-07-22T18:30:00Z",
+        message: "Pin checkout revision",
+        changed_paths: [],
+      },
+    ],
+    has_more: false,
+    next_start_revision: null,
+  });
   createRepositoryCheckoutTaskMock.mockResolvedValue(makeTask("pending"));
   getTaskMock.mockResolvedValue(
     makeTask("success", [
@@ -227,6 +246,56 @@ describe("StandaloneCheckoutWindow", () => {
     );
 
     expect(openLocalPathLocationMock).toHaveBeenCalledWith({ path: "C:\\work\\project" });
+  });
+
+  it("将 r 前缀的 Revision 规范化后传给 Checkout", async () => {
+    render(StandaloneCheckoutWindow, { props: { targetPath: "C:\\work\\project" } });
+    await fireEvent.input(screen.getByLabelText("仓库 URL"), {
+      target: { value: "https://example.com/svn/project/trunk" },
+    });
+    await fireEvent.input(screen.getByLabelText("Revision"), { target: { value: "r42" } });
+    expect(screen.getByText("r42")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
+
+    await waitFor(() => {
+      expect(createRepositoryCheckoutTaskMock).toHaveBeenCalledWith({
+        url: "https://example.com/svn/project/trunk",
+        local_path: "C:\\work\\project",
+        revision: "42",
+        svn_executable: undefined,
+      });
+    });
+  });
+
+  it("从日志窗口选择 Revision 后执行 Checkout", async () => {
+    render(StandaloneCheckoutWindow, { props: { targetPath: "C:\\work\\project" } });
+    await fireEvent.input(screen.getByLabelText("仓库 URL"), {
+      target: { value: "https://example.com/svn/project/trunk" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "选择 Revision" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "选择 Checkout Revision" });
+    await fireEvent.click(within(dialog).getByRole("option", { name: "选择 r42" }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "使用 r42" }));
+
+    expect(screen.queryByRole("dialog", { name: "选择 Checkout Revision" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Revision")).toHaveValue("42");
+    await fireEvent.click(screen.getByRole("button", { name: "Checkout" }));
+
+    await waitFor(() => {
+      expect(createRepositoryCheckoutTaskMock).toHaveBeenCalledWith(
+        expect.objectContaining({ revision: "42" }),
+      );
+    });
+  });
+
+  it("未填写仓库 URL 时不能打开 Revision 选择窗口", async () => {
+    render(StandaloneCheckoutWindow, { props: { targetPath: "C:\\work\\project" } });
+    await fireEvent.click(screen.getByRole("button", { name: "选择 Revision" }));
+
+    expect(screen.getByRole("alert", { name: "命令错误" })).toHaveTextContent("请输入仓库 URL");
+    expect(screen.queryByRole("dialog", { name: "选择 Checkout Revision" })).not.toBeInTheDocument();
+    expect(getRepositoryFileLogMock).not.toHaveBeenCalled();
   });
 });
 

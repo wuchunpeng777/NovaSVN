@@ -4884,7 +4884,7 @@
               on:click={() =>
                 onPrepareRepositoryCheckout(
                   repositoryCurrentUrl || repositoryList?.url || repositoryUrlInput,
-                  repositoryList?.revision ?? repositoryRevisionInput,
+                  repositoryRevisionInput || repositoryList?.revision,
                 )}
             >
               使用当前 URL

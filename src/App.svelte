@@ -34,7 +34,7 @@
     resolveTextConflict,
     setWorkspaceChangelist,
   } from "./lib/api";
-  import { suggestExportLocalPath } from "./lib/svn-log";
+  import { normalizeSvnRevisionInput, suggestExportLocalPath } from "./lib/svn-log";
   import {
     consumePendingSvnOperationCompletion,
     createSvnOperationCreationCoordinator,
@@ -1234,6 +1234,11 @@
       workspaceStore.failRepositoryCheckoutTask("请输入本地工作副本路径");
       return;
     }
+    const revision = normalizeSvnRevisionInput(form.revision);
+    if (revision === null) {
+      workspaceStore.failRepositoryCheckoutTask("Revision 无效，必须是数字，可带 r 前缀");
+      return;
+    }
     if ($workspaceStore.pendingRepositoryCheckoutTaskId !== null) {
       return;
     }
@@ -1241,7 +1246,7 @@
     const task = await taskStore.createRepositoryCheckout({
       url: form.url,
       localPath: form.localPath,
-      revision: form.revision,
+      revision,
       svnExecutable: currentSvnExecutable(),
     });
 

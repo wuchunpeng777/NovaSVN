@@ -12,6 +12,19 @@ export interface RepositoryPathLogTarget {
   revision: string;
 }
 
+/** 规范化用户输入的 SVN revision。空 / HEAD → ""；r123 / 123 → "123"；非法 → null。 */
+export function normalizeSvnRevisionInput(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed || /^HEAD$/i.test(trimmed)) {
+    return "";
+  }
+  const digits = trimmed.replace(/^r/i, "");
+  if (!/^\d+$/.test(digits)) {
+    return null;
+  }
+  return digits;
+}
+
 export function resolveWorkingCopyLogRevision(
   entries: SvnLog["entries"],
   workingCopyRevision: string | null | undefined,

@@ -1953,6 +1953,10 @@ describe("taskStore repository list tasks", () => {
       revision: "12",
     });
 
+    workspaceStore.setRepositoryRevisionInput("8");
+    workspaceStore.prepareRepositoryCheckout();
+    expect(get(workspaceStore).repositoryCheckoutForm.revision).toBe("8");
+
     chooseCheckoutDirectoryMock.mockResolvedValue("/Users/me/checkouts");
     await workspaceStore.chooseRepositoryCheckoutParent();
     expect(get(workspaceStore).repositoryCheckoutForm.localPath).toBe(
@@ -1993,7 +1997,7 @@ describe("taskStore repository list tasks", () => {
       repositoryCheckoutForm: {
         url: "https://example.com/svn/trunk",
         localPath: "",
-        revision: "12",
+        revision: "8",
       },
       repositoryCheckoutError: null,
     });
