@@ -4,7 +4,7 @@
   import { getRepositoryFileLog } from "../lib/api";
   import { isRepositoryUrl } from "../lib/repository-url";
   import { detectSvnAuthenticationFailure } from "../lib/svn-authentication";
-  import { mergeSvnLogPage, normalizeSvnRevisionInput } from "../lib/svn-log";
+  import { loadAllSvnLogPages, mergeSvnLogPage, normalizeSvnRevisionInput } from "../lib/svn-log";
   import type { CommandError, SvnLog, SvnLogEntry } from "../types/api";
   import ErrorNotice from "./ErrorNotice.svelte";
   import SvnAuthenticationDialog from "./SvnAuthenticationDialog.svelte";
@@ -34,10 +34,14 @@
   let loadingMore = false;
   let error: CommandError | null = null;
   let selectedRevision = normalizeSvnRevisionInput(currentRevision) ?? "";
+  let searchText = "";
   let requestGeneration = 0;
 
   $: authenticationFailure = detectSvnAuthenticationFailure(commandErrorText(error));
   $: entries = log?.entries ?? [];
+  $: searchKeyword = searchText.trim().toLowerCase();
+  $: visibleEntries = filterRevisionEntries(entries, searchKeyword);
+  $: showHeadOption = !searchKeyword || "head".includes(searchKeyword);
   $: selectedLabel = selectedRevision ? `r${selectedRevision}` : "HEAD";
 
   onMount(() => {
@@ -66,11 +70,7 @@
     error = null;
     log = null;
     try {
-      const next = await getRepositoryFileLog({
-        url,
-        svn_executable: svnExecutable?.trim() || undefined,
-        limit: PAGE_LIMIT,
-      });
+      const next = await fetchLogPage();
       if (generation !== requestGeneration) {
         return;
       }
@@ -90,7 +90,7 @@
     const url = repositoryUrl.trim();
     const currentLog = log;
     const startRevision = currentLog?.next_start_revision;
-    if (!currentLog?.has_more || !startRevision || loading || loadingMore) {
+    if (!url || !currentLog?.has_more || !startRevision || loading || loadingMore) {
       return;
     }
 
@@ -98,12 +98,7 @@
     loadingMore = true;
     error = null;
     try {
-      const next = await getRepositoryFileLog({
-        url,
-        svn_executable: svnExecutable?.trim() || undefined,
-        limit: PAGE_LIMIT,
-        start_revision: startRevision,
-      });
+      const next = await fetchLogPage(startRevision);
       if (generation !== requestGeneration) {
         return;
       }
@@ -117,6 +112,60 @@
         loadingMore = false;
       }
     }
+  }
+
+  async function loadAll() {
+    const url = repositoryUrl.trim();
+    const currentLog = log;
+    if (!url || !currentLog?.has_more || !currentLog.next_start_revision || loading || loadingMore) {
+      return;
+    }
+
+    const generation = requestGeneration;
+    loadingMore = true;
+    error = null;
+    try {
+      await loadAllSvnLogPages(
+        currentLog,
+        (startRevision) => fetchLogPage(startRevision),
+        (merged) => {
+          if (generation === requestGeneration) {
+            log = merged;
+          }
+        },
+        () => generation === requestGeneration,
+      );
+    } catch (caught) {
+      if (generation === requestGeneration) {
+        error = normalizeCommandError(caught);
+      }
+    } finally {
+      if (generation === requestGeneration) {
+        loadingMore = false;
+      }
+    }
+  }
+
+  function fetchLogPage(startRevision?: string) {
+    return getRepositoryFileLog({
+      url: repositoryUrl.trim(),
+      svn_executable: svnExecutable?.trim() || undefined,
+      limit: PAGE_LIMIT,
+      ...(startRevision ? { start_revision: startRevision } : {}),
+    });
+  }
+
+  function filterRevisionEntries(items: SvnLogEntry[], keyword: string) {
+    if (!keyword) {
+      return items;
+    }
+    return items.filter((entry) =>
+      `${entry.revision} ${entry.author} ${entry.message} ${entry.changed_paths
+        .map((path) => path.path)
+        .join(" ")}`
+        .toLowerCase()
+        .includes(keyword),
+    );
   }
 
   function confirmSelection(revision = selectedRevision) {
@@ -136,6 +185,9 @@
       return;
     }
     if (event.key === "Enter" && !loading && !error) {
+      if (event.target instanceof HTMLInputElement) {
+        return;
+      }
       event.preventDefault();
       confirmSelection();
     }
@@ -210,6 +262,21 @@
         <X size={17} aria-hidden="true" />
       </button>
     </header>
+    <div class="revision-picker-toolbar">
+      <input
+        type="search"
+        aria-label="搜索 Revision"
+        placeholder="搜索 revision、作者或提交信息"
+        bind:value={searchText}
+      />
+      <button
+        type="button"
+        disabled={loading || loadingMore || !log?.has_more}
+        on:click={loadAll}
+      >
+        {loadingMore ? "加载中..." : "加载全部"}
+      </button>
+    </div>
 
     <div class="revision-picker-body" aria-busy={loading || loadingMore}>
       {#if loading}
@@ -224,19 +291,21 @@
           <ErrorNotice {error} />
         {/if}
         <div class="revision-picker-list" role="listbox" aria-label="Revision 列表">
-          <button
-            type="button"
-            role="option"
-            aria-selected={selectedRevision === ""}
-            aria-label="选择 HEAD"
-            on:click={() => (selectedRevision = "")}
-            on:dblclick={() => confirmSelection("")}
-          >
-            <strong>HEAD</strong>
-            <span class="meta">最新 revision</span>
-            <p>检出仓库当前最新版本</p>
-          </button>
-          {#each entries as entry (entry.revision)}
+          {#if showHeadOption}
+            <button
+              type="button"
+              role="option"
+              aria-selected={selectedRevision === ""}
+              aria-label="选择 HEAD"
+              on:click={() => (selectedRevision = "")}
+              on:dblclick={() => confirmSelection("")}
+            >
+              <strong>HEAD</strong>
+              <span class="meta">最新 revision</span>
+              <p>检出仓库当前最新版本</p>
+            </button>
+          {/if}
+          {#each visibleEntries as entry (entry.revision)}
             <button
               type="button"
               role="option"
@@ -254,6 +323,9 @@
             </button>
           {/each}
         </div>
+        {#if visibleEntries.length === 0 && !showHeadOption}
+          <div class="dialog-status" role="status">没有匹配的 Revision</div>
+        {/if}
         {#if log?.has_more}
           <button type="button" class="load-more" disabled={loadingMore} on:click={loadMore}>
             {loadingMore ? "加载中..." : "加载更多"}
@@ -317,7 +389,7 @@
 
   .revision-picker-dialog {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
     width: min(720px, calc(100vw - 32px));
     max-height: min(760px, calc(100vh - 32px));
     overflow: hidden;
@@ -338,6 +410,31 @@
 
   .revision-picker-dialog > header {
     border-bottom: 1px solid var(--dialog-border);
+  }
+  .revision-picker-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--dialog-border);
+    background: var(--dialog-subtle);
+  }
+
+  .revision-picker-toolbar input {
+    min-width: 0;
+    min-height: 30px;
+    border: 1px solid var(--dialog-border);
+    border-radius: 5px;
+    background: var(--dialog-panel);
+    padding: 4px 10px;
+    color: var(--dialog-text);
+    font: inherit;
+  }
+
+  .revision-picker-toolbar input:hover,
+  .revision-picker-toolbar input:focus-visible {
+    border-color: var(--dialog-accent);
+    outline: none;
   }
 
   .revision-picker-dialog > footer {

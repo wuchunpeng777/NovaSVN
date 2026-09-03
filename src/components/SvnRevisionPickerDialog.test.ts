@@ -123,6 +123,123 @@ describe("SvnRevisionPickerDialog", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("请先输入有效的仓库 URL");
     expect(getRepositoryFileLogMock).not.toHaveBeenCalled();
   });
+
+  it("按关键字过滤已加载的 Revision", async () => {
+    getRepositoryFileLogMock.mockResolvedValue(
+      makeLog({
+        entries: [
+          {
+            revision: "42",
+            author: "alice",
+            date: "2026-07-22T18:30:00Z",
+            message: "Add checkout window",
+            changed_paths: [],
+          },
+          {
+            revision: "41",
+            author: "bob",
+            date: "2026-07-21T10:00:00Z",
+            message: "Fix menu",
+            changed_paths: [{ path: "/trunk/src/menu.ts", action: "M", kind: "file" }],
+          },
+        ],
+      }),
+    );
+    render(SvnRevisionPickerDialog, {
+      props: {
+        repositoryUrl: "https://example.com/svn/trunk",
+      },
+    });
+
+    await screen.findByText("Add checkout window");
+    expect(screen.getByRole("option", { name: "选择 HEAD" })).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByLabelText("搜索 Revision"), {
+      target: { value: "menu" },
+    });
+
+    expect(screen.queryByText("Add checkout window")).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "选择 HEAD" })).not.toBeInTheDocument();
+    expect(screen.getByText("Fix menu")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "选择 r41" })).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByLabelText("搜索 Revision"), {
+      target: { value: "nobody" },
+    });
+    expect(screen.getByText("没有匹配的 Revision")).toBeInTheDocument();
+  });
+
+  it("连续加载全部剩余日志页", async () => {
+    getRepositoryFileLogMock
+      .mockResolvedValueOnce(
+        makeLog({
+          has_more: true,
+          next_start_revision: "41",
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeLog({
+          entries: [
+            {
+              revision: "42",
+              author: "alice",
+              date: "2026-07-22T18:30:00Z",
+              message: "duplicate",
+              changed_paths: [],
+            },
+            {
+              revision: "41",
+              author: "bob",
+              date: "2026-07-21T10:00:00Z",
+              message: "Second page",
+              changed_paths: [],
+            },
+          ],
+          has_more: true,
+          next_start_revision: "40",
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeLog({
+          entries: [
+            {
+              revision: "40",
+              author: "carol",
+              date: "2026-07-20T10:00:00Z",
+              message: "Final page",
+              changed_paths: [],
+            },
+          ],
+        }),
+      );
+
+    render(SvnRevisionPickerDialog, {
+      props: {
+        repositoryUrl: "https://example.com/svn/trunk",
+      },
+    });
+
+    await screen.findByText("Add checkout window");
+    expect(screen.getByRole("button", { name: "加载全部" })).toBeEnabled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "加载全部" }));
+
+    expect(await screen.findByText("Final page")).toBeInTheDocument();
+    expect(screen.getByText("Second page")).toBeInTheDocument();
+    expect(getRepositoryFileLogMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        start_revision: "41",
+      }),
+    );
+    expect(getRepositoryFileLogMock).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        start_revision: "40",
+      }),
+    );
+    expect(screen.getByRole("button", { name: "加载全部" })).toBeDisabled();
+  });
 });
 
 function makeLog(overrides: Partial<SvnLog> = {}): SvnLog {
