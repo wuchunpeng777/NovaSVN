@@ -1,6 +1,7 @@
 use std::{
     env,
-    path::PathBuf,
+    ffi::OsString,
+    path::{Path, PathBuf},
     process::Command,
     sync::{OnceLock, RwLock},
 };
@@ -167,6 +168,19 @@ pub(crate) fn command(executable: &str) -> Command {
     let authentication = current_authentication();
     let certificate_failures = current_certificate_trust();
     command_with_configuration(executable, &authentication, &certificate_failures)
+}
+
+/// SVN target syntax treats `@` as a peg revision. Working-copy operations
+/// reject peg revisions (`svn: E200009`). Append a trailing `@` so a path
+/// that contains `@` is used as a literal target.
+pub(crate) fn working_copy_target(path: impl AsRef<Path>) -> OsString {
+    let os = path.as_ref().as_os_str();
+    if !os.to_string_lossy().contains('@') {
+        return os.to_os_string();
+    }
+    let mut target = os.to_os_string();
+    target.push("@");
+    target
 }
 
 pub(crate) fn configure_hidden_console(command: &mut Command) {
@@ -895,5 +909,23 @@ mod tests {
         assert!(candidates
             .iter()
             .any(|path| path.ends_with("/.homebrew/bin/svn")));
+    }
+
+    #[test]
+    fn escapes_working_copy_targets_that_contain_at_signs() {
+        assert_eq!(
+            working_copy_target(Path::new("src/main.ts")),
+            OsString::from("src/main.ts")
+        );
+        assert_eq!(
+            working_copy_target(Path::new(
+                "fish_1668_taqiubaobei@juexing_1_camera.fbx.meta"
+            )),
+            OsString::from("fish_1668_taqiubaobei@juexing_1_camera.fbx.meta@")
+        );
+        assert_eq!(
+            working_copy_target(Path::new(r"C:\wc\name@peg.txt")),
+            OsString::from(r"C:\wc\name@peg.txt@")
+        );
     }
 }

@@ -552,7 +552,7 @@ pub fn get_svn_info(request: GetSvnInfoRequest) -> Result<SvnInfo, NovaError> {
     let executable = normalize_svn_executable(request.svn_executable.as_deref())?;
     let output = svn::command(&executable)
         .args(["info", "--xml", "--"])
-        .arg(&target)
+        .arg(svn::working_copy_target(&target))
         .output()
         .map_err(|error| {
             NovaError::command(
@@ -582,7 +582,7 @@ pub fn get_svn_info(request: GetSvnInfoRequest) -> Result<SvnInfo, NovaError> {
 fn read_workspace_summary(path: &Path, executable: &str) -> Result<WorkspaceSummary, NovaError> {
     let output = svn::command(executable)
         .args(["info", "--xml"])
-        .arg(path)
+        .arg(svn::working_copy_target(path))
         .output()
         .map_err(|error| {
             NovaError::command(
@@ -730,7 +730,7 @@ fn run_svn_log(
         .arg((limit + 1).to_string());
     let revision = start_revision.unwrap_or("HEAD");
     command.arg("-r").arg(format!("{revision}:0"));
-    command.arg("--").arg(target).current_dir(current_dir);
+    command.arg("--").arg(svn::working_copy_target(target)).current_dir(current_dir);
 
     let output = command.output().map_err(|error| {
         NovaError::command(
@@ -1971,7 +1971,7 @@ fn run_status_with_updates(
     if !include_unversioned {
         command.arg("--quiet");
     }
-    let output = command.arg(path).output().map_err(|error| {
+    let output = command.arg(svn::working_copy_target(path)).output().map_err(|error| {
         NovaError::command(
             "SVN_STATUS_FAILED",
             "无法扫描工作副本状态",
@@ -2000,7 +2000,7 @@ fn run_status_without_updates(
     if !include_unversioned {
         command.arg("--quiet");
     }
-    command.arg(path).output().map_err(|error| {
+    command.arg(svn::working_copy_target(path)).output().map_err(|error| {
         NovaError::command(
             "SVN_STATUS_FAILED",
             "无法扫描工作副本状态",
@@ -2032,7 +2032,7 @@ fn read_versioned_workspace_paths(
     let target = scope_path.unwrap_or(".");
     let mut child = svn::command(executable)
         .args(["info", "--xml", "--depth", "infinity"])
-        .arg(target)
+        .arg(svn::working_copy_target(target))
         .current_dir(&canonical_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

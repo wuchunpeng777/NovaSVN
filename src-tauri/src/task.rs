@@ -3295,7 +3295,7 @@ fn run_svn_operation_task(
     );
     match payload.kind {
         SvnOperationKind::Update => {
-            command.arg("update").arg(&root);
+            command.arg("update").arg(svn::working_copy_target(&root));
             append_task_log(state, task_id, "执行 svn update");
         }
         SvnOperationKind::UpdatePath => {
@@ -3309,7 +3309,7 @@ fn run_svn_operation_task(
                 );
                 return;
             };
-            command.arg("update").arg(root.join(file_path));
+            command.arg("update").arg(svn::working_copy_target(root.join(file_path)));
             append_task_log(state, task_id, &format!("执行 svn update：{file_path}"));
         }
         SvnOperationKind::Cleanup => {
@@ -3337,7 +3337,7 @@ fn run_svn_operation_task(
                 );
                 return;
             }
-            command.arg("add").arg("--parents").arg(file_path);
+            command.arg("add").arg("--parents").arg(svn::working_copy_target(file_path));
             append_task_log(state, task_id, &format!("执行 svn add：{file_path}"));
         }
         SvnOperationKind::UnaddFile => {
@@ -3361,7 +3361,7 @@ fn run_svn_operation_task(
                 );
                 return;
             }
-            command.arg("revert").arg(root.join(file_path));
+            command.arg("revert").arg(svn::working_copy_target(root.join(file_path)));
             append_task_log(
                 state,
                 task_id,
@@ -3445,7 +3445,7 @@ fn run_svn_operation_task(
             command
                 .arg("delete")
                 .arg("--force")
-                .arg(canonical_root.join(file_path));
+                .arg(svn::working_copy_target(canonical_root.join(file_path)));
             append_task_log(
                 state,
                 task_id,
@@ -3655,8 +3655,8 @@ fn run_svn_operation_task(
             }
             command
                 .arg(command_name)
-                .arg(canonical_root.join(source_path))
-                .arg(canonical_root.join(target_path));
+                .arg(svn::working_copy_target(canonical_root.join(source_path)))
+                .arg(svn::working_copy_target(canonical_root.join(target_path)));
             append_task_log(
                 state,
                 task_id,
@@ -3674,7 +3674,7 @@ fn run_svn_operation_task(
                 );
                 return;
             };
-            command.arg("revert").arg(root.join(file_path));
+            command.arg("revert").arg(svn::working_copy_target(root.join(file_path)));
             append_task_log(state, task_id, &format!("执行 svn revert：{file_path}"));
         }
         SvnOperationKind::LockFile => {
@@ -3688,7 +3688,7 @@ fn run_svn_operation_task(
                 );
                 return;
             };
-            command.arg("lock").arg(root.join(file_path));
+            command.arg("lock").arg(svn::working_copy_target(root.join(file_path)));
             append_task_log(state, task_id, &format!("执行 svn lock：{file_path}"));
         }
         SvnOperationKind::UnlockFile | SvnOperationKind::ForceUnlockFile => {
@@ -3706,7 +3706,7 @@ fn run_svn_operation_task(
             if matches!(payload.kind, SvnOperationKind::ForceUnlockFile) {
                 command.arg("--force");
             }
-            command.arg(root.join(file_path));
+            command.arg(svn::working_copy_target(root.join(file_path)));
             let force_label = if matches!(payload.kind, SvnOperationKind::ForceUnlockFile) {
                 " --force"
             } else {
@@ -3741,7 +3741,7 @@ fn run_svn_operation_task(
                 .arg("resolve")
                 .arg("--accept")
                 .arg(accept)
-                .arg(root.join(file_path));
+                .arg(svn::working_copy_target(root.join(file_path)));
             append_task_log(
                 state,
                 task_id,
@@ -14432,6 +14432,76 @@ mod tests {
         assert_eq!(
             fs::read_to_string(local_working_copy.join("untouched.txt")).unwrap(),
             "base"
+        );
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn updates_working_copy_path_containing_at_sign() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let file_name = "fish_1668_taqiubaobei@juexing_1_camera.fbx.meta";
+        let root = test_temp_dir("svn-update-path-at-sign-integration");
+        let repository = root.join("repository");
+        let import_dir = root.join("import");
+        let local_working_copy = root.join("local-working-copy");
+        let remote_working_copy = root.join("remote-working-copy");
+        fs::create_dir_all(&import_dir).expect("create at-sign update import tree");
+        fs::write(import_dir.join(file_name), "base").expect("write at-sign update fixture");
+
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = format!("file://{}", repository.display());
+        run_test_command(
+            Command::new("svn")
+                .arg("import")
+                .arg(&import_dir)
+                .arg(&repository_url)
+                .args(["-m", "initial"]),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&local_working_copy),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&remote_working_copy),
+        );
+        fs::write(remote_working_copy.join(file_name), "remote target")
+            .expect("write remote at-sign update target");
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .arg(&remote_working_copy)
+                .args(["-m", "remote at-sign change"]),
+        );
+
+        let queue = TaskQueue::new();
+        let task = queue
+            .create_svn_operation_task(CreateSvnOperationTaskRequest {
+                working_copy_root: local_working_copy.display().to_string(),
+                kind: SvnOperationKind::UpdatePath,
+                file_path: Some(file_name.to_string()),
+                target_path: None,
+                svn_executable: None,
+            })
+            .expect("at-sign path update task should be created");
+        let task = wait_for_test_task(&queue, &task.task_id);
+
+        assert!(
+            matches!(task.status, TaskStatus::Success),
+            "含 @ 的 Update 路径任务失败：{:?}",
+            task.error
+        );
+        assert_eq!(
+            fs::read_to_string(local_working_copy.join(file_name)).unwrap(),
+            "remote target"
         );
 
         fs::remove_dir_all(root).ok();
