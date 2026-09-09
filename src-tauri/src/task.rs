@@ -2937,6 +2937,45 @@ fn run_commit_task(state: &Arc<Mutex<TaskQueueState>>, task_id: &str, payload: C
             commit_paths.push(parent);
         }
     }
+    // SVN status lists an unversioned directory as a single entry. `svn add` schedules
+    // its contents, but `svn commit --depth empty` would otherwise commit only the
+    // directory node. Expand to added descendants so checking a new folder includes files.
+    if !unversioned.is_empty() {
+        match collect_added_descendants_for_commit(
+            &payload.svn_executable,
+            &root,
+            &unversioned,
+        ) {
+            Ok(descendants) => {
+                if !descendants.is_empty() {
+                    append_task_log(
+                        state,
+                        task_id,
+                        &format!(
+                            "未版本控制目录包含 {} 个新增路径：{}",
+                            descendants.len(),
+                            format_paths_for_task_log(&descendants)
+                        ),
+                    );
+                    for path in descendants {
+                        if !commit_paths.iter().any(|existing| existing == &path) {
+                            commit_paths.push(path);
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                update_task(
+                    state,
+                    task_id,
+                    TaskStatus::Failed,
+                    "无法展开未版本控制目录的提交路径",
+                    Some(error),
+                );
+                return;
+            }
+        }
+    }
 
     let commit_targets = match SvnTargetsFile::create(task_id, "commit", &commit_paths) {
         Ok(targets) => targets,
@@ -3123,6 +3162,92 @@ fn commit_parent_paths(paths: &[String]) -> Vec<String> {
     parents
 }
 
+/// After `svn add` of unversioned directories, collect scheduled-add descendants.
+///
+/// Needed because `svn commit --depth empty` only commits explicit targets, and the
+/// commit window cannot select nested files that `svn status` omits under an
+/// unversioned directory.
+fn collect_added_descendants_for_commit(
+    executable: &str,
+    root: &Path,
+    unversioned: &[String],
+) -> Result<Vec<String>, String> {
+    let directories: Vec<String> = unversioned
+        .iter()
+        .filter(|path| {
+            fs::symlink_metadata(root.join(path))
+                .map(|meta| meta.file_type().is_dir())
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+    if directories.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let root_normalized = normalize_status_path(&root.display().to_string());
+    let mut added = Vec::new();
+    let mut seen = unversioned.iter().cloned().collect::<HashSet<_>>();
+    for batch in chunk_paths_for_svn_status_argv(&directories) {
+        let mut command = svn::command(executable);
+        command
+            .args(["status", "--xml"])
+            .args(batch)
+            .current_dir(root);
+
+        let output = command.output().map_err(|error| {
+            format!("执行 `{executable} status --xml` 展开未版本控制目录失败：{error}")
+        })?;
+        if !output.status.success() {
+            return Err(command_error_detail(executable, &output));
+        }
+
+        let xml = String::from_utf8_lossy(&output.stdout);
+        let document = Document::parse(xml.as_ref())
+            .map_err(|error| format!("解析未版本控制目录 status XML 失败：{error}"))?;
+
+        for entry in document
+            .descendants()
+            .filter(|node| node.has_tag_name("entry"))
+        {
+            let path = entry.attribute("path").unwrap_or("").trim();
+            if path.is_empty() {
+                continue;
+            }
+            let item = entry
+                .descendants()
+                .find(|node| node.has_tag_name("wc-status"))
+                .and_then(|node| node.attribute("item"))
+                .unwrap_or("");
+            if item != "added" {
+                continue;
+            }
+            let Some(relative) = relative_commit_path_from_status(path, &root_normalized) else {
+                continue;
+            };
+            if !directories
+                .iter()
+                .any(|dir| path_is_self_or_descendant(&relative, dir))
+            {
+                continue;
+            }
+            if seen.insert(relative.clone()) {
+                added.push(relative);
+            }
+        }
+    }
+    Ok(added)
+}
+
+fn path_is_self_or_descendant(path: &str, ancestor: &str) -> bool {
+    let path = normalize_status_path(path);
+    let ancestor = normalize_status_path(ancestor);
+    if ancestor.is_empty() {
+        return false;
+    }
+    path == ancestor || path.starts_with(&format!("{ancestor}/"))
+}
+
 /// Split paths into argv-safe batches for commands that cannot use `--targets`.
 fn chunk_paths_for_svn_status_argv(paths: &[String]) -> Vec<&[String]> {
     if paths.is_empty() {
@@ -3241,18 +3366,7 @@ fn match_commit_file_path(
     status_path: &str,
     root_normalized: &str,
 ) -> Option<String> {
-    let mut normalized = normalize_status_path(status_path);
-    // Strip working-copy root prefix when svn reports absolute paths.
-    if !root_normalized.is_empty() {
-        if let Some(stripped) = normalized
-            .strip_prefix(root_normalized)
-            .map(|value| value.trim_start_matches('/'))
-        {
-            if !stripped.is_empty() {
-                normalized = stripped.to_string();
-            }
-        }
-    }
+    let normalized = relative_status_path(status_path, root_normalized);
 
     for file in files {
         let candidate = normalize_status_path(file);
@@ -3264,6 +3378,38 @@ fn match_commit_file_path(
         }
     }
     None
+}
+
+fn relative_commit_path_from_status(status_path: &str, root_normalized: &str) -> Option<String> {
+    let relative = relative_status_path(status_path, root_normalized);
+    if relative.is_empty() {
+        return None;
+    }
+    let path = Path::new(&relative);
+    if task_file_path_is_absolute(path, &relative)
+        || task_file_path_has_parent_segment(&relative)
+        || task_file_path_has_unsafe_platform_alias(&relative)
+    {
+        return None;
+    }
+    Some(normalize_task_file_path_separators(&relative))
+}
+
+fn relative_status_path(status_path: &str, root_normalized: &str) -> String {
+    let mut normalized = normalize_status_path(status_path);
+    let root_normalized = normalize_status_path(root_normalized);
+    // Strip working-copy root prefix when svn reports absolute paths.
+    if !root_normalized.is_empty() {
+        if let Some(stripped) = normalized
+            .strip_prefix(&root_normalized)
+            .map(|value| value.trim_start_matches('/'))
+        {
+            if !stripped.is_empty() {
+                normalized = stripped.to_string();
+            }
+        }
+    }
+    normalized
 }
 
 fn normalize_status_path(path: &str) -> String {
@@ -12562,6 +12708,42 @@ mod tests {
     }
 
     #[test]
+    fn maps_status_paths_to_working_copy_relative_commit_paths() {
+        assert_eq!(
+            relative_commit_path_from_status("new-folder/a.txt", "C:/repo").as_deref(),
+            Some("new-folder/a.txt")
+        );
+        assert_eq!(
+            relative_commit_path_from_status(r"C:\repo\new-folder\a.txt", "C:/repo").as_deref(),
+            Some("new-folder/a.txt")
+        );
+        assert_eq!(
+            relative_commit_path_from_status("C:/repo/new-folder/a.txt", "C:/repo").as_deref(),
+            Some("new-folder/a.txt")
+        );
+        assert_eq!(
+            relative_commit_path_from_status("../outside.txt", "C:/repo"),
+            None
+        );
+    }
+
+    #[test]
+    fn detects_commit_path_descendants() {
+        assert!(path_is_self_or_descendant("new-folder", "new-folder"));
+        assert!(path_is_self_or_descendant("new-folder/a.txt", "new-folder"));
+        assert!(path_is_self_or_descendant(
+            "new-folder/sub/deep.txt",
+            "new-folder"
+        ));
+        assert!(!path_is_self_or_descendant("new-folder-2/a.txt", "new-folder"));
+        assert!(!path_is_self_or_descendant(
+            "other/new-folder/a.txt",
+            "new-folder"
+        ));
+    }
+
+
+    #[test]
     fn collects_unversioned_commit_targets_from_status_xml_paths() {
         // Simulate the matching half of auto-add: absolute status path must map to relative request.
         let files = vec!["docs/readme.md".to_string(), "new-file.txt".to_string()];
@@ -13965,6 +14147,94 @@ mod tests {
         );
         fs::remove_dir_all(root).ok();
     }
+
+    #[test]
+    fn auto_adds_unversioned_directory_contents_before_commit() {
+        if !svn_tools_available() {
+            return;
+        }
+
+        let root = test_temp_dir("svn-commit-auto-add-dir");
+        let repository = root.join("repository");
+        let working_copy = root.join("working-copy");
+        run_test_command(Command::new("svnadmin").arg("create").arg(&repository));
+        let repository_url = test_file_repository_url(&repository);
+        run_test_command(
+            Command::new("svn")
+                .arg("checkout")
+                .arg(&repository_url)
+                .arg(&working_copy),
+        );
+        fs::write(working_copy.join("tracked.txt"), "base\n").expect("write tracked file");
+        run_test_command(
+            Command::new("svn")
+                .arg("add")
+                .arg(working_copy.join("tracked.txt")),
+        );
+        run_test_command(
+            Command::new("svn")
+                .arg("commit")
+                .args(["-m", "init"])
+                .arg(&working_copy),
+        );
+
+        fs::write(working_copy.join("tracked.txt"), "changed\n").expect("modify tracked file");
+        fs::write(working_copy.join("skip.txt"), "leave me\n")
+            .expect("write unselected unversioned file");
+        fs::create_dir_all(working_copy.join("new-folder/sub"))
+            .expect("create nested unversioned directory");
+        fs::write(working_copy.join("new-folder/nested.txt"), "nested\n")
+            .expect("write nested unversioned file");
+        fs::write(working_copy.join("new-folder/sub/deep.txt"), "deep\n")
+            .expect("write deep unversioned file");
+
+        let queue = TaskQueue::new();
+        let commit_task = queue
+            .create_commit_task(CreateCommitTaskRequest {
+                working_copy_root: working_copy.display().to_string(),
+                message: "commit new folder".to_string(),
+                files: vec!["new-folder".to_string()],
+                svn_executable: None,
+            })
+            .expect("commit task with unversioned directory should be created");
+        let commit_task = wait_for_test_task(&queue, &commit_task.task_id);
+        assert!(
+            matches!(commit_task.status, TaskStatus::Success),
+            "勾选未版本控制目录后应提交目录内文件：{:?}",
+            commit_task.error
+        );
+
+        let nested = run_test_command(
+            Command::new("svn")
+                .arg("cat")
+                .arg(format!("{repository_url}/new-folder/nested.txt")),
+        );
+        assert_eq!(String::from_utf8_lossy(&nested.stdout), "nested\n");
+        let deep = run_test_command(
+            Command::new("svn")
+                .arg("cat")
+                .arg(format!("{repository_url}/new-folder/sub/deep.txt")),
+        );
+        assert_eq!(String::from_utf8_lossy(&deep.stdout), "deep\n");
+
+        let leftover = run_test_command(Command::new("svn").arg("status").arg(&working_copy));
+        let leftover_text = String::from_utf8_lossy(&leftover.stdout);
+        assert!(
+            leftover_text.contains("tracked.txt"),
+            "未勾选的已修改文件不得被提交：{leftover_text}"
+        );
+        assert!(
+            leftover_text.contains("skip.txt"),
+            "未勾选的未版本控制文件不得被提交：{leftover_text}"
+        );
+        assert!(
+            !leftover_text.contains("new-folder"),
+            "勾选的新目录应已全部提交：{leftover_text}"
+        );
+
+        fs::remove_dir_all(root).ok();
+    }
+
 
     #[test]
     fn commit_does_not_include_unselected_changes_under_versioned_parents() {
